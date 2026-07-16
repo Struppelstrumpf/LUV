@@ -57,7 +57,6 @@ import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
-import com.luv.couple.update.AppUpdater
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -115,8 +114,6 @@ fun LuvAppNav() {
     var shopEnabled by remember { mutableStateOf(false) }
     var packs by remember { mutableStateOf<List<ShopPack>>(emptyList()) }
     var vouchers by remember { mutableStateOf<List<VoucherInfo>>(emptyList()) }
-    val versionLabel = remember { AppUpdater.versionLabel() }
-
     fun shareText(text: String) {
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
@@ -283,7 +280,6 @@ fun LuvAppNav() {
                             colorIndex = colorIndex,
                             coins = account?.coins ?: 0,
                             freeLeft = account?.freeSessionsLeft ?: 0,
-                            versionLabel = versionLabel,
                             onOpenLobbies = { tab = 1 },
                             onOpenAccount = { tab = 2 }
                         )
@@ -294,7 +290,6 @@ fun LuvAppNav() {
                             activeLobbyId = activeLobbyId,
                             lobbyStates = lobbyStates,
                             reconnectUi = reconnectUi,
-                            versionLabel = versionLabel,
                             partnerNotifyEnabled = partnerNotify,
                             onPartnerNotifyChange = { enabled ->
                                 scope.launch { prefs.setPartnerDrawNotifyEnabled(enabled) }
@@ -583,7 +578,6 @@ private fun HomeMenu(
     colorIndex: Int,
     coins: Int,
     freeLeft: Int,
-    versionLabel: String,
     onOpenLobbies: () -> Unit,
     onOpenAccount: () -> Unit
 ) {
@@ -606,10 +600,6 @@ private fun HomeMenu(
                     fontFamily = BodyFont,
                     fontSize = 14.sp
                 )
-                if (versionLabel.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(versionLabel, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
-                }
             }
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 HomeBtn("Meine Lobbys", accent, onOpenLobbies)

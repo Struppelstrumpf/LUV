@@ -208,7 +208,6 @@ fun LobbiesScreen(
     activeLobbyId: String?,
     lobbyStates: Map<String, ConnectionState>,
     reconnectUi: Map<String, LobbyReconnectUi>,
-    versionLabel: String,
     partnerNotifyEnabled: Boolean,
     onPartnerNotifyChange: (Boolean) -> Unit,
     partnerHapticEnabled: Boolean,
@@ -257,15 +256,6 @@ fun LobbiesScreen(
                 }
             }
 
-            Text(
-                "Bis zu ${PeerPalette.MAX_LOBBIES} Lobbys · max. ${PeerPalette.MAX_PEERS} Personen",
-                color = TextMuted,
-                fontFamily = BodyFont,
-                fontSize = 13.sp
-            )
-            if (versionLabel.isNotBlank()) {
-                Text(versionLabel, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
-            }
             if (!error.isNullOrBlank()) {
                 Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
             }

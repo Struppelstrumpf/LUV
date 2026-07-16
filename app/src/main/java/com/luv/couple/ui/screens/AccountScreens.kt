@@ -20,7 +20,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +65,7 @@ fun AccountHomeScreen(
     onRefresh: () -> Unit
 ) {
     val accent = PeerPalette.composeColor(colorIndex)
+    var legalDoc by remember { mutableStateOf<LegalDoc?>(null) }
     MenuBackdrop {
         Column(
             modifier = Modifier
@@ -147,10 +151,129 @@ fun AccountHomeScreen(
                     bordered = !shopEnabled
                 )
             }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                Text(
+                    "Impressum",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .clickable { legalDoc = LegalDoc.Impressum }
+                        .padding(vertical = 6.dp)
+                )
+                Text(
+                    "AGB",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .clickable { legalDoc = LegalDoc.Agb }
+                        .padding(vertical = 6.dp)
+                )
+            }
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
+
+    legalDoc?.let { doc ->
+        LegalDialog(doc = doc, onDismiss = { legalDoc = null })
+    }
 }
+
+private enum class LegalDoc { Impressum, Agb }
+
+@Composable
+private fun LegalDialog(doc: LegalDoc, onDismiss: () -> Unit) {
+    val title = when (doc) {
+        LegalDoc.Impressum -> "Impressum"
+        LegalDoc.Agb -> "AGB"
+    }
+    val body = when (doc) {
+        LegalDoc.Impressum -> IMPRESSUM_TEXT
+        LegalDoc.Agb -> AGB_TEXT
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Schließen", color = AccentRose, fontFamily = BodyFont)
+            }
+        },
+        title = {
+            Text(title, fontFamily = DisplayFont, fontSize = 22.sp, color = TextPrimary)
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    body,
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp
+                )
+            }
+        },
+        containerColor = BgSoft,
+        titleContentColor = TextPrimary,
+        textContentColor = TextMuted
+    )
+}
+
+private val IMPRESSUM_TEXT = """
+Reineke GbR
+Matthias und Jane Reineke
+Elisabethstraße 31
+49201 Dissen
+
+E-Mail: info@reineke.pro
+Tel: 015561 048098
+
+Verantwortlich für den Inhalt der App LUV.
+
+Hinweis zu Käufen:
+Coins und sonstige kostenpflichtige Inhalte sind an dein Geräte-/App-Konto gebunden. Wenn du die App deinstallierst, das Gerät wechselst oder App-Daten löschst, kann es sein, dass gekaufte Inhalte, Coins und Fortschritt verloren gehen und nicht wiederherstellbar sind.
+""".trimIndent()
+
+private val AGB_TEXT = """
+Allgemeine Geschäftsbedingungen für LUV (digitale Inhalte)
+
+1. Anbieter
+Reineke GbR, Matthias und Jane Reineke, Elisabethstraße 31, 49201 Dissen (info@reineke.pro).
+
+2. Leistungsbeschreibung
+LUV ermöglicht gemeinsames Zeichnen in Lobbys. Kostenlose Funktionen (u. a. Daily Coins, freie Sessions) und optionale Coin-Pakete können angeboten werden. Technische Verfügbarkeit kann schwanken.
+
+3. Käufe / Coins
+Käufe erfolgen über den integrierten Shop (z. B. Mollie). Mit Abschluss der Zahlung erwirbst du digitale Guthaben-/Nutzungsrechte (Coins) in der App. Preise werden vor dem Kauf angezeigt. Es gelten die Zahlungsbedingungen des jeweiligen Zahlungsdienstleisters.
+
+4. Widerruf
+Bei digitalen Inhalten, deren Ausführung mit ausdrücklicher Zustimmung vor Ablauf der Widerrufsfrist begonnen hat und bei denen du zur Kenntnis genommen hast, dass du dein Widerrufsrecht verlierst, kann das Widerrufsrecht entfallen (§ 356 Abs. 5 BGB). Details dazu werden im Checkout-Prozess berücksichtigt, soweit anwendbar.
+
+5. Verlust bei Deinstallation
+Coins, gekaufte Inhalte und sonstiger Fortschritt sind an die App-Installation bzw. das lokale Gerätekonto gebunden. Bei Deinstallation der App, Löschen der App-Daten, Gerätewechsel ohne erfolgreiche Wiederherstellung oder ähnlichen Maßnahmen kann Guthaben und gekaufte Inhalte unwiderruflich verloren gehen. Eine Wiederherstellung ist nicht geschuldet und technisch möglicherweise nicht möglich. Bewahre dein Gerät und die App entsprechend auf, wenn du Guthaben behalten möchtest.
+
+6. Missbrauch
+Manipulation, Mehrfach-Konten zur Umgehung von Limits oder Missbrauch des Shops können zur Sperrung führen. Bereits gezahlte Beträge werden in solchen Fällen nicht erstattet, soweit gesetzlich zulässig.
+
+7. Haftung
+Für leicht fahrlässige Pflichtverletzungen haften wir nur bei Verletzung wesentlicher Vertragspflichten und begrenzt auf den typischen vorhersehbaren Schaden. Unberührt bleiben Haftung bei Vorsatz, grober Fahrlässigkeit, Verletzung von Leben, Körper oder Gesundheit sowie zwingende gesetzliche Ansprüche.
+
+8. Änderungen
+Wir können diese AGB mit Wirkung für die Zukunft anpassen, soweit dies erforderlich ist und dich nicht unangemessen benachteiligt. Die jeweils aktuelle Fassung findest du in der App.
+
+9. Schlussbestimmungen
+Es gilt das Recht der Bundesrepublik Deutschland unter Ausschluss des UN-Kaufrechts. Verbraucherschutzvorschriften am Wohnsitz bleiben unberührt. Sollten einzelne Klauseln unwirksam sein, bleibt der Rest wirksam.
+""".trimIndent()
 
 @Composable
 fun RedeemScreen(
