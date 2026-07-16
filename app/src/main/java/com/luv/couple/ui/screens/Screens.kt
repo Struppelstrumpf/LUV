@@ -204,6 +204,8 @@ fun NicknameScreen(
 fun LobbiesScreen(
     nickname: String,
     colorIndex: Int,
+    coins: Int,
+    freeLeft: Int,
     lobbies: List<Lobby>,
     activeLobbyId: String?,
     lobbyStates: Map<String, ConnectionState>,
@@ -237,7 +239,7 @@ fun LobbiesScreen(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(44.dp)
                         .clip(CircleShape)
                         .background(accent)
                         .clickable(onClick = onEditNickname),
@@ -247,12 +249,18 @@ fun LobbiesScreen(
                         nickname.take(1).uppercase(),
                         color = Color(0xFF1A1F2E),
                         fontFamily = DisplayFont,
-                        fontSize = 18.sp
+                        fontSize = 20.sp
                     )
                 }
-                Column {
-                    Text("LUV", fontFamily = DisplayFont, fontSize = 36.sp, color = TextPrimary, letterSpacing = 2.sp)
-                    Text("Hallo, $nickname", color = TextMuted, fontFamily = BodyFont, fontSize = 14.sp)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("LUV", fontFamily = DisplayFont, fontSize = 40.sp, color = TextPrimary, letterSpacing = 2.sp)
+                    Text("Hallo, $nickname", color = accent, fontFamily = DisplayFont, fontSize = 18.sp)
+                    Text(
+                        "$coins Coins · $freeLeft frei heute",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp
+                    )
                 }
             }
 

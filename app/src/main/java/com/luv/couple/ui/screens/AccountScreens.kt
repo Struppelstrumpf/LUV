@@ -541,7 +541,7 @@ fun SimpleBottomBar(
     selected: Int,
     onSelect: (Int) -> Unit
 ) {
-    val labels = listOf("Home", "Lobbys", "Konto")
+    val labels = listOf("Home", "Konto")
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -556,7 +556,7 @@ fun SimpleBottomBar(
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
                     .clickable { onSelect(index) }
-                    .padding(horizontal = 18.dp, vertical = 8.dp)
+                    .padding(horizontal = 28.dp, vertical = 8.dp)
             ) {
                 Box(
                     modifier = Modifier

@@ -6,7 +6,6 @@ import android.widget.Toast
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -15,10 +14,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.border
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -46,30 +43,11 @@ import com.luv.couple.ui.screens.CreateLobbyScreen
 import com.luv.couple.ui.screens.HostShareScreen
 import com.luv.couple.ui.screens.JoinScreen
 import com.luv.couple.ui.screens.LobbiesScreen
-import com.luv.couple.ui.screens.MenuBackdrop
 import com.luv.couple.ui.screens.NicknameScreen
 import com.luv.couple.ui.screens.RedeemScreen
 import com.luv.couple.ui.screens.RenameLobbyScreen
 import com.luv.couple.ui.screens.SimpleBottomBar
 import com.luv.couple.ui.screens.TutorialFlow
-import com.luv.couple.ui.theme.AccentRose
-import com.luv.couple.ui.theme.BodyFont
-import com.luv.couple.ui.theme.DisplayFont
-import com.luv.couple.ui.theme.TextMuted
-import com.luv.couple.ui.theme.TextPrimary
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.material3.Text
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -229,14 +207,14 @@ fun LuvAppNav() {
         val code = PendingJoin.consume() ?: return@LaunchedEffect
         if (joinWithCode(code)) {
             Toast.makeText(context, "Lobby beigetreten", Toast.LENGTH_SHORT).show()
-            tab = 1
+            tab = 0
         }
     }
 
     LaunchedEffect(startDestination, pendingShopReturn) {
         if (startDestination != Routes.MAIN) return@LaunchedEffect
         if (!PendingShopReturn.consume()) return@LaunchedEffect
-        tab = 2
+        tab = 1
         refreshAccount()
         // Webhook kann kurz brauchen
         kotlinx.coroutines.delay(1200)
@@ -275,17 +253,11 @@ fun LuvAppNav() {
             Column(modifier = Modifier.fillMaxSize()) {
                 Box(modifier = Modifier.weight(1f)) {
                     when (tab) {
-                        0 -> HomeMenu(
+                        0 -> LobbiesScreen(
                             nickname = nickname ?: "Du",
                             colorIndex = colorIndex,
                             coins = account?.coins ?: 0,
                             freeLeft = account?.freeSessionsLeft ?: 0,
-                            onOpenLobbies = { tab = 1 },
-                            onOpenAccount = { tab = 2 }
-                        )
-                        1 -> LobbiesScreen(
-                            nickname = nickname ?: "Du",
-                            colorIndex = colorIndex,
                             lobbies = lobbies,
                             activeLobbyId = activeLobbyId,
                             lobbyStates = lobbyStates,
@@ -380,7 +352,7 @@ fun LuvAppNav() {
                 SimpleBottomBar(
                     selected = tab,
                     onSelect = {
-                        if (it == 2) accountMessage = null
+                        if (it == 1) accountMessage = null
                         tab = it
                     }
                 )
@@ -458,11 +430,11 @@ fun LuvAppNav() {
                 connectionState = lobbyStates[lobby.id] ?: PairConnectionService.state.value,
                 onShare = { shareText(inviteMessage(lobby)) },
                 onContinue = {
-                    tab = 1
+                    tab = 0
                     navController.navigate(Routes.MAIN) { popUpTo(Routes.MAIN) { inclusive = true } }
                 },
                 onBack = {
-                    tab = 1
+                    tab = 0
                     navController.navigate(Routes.MAIN) { popUpTo(Routes.MAIN) { inclusive = true } }
                 }
             )
@@ -475,7 +447,7 @@ fun LuvAppNav() {
                 onJoin = { raw ->
                     scope.launch {
                         if (joinWithCode(raw)) {
-                            tab = 1
+                            tab = 0
                             navController.navigate(Routes.MAIN) { popUpTo(Routes.MAIN) { inclusive = true } }
                         }
                     }
@@ -509,7 +481,7 @@ fun LuvAppNav() {
                                 ).show()
                                 accountMessage = null
                                 navController.popBackStack()
-                                tab = 2
+                                tab = 1
                             }
                         }.onFailure {
                             accountMessage = it.message
@@ -569,61 +541,5 @@ fun LuvAppNav() {
                 onBack = { navController.popBackStack() }
             )
         }
-    }
-}
-
-@Composable
-private fun HomeMenu(
-    nickname: String,
-    colorIndex: Int,
-    coins: Int,
-    freeLeft: Int,
-    onOpenLobbies: () -> Unit,
-    onOpenAccount: () -> Unit
-) {
-    val accent = PeerPalette.composeColor(colorIndex)
-    MenuBackdrop {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 28.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column {
-                Text("LUV", fontFamily = DisplayFont, fontSize = 56.sp, color = TextPrimary, letterSpacing = 3.sp)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Hallo, $nickname", fontFamily = DisplayFont, fontSize = 26.sp, color = accent)
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    "$coins Coins · $freeLeft freie Sessions heute",
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 14.sp
-                )
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                HomeBtn("Meine Lobbys", accent, onOpenLobbies)
-                HomeBtn("Konto & Coins", Color(0xFF171C24), onOpenAccount, bordered = true)
-            }
-        }
-    }
-}
-
-@Composable
-private fun HomeBtn(label: String, color: Color, onClick: () -> Unit, bordered: Boolean = false) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(color)
-            .then(
-                if (bordered) Modifier.border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(18.dp))
-                else Modifier
-            )
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(label, color = TextPrimary, fontFamily = DisplayFont, fontSize = 17.sp, textAlign = TextAlign.Center)
     }
 }
