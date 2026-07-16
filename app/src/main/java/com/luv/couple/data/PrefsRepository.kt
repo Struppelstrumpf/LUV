@@ -65,11 +65,17 @@ class PrefsRepository(private val context: Context) {
 
     suspend fun setNickname(nickname: String) {
         val clean = nickname.trim().take(18)
-        val color = PeerPalette.indexFor(clean.lowercase())
         context.dataStore.edit {
             it[nicknameKey] = clean
-            it[colorIndexKey] = color.toString()
+            if (it[colorIndexKey].isNullOrBlank()) {
+                it[colorIndexKey] = PeerPalette.indexFor(clean.lowercase()).toString()
+            }
         }
+    }
+
+    suspend fun setColorIndex(index: Int) {
+        val safe = index.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
+        context.dataStore.edit { it[colorIndexKey] = safe.toString() }
     }
 
     suspend fun setTutorialDone(done: Boolean = true) {
@@ -97,7 +103,9 @@ class PrefsRepository(private val context: Context) {
             it[sessionTokenKey] = sessionToken
             it[accountJsonKey] = account.toJson()
             it[nicknameKey] = account.nickname
-            it[colorIndexKey] = PeerPalette.indexFor(account.nickname.lowercase()).toString()
+            if (it[colorIndexKey].isNullOrBlank()) {
+                it[colorIndexKey] = PeerPalette.indexFor(account.nickname.lowercase()).toString()
+            }
         }
     }
 

@@ -18,6 +18,8 @@ sealed class PairMessage {
         @Deprecated("legacy") val gender: String? = null
     ) : PairMessage()
     data class Note(val text: String) : PairMessage()
+    data class Recolor(val nickname: String?, val colorIndex: Int) : PairMessage()
+    data class Reaction(val emoji: String, val nickname: String?) : PairMessage()
     data object Clear : PairMessage()
     data class ClearPropose(val nickname: String?) : PairMessage()
     data class ClearVote(val proposalId: String, val yes: Boolean) : PairMessage()
@@ -66,6 +68,14 @@ object PairProtocol {
             is PairMessage.Note -> JSONObject()
                 .put("type", "note")
                 .put("text", message.text.take(80))
+            is PairMessage.Recolor -> JSONObject()
+                .put("type", "recolor")
+                .put("nickname", message.nickname ?: JSONObject.NULL)
+                .put("colorIndex", message.colorIndex)
+            is PairMessage.Reaction -> JSONObject()
+                .put("type", "reaction")
+                .put("emoji", message.emoji.take(8))
+                .put("nickname", message.nickname ?: JSONObject.NULL)
             PairMessage.Clear -> JSONObject().put("type", "clear_propose")
             is PairMessage.ClearPropose -> JSONObject()
                 .put("type", "clear_propose")
@@ -136,6 +146,14 @@ object PairProtocol {
                     )
                 }
                 "note" -> PairMessage.Note(json.optString("text").take(80))
+                "recolor" -> PairMessage.Recolor(
+                    nickname = json.optString("nickname").takeIf { it.isNotBlank() && it != "null" },
+                    colorIndex = json.optInt("colorIndex", 0)
+                )
+                "reaction" -> PairMessage.Reaction(
+                    emoji = json.optString("emoji").take(8),
+                    nickname = json.optString("nickname").takeIf { it.isNotBlank() && it != "null" }
+                )
                 "clear" -> PairMessage.Clear
                 "clear_propose" -> PairMessage.ClearPropose(
                     json.optString("nickname").takeIf { it.isNotBlank() && it != "null" }

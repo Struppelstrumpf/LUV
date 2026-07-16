@@ -36,7 +36,6 @@ import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.LuvApiException
 import com.luv.couple.net.PairConnectionService
-import com.luv.couple.net.PairSessionState
 import com.luv.couple.net.PendingJoin
 import com.luv.couple.net.PendingShopReturn
 import com.luv.couple.net.ShopPack
@@ -143,7 +142,7 @@ fun LuvAppNav() {
             val result = LuvApiClient.authDevice(id, secret, nick)
             prefs.saveSession(result.sessionToken, result.user)
             AccountSession.setAccount(result.user)
-            colorIndex = PeerPalette.indexFor(result.user.nickname.lowercase())
+            colorIndex = prefs.snapshot().colorIndex
             CanvasStore.updateProfile(result.user.nickname, colorIndex)
             true
         } catch (e: Exception) {
@@ -157,7 +156,7 @@ fun LuvAppNav() {
             val user = LuvApiClient.me()
             prefs.updateAccount(user)
             AccountSession.setAccount(user)
-            colorIndex = PeerPalette.indexFor(user.nickname.lowercase())
+            colorIndex = prefs.snapshot().colorIndex
             CanvasStore.updateProfile(user.nickname, colorIndex)
             val (enabled, list) = LuvApiClient.shopPacks()
             shopEnabled = enabled
@@ -201,11 +200,6 @@ fun LuvAppNav() {
         }
     }
 
-    LaunchedEffect(Unit) {
-        PairSessionState.notes.collect {
-            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
-        }
-    }
     LaunchedEffect(Unit) {
         AccountSession.economyBlocks.collect {
             Toast.makeText(context, it, Toast.LENGTH_LONG).show()
@@ -406,7 +400,7 @@ fun LuvAppNav() {
                     scope.launch {
                         prefs.setNickname(selected)
                         ensureAuth(selected)
-                        colorIndex = PeerPalette.indexFor(selected.lowercase())
+                        colorIndex = prefs.snapshot().colorIndex
                         navController.popBackStack()
                     }
                 }

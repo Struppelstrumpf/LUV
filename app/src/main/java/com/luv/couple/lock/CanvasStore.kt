@@ -47,7 +47,53 @@ object CanvasStore {
 
     fun updateProfile(nickname: String?, colorIndex: Int) {
         cachedNickname = nickname
-        cachedColorIndex = colorIndex
+        cachedColorIndex = colorIndex.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
+    }
+
+    /** Eigene Striche lokal umfärben und Sync an Peers senden. */
+    fun recolorOwnStrokes(colorIndex: Int, lobbyId: String? = null) {
+        val id = resolveLobbyId(lobbyId) ?: return
+        val safe = colorIndex.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
+        cachedColorIndex = safe
+        val nick = cachedNickname
+        val c = canvas(id)
+        val updated = c.strokes.map { stroke ->
+            if (stroke.isLocal || stroke.nickname.equals(nick, ignoreCase = true)) {
+                stroke.copy(colorIndex = safe, isLocal = stroke.isLocal)
+            } else {
+                stroke
+            }
+        }
+        c.strokes.clear()
+        c.strokes.addAll(updated)
+        bump(id)
+        if (::appContext.isInitialized) {
+            PairConnectionService.sendRecolor(appContext, nick, safe, id)
+            LockScreenWidgetProvider.requestUpdate(appContext)
+        }
+    }
+
+    /** Fremde Umfärbung anwenden (nach Nickname). */
+    fun recolorByNickname(nickname: String?, colorIndex: Int, lobbyId: String) {
+        if (nickname.isNullOrBlank()) return
+        val safe = colorIndex.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
+        val c = canvas(lobbyId)
+        var changed = false
+        val updated = c.strokes.map { stroke ->
+            if (!stroke.isLocal && stroke.nickname.equals(nickname, ignoreCase = true)) {
+                changed = true
+                stroke.copy(colorIndex = safe)
+            } else {
+                stroke
+            }
+        }
+        if (!changed) return
+        c.strokes.clear()
+        c.strokes.addAll(updated)
+        bump(lobbyId)
+        if (::appContext.isInitialized) {
+            LockScreenWidgetProvider.requestUpdate(appContext)
+        }
     }
 
     fun updateKnownLobbies(ids: Collection<String>) {

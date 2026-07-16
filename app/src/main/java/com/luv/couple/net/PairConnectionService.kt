@@ -379,6 +379,20 @@ class PairConnectionService : Service() {
                 )
             }
             is PairMessage.Note -> PairSessionState.emitNote(message.text)
+            is PairMessage.Recolor -> {
+                CanvasStore.recolorByNickname(message.nickname, message.colorIndex, lobby.id)
+                PairSessionState.updatePeerColor(lobby.id, message.nickname, message.colorIndex)
+                scope.launch {
+                    _events.emit(
+                        PairEvent.RecolorReceived(lobby.id, message.nickname, message.colorIndex)
+                    )
+                }
+            }
+            is PairMessage.Reaction -> {
+                scope.launch {
+                    _events.emit(PairEvent.ReactionReceived(lobby.id, message.emoji, message.nickname))
+                }
+            }
             PairMessage.Clear -> {
                 CanvasStore.clear(localOnly = true, lobbyId = lobby.id)
                 scope.launch { _events.emit(PairEvent.Cleared(lobby.id)) }
@@ -671,6 +685,34 @@ class PairConnectionService : Service() {
             }
         }
 
+        fun sendRecolor(context: Context, nickname: String?, colorIndex: Int, lobbyId: String? = null) {
+            try {
+                val payload = PairProtocol.encode(PairMessage.Recolor(nickname, colorIndex))
+                val intent = Intent(context, PairConnectionService::class.java)
+                    .setAction(ACTION_SEND_STROKE)
+                    .putExtra(EXTRA_PAYLOAD, payload)
+                    .putExtra(EXTRA_LOBBY_ID, lobbyId ?: CanvasStore.activeLobbyId.value)
+                context.startService(intent)
+            } catch (t: Throwable) {
+                Log.e(TAG, "Unable to send recolor", t)
+            }
+        }
+
+        fun sendReaction(context: Context, emoji: String, lobbyId: String? = null) {
+            try {
+                val nickname = CanvasStore.cachedNickname
+                    ?: AccountSession.account.value?.nickname
+                val payload = PairProtocol.encode(PairMessage.Reaction(emoji, nickname))
+                val intent = Intent(context, PairConnectionService::class.java)
+                    .setAction(ACTION_SEND_STROKE)
+                    .putExtra(EXTRA_PAYLOAD, payload)
+                    .putExtra(EXTRA_LOBBY_ID, lobbyId ?: CanvasStore.activeLobbyId.value)
+                context.startService(intent)
+            } catch (t: Throwable) {
+                Log.e(TAG, "Unable to send reaction", t)
+            }
+        }
+
         fun lobbyState(lobbyId: String): ConnectionState =
             _lobbyStates.value[lobbyId] ?: ConnectionState.IDLE
 
@@ -699,4 +741,6 @@ sealed class PairEvent {
     data class StrokeReceived(val lobbyId: String, val stroke: com.luv.couple.data.Stroke) : PairEvent()
     data class StrokeUndone(val lobbyId: String, val strokeId: String) : PairEvent()
     data class Cleared(val lobbyId: String) : PairEvent()
+    data class RecolorReceived(val lobbyId: String, val nickname: String?, val colorIndex: Int) : PairEvent()
+    data class ReactionReceived(val lobbyId: String, val emoji: String, val nickname: String?) : PairEvent()
 }

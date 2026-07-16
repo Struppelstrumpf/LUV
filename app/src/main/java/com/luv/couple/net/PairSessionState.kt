@@ -17,6 +17,9 @@ object PairSessionState {
     private val _notes = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val notes: SharedFlow<String> = _notes.asSharedFlow()
 
+    private val _reactions = MutableSharedFlow<ReactionEvent>(extraBufferCapacity = 16)
+    val reactions: SharedFlow<ReactionEvent> = _reactions.asSharedFlow()
+
     private val _missedYou = MutableSharedFlow<Unit>(extraBufferCapacity = 2)
     val missedYou: SharedFlow<Unit> = _missedYou.asSharedFlow()
 
@@ -81,6 +84,32 @@ object PairSessionState {
         if (text.isNotBlank()) _notes.tryEmit(text.trim())
     }
 
+    fun emitReaction(lobbyId: String, emoji: String, nickname: String?) {
+        if (emoji.isBlank()) return
+        _reactions.tryEmit(ReactionEvent(lobbyId, emoji, nickname))
+    }
+
+    fun takenColorIndices(lobbyId: String, myNickname: String?): Set<Int> {
+        val fromPeers = peersByLobby[lobbyId]?.value?.values.orEmpty()
+            .filter { !it.nickname.equals(myNickname, ignoreCase = true) }
+            .map { it.colorIndex }
+        return fromPeers.toSet()
+    }
+
+    fun updatePeerColor(lobbyId: String, nickname: String?, colorIndex: Int) {
+        if (nickname.isNullOrBlank()) return
+        val flow = peersByLobby[lobbyId] ?: return
+        flow.update { map ->
+            map.mapValues { (_, peer) ->
+                if (peer.nickname.equals(nickname, ignoreCase = true)) {
+                    peer.copy(colorIndex = colorIndex)
+                } else {
+                    peer
+                }
+            }
+        }
+    }
+
     fun resetLobby(lobbyId: String) {
         peersByLobby[lobbyId]?.value = emptyMap()
         peerCounts[lobbyId]?.value = 0
@@ -93,3 +122,9 @@ object PairSessionState {
         goneSinceByLobby.clear()
     }
 }
+
+data class ReactionEvent(
+    val lobbyId: String,
+    val emoji: String,
+    val nickname: String?
+)

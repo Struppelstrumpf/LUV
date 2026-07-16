@@ -1,16 +1,14 @@
 package com.luv.couple.lock
 
-import android.animation.ObjectAnimator
-import android.animation.PropertyValuesHolder
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
-import android.text.InputFilter
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import android.widget.EditText
+import android.widget.GridLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -39,18 +37,19 @@ import java.util.Locale
 class LockDrawActivity : ComponentActivity() {
     private lateinit var drawingView: DrawingView
     private lateinit var statusView: TextView
-    private lateinit var presenceDot: View
-    private lateinit var presenceLabel: TextView
-    private lateinit var noteBanner: TextView
     private lateinit var missedBanner: TextView
+    private lateinit var reactionBurst: TextView
     private lateinit var legendRow: LinearLayout
     private lateinit var lobbyTitle: TextView
     private lateinit var btnBack: TextView
+    private lateinit var btnSave: TextView
+    private lateinit var btnColor: TextView
+    private lateinit var bottomDock: View
     private var voteBanner: TextView? = null
     private var lobbyId: String? = null
-    private var pulseAnimator: ObjectAnimator? = null
     private var legendExpanded = false
     private var activeProposalId: String? = null
+    private var rootView: android.widget.FrameLayout? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,17 +63,18 @@ class LockDrawActivity : ComponentActivity() {
         setContentView(R.layout.activity_lock_draw)
 
         val root = findViewById<android.widget.FrameLayout>(R.id.lockRoot)
+        rootView = root
         drawingView = findViewById(R.id.drawingView)
         statusView = findViewById(R.id.statusDot)
-        presenceDot = findViewById(R.id.presenceDot)
-        presenceLabel = findViewById(R.id.presenceLabel)
-        noteBanner = findViewById(R.id.noteBanner)
         missedBanner = findViewById(R.id.missedBanner)
+        reactionBurst = findViewById(R.id.reactionBurst)
         legendRow = findViewById(R.id.legendRow)
         lobbyTitle = findViewById(R.id.lobbyTitle)
         btnBack = findViewById(R.id.btnBack)
+        btnSave = findViewById(R.id.btnSave)
+        btnColor = findViewById(R.id.btnColor)
+        bottomDock = findViewById(R.id.bottomDock)
 
-        // Synchron vor Collectors setzen — verhindert runBlocking/Deadlock
         lobbyId = intent.getStringExtra(EXTRA_LOBBY_ID)
             ?: CanvasStore.activeLobbyId.value
         lobbyId?.let { CanvasStore.setActiveLobby(it) }
@@ -82,22 +82,54 @@ class LockDrawActivity : ComponentActivity() {
         root.setBackgroundColor(CanvasStore.backgroundFor(CanvasStore.cachedColorIndex))
         drawingView.myColorIndex = CanvasStore.cachedColorIndex
         drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
+        paintColorButton()
 
         btnBack.setOnClickListener { finish() }
-        btnBack.bringToFront()
+        btnColor.setOnClickListener { showColorPicker() }
+        btnSave.setOnClickListener {
+            lifecycleScope.launch {
+                CanvasCapture.saveMoment(this@LockDrawActivity, lobbyId)
+                    .onSuccess {
+                        Toast.makeText(this@LockDrawActivity, R.string.moment_saved, Toast.LENGTH_SHORT).show()
+                    }
+                    .onFailure {
+                        Toast.makeText(this@LockDrawActivity, it.message ?: "Fehler", Toast.LENGTH_SHORT).show()
+                    }
+            }
+        }
+
+        listOf(
+            R.id.emoji0 to "👍",
+            R.id.emoji1 to "😮",
+            R.id.emoji2 to "😍",
+            R.id.emoji3 to "😢",
+            R.id.emoji4 to "❤️"
+        ).forEach { (viewId, emoji) ->
+            findViewById<TextView>(viewId).setOnClickListener {
+                sendReaction(emoji)
+            }
+        }
+
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             val pad = (12 * resources.displayMetrics.density).toInt()
-            fun marginTop(view: View, extra: Int = 0) {
-                val lp = view.layoutParams as android.widget.FrameLayout.LayoutParams
-                lp.topMargin = bars.top + pad + extra
-                view.layoutParams = lp
+            (lobbyTitle.layoutParams as android.widget.FrameLayout.LayoutParams).apply {
+                topMargin = bars.top + pad
+                lobbyTitle.layoutParams = this
             }
-            marginTop(btnBack)
-            marginTop(lobbyTitle, 4)
-            marginTop(findViewById(R.id.presenceRow), 2)
+            (btnColor.layoutParams as android.widget.FrameLayout.LayoutParams).apply {
+                topMargin = bars.top + pad
+                btnColor.layoutParams = this
+            }
+            bottomDock.setPadding(
+                bottomDock.paddingLeft,
+                bottomDock.paddingTop,
+                bottomDock.paddingRight,
+                pad + (10 * resources.displayMetrics.density).toInt()
+            )
             insets
         }
+
         legendRow.setOnClickListener {
             legendExpanded = !legendExpanded
             refreshLegend()
@@ -116,8 +148,7 @@ class LockDrawActivity : ComponentActivity() {
             CanvasStore.updateKnownLobbies(snap.lobbies.map { it.id })
             val lobby = snap.lobbies.firstOrNull { it.id == lobbyId }
             lobbyTitle.text = lobby?.name.orEmpty()
-            root.setBackgroundColor(CanvasStore.backgroundFor(snap.colorIndex))
-            drawingView.myColorIndex = snap.colorIndex
+            applyMyColor(snap.colorIndex, persist = false, sync = false)
             drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
             refreshLegend()
         }
@@ -143,19 +174,6 @@ class LockDrawActivity : ComponentActivity() {
         drawingView.onDotPlaced = { point ->
             CanvasStore.addLocalDot(point.x, point.y, lobbyId = lobbyId)
             drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = true)
-        }
-
-        findViewById<TextView>(R.id.btnNote).setOnClickListener { showNoteDialog() }
-        findViewById<TextView>(R.id.btnSave).setOnClickListener {
-            lifecycleScope.launch {
-                CanvasCapture.saveMoment(this@LockDrawActivity, lobbyId)
-                    .onSuccess {
-                        Toast.makeText(this@LockDrawActivity, R.string.moment_saved, Toast.LENGTH_SHORT).show()
-                    }
-                    .onFailure {
-                        Toast.makeText(this@LockDrawActivity, it.message ?: "Fehler", Toast.LENGTH_SHORT).show()
-                    }
-            }
         }
 
         WindowInsetsControllerCompat(window, window.decorView).let { controller ->
@@ -186,6 +204,13 @@ class LockDrawActivity : ComponentActivity() {
                     is PairEvent.Cleared -> if (event.lobbyId == id) {
                         drawingView.clearCanvas()
                     }
+                    is PairEvent.RecolorReceived -> if (event.lobbyId == id) {
+                        drawingView.setStrokes(CanvasStore.snapshot(id), animateNew = false)
+                        refreshLegend()
+                    }
+                    is PairEvent.ReactionReceived -> if (event.lobbyId == id) {
+                        showReaction(event.emoji)
+                    }
                 }
             }
         }
@@ -202,16 +227,16 @@ class LockDrawActivity : ComponentActivity() {
                 val id = lobbyId ?: return@collectLatest
                 val reconnect = PairConnectionService.reconnectUi.value[id]
                 statusView.text = when (map[id] ?: ConnectionState.IDLE) {
-                    ConnectionState.CONNECTED -> "Verbunden · zeichnen"
-                    ConnectionState.HOSTING -> "Warte auf Leute…"
+                    ConnectionState.CONNECTED -> "Verbunden"
+                    ConnectionState.HOSTING -> "Warte…"
                     ConnectionState.RECONNECTING, ConnectionState.CONNECTING -> {
                         if (reconnect?.waiting == true && reconnect.nextRetryInSec > 0) {
-                            "Offline · in ${reconnect.nextRetryInSec}s · tippen = sofort"
+                            "Offline · ${reconnect.nextRetryInSec}s"
                         } else {
-                            "Verbinde erneut… · tippen = sofort"
+                            "Verbinde…"
                         }
                     }
-                    ConnectionState.IDLE -> "Nicht verbunden · tippen = verbinden"
+                    ConnectionState.IDLE -> "Offline"
                 }
             }
         }
@@ -222,14 +247,13 @@ class LockDrawActivity : ComponentActivity() {
                 if (state != ConnectionState.RECONNECTING && state != ConnectionState.CONNECTING) return@collectLatest
                 val reconnect = map[id] ?: return@collectLatest
                 statusView.text = if (reconnect.waiting && reconnect.nextRetryInSec > 0) {
-                    "Offline · in ${reconnect.nextRetryInSec}s · tippen = sofort"
+                    "Offline · ${reconnect.nextRetryInSec}s"
                 } else {
-                    "Verbinde erneut… · tippen = sofort"
+                    "Verbinde…"
                 }
             }
         }
         lifecycleScope.launch {
-            // Warten bis lobbyId sicher gesetzt ist
             var id = lobbyId
             var tries = 0
             while (id == null && tries < 20) {
@@ -239,13 +263,7 @@ class LockDrawActivity : ComponentActivity() {
             }
             val readyId = id ?: return@launch
             PairSessionState.peers(readyId).collectLatest {
-                updatePresence(PairSessionState.anyonePresent(readyId))
                 refreshLegend()
-            }
-        }
-        lifecycleScope.launch {
-            PairSessionState.notes.collectLatest { text ->
-                showBanner(noteBanner, text, 3500)
             }
         }
         lifecycleScope.launch {
@@ -262,15 +280,11 @@ class LockDrawActivity : ComponentActivity() {
                         showClearVote("${event.by} will löschen (${event.yes}/${event.total})")
                     }
                     is ClearVoteEvent.Update -> if (event.lobbyId == id) {
-                        statusView.text = "Abstimmung ${event.yes} Ja · ${event.no} Nein"
+                        statusView.text = "Abstimmung ${event.yes}/${event.no}"
                     }
                     is ClearVoteEvent.Result -> if (event.lobbyId == id) {
                         hideClearVote()
-                        statusView.text = if (event.approved) {
-                            "Mehrheit sagt Ja — Leinwand leer"
-                        } else {
-                            "Nicht genug Stimmen"
-                        }
+                        statusView.text = if (event.approved) "Leinwand leer" else "Abgelehnt"
                         activeProposalId = null
                     }
                 }
@@ -283,8 +297,121 @@ class LockDrawActivity : ComponentActivity() {
         }
     }
 
+    private fun sendReaction(emoji: String) {
+        showReaction(emoji)
+        PairConnectionService.sendReaction(this, emoji, lobbyId)
+    }
+
+    private fun showReaction(emoji: String) {
+        reactionBurst.text = emoji
+        reactionBurst.alpha = 0f
+        reactionBurst.scaleX = 0.4f
+        reactionBurst.scaleY = 0.4f
+        reactionBurst.animate()
+            .alpha(1f)
+            .scaleX(1.15f)
+            .scaleY(1.15f)
+            .setDuration(220)
+            .withEndAction {
+                reactionBurst.animate()
+                    .alpha(0f)
+                    .scaleX(1.4f)
+                    .scaleY(1.4f)
+                    .setStartDelay(500)
+                    .setDuration(420)
+                    .start()
+            }
+            .start()
+    }
+
+    private fun paintColorButton() {
+        val color = PeerPalette.strokeColor(CanvasStore.cachedColorIndex)
+        btnColor.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(color)
+            setStroke(
+                (2 * resources.displayMetrics.density).toInt(),
+                0x66FFFFFF
+            )
+        }
+    }
+
+    private fun applyMyColor(index: Int, persist: Boolean, sync: Boolean) {
+        val safe = index.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
+        CanvasStore.updateProfile(CanvasStore.cachedNickname, safe)
+        drawingView.myColorIndex = safe
+        rootView?.setBackgroundColor(CanvasStore.backgroundFor(safe))
+        paintColorButton()
+        if (persist) {
+            lifecycleScope.launch {
+                withContext(Dispatchers.IO) { LuvApp.instance.prefs.setColorIndex(safe) }
+            }
+        }
+        if (sync) {
+            CanvasStore.recolorOwnStrokes(safe, lobbyId)
+            PairConnectionService.sendPresence(this, active = true, lobbyId = lobbyId)
+            drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
+        }
+        refreshLegend()
+    }
+
+    private fun showColorPicker() {
+        val id = lobbyId ?: return
+        val mine = CanvasStore.cachedColorIndex
+        val taken = PairSessionState.takenColorIndices(id, CanvasStore.cachedNickname) +
+            CanvasStore.snapshot(id)
+                .filter { !it.isLocal && !it.nickname.equals(CanvasStore.cachedNickname, ignoreCase = true) }
+                .map { it.colorIndex }
+                .toSet()
+
+        val dp = resources.displayMetrics.density
+        val grid = GridLayout(this).apply {
+            columnCount = 5
+            setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), (8 * dp).toInt())
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("Deine Farbe")
+            .setMessage("Nur freie Farben — deine Linien wechseln für alle mit.")
+            .create()
+
+        PeerPalette.allIndices().forEach { index ->
+            val blocked = index in taken && index != mine
+            val cell = TextView(this).apply {
+                val size = (48 * dp).toInt()
+                layoutParams = GridLayout.LayoutParams().apply {
+                    width = size
+                    height = size
+                    setMargins((6 * dp).toInt(), (6 * dp).toInt(), (6 * dp).toInt(), (6 * dp).toInt())
+                }
+                gravity = Gravity.CENTER
+                alpha = if (blocked) 0.28f else 1f
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(PeerPalette.strokeColor(index))
+                    if (index == mine) {
+                        setStroke((3 * dp).toInt(), 0xFFFFFFFF.toInt())
+                    }
+                }
+                isEnabled = !blocked
+                setOnClickListener {
+                    if (blocked) return@setOnClickListener
+                    applyMyColor(index, persist = true, sync = true)
+                    dialog.dismiss()
+                }
+            }
+            grid.addView(cell)
+        }
+
+        val scroll = ScrollView(this).apply {
+            addView(grid)
+            setPadding(0, (4 * dp).toInt(), 0, (4 * dp).toInt())
+        }
+        dialog.setView(scroll)
+        dialog.show()
+    }
+
     private fun showClearVote(text: String) {
-        val root = findViewById<android.widget.FrameLayout>(R.id.lockRoot)
+        val root = rootView ?: return
         if (voteBanner == null) {
             voteBanner = TextView(this).apply {
                 setBackgroundResource(R.drawable.note_banner_bg)
@@ -292,6 +419,7 @@ class LockDrawActivity : ComponentActivity() {
                 textSize = 15f
                 setPadding(36, 28, 36, 28)
                 gravity = Gravity.CENTER
+                elevation = 16f
                 setOnClickListener {
                     val proposalId = activeProposalId ?: return@setOnClickListener
                     PairConnectionService.sendClearVote(
@@ -300,7 +428,7 @@ class LockDrawActivity : ComponentActivity() {
                         yes = true,
                         lobbyId = lobbyId
                     )
-                    statusView.text = "Du hast Ja gestimmt"
+                    statusView.text = "Ja gestimmt"
                 }
                 setOnLongClickListener {
                     val proposalId = activeProposalId ?: return@setOnLongClickListener true
@@ -310,7 +438,7 @@ class LockDrawActivity : ComponentActivity() {
                         yes = false,
                         lobbyId = lobbyId
                     )
-                    statusView.text = "Du hast Nein gestimmt"
+                    statusView.text = "Nein gestimmt"
                     true
                 }
             }
@@ -418,53 +546,12 @@ class LockDrawActivity : ComponentActivity() {
         }
     }
 
-    private fun updatePresence(present: Boolean) {
-        presenceLabel.text = getString(if (present) R.string.partner_here else R.string.partner_away)
-        presenceDot.alpha = if (present) 1f else 0.35f
-        pulseAnimator?.cancel()
-        if (present) {
-            pulseAnimator = ObjectAnimator.ofPropertyValuesHolder(
-                presenceDot,
-                PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.35f, 1f),
-                PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.35f, 1f)
-            ).apply {
-                duration = 1200
-                repeatCount = ObjectAnimator.INFINITE
-                interpolator = android.view.animation.AccelerateDecelerateInterpolator()
-                start()
-            }
-        } else {
-            presenceDot.scaleX = 1f
-            presenceDot.scaleY = 1f
-        }
-    }
-
     private fun showBanner(view: TextView, text: String, durationMs: Long) {
         view.text = text
         view.animate().alpha(1f).setDuration(220).start()
         view.postDelayed({
             view.animate().alpha(0f).setDuration(280).start()
         }, durationMs)
-    }
-
-    private fun showNoteDialog() {
-        val input = EditText(this).apply {
-            hint = getString(R.string.note_hint)
-            filters = arrayOf(InputFilter.LengthFilter(80))
-            setPadding(48, 32, 48, 32)
-        }
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.send_note)
-            .setView(input)
-            .setPositiveButton(R.string.note_send) { _, _ ->
-                val text = input.text?.toString()?.trim().orEmpty()
-                if (text.isNotBlank()) {
-                    PairConnectionService.sendNote(this, text, lobbyId)
-                    showBanner(noteBanner, text, 2500)
-                }
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
     }
 
     companion object {
