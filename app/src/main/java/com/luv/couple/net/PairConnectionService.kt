@@ -68,7 +68,7 @@ class PairConnectionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        ensureForeground(getString(R.string.notification_connecting))
+        ensureForeground(getString(R.string.notification_running))
 
         when (intent?.action) {
             ACTION_STOP -> {
