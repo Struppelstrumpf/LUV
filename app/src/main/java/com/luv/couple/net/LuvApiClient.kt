@@ -244,6 +244,12 @@ object LuvApiClient {
         executeRoom(request)
     }
 
+    suspend fun abandonRoom(code: String) = withContext(Dispatchers.IO) {
+        val clean = normalizeCode(code) ?: return@withContext
+        val request = authedRequestBuilder("/v1/rooms/$clean").delete().build()
+        http.newCall(request).execute().use { /* best effort */ }
+    }
+
     fun normalizeCode(raw: String): String? {
         val text = raw.trim()
         if (text.isEmpty()) return null
@@ -290,24 +296,32 @@ object LuvApiClient {
     private fun executeRoom(request: Request): RoomSession {
         http.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
+            val json = runCatching { JSONObject(body) }.getOrNull()
             if (!response.isSuccessful) {
-                val err = runCatching { JSONObject(body).optString("error") }.getOrNull()
+                val err = json?.optString("error")
+                val msg = json?.optString("message")?.takeIf { it.isNotBlank() }
                 throw LuvApiException(
-                    when (err) {
+                    msg ?: when (err) {
                         "room_not_found" -> "Lobby nicht gefunden. Host muss online sein — Link neu teilen."
                         "room_full" -> "Lobby ist voll (max. ${PeerPalette.MAX_PEERS} Personen)."
+                        "max_lobbies" -> "Maximal ${PeerPalette.MAX_LOBBIES} Lobbys."
+                        "no_coins" -> "Nicht genug Coins (weitere Lobby: ${PeerPalette.LOBBY_CREATE_COST})."
+                        "unauthorized" -> "Bitte neu anmelden."
                         else -> "API-Fehler (${response.code})"
                     }
                 )
             }
-            val json = JSONObject(body)
-            val code = json.getString("code")
+            val parsed = json ?: throw LuvApiException("Ungültige Server-Antwort")
+            parsed.optJSONObject("user")?.let { userJson ->
+                AccountSession.setAccount(AccountInfo.fromApi(userJson))
+            }
+            val code = parsed.getString("code")
             return RoomSession(
                 code = code,
-                token = json.getString("token"),
-                invite = json.optString("invite", "LUV-$code"),
-                joinUrl = json.optString("joinUrl", publicJoinUrl(code)),
-                maxPeers = json.optInt("maxPeers", PeerPalette.MAX_PEERS)
+                token = parsed.getString("token"),
+                invite = parsed.optString("invite", "LUV-$code"),
+                joinUrl = parsed.optString("joinUrl", publicJoinUrl(code)),
+                maxPeers = parsed.optInt("maxPeers", PeerPalette.MAX_PEERS)
             )
         }
     }

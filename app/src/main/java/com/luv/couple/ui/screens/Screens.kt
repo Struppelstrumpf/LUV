@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import com.luv.couple.data.ConnectionState
 import com.luv.couple.data.Lobby
 import com.luv.couple.data.PeerPalette
+import com.luv.couple.data.Role
 import com.luv.couple.net.LobbyReconnectUi
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
@@ -284,7 +285,16 @@ fun LobbiesScreen(
             }
 
             if (lobbies.size < PeerPalette.MAX_LOBBIES) {
-                PrimaryButton("Neue Lobby hosten", accent, onCreateLobby)
+                val hostCount = lobbies.count { it.role == Role.HOST }
+                PrimaryButton(
+                    label = if (hostCount == 0) {
+                        "Neue Lobby hosten"
+                    } else {
+                        "Neue Lobby · ${PeerPalette.LOBBY_CREATE_COST} Coins"
+                    },
+                    color = accent,
+                    onClick = onCreateLobby
+                )
                 PrimaryButton("Per Link beitreten", BgSoft, onJoinLobby, bordered = true)
             }
 
@@ -443,7 +453,7 @@ fun CreateLobbyScreen(
                 Text("Neue Lobby", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "Name für Widget & Benachrichtigungen — z. B. Familie",
+                    "Name für Widget & Benachrichtigungen — z. B. Familie. Die erste Lobby ist gratis, jede weitere kostet ${PeerPalette.LOBBY_CREATE_COST} Coins (max. ${PeerPalette.MAX_LOBBIES}).",
                     color = TextMuted,
                     fontFamily = BodyFont
                 )

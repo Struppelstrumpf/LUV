@@ -296,6 +296,9 @@ fun LuvAppNav() {
                             },
                             onLeaveLobby = { lobby ->
                                 scope.launch {
+                                    if (lobby.role == Role.HOST) {
+                                        runCatching { LuvApiClient.abandonRoom(lobby.code) }
+                                    }
                                     PairConnectionService.stop(context, lobby.id)
                                     CanvasStore.clearLobby(lobby.id)
                                     prefs.removeLobby(lobby.id)
@@ -303,6 +306,7 @@ fun LuvAppNav() {
                                     if (prefs.snapshot().lobbies.isEmpty()) {
                                         PairConnectionService.stop(context)
                                     }
+                                    refreshAccount()
                                 }
                             },
                             onReconnect = { lobby ->
@@ -388,7 +392,13 @@ fun LuvAppNav() {
                                 joinError = "Maximal ${PeerPalette.MAX_LOBBIES} Lobbys."
                                 return@launch
                             }
+                            val hostCount = snap.lobbies.count { it.role == Role.HOST }
+                            if (hostCount >= 1 && (account?.coins ?: 0) < PeerPalette.LOBBY_CREATE_COST) {
+                                joinError = "Weitere Lobby kostet ${PeerPalette.LOBBY_CREATE_COST} Coins."
+                                return@launch
+                            }
                             val room = LuvApiClient.createRoom()
+                            AccountSession.account.value?.let { prefs.updateAccount(it) }
                             val lobby = Lobby(
                                 id = UUID.randomUUID().toString(),
                                 name = name,
@@ -401,6 +411,7 @@ fun LuvAppNav() {
                             CanvasStore.setActiveLobby(lobby.id)
                             PairConnectionService.startAll(context)
                             shareLobby = lobby
+                            refreshAccount()
                             navController.navigate(Routes.HOST_SHARE) {
                                 popUpTo(Routes.CREATE) { inclusive = true }
                             }

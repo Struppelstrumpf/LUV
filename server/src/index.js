@@ -28,6 +28,9 @@ const DAILY_COINS = 10;
 const STARTING_COINS = 15;
 const FREE_SESSIONS_PER_DAY = 5;
 const SESSION_COST = 1;
+const CLEAR_COST = 1;
+const LOBBY_CREATE_COST = 5;
+const MAX_LOBBIES = 10;
 const CLEAR_VOTE_MS = 60_000;
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -59,11 +62,42 @@ function inviteFor(code) {
   };
 }
 
+function ensureHostedRooms(user) {
+  if (!user.hostedRooms || typeof user.hostedRooms !== "object") {
+    user.hostedRooms = {};
+  }
+}
+
+function pruneHostedRooms(user) {
+  ensureHostedRooms(user);
+  let dirty = false;
+  for (const code of Object.keys(user.hostedRooms)) {
+    if (!rooms.has(code)) {
+      delete user.hostedRooms[code];
+      dirty = true;
+    }
+  }
+  return dirty;
+}
+
+function releaseHostedRoom(code, hostUserId) {
+  if (!hostUserId) return;
+  const user = getDb().users[hostUserId];
+  if (!user) return;
+  ensureHostedRooms(user);
+  if (user.hostedRooms[code]) {
+    delete user.hostedRooms[code];
+    scheduleSave();
+  }
+}
+
 function cleanupRooms() {
   const now = Date.now();
   for (const [code, room] of rooms.entries()) {
     if (room.sockets.size === 0 && now - room.createdAt > ROOM_TTL_MS) {
+      const hostUserId = room.hostUserId;
       rooms.delete(code);
+      releaseHostedRoom(code, hostUserId);
     }
   }
 }
@@ -80,6 +114,9 @@ function publicUser(user) {
     freeSessionsPerDay: FREE_SESSIONS_PER_DAY,
     dailyCoins: DAILY_COINS,
     sessionCost: SESSION_COST,
+    clearCost: CLEAR_COST,
+    lobbyCreateCost: LOBBY_CREATE_COST,
+    maxLobbies: MAX_LOBBIES,
     lastDailyGrantDate: user.lastDailyGrantDate || null,
     canClaimDaily: user.lastDailyGrantDate !== day,
     googleLinked: Boolean(user.googleSub),
@@ -198,6 +235,13 @@ function broadcastPeerCount(room) {
   });
 }
 
+function refundClearCharge(proposal) {
+  if (!proposal?.charged || !proposal.chargedUserId) return null;
+  const user = applyLedger(proposal.chargedUserId, CLEAR_COST, "clear_refund", proposal.id);
+  proposal.charged = false;
+  return user;
+}
+
 function resolveClear(room, code) {
   const proposal = room.clearProposal;
   if (!proposal || proposal.status !== "open") return;
@@ -210,6 +254,12 @@ function resolveClear(room, code) {
   const yesCount = yesSet.size;
   const approved = yesCount * 2 > total; // strict majority
   proposal.status = approved ? "approved" : "rejected";
+
+  let refundedUser = null;
+  if (!approved) {
+    refundedUser = refundClearCharge(proposal);
+  }
+
   broadcastRoom(room, {
     type: "clear_result",
     proposalId: proposal.id,
@@ -219,6 +269,19 @@ function resolveClear(room, code) {
   });
   if (approved) {
     broadcastRoom(room, { type: "clear" });
+  }
+  if (refundedUser) {
+    const sock = room.sockets.get(proposal.byPeerId);
+    if (sock?.readyState === 1) {
+      sock.send(
+        JSON.stringify({
+          type: "economy_ok",
+          charged: false,
+          refunded: true,
+          user: publicUser(refundedUser),
+        })
+      );
+    }
   }
   room.clearProposal = null;
   void code;
@@ -255,6 +318,9 @@ app.get("/health", (_req, res) => {
       freeSessionsPerDay: FREE_SESSIONS_PER_DAY,
       sessionCost: SESSION_COST,
       startingCoins: STARTING_COINS,
+      clearCost: CLEAR_COST,
+      lobbyCreateCost: LOBBY_CREATE_COST,
+      maxLobbies: MAX_LOBBIES,
     },
     shopEnabled: Boolean(MOLLIE_API_KEY),
     uptimeSec: Math.round(process.uptime()),
@@ -567,7 +633,27 @@ app.post("/v1/webhooks/mollie", async (req, res) => {
 
 app.post("/v1/rooms", (req, res) => {
   cleanupRooms();
-  const ctx = authUser(req); // optional, but preferred
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  pruneHostedRooms(ctx.user);
+  const hostedCount = Object.keys(ctx.user.hostedRooms).length;
+  if (hostedCount >= MAX_LOBBIES) {
+    return res.status(403).json({
+      error: "max_lobbies",
+      message: `Maximal ${MAX_LOBBIES} Lobbys.`,
+    });
+  }
+  let charged = 0;
+  if (hostedCount >= 1) {
+    if ((ctx.user.coins || 0) < LOBBY_CREATE_COST) {
+      return res.status(402).json({
+        error: "no_coins",
+        message: `Weitere Lobby kostet ${LOBBY_CREATE_COST} Coins.`,
+      });
+    }
+    applyLedger(ctx.user.id, -LOBBY_CREATE_COST, "lobby_create", null);
+    charged = LOBBY_CREATE_COST;
+  }
   let code = randomCode();
   while (rooms.has(code)) code = randomCode();
   const token = randomToken().slice(0, 32);
@@ -576,13 +662,44 @@ app.post("/v1/rooms", (req, res) => {
     createdAt: Date.now(),
     sockets: new Map(),
     clearProposal: null,
-    hostUserId: ctx?.user?.id || null,
+    hostUserId: ctx.user.id,
   });
+  ensureHostedRooms(ctx.user);
+  ctx.user.hostedRooms[code] = { createdAt: Date.now() };
+  scheduleSave();
   res.status(201).json({
     token,
     maxPeers: MAX_PEERS,
+    charged,
+    user: publicUser(ctx.user),
     ...inviteFor(code),
   });
+});
+
+app.delete("/v1/rooms/:code", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  const room = rooms.get(code);
+  if (!room) {
+    releaseHostedRoom(code, ctx.user.id);
+    return res.json({ ok: true, alreadyGone: true });
+  }
+  if (room.hostUserId && room.hostUserId !== ctx.user.id) {
+    return res.status(403).json({ error: "not_host", message: "Nur der Host kann die Lobby auflösen." });
+  }
+  for (const sock of room.sockets.values()) {
+    try {
+      sock.close(4000, "room_closed");
+    } catch {
+      /* ignore */
+    }
+  }
+  rooms.delete(code);
+  releaseHostedRoom(code, ctx.user.id);
+  return res.json({ ok: true });
 });
 
 app.post("/v1/rooms/:code/join", (req, res) => {
@@ -676,16 +793,48 @@ wss.on("connection", (socket, req) => {
         socket.send(JSON.stringify({ type: "clear_busy", proposalId: room.clearProposal.id }));
         return;
       }
+      if (!user) {
+        socket.send(
+          JSON.stringify({
+            type: "clear_blocked",
+            error: "unauthorized",
+            message: "Zum Löschen musst du angemeldet sein.",
+          })
+        );
+        return;
+      }
+      if ((user.coins || 0) < CLEAR_COST) {
+        socket.send(
+          JSON.stringify({
+            type: "clear_blocked",
+            error: "no_coins",
+            message: `Leinwand löschen kostet ${CLEAR_COST} Coin — keine freien Clears.`,
+          })
+        );
+        return;
+      }
       const proposalId = newId("clr");
+      applyLedger(user.id, -CLEAR_COST, "clear_canvas", proposalId);
       room.clearProposal = {
         id: proposalId,
         byPeerId: peerId,
-        byNickname: String(json.nickname || user?.nickname || "Jemand").slice(0, 18),
+        byUserId: user.id,
+        byNickname: String(json.nickname || user.nickname || "Jemand").slice(0, 18),
         yes: [peerId],
         no: [],
         status: "open",
         endsAt: Date.now() + CLEAR_VOTE_MS,
+        charged: true,
+        chargedUserId: user.id,
       };
+      socket.send(
+        JSON.stringify({
+          type: "economy_ok",
+          charged: true,
+          reason: "clear_canvas",
+          user: publicUser(user),
+        })
+      );
       broadcastRoom(room, {
         type: "clear_vote_open",
         proposalId,
@@ -788,6 +937,6 @@ wss.on("connection", (socket, req) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(
-    `luv-api :${PORT} maxPeers=${MAX_PEERS} freeSessions=${FREE_SESSIONS_PER_DAY} shop=${Boolean(MOLLIE_API_KEY)}`
+    `luv-api :${PORT} maxPeers=${MAX_PEERS} maxLobbies=${MAX_LOBBIES} clearCost=${CLEAR_COST} lobbyCreate=${LOBBY_CREATE_COST} shop=${Boolean(MOLLIE_API_KEY)}`
   );
 });

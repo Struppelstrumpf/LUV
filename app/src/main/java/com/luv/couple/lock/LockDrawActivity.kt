@@ -168,7 +168,7 @@ class LockDrawActivity : ComponentActivity() {
         }
         drawingView.onLongPressClear = {
             PairConnectionService.sendClear(this, lobbyId)
-            statusView.text = "Abstimmung: Leinwand löschen?"
+            statusView.text = "Löschen? Kostet dich 1 Coin"
         }
         drawingView.onDoubleTapUndo = {
             if (CanvasStore.undoLastLocalStroke(lobbyId)) {

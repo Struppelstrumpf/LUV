@@ -336,6 +336,19 @@ class PairConnectionService : Service() {
                     )
                     return
                 }
+                "clear_blocked", "clear_busy" -> {
+                    AccountSession.emitEconomyBlock(
+                        json.optString(
+                            "message",
+                            if (json.optString("type") == "clear_busy") {
+                                "Lösch-Abstimmung läuft schon."
+                            } else {
+                                "Löschen nicht möglich."
+                            }
+                        )
+                    )
+                    return
+                }
                 "economy_block" -> {
                     AccountSession.emitEconomyBlock(
                         json.optString("message", "Keine Coins mehr — Zuschauen geht weiter.")

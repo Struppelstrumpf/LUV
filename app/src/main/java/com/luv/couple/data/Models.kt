@@ -18,7 +18,8 @@ enum class ConnectionState {
 /** Standardpalette für Zeichenfarben — gut unterscheidbar auf dunklem Sperrbildschirm. */
 object PeerPalette {
     const val MAX_PEERS = 4
-    const val MAX_LOBBIES = 3
+    const val MAX_LOBBIES = 10
+    const val LOBBY_CREATE_COST = 5
     const val COLOR_COUNT = 20
 
     private val strokeColors = intArrayOf(
