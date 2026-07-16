@@ -848,8 +848,9 @@ app.get("/invite/:code", (req, res) => {
     : "Gemeinsam zeichnen. Live. Nur für euch.";
   const found = Boolean(room);
 
+  // Immer 200 — WhatsApp/Link-Preview crawlen keine 404-Seiten für OG-Tags
   res
-    .status(found ? 200 : 404)
+    .status(200)
     .type("html")
     .send(`<!DOCTYPE html>
 <html lang="de">
