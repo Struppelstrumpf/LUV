@@ -42,6 +42,7 @@ class LockDrawActivity : ComponentActivity() {
     private lateinit var lobbyTitle: TextView
     private lateinit var btnBack: TextView
     private lateinit var btnSave: TextView
+    private lateinit var btnGame: TextView
     private lateinit var btnColor: TextView
     private lateinit var bottomDock: View
     private var voteBanner: TextView? = null
@@ -49,6 +50,7 @@ class LockDrawActivity : ComponentActivity() {
     private var legendExpanded = false
     private var activeProposalId: String? = null
     private var rootView: android.widget.FrameLayout? = null
+    private var ticTacToeVisible = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,6 +73,7 @@ class LockDrawActivity : ComponentActivity() {
         lobbyTitle = findViewById(R.id.lobbyTitle)
         btnBack = findViewById(R.id.btnBack)
         btnSave = findViewById(R.id.btnSave)
+        btnGame = findViewById(R.id.btnGame)
         btnColor = findViewById(R.id.btnColor)
         bottomDock = findViewById(R.id.bottomDock)
 
@@ -95,6 +98,9 @@ class LockDrawActivity : ComponentActivity() {
                         Toast.makeText(this@LockDrawActivity, it.message ?: "Fehler", Toast.LENGTH_SHORT).show()
                     }
             }
+        }
+        btnGame.setOnClickListener {
+            setTicTacToeVisible(!ticTacToeVisible, sync = true)
         }
 
         listOf(
@@ -210,6 +216,11 @@ class LockDrawActivity : ComponentActivity() {
                     is PairEvent.ReactionReceived -> if (event.lobbyId == id) {
                         showReaction(event.emoji)
                     }
+                    is PairEvent.GameBoardReceived -> if (event.lobbyId == id) {
+                        if (event.game == "ttt" || event.game.isBlank()) {
+                            setTicTacToeVisible(event.visible, sync = false)
+                        }
+                    }
                 }
             }
         }
@@ -262,6 +273,17 @@ class LockDrawActivity : ComponentActivity() {
     private fun sendReaction(emoji: String) {
         showReaction(emoji)
         PairConnectionService.sendReaction(this, emoji, lobbyId)
+    }
+
+    private fun setTicTacToeVisible(visible: Boolean, sync: Boolean) {
+        ticTacToeVisible = visible
+        drawingView.showTicTacToe = visible
+        btnGame.alpha = if (visible) 1f else 0.72f
+        btnGame.scaleX = if (visible) 1.08f else 1f
+        btnGame.scaleY = if (visible) 1.08f else 1f
+        if (sync) {
+            PairConnectionService.sendGameBoard(this, game = "ttt", visible = visible, lobbyId = lobbyId)
+        }
     }
 
     private fun showReaction(emoji: String) {

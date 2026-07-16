@@ -18,6 +18,7 @@ import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Stroke
 import com.luv.couple.data.StrokePoint
 import kotlin.math.hypot
+import kotlin.math.min
 
 class DrawingView @JvmOverloads constructor(
     context: Context,
@@ -40,11 +41,30 @@ class DrawingView @JvmOverloads constructor(
     private var pendingDot: StrokePoint? = null
     var myColorIndex: Int = 0
 
+    var showTicTacToe: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
+
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 18f
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
+    }
+
+    private val boardPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        color = 0x99FFFFFF.toInt()
+    }
+
+    private val boardGlow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        color = 0x33FFFFFF.toInt()
     }
 
     var onStrokeFinished: ((List<StrokePoint>) -> Unit)? = null
@@ -123,6 +143,7 @@ class DrawingView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        if (showTicTacToe) drawTicTacToeBoard(canvas)
         strokes.forEach { stroke ->
             val alpha = ((alphas[stroke.id] ?: 1f) * 255).toInt().coerceIn(0, 255)
             val color = CanvasStore.strokeColor(stroke)
@@ -133,6 +154,35 @@ class DrawingView @JvmOverloads constructor(
         paint.color = PeerPalette.strokeColor(myColorIndex)
         paint.strokeWidth = 18f
         canvas.drawPath(currentPath, paint)
+    }
+
+    private fun drawTicTacToeBoard(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        val size = min(w, h) * 0.64f
+        val left = (w - size) / 2f
+        val top = (h - size) / 2f - h * 0.05f
+        val right = left + size
+        val bottom = top + size
+        val third = size / 3f
+        val dens = resources.displayMetrics.density
+
+        boardGlow.strokeWidth = 10f * dens
+        boardPaint.strokeWidth = 3.2f * dens
+
+        fun vLine(x: Float) {
+            canvas.drawLine(x, top + dens * 4f, x, bottom - dens * 4f, boardGlow)
+            canvas.drawLine(x, top + dens * 4f, x, bottom - dens * 4f, boardPaint)
+        }
+        fun hLine(y: Float) {
+            canvas.drawLine(left + dens * 4f, y, right - dens * 4f, y, boardGlow)
+            canvas.drawLine(left + dens * 4f, y, right - dens * 4f, y, boardPaint)
+        }
+        vLine(left + third)
+        vLine(left + third * 2f)
+        hLine(top + third)
+        hLine(top + third * 2f)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {

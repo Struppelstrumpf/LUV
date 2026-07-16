@@ -394,6 +394,13 @@ class PairConnectionService : Service() {
                     _events.emit(PairEvent.ReactionReceived(lobby.id, message.emoji, message.nickname))
                 }
             }
+            is PairMessage.GameBoard -> {
+                scope.launch {
+                    _events.emit(
+                        PairEvent.GameBoardReceived(lobby.id, message.game, message.visible)
+                    )
+                }
+            }
             PairMessage.Clear -> {
                 CanvasStore.clear(localOnly = true, lobbyId = lobby.id)
                 scope.launch { _events.emit(PairEvent.Cleared(lobby.id)) }
@@ -715,6 +722,24 @@ class PairConnectionService : Service() {
             }
         }
 
+        fun sendGameBoard(
+            context: Context,
+            game: String,
+            visible: Boolean,
+            lobbyId: String? = null
+        ) {
+            try {
+                val payload = PairProtocol.encode(PairMessage.GameBoard(game, visible))
+                val intent = Intent(context, PairConnectionService::class.java)
+                    .setAction(ACTION_SEND_STROKE)
+                    .putExtra(EXTRA_PAYLOAD, payload)
+                    .putExtra(EXTRA_LOBBY_ID, lobbyId ?: CanvasStore.activeLobbyId.value)
+                context.startService(intent)
+            } catch (t: Throwable) {
+                Log.e(TAG, "Unable to send game board", t)
+            }
+        }
+
         fun lobbyState(lobbyId: String): ConnectionState =
             _lobbyStates.value[lobbyId] ?: ConnectionState.IDLE
 
@@ -745,4 +770,5 @@ sealed class PairEvent {
     data class Cleared(val lobbyId: String) : PairEvent()
     data class RecolorReceived(val lobbyId: String, val nickname: String?, val colorIndex: Int) : PairEvent()
     data class ReactionReceived(val lobbyId: String, val emoji: String, val nickname: String?) : PairEvent()
+    data class GameBoardReceived(val lobbyId: String, val game: String, val visible: Boolean) : PairEvent()
 }

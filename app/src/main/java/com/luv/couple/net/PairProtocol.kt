@@ -20,6 +20,7 @@ sealed class PairMessage {
     data class Note(val text: String) : PairMessage()
     data class Recolor(val nickname: String?, val colorIndex: Int) : PairMessage()
     data class Reaction(val emoji: String, val nickname: String?) : PairMessage()
+    data class GameBoard(val game: String, val visible: Boolean) : PairMessage()
     data object Clear : PairMessage()
     data class ClearPropose(val nickname: String?) : PairMessage()
     data class ClearVote(val proposalId: String, val yes: Boolean) : PairMessage()
@@ -76,6 +77,10 @@ object PairProtocol {
                 .put("type", "reaction")
                 .put("emoji", message.emoji.take(8))
                 .put("nickname", message.nickname ?: JSONObject.NULL)
+            is PairMessage.GameBoard -> JSONObject()
+                .put("type", "game_board")
+                .put("game", message.game)
+                .put("visible", message.visible)
             PairMessage.Clear -> JSONObject().put("type", "clear_propose")
             is PairMessage.ClearPropose -> JSONObject()
                 .put("type", "clear_propose")
@@ -153,6 +158,10 @@ object PairProtocol {
                 "reaction" -> PairMessage.Reaction(
                     emoji = json.optString("emoji").take(8),
                     nickname = json.optString("nickname").takeIf { it.isNotBlank() && it != "null" }
+                )
+                "game_board" -> PairMessage.GameBoard(
+                    game = json.optString("game", "ttt"),
+                    visible = json.optBoolean("visible", true)
                 )
                 "clear" -> PairMessage.Clear
                 "clear_propose" -> PairMessage.ClearPropose(
