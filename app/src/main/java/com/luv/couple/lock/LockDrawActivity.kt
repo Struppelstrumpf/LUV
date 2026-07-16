@@ -30,8 +30,10 @@ import com.luv.couple.net.ClearVoteEvent
 import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairEvent
 import com.luv.couple.net.PairSessionState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Calendar
 import java.util.Locale
 
@@ -75,6 +77,15 @@ class LockDrawActivity : ComponentActivity() {
         legendRow = findViewById(R.id.legendRow)
         lobbyTitle = findViewById(R.id.lobbyTitle)
 
+        // Synchron vor Collectors setzen — verhindert runBlocking/Deadlock
+        lobbyId = intent.getStringExtra(EXTRA_LOBBY_ID)
+            ?: CanvasStore.activeLobbyId.value
+        lobbyId?.let { CanvasStore.setActiveLobby(it) }
+
+        root.setBackgroundColor(CanvasStore.backgroundFor(CanvasStore.cachedColorIndex))
+        drawingView.myColorIndex = CanvasStore.cachedColorIndex
+        drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
+
         findViewById<TextView>(R.id.btnBack).setOnClickListener { finish() }
         legendRow.setOnClickListener {
             legendExpanded = !legendExpanded
@@ -82,14 +93,16 @@ class LockDrawActivity : ComponentActivity() {
         }
 
         lifecycleScope.launch {
-            val snap = LuvApp.instance.prefs.snapshot()
-            lobbyId = intent.getStringExtra(EXTRA_LOBBY_ID)
-                ?: snap.activeLobbyId
-                ?: snap.lobbies.firstOrNull()?.id
-            lobbyId?.let {
-                prefsSetActive(it)
-                CanvasStore.setActiveLobby(it)
+            val snap = withContext(Dispatchers.IO) { LuvApp.instance.prefs.snapshot() }
+            if (lobbyId == null) {
+                lobbyId = snap.activeLobbyId ?: snap.lobbies.firstOrNull()?.id
+                lobbyId?.let { CanvasStore.setActiveLobby(it) }
             }
+            lobbyId?.let { id ->
+                withContext(Dispatchers.IO) { LuvApp.instance.prefs.setActiveLobby(id) }
+            }
+            CanvasStore.updateProfile(snap.nickname, snap.colorIndex)
+            CanvasStore.updateKnownLobbies(snap.lobbies.map { it.id })
             val lobby = snap.lobbies.firstOrNull { it.id == lobbyId }
             lobbyTitle.text = lobby?.name.orEmpty()
             root.setBackgroundColor(CanvasStore.backgroundFor(snap.colorIndex))
@@ -100,6 +113,7 @@ class LockDrawActivity : ComponentActivity() {
 
         MidnightClear.checkAndClearIfNewDay(this)
         updateClock()
+        refreshLegend()
 
         drawingView.onStrokeFinished = { points ->
             CanvasStore.addLocalStroke(points, lobbyId = lobbyId)
@@ -107,7 +121,6 @@ class LockDrawActivity : ComponentActivity() {
             refreshLegend()
         }
         drawingView.onLongPressClear = {
-            // Nur Abstimmung starten — Clear erst nach Mehrheit
             PairConnectionService.sendClear(this, lobbyId)
             statusView.text = "Abstimmung: Leinwand löschen?"
         }
@@ -143,7 +156,8 @@ class LockDrawActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             CanvasStore.revision.collectLatest {
-                drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = true)
+                val id = lobbyId ?: return@collectLatest
+                drawingView.setStrokes(CanvasStore.snapshot(id), animateNew = true)
                 refreshLegend()
             }
         }
@@ -177,9 +191,17 @@ class LockDrawActivity : ComponentActivity() {
             }
         }
         lifecycleScope.launch {
-            val id = lobbyId ?: return@launch
-            PairSessionState.peers(id).collectLatest {
-                updatePresence(PairSessionState.anyonePresent(id))
+            // Warten bis lobbyId sicher gesetzt ist
+            var id = lobbyId
+            var tries = 0
+            while (id == null && tries < 20) {
+                kotlinx.coroutines.delay(50)
+                id = lobbyId
+                tries++
+            }
+            val readyId = id ?: return@launch
+            PairSessionState.peers(readyId).collectLatest {
+                updatePresence(PairSessionState.anyonePresent(readyId))
                 refreshLegend()
             }
         }
@@ -272,10 +294,6 @@ class LockDrawActivity : ComponentActivity() {
         voteBanner?.animate()?.alpha(0f)?.setDuration(200)?.start()
     }
 
-    private suspend fun prefsSetActive(id: String) {
-        LuvApp.instance.prefs.setActiveLobby(id)
-    }
-
     override fun onResume() {
         super.onResume()
         updateClock()
@@ -292,32 +310,30 @@ class LockDrawActivity : ComponentActivity() {
 
     private fun refreshLegend() {
         val id = lobbyId ?: return
-        lifecycleScope.launch {
-            val snap = LuvApp.instance.prefs.snapshot()
-            val peers = PairSessionState.legendPeers(id, snap.nickname, snap.colorIndex)
-            // Auch aus Strokes ergänzen
-            val fromStrokes = CanvasStore.snapshot(id)
-                .filter { !it.isLocal && !it.nickname.isNullOrBlank() }
-                .map {
-                    PeerInfo(
-                        peerKey = it.authorId ?: it.nickname!!,
-                        nickname = it.nickname!!,
-                        colorIndex = it.colorIndex,
-                        active = false
-                    )
-                }
-            val merged = (peers + fromStrokes).distinctBy { it.nickname.lowercase() }.take(PeerPalette.MAX_PEERS)
-            legendRow.removeAllViews()
-            val pad = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 4f, resources.displayMetrics).toInt()
-            merged.forEachIndexed { index, peer ->
-                if (index > 0) {
-                    val spacer = View(this@LockDrawActivity).apply {
-                        layoutParams = LinearLayout.LayoutParams(pad * 2, 1)
-                    }
-                    legendRow.addView(spacer)
-                }
-                legendRow.addView(buildLegendChip(peer))
+        val nickname = CanvasStore.cachedNickname
+        val color = CanvasStore.cachedColorIndex
+        val peers = PairSessionState.legendPeers(id, nickname, color)
+        val fromStrokes = CanvasStore.snapshot(id)
+            .filter { !it.isLocal && !it.nickname.isNullOrBlank() }
+            .map {
+                PeerInfo(
+                    peerKey = it.authorId ?: it.nickname!!,
+                    nickname = it.nickname!!,
+                    colorIndex = it.colorIndex,
+                    active = false
+                )
             }
+        val merged = (peers + fromStrokes).distinctBy { it.nickname.lowercase() }.take(PeerPalette.MAX_PEERS)
+        legendRow.removeAllViews()
+        val pad = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 4f, resources.displayMetrics).toInt()
+        merged.forEachIndexed { index, peer ->
+            if (index > 0) {
+                val spacer = View(this).apply {
+                    layoutParams = LinearLayout.LayoutParams(pad * 2, 1)
+                }
+                legendRow.addView(spacer)
+            }
+            legendRow.addView(buildLegendChip(peer))
         }
     }
 
@@ -356,7 +372,10 @@ class LockDrawActivity : ComponentActivity() {
 
     private fun maybeHaptic() {
         lifecycleScope.launch {
-            if (LuvApp.instance.prefs.isPartnerHapticEnabled()) {
+            val enabled = withContext(Dispatchers.IO) {
+                LuvApp.instance.prefs.isPartnerHapticEnabled()
+            }
+            if (enabled) {
                 drawingView.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
             }
         }

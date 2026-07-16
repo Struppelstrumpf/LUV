@@ -166,6 +166,7 @@ fun LuvAppNav() {
             prefs.saveSession(result.sessionToken, result.user)
             AccountSession.setAccount(result.user)
             colorIndex = PeerPalette.indexFor(result.user.nickname.lowercase())
+            CanvasStore.updateProfile(result.user.nickname, colorIndex)
             true
         } catch (e: Exception) {
             joinError = e.message ?: "Server nicht erreichbar"
@@ -178,6 +179,8 @@ fun LuvAppNav() {
             val user = LuvApiClient.me()
             prefs.updateAccount(user)
             AccountSession.setAccount(user)
+            colorIndex = PeerPalette.indexFor(user.nickname.lowercase())
+            CanvasStore.updateProfile(user.nickname, colorIndex)
             val (enabled, list) = LuvApiClient.shopPacks()
             shopEnabled = enabled
             packs = list
@@ -237,6 +240,8 @@ fun LuvAppNav() {
         colorIndex = snapshot.colorIndex
         LuvApiClient.sessionToken = snapshot.sessionToken
         snapshot.account?.let { AccountSession.setAccount(it) }
+        CanvasStore.updateProfile(snapshot.nickname, snapshot.colorIndex)
+        CanvasStore.updateKnownLobbies(snapshot.lobbies.map { it.id })
         startDestination = if (!snapshot.tutorialDone || !snapshot.hasNickname || snapshot.sessionToken.isNullOrBlank()) {
             Routes.TUTORIAL
         } else {
@@ -316,16 +321,15 @@ fun LuvAppNav() {
                             },
                             error = joinError,
                             onOpenLobby = { lobby ->
-                                scope.launch {
-                                    prefs.setActiveLobby(lobby.id)
-                                    CanvasStore.setActiveLobby(lobby.id)
-                                    context.startActivity(
-                                        Intent(context, LockDrawActivity::class.java).apply {
-                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                            putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
-                                        }
-                                    )
-                                }
+                                CanvasStore.setActiveLobby(lobby.id)
+                                CanvasStore.updateKnownLobbies(lobbies.map { it.id })
+                                context.startActivity(
+                                    Intent(context, LockDrawActivity::class.java).apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
+                                    }
+                                )
+                                scope.launch { prefs.setActiveLobby(lobby.id) }
                             },
                             onCreateLobby = {
                                 joinError = null
@@ -395,7 +399,13 @@ fun LuvAppNav() {
                         )
                     }
                 }
-                SimpleBottomBar(selected = tab, onSelect = { tab = it })
+                SimpleBottomBar(
+                    selected = tab,
+                    onSelect = {
+                        if (it == 2) accountMessage = null
+                        tab = it
+                    }
+                )
             }
         }
 
@@ -506,14 +516,20 @@ fun LuvAppNav() {
                             val result = LuvApiClient.redeem(code)
                             prefs.updateAccount(result.user)
                             AccountSession.setAccount(result.user)
-                            accountMessage = when (result.type) {
-                                "admin" -> "Admin freigeschaltet"
-                                else -> "+${result.coins} Coins eingelöst ♥"
-                            }
                             if (result.type == "admin") {
+                                Toast.makeText(context, "Admin freigeschaltet", Toast.LENGTH_SHORT).show()
+                                accountMessage = null
                                 vouchers = runCatching { LuvApiClient.listVouchers() }.getOrDefault(emptyList())
-                                navController.navigate(Routes.ADMIN)
+                                navController.navigate(Routes.ADMIN) {
+                                    popUpTo(Routes.REDEEM) { inclusive = true }
+                                }
                             } else {
+                                Toast.makeText(
+                                    context,
+                                    "+${result.coins} Coins eingelöst",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                accountMessage = null
                                 navController.popBackStack()
                                 tab = 2
                             }
@@ -532,6 +548,7 @@ fun LuvAppNav() {
                 message = accountMessage,
                 onCreate = { draft ->
                     scope.launch {
+                        accountMessage = null
                         runCatching {
                             val v = LuvApiClient.createVoucher(
                                 coins = draft.coins,
@@ -541,11 +558,14 @@ fun LuvAppNav() {
                                 code = draft.code
                             )
                             vouchers = listOf(v) + vouchers
-                            accountMessage = "Code ${v.code} erstellt"
+                            Toast.makeText(context, "Code ${v.code} erstellt", Toast.LENGTH_SHORT).show()
                         }.onFailure { accountMessage = it.message }
                     }
                 },
-                onBack = { navController.popBackStack() }
+                onBack = {
+                    accountMessage = null
+                    navController.popBackStack()
+                }
             )
         }
 

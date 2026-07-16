@@ -75,6 +75,7 @@ class WidgetConfigureActivity : ComponentActivity() {
                     onPick = { lobby ->
                         scope.launch {
                             LuvApp.instance.prefs.bindWidget(appWidgetId, lobby.id)
+                            LockScreenWidgetProvider.bind(appWidgetId, lobby.id, lobby.name)
                             LockScreenWidgetProvider.requestUpdate(this@WidgetConfigureActivity)
                             val result = Intent().putExtra(
                                 AppWidgetManager.EXTRA_APPWIDGET_ID,

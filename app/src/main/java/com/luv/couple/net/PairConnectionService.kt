@@ -32,7 +32,6 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -95,18 +94,19 @@ class PairConnectionService : Service() {
                 return START_STICKY
             }
             ACTION_START_ALL, ACTION_START, null -> {
-                syncSessionsFromPrefs()
+                scope.launch { syncSessionsFromPrefs() }
             }
         }
         return START_STICKY
     }
 
-    private fun syncSessionsFromPrefs() {
-        val lobbies = runBlocking { LuvApp.instance.prefs.snapshot().lobbies }
+    private suspend fun syncSessionsFromPrefs() {
+        val lobbies = runCatching { LuvApp.instance.prefs.snapshot().lobbies }.getOrDefault(emptyList())
         if (lobbies.isEmpty()) {
             stopAll()
             return
         }
+        CanvasStore.updateKnownLobbies(lobbies.map { it.id })
         val wanted = lobbies.associateBy { it.id }
         sessions.keys.filter { it !in wanted }.forEach { stopLobby(it) }
         wanted.values.forEach { ensureLobbySession(it) }
@@ -499,9 +499,8 @@ class PairConnectionService : Service() {
         fun sendClear(context: Context, lobbyId: String? = null) {
             // Clear = Abstimmung starten (Server)
             try {
-                val nickname = runBlocking {
-                    LuvApp.instance.prefs.snapshot().nickname
-                }
+                val nickname = CanvasStore.cachedNickname
+                    ?: AccountSession.account.value?.nickname
                 val payload = PairProtocol.encode(PairMessage.ClearPropose(nickname))
                 val intent = Intent(context, PairConnectionService::class.java)
                     .setAction(ACTION_SEND_STROKE)
@@ -540,13 +539,15 @@ class PairConnectionService : Service() {
 
         fun sendPresence(context: Context, active: Boolean, lobbyId: String? = null) {
             try {
-                val snap = runBlocking { LuvApp.instance.prefs.snapshot() }
+                val nickname = CanvasStore.cachedNickname
+                    ?: AccountSession.account.value?.nickname
+                val colorIndex = CanvasStore.cachedColorIndex
                 val payload = PairProtocol.encode(
                     PairMessage.Presence(
                         active = active,
-                        nickname = snap.nickname,
-                        colorIndex = snap.colorIndex,
-                        peerKey = snap.nickname
+                        nickname = nickname,
+                        colorIndex = colorIndex,
+                        peerKey = nickname
                     )
                 )
                 val intent = Intent(context, PairConnectionService::class.java)
