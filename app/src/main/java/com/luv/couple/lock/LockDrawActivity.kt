@@ -5,7 +5,6 @@ import android.animation.PropertyValuesHolder
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.InputFilter
-import android.text.format.DateFormat
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -15,6 +14,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -34,13 +34,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.Calendar
 import java.util.Locale
 
 class LockDrawActivity : ComponentActivity() {
     private lateinit var drawingView: DrawingView
-    private lateinit var clockView: TextView
-    private lateinit var dateView: TextView
     private lateinit var statusView: TextView
     private lateinit var presenceDot: View
     private lateinit var presenceLabel: TextView
@@ -48,6 +45,7 @@ class LockDrawActivity : ComponentActivity() {
     private lateinit var missedBanner: TextView
     private lateinit var legendRow: LinearLayout
     private lateinit var lobbyTitle: TextView
+    private lateinit var btnBack: TextView
     private var voteBanner: TextView? = null
     private var lobbyId: String? = null
     private var pulseAnimator: ObjectAnimator? = null
@@ -67,8 +65,6 @@ class LockDrawActivity : ComponentActivity() {
 
         val root = findViewById<android.widget.FrameLayout>(R.id.lockRoot)
         drawingView = findViewById(R.id.drawingView)
-        clockView = findViewById(R.id.lockClock)
-        dateView = findViewById(R.id.lockDate)
         statusView = findViewById(R.id.statusDot)
         presenceDot = findViewById(R.id.presenceDot)
         presenceLabel = findViewById(R.id.presenceLabel)
@@ -76,6 +72,7 @@ class LockDrawActivity : ComponentActivity() {
         missedBanner = findViewById(R.id.missedBanner)
         legendRow = findViewById(R.id.legendRow)
         lobbyTitle = findViewById(R.id.lobbyTitle)
+        btnBack = findViewById(R.id.btnBack)
 
         // Synchron vor Collectors setzen — verhindert runBlocking/Deadlock
         lobbyId = intent.getStringExtra(EXTRA_LOBBY_ID)
@@ -86,7 +83,21 @@ class LockDrawActivity : ComponentActivity() {
         drawingView.myColorIndex = CanvasStore.cachedColorIndex
         drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
 
-        findViewById<TextView>(R.id.btnBack).setOnClickListener { finish() }
+        btnBack.setOnClickListener { finish() }
+        btnBack.bringToFront()
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val pad = (12 * resources.displayMetrics.density).toInt()
+            fun marginTop(view: View, extra: Int = 0) {
+                val lp = view.layoutParams as android.widget.FrameLayout.LayoutParams
+                lp.topMargin = bars.top + pad + extra
+                view.layoutParams = lp
+            }
+            marginTop(btnBack)
+            marginTop(lobbyTitle, 4)
+            marginTop(findViewById(R.id.presenceRow), 2)
+            insets
+        }
         legendRow.setOnClickListener {
             legendExpanded = !legendExpanded
             refreshLegend()
@@ -112,7 +123,6 @@ class LockDrawActivity : ComponentActivity() {
         }
 
         MidnightClear.checkAndClearIfNewDay(this)
-        updateClock()
         refreshLegend()
 
         drawingView.onStrokeFinished = { points ->
@@ -324,7 +334,6 @@ class LockDrawActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        updateClock()
         MidnightClear.checkAndClearIfNewDay(this)
         drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
         PairConnectionService.sendPresence(this, active = true, lobbyId = lobbyId)
@@ -456,14 +465,6 @@ class LockDrawActivity : ComponentActivity() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
-    }
-
-    private fun updateClock() {
-        val now = Calendar.getInstance()
-        clockView.text = DateFormat.format("H:mm", now)
-        dateView.text = DateFormat.format("EEEE, d. MMMM", now)
-            .toString()
-            .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
     }
 
     companion object {

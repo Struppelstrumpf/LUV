@@ -49,6 +49,12 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="luv" android:host="join" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="luv" android:host="shop" />
+            </intent-filter>
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -61,6 +67,10 @@
                     android:scheme="https"
                     android:host="reineke.pro"
                     android:pathPrefix="/love/j/" />
+                <data
+                    android:scheme="https"
+                    android:host="reineke.pro"
+                    android:pathPrefix="/luv/shop/return" />
             </intent-filter>
         </activity>
 

@@ -38,6 +38,7 @@ import com.luv.couple.net.LuvApiException
 import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairSessionState
 import com.luv.couple.net.PendingJoin
+import com.luv.couple.net.PendingShopReturn
 import com.luv.couple.net.ShopPack
 import com.luv.couple.net.VoucherInfo
 import com.luv.couple.ui.screens.AccountHomeScreen
@@ -103,6 +104,7 @@ fun LuvAppNav() {
     val reconnectUi by PairConnectionService.reconnectUi.collectAsStateWithLifecycle()
     val account by AccountSession.account.collectAsStateWithLifecycle()
     val pendingJoin by PendingJoin.code.collectAsStateWithLifecycle()
+    val pendingShopReturn by PendingShopReturn.pending.collectAsStateWithLifecycle()
 
     var startDestination by remember { mutableStateOf<String?>(null) }
     var shareLobby by remember { mutableStateOf<Lobby?>(null) }
@@ -238,6 +240,18 @@ fun LuvAppNav() {
             Toast.makeText(context, "Lobby beigetreten", Toast.LENGTH_SHORT).show()
             tab = 1
         }
+    }
+
+    LaunchedEffect(startDestination, pendingShopReturn) {
+        if (startDestination != Routes.MAIN) return@LaunchedEffect
+        if (!PendingShopReturn.consume()) return@LaunchedEffect
+        tab = 2
+        refreshAccount()
+        // Webhook kann kurz brauchen
+        kotlinx.coroutines.delay(1200)
+        refreshAccount()
+        accountMessage = "Willkommen zurück — Coins sind aktualisiert ♥"
+        Toast.makeText(context, "Zurück in LUV", Toast.LENGTH_SHORT).show()
     }
 
     val destination = startDestination ?: return

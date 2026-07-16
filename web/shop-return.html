@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>LUV — zurück zur App</title>
+  <meta name="theme-color" content="#0B0E14" />
+  <meta http-equiv="refresh" content="0;url=luv://shop/return" />
+  <link rel="stylesheet" href="/luv/styles.css" />
+  <style>
+    .return-stage { min-height: 100dvh; display: grid; place-content: center; padding: 2rem 1.25rem; text-align: center; }
+    .return-stage .brand { font-family: Fraunces, serif; font-size: clamp(3rem, 10vw, 5rem); letter-spacing: 0.12em; margin: 0; }
+    .return-stage .headline { font-family: Fraunces, serif; font-weight: 500; font-size: clamp(1.4rem, 4vw, 2rem); margin: 1rem 0 0.5rem; }
+    .return-stage .lede { opacity: 0.72; max-width: 28rem; margin: 0 auto 1.75rem; line-height: 1.5; }
+    .return-stage .cta-row { display: flex; flex-direction: column; gap: 0.85rem; align-items: center; }
+  </style>
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true">
+    <div class="wash wash-a"></div>
+    <div class="wash wash-b"></div>
+    <div class="grain"></div>
+  </div>
+  <main class="return-stage">
+    <p class="brand">LUV</p>
+    <h1 class="headline">Zahlung abgeschlossen</h1>
+    <p class="lede">Du wirst zurück in die App geleitet. Falls nichts passiert, tippe auf den Button.</p>
+    <div class="cta-row">
+      <a class="download" id="openApp" href="luv://shop/return">
+        <span class="download-label">Zurück zu LUV</span>
+        <span class="download-meta">Coins erscheinen nach kurzer Bestätigung</span>
+      </a>
+    </div>
+  </main>
+  <script>
+    (function () {
+      var deep = "luv://shop/return";
+      try { window.location.replace(deep); } catch (e) {}
+      setTimeout(function () { window.location.href = deep; }, 250);
+    })();
+  </script>
+</body>
+</html>

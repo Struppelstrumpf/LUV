@@ -11,6 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.luv.couple.net.PendingJoin
+import com.luv.couple.net.PendingShopReturn
 import com.luv.couple.ui.LuvAppNav
 import com.luv.couple.ui.theme.LuvTheme
 
@@ -40,6 +41,12 @@ class MainActivity : ComponentActivity() {
     private fun captureJoinIntent(intent: Intent?) {
         val data = intent?.data?.toString()
         val extra = intent?.getStringExtra(Intent.EXTRA_TEXT)
+        PendingShopReturn.offer(data)
+        if (data?.contains("/shop/", ignoreCase = true) == true ||
+            data?.startsWith("luv://shop", ignoreCase = true) == true
+        ) {
+            return
+        }
         PendingJoin.offer(data ?: extra)
     }
 

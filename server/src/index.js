@@ -22,7 +22,7 @@ const MOLLIE_API_KEY = process.env.MOLLIE_API_KEY || "";
 const MOLLIE_WEBHOOK_URL =
   process.env.MOLLIE_WEBHOOK_URL || "https://reineke.pro/luv/v1/webhooks/mollie";
 const PUBLIC_SHOP_REDIRECT =
-  process.env.PUBLIC_SHOP_REDIRECT || "https://reineke.pro/luv/";
+  process.env.PUBLIC_SHOP_REDIRECT || "https://reineke.pro/luv/shop/return";
 
 const DAILY_COINS = 10;
 const STARTING_COINS = 15;
