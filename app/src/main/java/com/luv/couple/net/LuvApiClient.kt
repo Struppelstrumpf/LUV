@@ -163,7 +163,8 @@ object LuvApiClient {
                         coins = o.optInt("coins"),
                         maxRedeems = o.optInt("maxRedeems"),
                         redeemCount = o.optInt("redeemCount"),
-                        expiresAt = o.optLong("expiresAt").takeIf { it > 0 }
+                        expiresAt = if (o.isNull("expiresAt")) null
+                        else o.optLong("expiresAt").takeIf { it > 0 }
                     )
                 )
             }
@@ -174,12 +175,14 @@ object LuvApiClient {
         coins: Int,
         maxRedeems: Int = 1,
         validDays: Int = 30,
+        forever: Boolean = false,
         code: String? = null
     ): VoucherInfo = withContext(Dispatchers.IO) {
         val payload = JSONObject()
             .put("coins", coins)
             .put("maxRedeems", maxRedeems)
             .put("validDays", validDays)
+            .put("forever", forever)
         if (!code.isNullOrBlank()) payload.put("code", code)
         val json = authedPost("/v1/admin/vouchers", payload.toString())
         val o = json.getJSONObject("voucher")
@@ -188,7 +191,7 @@ object LuvApiClient {
             coins = o.optInt("coins"),
             maxRedeems = o.optInt("maxRedeems"),
             redeemCount = o.optInt("redeemCount"),
-            expiresAt = o.optLong("expiresAt").takeIf { it > 0 }
+            expiresAt = if (o.isNull("expiresAt")) null else o.optLong("expiresAt").takeIf { it > 0 }
         )
     }
 

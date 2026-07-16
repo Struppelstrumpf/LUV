@@ -530,10 +530,16 @@ fun LuvAppNav() {
             AdminScreen(
                 vouchers = vouchers,
                 message = accountMessage,
-                onCreate = { coins, max ->
+                onCreate = { draft ->
                     scope.launch {
                         runCatching {
-                            val v = LuvApiClient.createVoucher(coins, max)
+                            val v = LuvApiClient.createVoucher(
+                                coins = draft.coins,
+                                maxRedeems = draft.maxPeople,
+                                validDays = draft.validDays,
+                                forever = draft.forever,
+                                code = draft.code
+                            )
                             vouchers = listOf(v) + vouchers
                             accountMessage = "Code ${v.code} erstellt"
                         }.onFailure { accountMessage = it.message }
@@ -584,7 +590,7 @@ private fun HomeMenu(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(28.dp),
+                .padding(horizontal = 28.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Column {

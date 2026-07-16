@@ -433,13 +433,18 @@ app.post("/v1/admin/vouchers", (req, res) => {
   const ctx = requireAdmin(req, res);
   if (!ctx) return;
   const coins = Math.min(10000, Math.max(1, Number(req.body?.coins) || 0));
+  // maxRedeems = how many different people may redeem; each person only once
   const maxRedeems = Math.min(10000, Math.max(1, Number(req.body?.maxRedeems) || 1));
+  const forever = Boolean(req.body?.forever);
   const days = Math.min(365, Math.max(1, Number(req.body?.validDays) || 30));
   const custom = String(req.body?.code || "")
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 24);
-  const code = custom.length >= 6 ? custom : randomCode(10);
+  if (custom.length > 0 && custom.length < 4) {
+    return res.status(400).json({ error: "code_too_short" });
+  }
+  const code = custom.length >= 4 ? custom : randomCode(10);
   const db = getDb();
   if (db.vouchers[code]) return res.status(409).json({ error: "code_exists" });
   const voucher = {
@@ -448,7 +453,7 @@ app.post("/v1/admin/vouchers", (req, res) => {
     coins,
     maxRedeems,
     redeemCount: 0,
-    expiresAt: Date.now() + days * 86400000,
+    expiresAt: forever ? null : Date.now() + days * 86400000,
     createdAt: Date.now(),
     createdBy: ctx.user.id,
     revoked: false,

@@ -11,8 +11,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -166,14 +168,14 @@ fun RedeemScreen(
         ) {
             Column {
                 Text(
-                    "Zurück",
+                    "Zur\u00FCck",
                     color = TextMuted,
                     fontFamily = BodyFont,
                     modifier = Modifier
                         .clickable(onClick = onBack)
                         .padding(vertical = 8.dp)
                 )
-                Text("Code einlösen", fontFamily = DisplayFont, fontSize = 32.sp, color = TextPrimary)
+                Text("Code einl\u00F6sen", fontFamily = DisplayFont, fontSize = 32.sp, color = TextPrimary)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     "Gutschein einfügen. (Admin-Zugang nur über Server — nicht in der App gespeichert.)",
@@ -193,25 +195,36 @@ fun RedeemScreen(
     }
 }
 
+data class AdminVoucherDraft(
+    val code: String,
+    val coins: Int,
+    val forever: Boolean,
+    val validDays: Int,
+    val maxPeople: Int
+)
+
 @Composable
 fun AdminScreen(
     vouchers: List<VoucherInfo>,
     message: String?,
-    onCreate: (coins: Int, maxRedeems: Int) -> Unit,
+    onCreate: (AdminVoucherDraft) -> Unit,
     onBack: () -> Unit
 ) {
+    var code by remember { mutableStateOf("") }
     var coins by remember { mutableStateOf("50") }
-    var max by remember { mutableStateOf("10") }
+    var forever by remember { mutableStateOf(false) }
+    var validDays by remember { mutableStateOf("30") }
+    var maxPeople by remember { mutableStateOf("100") }
     MenuBackdrop {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(24.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text(
-                "Zurück",
+                "Zur\u00FCck",
                 color = TextMuted,
                 fontFamily = BodyFont,
                 modifier = Modifier
@@ -219,17 +232,84 @@ fun AdminScreen(
                     .padding(vertical = 8.dp)
             )
             Text("Admin", fontFamily = DisplayFont, fontSize = 32.sp, color = TextPrimary)
-            Text("Gutscheine erstellen", color = TextMuted, fontFamily = BodyFont, fontSize = 14.sp)
-            SoftInput(value = coins, onValueChange = { coins = it.filter { c -> c.isDigit() }.take(5) }, hint = "Coins")
-            SoftInput(value = max, onValueChange = { max = it.filter { c -> c.isDigit() }.take(5) }, hint = "Max. Einlösungen")
+            Text(
+                "Gutscheincode anlegen. Jede Person kann einen Code nur einmal einl\u00F6sen.",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 14.sp
+            )
+
+            FieldLabel("Code (z.B. CODE22)")
+            SoftInput(
+                value = code,
+                onValueChange = {
+                    code = it.uppercase().filter { c -> c.isLetterOrDigit() }.take(24)
+                },
+                hint = "CODE22"
+            )
+
+            FieldLabel("Coins pro Einl\u00F6sung")
+            SoftInput(
+                value = coins,
+                onValueChange = { coins = it.filter { c -> c.isDigit() }.take(5) },
+                hint = "50"
+            )
+
+            FieldLabel("G\u00FCltigkeit")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ChoiceChip("30 Tage", !forever && validDays == "30") {
+                    forever = false
+                    validDays = "30"
+                }
+                ChoiceChip("90 Tage", !forever && validDays == "90") {
+                    forever = false
+                    validDays = "90"
+                }
+                ChoiceChip("F\u00FCr immer", forever) {
+                    forever = true
+                }
+            }
+            if (!forever) {
+                SoftInput(
+                    value = validDays,
+                    onValueChange = { validDays = it.filter { c -> c.isDigit() }.take(3) },
+                    hint = "Tage"
+                )
+            }
+
+            FieldLabel("Max. Personen (jede nur 1x)")
+            SoftInput(
+                value = maxPeople,
+                onValueChange = { maxPeople = it.filter { c -> c.isDigit() }.take(5) },
+                hint = "100"
+            )
+
             if (!message.isNullOrBlank()) {
                 Text(message, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
             }
             MenuButton("Code erzeugen", AccentRose, {
-                onCreate(coins.toIntOrNull() ?: 50, max.toIntOrNull() ?: 1)
+                val cleaned = code.trim()
+                if (cleaned.length < 4) return@MenuButton
+                onCreate(
+                    AdminVoucherDraft(
+                        code = cleaned,
+                        coins = coins.toIntOrNull()?.coerceAtLeast(1) ?: 50,
+                        forever = forever,
+                        validDays = validDays.toIntOrNull()?.coerceIn(1, 365) ?: 30,
+                        maxPeople = maxPeople.toIntOrNull()?.coerceAtLeast(1) ?: 100
+                    )
+                )
             })
             Spacer(modifier = Modifier.height(8.dp))
             vouchers.forEach { v ->
+                val validity = when {
+                    v.expiresAt == null -> "f\u00FCr immer"
+                    else -> {
+                        val daysLeft = ((v.expiresAt - System.currentTimeMillis()) / 86400000L)
+                            .coerceAtLeast(0)
+                        "noch ${daysLeft}d"
+                    }
+                }
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -239,7 +319,7 @@ fun AdminScreen(
                 ) {
                     Text(v.code, color = TextPrimary, fontFamily = DisplayFont, fontSize = 18.sp)
                     Text(
-                        "${v.coins} Coins · ${v.redeemCount}/${v.maxRedeems} genutzt",
+                        "${v.coins} Coins \u00B7 ${v.redeemCount}/${v.maxRedeems} Personen \u00B7 $validity",
                         color = TextMuted,
                         fontFamily = BodyFont,
                         fontSize = 12.sp
@@ -251,11 +331,31 @@ fun AdminScreen(
 }
 
 @Composable
+private fun FieldLabel(text: String) {
+    Text(text, color = TextPrimary, fontFamily = BodyFont, fontSize = 13.sp)
+}
+
+@Composable
+private fun ChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (selected) AccentRose else BgSoft)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        Text(label, color = TextPrimary, fontFamily = BodyFont, fontSize = 12.sp)
+    }
+}
+
+@Composable
 fun MenuBackdrop(content: @Composable () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Brush.verticalGradient(listOf(Color(0xFF121821), BgDeep, Color(0xFF1A1220))))
+            .statusBarsPadding()
+            .navigationBarsPadding()
     ) { content() }
 }
 

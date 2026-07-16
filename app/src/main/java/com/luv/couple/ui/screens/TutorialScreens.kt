@@ -15,8 +15,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -35,7 +37,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.luv.couple.data.PeerPalette
@@ -55,7 +56,9 @@ fun TutorialFlow(
 ) {
     var step by remember { mutableIntStateOf(0) }
     var nickname by remember { mutableStateOf("") }
-    val color = PeerPalette.composeColor(PeerPalette.indexFor(nickname.trim().lowercase().ifBlank { "a" }))
+    val color = PeerPalette.composeColor(
+        PeerPalette.indexFor(nickname.trim().lowercase().ifBlank { "a" })
+    )
 
     Box(
         modifier = Modifier
@@ -67,18 +70,28 @@ fun TutorialFlow(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(28.dp),
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 28.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                repeat(4) { i ->
-                    Box(
-                        modifier = Modifier
-                            .height(4.dp)
-                            .weight(1f)
-                            .clip(RoundedCornerShape(99.dp))
-                            .background(if (i <= step) AccentRose else Color.White.copy(0.12f))
-                    )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Schritt ${step + 1} von 4",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    repeat(4) { i ->
+                        Box(
+                            modifier = Modifier
+                                .height(4.dp)
+                                .weight(1f)
+                                .clip(RoundedCornerShape(99.dp))
+                                .background(if (i <= step) AccentRose else Color.White.copy(0.12f))
+                        )
+                    }
                 }
             }
 
@@ -90,13 +103,13 @@ fun TutorialFlow(
                 when (s) {
                     0 -> TutorialPane(
                         emojiDot = AccentRose,
-                        title = "Hey, schÃ¶n dass du da bist",
-                        body = "LUV verbindet bis zu vier Herzen auf einer gemeinsamen Sperrbildschirm-Leinwand â€” live, sÃ¼ÃŸ, ohne Chaos."
+                        title = "Hey, sch\u00F6n dass du da bist",
+                        body = "LUV verbindet bis zu vier Herzen auf einer gemeinsamen Sperrbildschirm-Leinwand \u2014 live, s\u00FC\u00DF, ohne Chaos."
                     )
                     1 -> TutorialPane(
                         emojiDot = color,
                         title = "Wie sollen wir dich nennen?",
-                        body = "Dein Spitzname fÃ¤rbt deine Linien. So sieht jeder sofort, wer was gemalt hat."
+                        body = "Dein Spitzname f\u00E4rbt deine Linien. So sieht jeder sofort, wer was gemalt hat."
                     ) {
                         Spacer(modifier = Modifier.height(20.dp))
                         Row(
@@ -111,7 +124,7 @@ fun TutorialFlow(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    (nickname.trim().take(1).ifBlank { "â™¥" }).uppercase(),
+                                    nickname.trim().take(1).uppercase().ifBlank { "?" },
                                     color = Color(0xFF1A1F2E),
                                     fontFamily = DisplayFont,
                                     fontSize = 20.sp
@@ -136,7 +149,12 @@ fun TutorialFlow(
                                     cursorBrush = SolidColor(AccentRose),
                                     decorationBox = { inner ->
                                         if (nickname.isBlank()) {
-                                            Text("z.â€¯B. Jane", color = TextMuted, fontFamily = BodyFont, fontSize = 18.sp)
+                                            Text(
+                                                "z.B. Jane",
+                                                color = TextMuted,
+                                                fontFamily = BodyFont,
+                                                fontSize = 18.sp
+                                            )
                                         }
                                         inner()
                                     }
@@ -147,12 +165,12 @@ fun TutorialFlow(
                     2 -> TutorialPane(
                         emojiDot = Color(0xFFFFE29A),
                         title = "Jeden Tag ein bisschen Magie",
-                        body = "Du bekommst tÃ¤glich 10 Coins und 5 freie Lobby-Sessions. Danach kostet eine Session 1 Coin â€” Zuschauen bleibt immer gratis."
+                        body = "Du bekommst t\u00E4glich 10 Coins und 5 freie Lobby-Sessions. Danach kostet eine Session 1 Coin \u2014 Zuschauen bleibt immer gratis."
                     )
                     else -> TutorialPane(
                         emojiDot = Color(0xFFA8E6CF),
-                        title = "Gemeinsam lÃ¶schen",
-                        body = "2 Sekunden halten startet eine Abstimmung. Erst wenn mehr als die HÃ¤lfte Ja sagt, wird die Leinwand geleert. Fair fÃ¼r alle."
+                        title = "Gemeinsam l\u00F6schen",
+                        body = "2 Sekunden halten startet eine Abstimmung. Erst wenn mehr als die H\u00E4lfte Ja sagt, wird die Leinwand geleert. Fair f\u00FCr alle."
                     )
                 }
             }
@@ -180,9 +198,9 @@ fun TutorialFlow(
                 ) {
                     Text(
                         when {
-                            busy -> "Einen Momentâ€¦"
+                            busy -> "Einen Moment\u2026"
                             step < 3 -> "Weiter"
-                            else -> "Los gehtâ€™s â™¥"
+                            else -> "Los geht\u2019s"
                         },
                         color = TextPrimary,
                         fontFamily = DisplayFont,
@@ -191,7 +209,7 @@ fun TutorialFlow(
                 }
                 if (step > 0) {
                     Text(
-                        "ZurÃ¼ck",
+                        "Zur\u00FCck",
                         color = TextMuted,
                         fontFamily = BodyFont,
                         modifier = Modifier
@@ -215,7 +233,7 @@ private fun TutorialPane(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 24.dp),
+            .padding(vertical = 20.dp),
         horizontalAlignment = Alignment.Start
     ) {
         Box(
@@ -249,4 +267,3 @@ private fun TutorialPane(
         extra?.invoke()
     }
 }
-

@@ -14,8 +14,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,6 +65,8 @@ private fun ScreenBackdrop(content: @Composable () -> Unit) {
                     listOf(Color(0xFF121821), BgDeep, Color(0xFF1A1220))
                 )
             )
+            .statusBarsPadding()
+            .navigationBarsPadding()
     ) {
         Box(
             modifier = Modifier
@@ -178,7 +182,7 @@ fun NicknameScreen(
                             modifier = Modifier.fillMaxWidth(),
                             decorationBox = { inner ->
                                 if (name.isBlank()) {
-                                    Text("z. B. Jane", color = TextMuted, fontFamily = BodyFont, fontSize = 18.sp)
+                                    Text("z.B. Jane", color = TextMuted, fontFamily = BodyFont, fontSize = 18.sp)
                                 }
                                 inner()
                             }
