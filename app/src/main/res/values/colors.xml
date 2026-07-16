@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="male_blue">#FF00B7E4</color>
+    <color name="female_purple">#FFC218A8</color>
+    <color name="ink_white">#FFFFFFFF</color>
+    <color name="bg_deep">#FF0E1116</color>
+    <color name="bg_soft">#FF171C24</color>
+    <color name="accent_rose">#FFFF6B8A</color>
+    <color name="text_primary">#FFF4F1EC</color>
+    <color name="text_muted">#FF9AA3B2</color>
+</resources>

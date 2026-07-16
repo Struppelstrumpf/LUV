@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LUV</string>
+    <string name="widget_name">LUV Leinwand</string>
+    <string name="widget_description">Gemeinsame Sperrbildschirm-Leinwand für euch beide.</string>
+    <string name="notification_channel">Paar-Verbindung</string>
+    <string name="notification_title">LUV verbunden</string>
+    <string name="notification_connecting">Verbindung wird hergestellt…</string>
+    <string name="notification_hosting">Warte auf Partner…</string>
+    <string name="draw_hint">Zeichnen · 2 Sek. halten zum Löschen</string>
+    <string name="open_canvas">Leinwand öffnen</string>
+</resources>

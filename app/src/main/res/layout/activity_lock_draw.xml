@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/lockRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/male_blue">
+
+    <TextView
+        android:id="@+id/lockClock"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="72dp"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:textColor="@color/ink_white"
+        android:textSize="72sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/lockDate"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="150dp"
+        android:gravity="center"
+        android:textColor="@color/ink_white"
+        android:textSize="16sp" />
+
+    <com.luv.couple.lock.DrawingView
+        android:id="@+id/drawingView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <TextView
+        android:id="@+id/statusDot"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="36dp"
+        android:alpha="0.7"
+        android:text="@string/draw_hint"
+        android:textColor="@color/ink_white"
+        android:textSize="13sp" />
+</FrameLayout>

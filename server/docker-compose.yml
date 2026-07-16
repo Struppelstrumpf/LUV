@@ -1,0 +1,39 @@
+# Isolierter Stack — berührt andere Compose-Projekte auf dem Server nicht.
+# Start auf Hetzner:
+#   cd /opt/luv-api   # oder wohin du den Ordner kopierst
+#   docker compose up -d --build
+#
+# Danach laufen deine bestehenden 2 Container + dieser dritte (luv-api).
+
+services:
+  luv-api:
+    build: .
+    image: luv-api:1.0.0
+    container_name: luv-api
+    restart: unless-stopped
+    ports:
+      # Nur neuer Host-Port — nichts an bestehenden Services ändern
+      - "18780:8080"
+    environment:
+      PORT: "8080"
+      ROOM_TTL_MS: "86400000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Eigene Bridge — keine shared network mit anderen Stacks nötig
+    networks:
+      - luv_net
+
+networks:
+  luv_net:
+    name: luv_net
+    driver: bridge

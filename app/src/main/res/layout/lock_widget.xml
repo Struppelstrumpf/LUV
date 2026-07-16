@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widgetRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/male_blue">
+
+    <ImageView
+        android:id="@+id/canvasImage"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@string/widget_name"
+        android:scaleType="fitXY" />
+
+    <TextView
+        android:id="@+id/tapHint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="28dp"
+        android:alpha="0.75"
+        android:text="@string/open_canvas"
+        android:textColor="@color/ink_white"
+        android:textSize="13sp" />
+</FrameLayout>
