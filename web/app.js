@@ -3,6 +3,66 @@
   const impressumDialog = document.getElementById("impressumDialog");
   openImpressum?.addEventListener("click", () => impressumDialog?.showModal());
 
+  // Fake „live“ Nutzerzähler — zufälliger Drift, kein erkennbarer Loop
+  (function liveUsersHook() {
+    const el = document.getElementById("liveCount");
+    if (!el) return;
+
+    const MIN = 3000;
+    const MAX = 80000;
+    let value = 14293;
+    let velocity = 0;
+
+    const fmt = (n) =>
+      Math.round(n).toLocaleString("de-DE", { maximumFractionDigits: 0 });
+
+    const rand = (a, b) => a + Math.random() * (b - a);
+    const pick = (arr) => arr[(Math.random() * arr.length) | 0];
+
+    function tick() {
+      // Gelegentlich starke „Wellen“, sonst kleine Fluktuation
+      const mood = Math.random();
+      if (mood < 0.08) {
+        velocity += rand(-2200, 2200);
+      } else if (mood < 0.28) {
+        velocity += rand(-480, 480);
+      } else {
+        velocity += rand(-90, 90);
+      }
+
+      // Dämpfung + leichte Tendenz zur Mitte (kein fester Zyklus)
+      velocity *= rand(0.72, 0.92);
+      const midBias = (41500 - value) * rand(0.0004, 0.0022);
+      velocity += midBias;
+
+      // Seltene Sprünge (wie „Server-Batches“)
+      if (Math.random() < 0.045) {
+        value += pick([-1, 1]) * rand(800, 4200);
+        velocity *= 0.3;
+      }
+
+      value += velocity;
+
+      // Weiche Begrenzung statt hartem Bounce-Loop
+      if (value < MIN) {
+        value = MIN + rand(0, 180);
+        velocity = Math.abs(velocity) * rand(0.2, 0.7);
+      } else if (value > MAX) {
+        value = MAX - rand(0, 220);
+        velocity = -Math.abs(velocity) * rand(0.2, 0.7);
+      }
+
+      el.textContent = fmt(value);
+
+      // Unregelmäßiges Intervall — verhindert Takt-/Loop-Erkennung
+      const delay = rand(480, 2400) * (Math.random() < 0.12 ? rand(1.6, 3.2) : 1);
+      setTimeout(tick, delay);
+    }
+
+    el.textContent = fmt(value);
+    setTimeout(tick, rand(600, 1400));
+  })();
+
   const leftPhone = document.querySelector(".phone-him");
   const rightPhone = document.querySelector(".phone-her");
   const leftCanvas = leftPhone.querySelector("canvas.draw");
