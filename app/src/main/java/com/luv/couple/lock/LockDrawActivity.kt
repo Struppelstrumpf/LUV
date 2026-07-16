@@ -615,11 +615,11 @@ class LockDrawActivity : ComponentActivity() {
             }
         val merged = (peers + fromStrokes).distinctBy { it.nickname.lowercase() }.take(PeerPalette.MAX_PEERS)
         legendRow.removeAllViews()
-        val pad = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 4f, resources.displayMetrics).toInt()
+        val gap = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 8f, resources.displayMetrics).toInt()
         merged.forEachIndexed { index, peer ->
             if (index > 0) {
                 val spacer = View(this).apply {
-                    layoutParams = LinearLayout.LayoutParams(pad * 2, 1)
+                    layoutParams = LinearLayout.LayoutParams(gap, 1)
                 }
                 legendRow.addView(spacer)
             }
@@ -629,35 +629,37 @@ class LockDrawActivity : ComponentActivity() {
 
     private fun buildLegendChip(peer: PeerInfo): View {
         val dp = resources.displayMetrics.density
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding((6 * dp).toInt(), (2 * dp).toInt(), (8 * dp).toInt(), (2 * dp).toInt())
-        }
+        val size = (34 * dp).toInt()
         val circle = TextView(this).apply {
-            val size = (22 * dp).toInt()
             layoutParams = LinearLayout.LayoutParams(size, size)
             gravity = Gravity.CENTER
             text = peer.nickname.trim().take(1).uppercase(Locale.getDefault())
             setTextColor(0xFF1A1F2E.toInt())
-            textSize = 11f
+            textSize = 14f
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(PeerPalette.strokeColor(peer.colorIndex))
+                setStroke((2 * dp).toInt(), 0x66FFFFFF)
             }
-            alpha = if (peer.active || peer.peerKey == "me") 1f else 0.7f
+            alpha = if (peer.active || peer.peerKey == "me") 1f else 0.65f
+            contentDescription = peer.nickname
         }
-        row.addView(circle)
-        if (legendExpanded) {
-            val name = TextView(this).apply {
-                text = peer.nickname
-                setTextColor(0xE6FFFFFF.toInt())
-                textSize = 12f
-                setPadding((8 * dp).toInt(), 0, (4 * dp).toInt(), 0)
-            }
-            row.addView(name)
+        if (!legendExpanded) return circle
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(circle)
+            addView(
+                TextView(this@LockDrawActivity).apply {
+                    text = peer.nickname
+                    setTextColor(0xE6FFFFFF.toInt())
+                    textSize = 12f
+                    setPadding((8 * dp).toInt(), 0, (2 * dp).toInt(), 0)
+                    setShadowLayer(4f, 0f, 1f, 0x99000000.toInt())
+                }
+            )
         }
-        return row
     }
 
     private fun maybeHaptic() {
