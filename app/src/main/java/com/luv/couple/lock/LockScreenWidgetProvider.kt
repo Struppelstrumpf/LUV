@@ -7,7 +7,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
+import com.luv.couple.LuvApp
 import com.luv.couple.R
+import kotlinx.coroutines.runBlocking
 import java.util.concurrent.ConcurrentHashMap
 
 class LockScreenWidgetProvider : AppWidgetProvider() {
@@ -20,7 +22,13 @@ class LockScreenWidgetProvider : AppWidgetProvider() {
     }
 
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
-        appWidgetIds.forEach { widgetLobbyIds.remove(it) }
+        appWidgetIds.forEach { widgetId ->
+            widgetLobbyIds.remove(widgetId)
+            widgetLobbyNames.remove(widgetId)
+            runCatching {
+                runBlocking { LuvApp.instance.prefs.unbindWidget(widgetId) }
+            }
+        }
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -62,7 +70,7 @@ class LockScreenWidgetProvider : AppWidgetProvider() {
             val pxW = (width * density).toInt().coerceIn(200, 1200)
             val pxH = (height * density).toInt().coerceIn(200, 1600)
 
-            val lobbyId = widgetLobbyIds[widgetId] ?: CanvasStore.activeLobbyId.value
+            val (lobbyId, lobbyName) = resolveLobby(widgetId)
             val background = CanvasStore.backgroundFor(CanvasStore.cachedColorIndex)
             val bitmap = CanvasStore.renderBitmap(pxW, pxH, background, lobbyId)
 
@@ -71,7 +79,7 @@ class LockScreenWidgetProvider : AppWidgetProvider() {
             views.setImageViewBitmap(R.id.canvasImage, bitmap)
             views.setTextViewText(
                 R.id.tapHint,
-                widgetLobbyNames[widgetId]?.takeIf { it.isNotBlank() }
+                lobbyName?.takeIf { it.isNotBlank() }
                     ?: context.getString(R.string.open_canvas)
             )
 
@@ -89,6 +97,27 @@ class LockScreenWidgetProvider : AppWidgetProvider() {
             views.setOnClickPendingIntent(R.id.canvasImage, pending)
 
             manager.updateAppWidget(widgetId, views)
+        }
+
+        private fun resolveLobby(widgetId: Int): Pair<String?, String?> {
+            val cachedId = widgetLobbyIds[widgetId]
+            val cachedName = widgetLobbyNames[widgetId]
+            if (cachedId != null) return cachedId to cachedName
+
+            return runCatching {
+                runBlocking {
+                    val lobby = LuvApp.instance.prefs.widgetLobby(widgetId)
+                    if (lobby != null) {
+                        widgetLobbyIds[widgetId] = lobby.id
+                        widgetLobbyNames[widgetId] = lobby.name
+                        lobby.id to lobby.name
+                    } else {
+                        CanvasStore.activeLobbyId.value to null
+                    }
+                }
+            }.getOrElse {
+                CanvasStore.activeLobbyId.value to null
+            }
         }
     }
 }

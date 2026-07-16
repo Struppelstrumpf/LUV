@@ -4,14 +4,15 @@ import android.app.Activity
 import android.appwidget.AppWidgetManager
 import android.content.Intent
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -34,7 +35,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.luv.couple.LuvApp
+import com.luv.couple.MainActivity
 import com.luv.couple.data.Lobby
+import com.luv.couple.data.Role
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -65,49 +68,54 @@ class WidgetConfigureActivity : ComponentActivity() {
         setContent {
             LuvTheme {
                 var lobbies by remember { mutableStateOf<List<Lobby>>(emptyList()) }
+                var loaded by remember { mutableStateOf(false) }
                 val scope = rememberCoroutineScope()
+
                 LaunchedEffect(Unit) {
                     lobbies = LuvApp.instance.prefs.snapshot().lobbies
+                    loaded = true
+                    // Eine Lobby → direkt zuweisen
+                    if (lobbies.size == 1) {
+                        bindAndFinish(lobbies.first())
+                    }
                 }
 
                 WidgetPickScreen(
+                    loaded = loaded,
                     lobbies = lobbies,
                     onPick = { lobby ->
-                        scope.launch {
-                            LuvApp.instance.prefs.bindWidget(appWidgetId, lobby.id)
-                            LockScreenWidgetProvider.bind(appWidgetId, lobby.id, lobby.name)
-                            LockScreenWidgetProvider.requestUpdate(this@WidgetConfigureActivity)
-                            val result = Intent().putExtra(
-                                AppWidgetManager.EXTRA_APPWIDGET_ID,
-                                appWidgetId
-                            )
-                            setResult(Activity.RESULT_OK, result)
-                            finish()
-                        }
+                        scope.launch { bindAndFinish(lobby) }
                     },
-                    onEmpty = {
-                        Toast.makeText(
-                            this,
-                            "Zuerst eine Lobby in LUV erstellen.",
-                            Toast.LENGTH_LONG
-                        ).show()
+                    onOpenApp = {
+                        startActivity(
+                            Intent(this, MainActivity::class.java).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            }
+                        )
                         finish()
                     }
                 )
             }
         }
     }
+
+    private suspend fun bindAndFinish(lobby: Lobby) {
+        LuvApp.instance.prefs.bindWidget(appWidgetId, lobby.id)
+        LockScreenWidgetProvider.bind(appWidgetId, lobby.id, lobby.name)
+        LockScreenWidgetProvider.requestUpdate(this@WidgetConfigureActivity)
+        val result = Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+        setResult(Activity.RESULT_OK, result)
+        finish()
+    }
 }
 
 @Composable
 private fun WidgetPickScreen(
+    loaded: Boolean,
     lobbies: List<Lobby>,
     onPick: (Lobby) -> Unit,
-    onEmpty: () -> Unit
+    onOpenApp: () -> Unit
 ) {
-    LaunchedEffect(lobbies) {
-        if (lobbies.isEmpty()) onEmpty()
-    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -118,32 +126,73 @@ private fun WidgetPickScreen(
     ) {
         Text("Widget für Lobby", color = TextPrimary, fontFamily = DisplayFont, fontSize = 28.sp)
         Text(
-            "Welche Lobby soll dieses Widget / Sperrbildschirm-Widget zeigen?",
+            "Wähle, welche Lobby dieses Widget zeigen soll.",
             color = TextMuted,
             fontFamily = BodyFont,
             fontSize = 14.sp
         )
+
+        if (!loaded) {
+            Text("Lobbys werden geladen…", color = TextMuted, fontFamily = BodyFont)
+            return@Column
+        }
+
+        if (lobbies.isEmpty()) {
+            Text(
+                "Noch keine Lobby auf diesem Gerät. Öffne LUV, erstelle oder tritt einer bei — dann Widget erneut hinzufügen.",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 14.sp
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(AccentRose)
+                    .clickable(onClick = onOpenApp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("LUV öffnen", color = TextPrimary, fontFamily = DisplayFont, fontSize = 17.sp)
+            }
+            return@Column
+        }
+
         lobbies.forEach { lobby ->
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(RoundedCornerShape(18.dp))
                     .background(BgSoft)
-                    .clickable { onPick(lobby) },
-                contentAlignment = Alignment.CenterStart
+                    .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(18.dp))
+                    .clickable { onPick(lobby) }
+                    .padding(horizontal = 18.dp, vertical = 16.dp)
             ) {
-                Text(
-                    lobby.name,
-                    color = TextPrimary,
-                    fontFamily = DisplayFont,
-                    fontSize = 18.sp,
-                    modifier = Modifier.padding(horizontal = 18.dp)
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        lobby.name,
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 20.sp
+                    )
+                    Text(
+                        if (lobby.role == Role.HOST) "Du hostest" else "Beigetreten",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 12.sp
+                    )
+                }
             }
         }
-        if (lobbies.isEmpty()) {
-            Text("Keine Lobby vorhanden.", color = AccentRose, fontFamily = BodyFont)
-        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            "Tipp: Auf Samsung-Handys erscheinen App-Widgets auf dem Homescreen — nicht in den Sperrbildschirm-Widgets (nur Samsung-eigene).",
+            color = TextMuted,
+            fontFamily = BodyFont,
+            fontSize = 12.sp,
+            lineHeight = 16.sp
+        )
     }
 }

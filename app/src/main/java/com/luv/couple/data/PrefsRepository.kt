@@ -221,6 +221,18 @@ class PrefsRepository(private val context: Context) {
             ?: parseLobbies(prefs[lobbiesKey]).firstOrNull()?.id
     }
 
+    /** Explizite Widget-Zuordnung inkl. Lobby-Name (ohne Fallback). */
+    suspend fun widgetLobby(widgetId: Int): Lobby? {
+        val prefs = context.dataStore.data.first()
+        val lobbies = parseLobbies(prefs[lobbiesKey])
+        val mapped = parseWidgetMap(prefs[widgetMapKey])[widgetId]
+        if (mapped != null) {
+            lobbies.firstOrNull { it.id == mapped }?.let { return it }
+        }
+        val active = prefs[activeLobbyKey]
+        return lobbies.firstOrNull { it.id == active } ?: lobbies.firstOrNull()
+    }
+
     suspend fun snapshot(): SessionSnapshot {
         migrateIfNeeded()
         val prefs = context.dataStore.data.first()

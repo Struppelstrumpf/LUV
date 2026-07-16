@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">LUV</string>
-    <string name="widget_name">LUV Leinwand</string>
-    <string name="widget_description">Leinwand einer LUV-Lobby — Home oder Sperrbildschirm.</string>
+    <string name="widget_name">LUV</string>
+    <string name="widget_description">Gemeinsame Leinwand einer LUV-Lobby auf dem Homescreen.</string>
     <string name="widget_configure">Lobby für Widget wählen</string>
     <string name="notification_channel">Lobby-Verbindung</string>
     <string name="notification_title">LUV verbunden</string>
