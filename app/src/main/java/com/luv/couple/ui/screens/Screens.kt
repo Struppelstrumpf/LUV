@@ -63,7 +63,10 @@ import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
 
 @Composable
-private fun ScreenBackdrop(content: @Composable () -> Unit) {
+private fun ScreenBackdrop(
+    includeNavigationBars: Boolean = true,
+    content: @Composable () -> Unit
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -73,7 +76,7 @@ private fun ScreenBackdrop(content: @Composable () -> Unit) {
                 )
             )
             .statusBarsPadding()
-            .navigationBarsPadding()
+            .then(if (includeNavigationBars) Modifier.navigationBarsPadding() else Modifier)
     ) {
         Box(
             modifier = Modifier
@@ -232,11 +235,12 @@ fun LobbiesScreen(
     onEditNickname: () -> Unit
 ) {
     val accent = PeerPalette.composeColor(colorIndex)
-    ScreenBackdrop {
+    ScreenBackdrop(includeNavigationBars = false) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(28.dp)
+                .padding(horizontal = 28.dp)
+                .padding(top = 20.dp, bottom = 8.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {

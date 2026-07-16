@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -36,6 +37,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,11 +68,12 @@ fun AccountHomeScreen(
 ) {
     val accent = PeerPalette.composeColor(colorIndex)
     var legalDoc by remember { mutableStateOf<LegalDoc?>(null) }
-    MenuBackdrop {
+    MenuBackdrop(includeNavigationBars = false) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp)
+                .padding(horizontal = 24.dp)
+                .padding(top = 20.dp, bottom = 8.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -472,13 +475,16 @@ private fun ChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-fun MenuBackdrop(content: @Composable () -> Unit) {
+fun MenuBackdrop(
+    includeNavigationBars: Boolean = true,
+    content: @Composable () -> Unit
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Brush.verticalGradient(listOf(Color(0xFF121821), BgDeep, Color(0xFF1A1220))))
             .statusBarsPadding()
-            .navigationBarsPadding()
+            .then(if (includeNavigationBars) Modifier.navigationBarsPadding() else Modifier)
     ) { content() }
 }
 
@@ -542,35 +548,55 @@ fun SimpleBottomBar(
     onSelect: (Int) -> Unit
 ) {
     val labels = listOf("Home", "Konto")
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(BgSoft.copy(alpha = 0.95f))
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center
     ) {
-        labels.forEachIndexed { index, label ->
-            val active = selected == index
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .clickable { onSelect(index) }
-                    .padding(horizontal = 28.dp, vertical = 8.dp)
-            ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(28.dp))
+                .background(Color(0xEE171C24))
+                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(28.dp))
+                .padding(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            labels.forEachIndexed { index, label ->
+                val active = selected == index
                 Box(
                     modifier = Modifier
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(if (active) AccentRose else Color.Transparent)
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    label,
-                    color = if (active) TextPrimary else TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 13.sp
-                )
+                        .weight(1f)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(if (active) AccentRose.copy(alpha = 0.22f) else Color.Transparent)
+                        .clickable { onSelect(index) }
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        if (active) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(AccentRose)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                        Text(
+                            label,
+                            color = if (active) TextPrimary else TextMuted,
+                            fontFamily = DisplayFont,
+                            fontSize = 15.sp,
+                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal
+                        )
+                    }
+                }
             }
         }
     }

@@ -1,14 +1,16 @@
 package com.luv.couple.lock
 
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.GridLayout
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -32,6 +34,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import kotlin.math.min
 
 class LockDrawActivity : ComponentActivity() {
     private lateinit var drawingView: DrawingView
@@ -45,12 +48,15 @@ class LockDrawActivity : ComponentActivity() {
     private lateinit var btnGame: TextView
     private lateinit var btnColor: TextView
     private lateinit var bottomDock: View
-    private var voteBanner: TextView? = null
+    private var voteOverlay: View? = null
+    private var voteByView: TextView? = null
+    private var voteProgressView: TextView? = null
     private var lobbyId: String? = null
     private var legendExpanded = false
     private var activeProposalId: String? = null
-    private var rootView: android.widget.FrameLayout? = null
+    private var rootView: FrameLayout? = null
     private var ticTacToeVisible = false
+    private var hasVotedClear = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -117,12 +123,13 @@ class LockDrawActivity : ComponentActivity() {
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            val pad = (12 * resources.displayMetrics.density).toInt()
-            (lobbyTitle.layoutParams as android.widget.FrameLayout.LayoutParams).apply {
+            val dp = resources.displayMetrics.density
+            val pad = (12 * dp).toInt()
+            (lobbyTitle.layoutParams as FrameLayout.LayoutParams).apply {
                 topMargin = bars.top + pad
                 lobbyTitle.layoutParams = this
             }
-            (btnColor.layoutParams as android.widget.FrameLayout.LayoutParams).apply {
+            (btnColor.layoutParams as FrameLayout.LayoutParams).apply {
                 topMargin = bars.top + pad
                 btnColor.layoutParams = this
             }
@@ -130,8 +137,19 @@ class LockDrawActivity : ComponentActivity() {
                 bottomDock.paddingLeft,
                 bottomDock.paddingTop,
                 bottomDock.paddingRight,
-                pad + (10 * resources.displayMetrics.density).toInt()
+                bars.bottom + (12 * dp).toInt()
             )
+            // Emoji kleiner, wenn die Breite eng ist
+            val emojiRow = findViewById<LinearLayout>(R.id.emojiRow)
+            val per = (resources.displayMetrics.widthPixels - (36 * dp).toInt()) / 5f
+            val emojiSize = when {
+                per < 48 * dp -> 18f
+                per < 56 * dp -> 20f
+                else -> 22f
+            }
+            for (i in 0 until emojiRow.childCount) {
+                (emojiRow.getChildAt(i) as? TextView)?.setTextSize(TypedValue.COMPLEX_UNIT_SP, emojiSize)
+            }
             insets
         }
 
@@ -250,15 +268,17 @@ class LockDrawActivity : ComponentActivity() {
                 when (event) {
                     is ClearVoteEvent.Open -> if (event.lobbyId == id) {
                         activeProposalId = event.proposalId
-                        showClearVote("${event.by} will löschen (${event.yes}/${event.total})")
+                        hasVotedClear = false
+                        showClearVote(event.by, event.yes, 0, event.total)
                     }
                     is ClearVoteEvent.Update -> if (event.lobbyId == id) {
-                        statusView.text = "Abstimmung ${event.yes}/${event.no}"
+                        updateClearVote(event.yes, event.no, event.total)
                     }
                     is ClearVoteEvent.Result -> if (event.lobbyId == id) {
                         hideClearVote()
                         statusView.text = if (event.approved) "Leinwand leer" else "Abgelehnt"
                         activeProposalId = null
+                        hasVotedClear = false
                     }
                 }
             }
@@ -349,25 +369,46 @@ class LockDrawActivity : ComponentActivity() {
                 .toSet()
 
         val dp = resources.displayMetrics.density
+        val screenW = resources.displayMetrics.widthPixels
+        // Dialog-Ränder + Innenabstand — Palette muss ohne Horizontal-Scroll passen
+        val usable = (screenW - (56 * dp).toInt()).coerceAtLeast((240 * dp).toInt())
+        val cols = 5
+        val gap = (5 * dp).toInt()
+        val sidePad = (10 * dp).toInt()
+        val cell = min(
+            (48 * dp).toInt(),
+            ((usable - sidePad * 2 - gap * (cols - 1)) / cols).coerceAtLeast((30 * dp).toInt())
+        )
+
+        val wrap = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(sidePad, (4 * dp).toInt(), sidePad, (8 * dp).toInt())
+        }
+        val hint = TextView(this).apply {
+            text = "Nur freie Farben — Linien wechseln für alle mit."
+            setTextColor(0xFF9AA3B2.toInt())
+            textSize = 13f
+            setPadding(0, 0, 0, (10 * dp).toInt())
+        }
         val grid = GridLayout(this).apply {
-            columnCount = 5
-            setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), (8 * dp).toInt())
+            columnCount = cols
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
         }
         val dialog = MaterialAlertDialogBuilder(this)
             .setTitle("Deine Farbe")
-            .setMessage("Nur freie Farben — deine Linien wechseln für alle mit.")
             .create()
 
         PeerPalette.allIndices().forEach { index ->
             val blocked = index in taken && index != mine
-            val cell = TextView(this).apply {
-                val size = (48 * dp).toInt()
+            val cellView = View(this).apply {
                 layoutParams = GridLayout.LayoutParams().apply {
-                    width = size
-                    height = size
-                    setMargins((6 * dp).toInt(), (6 * dp).toInt(), (6 * dp).toInt(), (6 * dp).toInt())
+                    width = cell
+                    height = cell
+                    setMargins(gap / 2, gap / 2, gap / 2, gap / 2)
                 }
-                gravity = Gravity.CENTER
                 alpha = if (blocked) 0.28f else 1f
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
@@ -376,6 +417,7 @@ class LockDrawActivity : ComponentActivity() {
                         setStroke((3 * dp).toInt(), 0xFFFFFFFF.toInt())
                     }
                 }
+                isClickable = !blocked
                 isEnabled = !blocked
                 setOnClickListener {
                     if (blocked) return@setOnClickListener
@@ -383,65 +425,152 @@ class LockDrawActivity : ComponentActivity() {
                     dialog.dismiss()
                 }
             }
-            grid.addView(cell)
+            grid.addView(cellView)
         }
-
-        val scroll = ScrollView(this).apply {
-            addView(grid)
-            setPadding(0, (4 * dp).toInt(), 0, (4 * dp).toInt())
-        }
-        dialog.setView(scroll)
+        wrap.addView(hint)
+        wrap.addView(grid)
+        dialog.setView(wrap)
         dialog.show()
+        dialog.window?.setLayout(
+            min(screenW - (32 * dp).toInt(), usable + sidePad * 2 + (24 * dp).toInt()),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
     }
 
-    private fun showClearVote(text: String) {
+    private fun showClearVote(by: String, yes: Int, no: Int, total: Int) {
         val root = rootView ?: return
-        if (voteBanner == null) {
-            voteBanner = TextView(this).apply {
-                setBackgroundResource(R.drawable.note_banner_bg)
-                setTextColor(0xFFFFFFFF.toInt())
-                textSize = 15f
-                setPadding(36, 28, 36, 28)
-                gravity = Gravity.CENTER
-                elevation = 16f
-                setOnClickListener {
-                    val proposalId = activeProposalId ?: return@setOnClickListener
-                    PairConnectionService.sendClearVote(
-                        this@LockDrawActivity,
-                        proposalId,
-                        yes = true,
-                        lobbyId = lobbyId
-                    )
-                    statusView.text = "Ja gestimmt"
-                }
-                setOnLongClickListener {
-                    val proposalId = activeProposalId ?: return@setOnLongClickListener true
-                    PairConnectionService.sendClearVote(
-                        this@LockDrawActivity,
-                        proposalId,
-                        yes = false,
-                        lobbyId = lobbyId
-                    )
-                    statusView.text = "Nein gestimmt"
-                    true
+        val dp = resources.displayMetrics.density
+        if (voteOverlay == null) {
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundResource(R.drawable.vote_card_bg)
+                elevation = 20f
+                setPadding((26 * dp).toInt(), (24 * dp).toInt(), (26 * dp).toInt(), (22 * dp).toInt())
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    gravity = Gravity.CENTER
+                    marginStart = (28 * dp).toInt()
+                    marginEnd = (28 * dp).toInt()
                 }
             }
-            val lp = android.widget.FrameLayout.LayoutParams(
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
+
+            val title = TextView(this).apply {
+                text = "Leinwand leeren?"
+                setTextColor(0xFFF4F1EC.toInt())
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 gravity = Gravity.CENTER
-                marginStart = 40
-                marginEnd = 40
             }
-            root.addView(voteBanner, lp)
+            voteByView = TextView(this).apply {
+                setTextColor(0xFFFF6B8A.toInt())
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                gravity = Gravity.CENTER
+                setPadding(0, (10 * dp).toInt(), 0, (6 * dp).toInt())
+            }
+            voteProgressView = TextView(this).apply {
+                setTextColor(0xFF9AA3B2.toInt())
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                gravity = Gravity.CENTER
+                setPadding(0, 0, 0, (20 * dp).toInt())
+            }
+
+            val buttons = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            }
+            val btnNo = TextView(this).apply {
+                text = "Ablehnen"
+                gravity = Gravity.CENTER
+                setTextColor(0xFFF4F1EC.toInt())
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                setBackgroundResource(R.drawable.vote_btn_no)
+                setPadding(0, (14 * dp).toInt(), 0, (14 * dp).toInt())
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = (8 * dp).toInt()
+                }
+                setOnClickListener { castClearVote(yes = false) }
+            }
+            val btnYes = TextView(this).apply {
+                text = "Leeren"
+                gravity = Gravity.CENTER
+                setTextColor(0xFFF4F1EC.toInt())
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                setBackgroundResource(R.drawable.vote_btn_yes)
+                setPadding(0, (14 * dp).toInt(), 0, (14 * dp).toInt())
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = (8 * dp).toInt()
+                }
+                setOnClickListener { castClearVote(yes = true) }
+            }
+            buttons.addView(btnNo)
+            buttons.addView(btnYes)
+
+            card.addView(title)
+            card.addView(voteByView)
+            card.addView(voteProgressView)
+            card.addView(buttons)
+
+            voteOverlay = FrameLayout(this).apply {
+                setBackgroundColor(0xCC0B0E14.toInt())
+                isClickable = true
+                isFocusable = true
+                alpha = 0f
+                addView(card)
+                setOnClickListener { /* block touches behind */ }
+            }
+            root.addView(
+                voteOverlay,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            )
         }
-        voteBanner?.text = "$text\nTipp = Ja · Lang = Nein"
-        voteBanner?.alpha = 1f
+        voteByView?.text = "$by möchte löschen"
+        updateClearVote(yes, no, total)
+        voteOverlay?.visibility = View.VISIBLE
+        voteOverlay?.animate()?.alpha(1f)?.setDuration(220)?.start()
+    }
+
+    private fun updateClearVote(yes: Int, no: Int, total: Int) {
+        val safeTotal = total.coerceAtLeast(1)
+        voteProgressView?.text = when {
+            hasVotedClear -> "Deine Stimme ist drin · $yes Zustimmen · $no dagegen"
+            else -> "$yes von $safeTotal stimmen zu${if (no > 0) " · $no dagegen" else ""}"
+        }
+    }
+
+    private fun castClearVote(yes: Boolean) {
+        val proposalId = activeProposalId ?: return
+        if (hasVotedClear) return
+        hasVotedClear = true
+        PairConnectionService.sendClearVote(
+            this,
+            proposalId,
+            yes = yes,
+            lobbyId = lobbyId
+        )
+        statusView.text = if (yes) "Zugestimmt" else "Abgelehnt"
+        voteProgressView?.text = if (yes) {
+            "Du hast zugestimmt — warte auf die anderen…"
+        } else {
+            "Du hast abgelehnt — warte auf die anderen…"
+        }
     }
 
     private fun hideClearVote() {
-        voteBanner?.animate()?.alpha(0f)?.setDuration(200)?.start()
+        val overlay = voteOverlay ?: return
+        overlay.animate()
+            .alpha(0f)
+            .setDuration(200)
+            .withEndAction { overlay.visibility = View.GONE }
+            .start()
     }
 
     override fun onResume() {
