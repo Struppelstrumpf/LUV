@@ -24,6 +24,11 @@ class PrefsRepository(private val context: Context) {
     private val partnerNotifyKey = booleanPreferencesKey("partner_draw_notify")
     private val partnerHapticKey = booleanPreferencesKey("partner_draw_haptic")
     private val lastClearDayKey = stringPreferencesKey("last_clear_day")
+    private val tutorialDoneKey = booleanPreferencesKey("tutorial_done")
+    private val installIdKey = stringPreferencesKey("install_id")
+    private val installSecretKey = stringPreferencesKey("install_secret")
+    private val sessionTokenKey = stringPreferencesKey("session_token")
+    private val accountJsonKey = stringPreferencesKey("account_json")
 
     // Legacy keys — Migration
     private val genderKey = stringPreferencesKey("gender")
@@ -34,6 +39,14 @@ class PrefsRepository(private val context: Context) {
 
     val nicknameFlow: Flow<String?> = context.dataStore.data.map { prefs ->
         prefs[nicknameKey]?.takeIf { it.isNotBlank() }
+    }
+
+    val tutorialDoneFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[tutorialDoneKey] ?: false
+    }
+
+    val accountFlow: Flow<AccountInfo?> = context.dataStore.data.map { prefs ->
+        AccountInfo.fromJson(prefs[accountJsonKey])
     }
 
     val lobbiesFlow: Flow<List<Lobby>> = context.dataStore.data.map { prefs ->
@@ -58,6 +71,45 @@ class PrefsRepository(private val context: Context) {
             it[colorIndexKey] = color.toString()
         }
     }
+
+    suspend fun setTutorialDone(done: Boolean = true) {
+        context.dataStore.edit { it[tutorialDoneKey] = done }
+    }
+
+    suspend fun ensureInstallCredentials(): Pair<String, String> {
+        val prefs = context.dataStore.data.first()
+        val existingId = prefs[installIdKey]
+        val existingSecret = prefs[installSecretKey]
+        if (!existingId.isNullOrBlank() && !existingSecret.isNullOrBlank()) {
+            return existingId to existingSecret
+        }
+        val id = UUID.randomUUID().toString()
+        val secret = UUID.randomUUID().toString() + UUID.randomUUID().toString()
+        context.dataStore.edit {
+            it[installIdKey] = id
+            it[installSecretKey] = secret
+        }
+        return id to secret
+    }
+
+    suspend fun saveSession(sessionToken: String, account: AccountInfo) {
+        context.dataStore.edit {
+            it[sessionTokenKey] = sessionToken
+            it[accountJsonKey] = account.toJson()
+            it[nicknameKey] = account.nickname
+            it[colorIndexKey] = PeerPalette.indexFor(account.nickname.lowercase()).toString()
+        }
+    }
+
+    suspend fun updateAccount(account: AccountInfo) {
+        context.dataStore.edit {
+            it[accountJsonKey] = account.toJson()
+            it[nicknameKey] = account.nickname
+        }
+    }
+
+    suspend fun sessionToken(): String? =
+        context.dataStore.data.first()[sessionTokenKey]
 
     suspend fun setPartnerDrawNotifyEnabled(enabled: Boolean) {
         context.dataStore.edit { it[partnerNotifyKey] = enabled }
@@ -167,7 +219,10 @@ class PrefsRepository(private val context: Context) {
             colorIndex = colorIndex,
             lobbies = lobbies,
             activeLobbyId = activeId,
-            activeLobby = active
+            activeLobby = active,
+            tutorialDone = prefs[tutorialDoneKey] ?: false,
+            sessionToken = prefs[sessionTokenKey],
+            account = AccountInfo.fromJson(prefs[accountJsonKey])
         )
     }
 
@@ -273,8 +328,73 @@ data class SessionSnapshot(
     val colorIndex: Int,
     val lobbies: List<Lobby>,
     val activeLobbyId: String?,
-    val activeLobby: Lobby?
+    val activeLobby: Lobby?,
+    val tutorialDone: Boolean = false,
+    val sessionToken: String? = null,
+    val account: AccountInfo? = null
 ) {
     val hasNickname: Boolean get() = !nickname.isNullOrBlank()
     val hasLobbies: Boolean get() = lobbies.isNotEmpty()
+}
+
+data class AccountInfo(
+    val id: String,
+    val nickname: String,
+    val coins: Int,
+    val role: String,
+    val freeSessionsLeft: Int,
+    val freeSessionsPerDay: Int,
+    val dailyCoins: Int,
+    val sessionCost: Int,
+    val canClaimDaily: Boolean,
+    val googleLinked: Boolean
+) {
+    val isAdmin: Boolean get() = role == "admin"
+
+    fun toJson(): String = JSONObject()
+        .put("id", id)
+        .put("nickname", nickname)
+        .put("coins", coins)
+        .put("role", role)
+        .put("freeSessionsLeft", freeSessionsLeft)
+        .put("freeSessionsPerDay", freeSessionsPerDay)
+        .put("dailyCoins", dailyCoins)
+        .put("sessionCost", sessionCost)
+        .put("canClaimDaily", canClaimDaily)
+        .put("googleLinked", googleLinked)
+        .toString()
+
+    companion object {
+        fun fromJson(raw: String?): AccountInfo? {
+            if (raw.isNullOrBlank()) return null
+            return runCatching {
+                val o = JSONObject(raw)
+                AccountInfo(
+                    id = o.getString("id"),
+                    nickname = o.optString("nickname", "Luv"),
+                    coins = o.optInt("coins", 0),
+                    role = o.optString("role", "user"),
+                    freeSessionsLeft = o.optInt("freeSessionsLeft", 0),
+                    freeSessionsPerDay = o.optInt("freeSessionsPerDay", 5),
+                    dailyCoins = o.optInt("dailyCoins", 10),
+                    sessionCost = o.optInt("sessionCost", 1),
+                    canClaimDaily = o.optBoolean("canClaimDaily", false),
+                    googleLinked = o.optBoolean("googleLinked", false)
+                )
+            }.getOrNull()
+        }
+
+        fun fromApi(o: JSONObject): AccountInfo = AccountInfo(
+            id = o.getString("id"),
+            nickname = o.optString("nickname", "Luv"),
+            coins = o.optInt("coins", 0),
+            role = o.optString("role", "user"),
+            freeSessionsLeft = o.optInt("freeSessionsLeft", 0),
+            freeSessionsPerDay = o.optInt("freeSessionsPerDay", 5),
+            dailyCoins = o.optInt("dailyCoins", 10),
+            sessionCost = o.optInt("sessionCost", 1),
+            canClaimDaily = o.optBoolean("canClaimDaily", false),
+            googleLinked = o.optBoolean("googleLinked", false)
+        )
+    }
 }

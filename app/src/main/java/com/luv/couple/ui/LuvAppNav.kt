@@ -1,18 +1,27 @@
 package com.luv.couple.ui
 
 import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.border
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -26,27 +35,57 @@ import com.luv.couple.data.Role
 import com.luv.couple.lock.CanvasStore
 import com.luv.couple.lock.LockDrawActivity
 import com.luv.couple.lock.LockScreenWidgetProvider
+import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.LuvApiException
 import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairSessionState
 import com.luv.couple.net.PendingJoin
+import com.luv.couple.net.ShopPack
+import com.luv.couple.net.VoucherInfo
+import com.luv.couple.ui.screens.AccountHomeScreen
+import com.luv.couple.ui.screens.AdminScreen
 import com.luv.couple.ui.screens.CreateLobbyScreen
 import com.luv.couple.ui.screens.HostShareScreen
 import com.luv.couple.ui.screens.JoinScreen
 import com.luv.couple.ui.screens.LobbiesScreen
+import com.luv.couple.ui.screens.MenuBackdrop
 import com.luv.couple.ui.screens.NicknameScreen
+import com.luv.couple.ui.screens.RedeemScreen
 import com.luv.couple.ui.screens.RenameLobbyScreen
+import com.luv.couple.ui.screens.SimpleBottomBar
+import com.luv.couple.ui.screens.TutorialFlow
+import com.luv.couple.ui.theme.AccentRose
+import com.luv.couple.ui.theme.BodyFont
+import com.luv.couple.ui.theme.DisplayFont
+import com.luv.couple.ui.theme.TextMuted
+import com.luv.couple.ui.theme.TextPrimary
 import com.luv.couple.update.AppUpdater
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import java.util.UUID
 
 object Routes {
-    const val NICKNAME = "nickname"
-    const val LOBBIES = "lobbies"
+    const val TUTORIAL = "tutorial"
+    const val MAIN = "main"
     const val CREATE = "create"
     const val HOST_SHARE = "host_share"
     const val JOIN = "join"
+    const val REDEEM = "redeem"
+    const val ADMIN = "admin"
+    const val NICKNAME = "nickname"
     const val RENAME = "rename/{lobbyId}"
     fun rename(lobbyId: String) = "rename/$lobbyId"
 }
@@ -64,25 +103,27 @@ fun LuvAppNav() {
     val partnerNotify by prefs.partnerDrawNotifyFlow.collectAsStateWithLifecycle(initialValue = true)
     val partnerHaptic by prefs.partnerHapticFlow.collectAsStateWithLifecycle(initialValue = true)
     val lobbyStates by PairConnectionService.lobbyStates.collectAsStateWithLifecycle()
+    val account by AccountSession.account.collectAsStateWithLifecycle()
     val pendingJoin by PendingJoin.code.collectAsStateWithLifecycle()
 
     var startDestination by remember { mutableStateOf<String?>(null) }
     var shareLobby by remember { mutableStateOf<Lobby?>(null) }
     var joinError by remember { mutableStateOf<String?>(null) }
+    var accountMessage by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var colorIndex by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableIntStateOf(0) }
+    var shopEnabled by remember { mutableStateOf(false) }
+    var packs by remember { mutableStateOf<List<ShopPack>>(emptyList()) }
+    var vouchers by remember { mutableStateOf<List<VoucherInfo>>(emptyList()) }
     val versionLabel = remember { AppUpdater.versionLabel() }
-    var colorIndex by remember { mutableStateOf(0) }
 
     val apkPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         AppUpdater.installUpdate(context, uri).onFailure { error ->
-            Toast.makeText(
-                context,
-                error.message ?: "Update fehlgeschlagen",
-                Toast.LENGTH_LONG
-            ).show()
+            Toast.makeText(context, error.message ?: "Update fehlgeschlagen", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -116,9 +157,34 @@ fun LuvAppNav() {
 
     fun inviteMessage(lobby: Lobby): String =
         "Tritt meiner LUV-Lobby „${lobby.name}“ bei:\n\n${lobby.joinUrl}\n\n" +
-            "App öffnen oder herunterladen: https://reineke.pro/love/"
+            "App: https://reineke.pro/love/"
 
-    suspend fun joinWithCode(raw: String, suggestedName: String? = null): Boolean {
+    suspend fun ensureAuth(nick: String): Boolean {
+        return try {
+            val (id, secret) = prefs.ensureInstallCredentials()
+            val result = LuvApiClient.authDevice(id, secret, nick)
+            prefs.saveSession(result.sessionToken, result.user)
+            AccountSession.setAccount(result.user)
+            colorIndex = PeerPalette.indexFor(result.user.nickname.lowercase())
+            true
+        } catch (e: Exception) {
+            joinError = e.message ?: "Server nicht erreichbar"
+            false
+        }
+    }
+
+    suspend fun refreshAccount() {
+        runCatching {
+            val user = LuvApiClient.me()
+            prefs.updateAccount(user)
+            AccountSession.setAccount(user)
+            val (enabled, list) = LuvApiClient.shopPacks()
+            shopEnabled = enabled
+            packs = list
+        }
+    }
+
+    suspend fun joinWithCode(raw: String): Boolean {
         if (busy) return false
         busy = true
         joinError = null
@@ -131,7 +197,7 @@ fun LuvAppNav() {
                 val room = LuvApiClient.joinRoom(raw)
                 val lobby = Lobby(
                     id = UUID.randomUUID().toString(),
-                    name = suggestedName?.takeIf { it.isNotBlank() } ?: "Lobby",
+                    name = "Lobby",
                     role = Role.JOIN,
                     code = room.code,
                     token = room.token,
@@ -146,7 +212,7 @@ fun LuvAppNav() {
         } catch (e: Exception) {
             joinError = when (e) {
                 is LuvApiException -> e.message
-                else -> "Beitreten fehlgeschlagen. Link/Server prüfen."
+                else -> "Beitreten fehlgeschlagen."
             }
             false
         } finally {
@@ -155,132 +221,195 @@ fun LuvAppNav() {
     }
 
     LaunchedEffect(Unit) {
-        PairSessionState.notes.collect { text ->
-            Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+        PairSessionState.notes.collect {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
         }
     }
     LaunchedEffect(Unit) {
-        PairSessionState.missedYou.collect {
-            Toast.makeText(context, context.getString(com.luv.couple.R.string.missed_you), Toast.LENGTH_LONG).show()
+        AccountSession.economyBlocks.collect {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            refreshAccount()
         }
     }
 
     LaunchedEffect(Unit) {
         val snapshot = prefs.snapshot()
         colorIndex = snapshot.colorIndex
-        startDestination = when {
-            !snapshot.hasNickname -> Routes.NICKNAME
-            else -> {
-                if (snapshot.hasLobbies) {
-                    CanvasStore.setActiveLobby(snapshot.activeLobbyId)
-                    PairConnectionService.startAll(context)
-                }
-                Routes.LOBBIES
+        LuvApiClient.sessionToken = snapshot.sessionToken
+        snapshot.account?.let { AccountSession.setAccount(it) }
+        startDestination = if (!snapshot.tutorialDone || !snapshot.hasNickname || snapshot.sessionToken.isNullOrBlank()) {
+            Routes.TUTORIAL
+        } else {
+            if (snapshot.hasLobbies) {
+                CanvasStore.setActiveLobby(snapshot.activeLobbyId)
+                PairConnectionService.startAll(context)
             }
+            scope.launch { runCatching { LuvApiClient.claimDaily(); refreshAccount() } }
+            Routes.MAIN
         }
     }
 
-    // Deep-Link: nach Nickname automatisch joinen
     LaunchedEffect(startDestination, nickname, pendingJoin) {
-        if (startDestination == null) return@LaunchedEffect
+        if (startDestination != Routes.MAIN) return@LaunchedEffect
         if (nickname.isNullOrBlank()) return@LaunchedEffect
         val code = PendingJoin.consume() ?: return@LaunchedEffect
-        val ok = joinWithCode(code)
-        if (ok) {
+        if (joinWithCode(code)) {
             Toast.makeText(context, "Lobby beigetreten", Toast.LENGTH_SHORT).show()
-            navController.navigate(Routes.LOBBIES) {
-                popUpTo(0) { inclusive = true }
-            }
-        } else if (joinError != null) {
-            navController.navigate(Routes.JOIN)
+            tab = 1
         }
     }
 
     val destination = startDestination ?: return
 
     NavHost(navController = navController, startDestination = destination) {
-        composable(Routes.NICKNAME) {
-            val canGoBack = navController.previousBackStackEntry != null
-            NicknameScreen(
-                initial = nickname.orEmpty(),
-                onBack = if (canGoBack) ({ navController.popBackStack() }) else null,
-                onContinue = { selected ->
+        composable(Routes.TUTORIAL) {
+            TutorialFlow(
+                busy = busy,
+                error = joinError,
+                onFinished = { nick ->
                     scope.launch {
-                        prefs.setNickname(selected)
-                        colorIndex = PeerPalette.indexFor(selected.lowercase())
-                        LockScreenWidgetProvider.requestUpdate(context)
-                        if (canGoBack) {
-                            navController.popBackStack()
-                        } else {
-                            navController.navigate(Routes.LOBBIES) {
-                                popUpTo(Routes.NICKNAME) { inclusive = true }
+                        busy = true
+                        joinError = null
+                        prefs.setNickname(nick)
+                        if (ensureAuth(nick)) {
+                            prefs.setTutorialDone(true)
+                            runCatching { LuvApiClient.claimDaily() }
+                            refreshAccount()
+                            navController.navigate(Routes.MAIN) {
+                                popUpTo(Routes.TUTORIAL) { inclusive = true }
                             }
                         }
+                        busy = false
                     }
                 }
             )
         }
 
-        composable(Routes.LOBBIES) {
-            LobbiesScreen(
-                nickname = nickname ?: "Du",
-                colorIndex = colorIndex,
-                lobbies = lobbies,
-                activeLobbyId = activeLobbyId,
-                lobbyStates = lobbyStates,
-                versionLabel = versionLabel,
-                partnerNotifyEnabled = partnerNotify,
-                onPartnerNotifyChange = { enabled ->
-                    scope.launch { prefs.setPartnerDrawNotifyEnabled(enabled) }
-                },
-                partnerHapticEnabled = partnerHaptic,
-                onPartnerHapticChange = { enabled ->
-                    scope.launch { prefs.setPartnerHapticEnabled(enabled) }
-                },
-                error = joinError,
-                onOpenLobby = { lobby ->
-                    scope.launch {
-                        prefs.setActiveLobby(lobby.id)
-                        CanvasStore.setActiveLobby(lobby.id)
-                        context.startActivity(
-                            Intent(context, LockDrawActivity::class.java).apply {
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
-                            }
+        composable(Routes.MAIN) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.weight(1f)) {
+                    when (tab) {
+                        0 -> HomeMenu(
+                            nickname = nickname ?: "Du",
+                            colorIndex = colorIndex,
+                            coins = account?.coins ?: 0,
+                            freeLeft = account?.freeSessionsLeft ?: 0,
+                            versionLabel = versionLabel,
+                            onOpenLobbies = { tab = 1 },
+                            onOpenAccount = { tab = 2 },
+                            onInstallUpdate = { startUpdateFlow() }
+                        )
+                        1 -> LobbiesScreen(
+                            nickname = nickname ?: "Du",
+                            colorIndex = colorIndex,
+                            lobbies = lobbies,
+                            activeLobbyId = activeLobbyId,
+                            lobbyStates = lobbyStates,
+                            versionLabel = versionLabel,
+                            partnerNotifyEnabled = partnerNotify,
+                            onPartnerNotifyChange = { enabled ->
+                                scope.launch { prefs.setPartnerDrawNotifyEnabled(enabled) }
+                            },
+                            partnerHapticEnabled = partnerHaptic,
+                            onPartnerHapticChange = { enabled ->
+                                scope.launch { prefs.setPartnerHapticEnabled(enabled) }
+                            },
+                            error = joinError,
+                            onOpenLobby = { lobby ->
+                                scope.launch {
+                                    prefs.setActiveLobby(lobby.id)
+                                    CanvasStore.setActiveLobby(lobby.id)
+                                    context.startActivity(
+                                        Intent(context, LockDrawActivity::class.java).apply {
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                            putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
+                                        }
+                                    )
+                                }
+                            },
+                            onCreateLobby = {
+                                joinError = null
+                                navController.navigate(Routes.CREATE)
+                            },
+                            onJoinLobby = {
+                                joinError = null
+                                navController.navigate(Routes.JOIN)
+                            },
+                            onShareLobby = { lobby -> shareText(inviteMessage(lobby)) },
+                            onRenameLobby = { lobby ->
+                                navController.navigate(Routes.rename(lobby.id))
+                            },
+                            onLeaveLobby = { lobby ->
+                                scope.launch {
+                                    PairConnectionService.stop(context, lobby.id)
+                                    CanvasStore.clearLobby(lobby.id)
+                                    prefs.removeLobby(lobby.id)
+                                    LockScreenWidgetProvider.requestUpdate(context)
+                                    if (prefs.snapshot().lobbies.isEmpty()) {
+                                        PairConnectionService.stop(context)
+                                    }
+                                }
+                            },
+                            onInstallUpdate = { startUpdateFlow() },
+                            onAddWidgetHelp = {
+                                runCatching { context.startActivity(Intent(Settings.ACTION_HOME_SETTINGS)) }
+                            },
+                            onEditNickname = { navController.navigate(Routes.NICKNAME) }
+                        )
+                        else -> AccountHomeScreen(
+                            account = account,
+                            colorIndex = colorIndex,
+                            message = accountMessage,
+                            shopEnabled = shopEnabled,
+                            packs = packs,
+                            onClaimDaily = {
+                                scope.launch {
+                                    runCatching {
+                                        val (user, claimed) = LuvApiClient.claimDaily()
+                                        prefs.updateAccount(user)
+                                        AccountSession.setAccount(user)
+                                        accountMessage = if (claimed) "+${user.dailyCoins} Coins — schön, dass du da bist ♥" else "Heute schon abgeholt"
+                                    }.onFailure {
+                                        accountMessage = it.message
+                                    }
+                                }
+                            },
+                            onOpenRedeem = { navController.navigate(Routes.REDEEM) },
+                            onOpenAdmin = {
+                                scope.launch {
+                                    vouchers = runCatching { LuvApiClient.listVouchers() }.getOrDefault(emptyList())
+                                    navController.navigate(Routes.ADMIN)
+                                }
+                            },
+                            onBuyPack = { pack ->
+                                scope.launch {
+                                    runCatching {
+                                        val url = LuvApiClient.checkout(pack.id)
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    }.onFailure {
+                                        accountMessage = it.message
+                                    }
+                                }
+                            },
+                            onRefresh = { scope.launch { refreshAccount(); accountMessage = "Aktualisiert" } }
                         )
                     }
-                },
-                onCreateLobby = {
-                    joinError = null
-                    navController.navigate(Routes.CREATE)
-                },
-                onJoinLobby = {
-                    joinError = null
-                    navController.navigate(Routes.JOIN)
-                },
-                onShareLobby = { lobby -> shareText(inviteMessage(lobby)) },
-                onRenameLobby = { lobby ->
-                    navController.navigate(Routes.rename(lobby.id))
-                },
-                onLeaveLobby = { lobby ->
+                }
+                SimpleBottomBar(selected = tab, onSelect = { tab = it })
+            }
+        }
+
+        composable(Routes.NICKNAME) {
+            NicknameScreen(
+                initial = nickname.orEmpty(),
+                onBack = { navController.popBackStack() },
+                onContinue = { selected ->
                     scope.launch {
-                        PairConnectionService.stop(context, lobby.id)
-                        CanvasStore.clearLobby(lobby.id)
-                        prefs.removeLobby(lobby.id)
-                        LockScreenWidgetProvider.requestUpdate(context)
-                        if (prefs.snapshot().lobbies.isEmpty()) {
-                            PairConnectionService.stop(context)
-                        }
+                        prefs.setNickname(selected)
+                        ensureAuth(selected)
+                        colorIndex = PeerPalette.indexFor(selected.lowercase())
+                        navController.popBackStack()
                     }
-                },
-                onInstallUpdate = { startUpdateFlow() },
-                onAddWidgetHelp = {
-                    runCatching {
-                        context.startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
-                    }
-                },
-                onEditNickname = {
-                    navController.navigate(Routes.NICKNAME)
                 }
             )
         }
@@ -332,7 +461,7 @@ fun LuvAppNav() {
         composable(Routes.HOST_SHARE) {
             val lobby = shareLobby ?: lobbies.lastOrNull()
             if (lobby == null) {
-                LaunchedEffect(Unit) { navController.popBackStack(Routes.LOBBIES, false) }
+                LaunchedEffect(Unit) { navController.popBackStack(Routes.MAIN, false) }
                 return@composable
             }
             HostShareScreen(
@@ -341,14 +470,12 @@ fun LuvAppNav() {
                 connectionState = lobbyStates[lobby.id] ?: PairConnectionService.state.value,
                 onShare = { shareText(inviteMessage(lobby)) },
                 onContinue = {
-                    navController.navigate(Routes.LOBBIES) {
-                        popUpTo(Routes.LOBBIES) { inclusive = true }
-                    }
+                    tab = 1
+                    navController.navigate(Routes.MAIN) { popUpTo(Routes.MAIN) { inclusive = true } }
                 },
                 onBack = {
-                    navController.navigate(Routes.LOBBIES) {
-                        popUpTo(Routes.LOBBIES) { inclusive = true }
-                    }
+                    tab = 1
+                    navController.navigate(Routes.MAIN) { popUpTo(Routes.MAIN) { inclusive = true } }
                 }
             )
         }
@@ -360,10 +487,56 @@ fun LuvAppNav() {
                 onJoin = { raw ->
                     scope.launch {
                         if (joinWithCode(raw)) {
-                            navController.navigate(Routes.LOBBIES) {
-                                popUpTo(Routes.LOBBIES) { inclusive = true }
-                            }
+                            tab = 1
+                            navController.navigate(Routes.MAIN) { popUpTo(Routes.MAIN) { inclusive = true } }
                         }
+                    }
+                },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Routes.REDEEM) {
+            RedeemScreen(
+                error = accountMessage,
+                onRedeem = { code ->
+                    scope.launch {
+                        accountMessage = null
+                        runCatching {
+                            val result = LuvApiClient.redeem(code)
+                            prefs.updateAccount(result.user)
+                            AccountSession.setAccount(result.user)
+                            accountMessage = when (result.type) {
+                                "admin" -> "Admin freigeschaltet"
+                                else -> "+${result.coins} Coins eingelöst ♥"
+                            }
+                            if (result.type == "admin") {
+                                vouchers = runCatching { LuvApiClient.listVouchers() }.getOrDefault(emptyList())
+                                navController.navigate(Routes.ADMIN)
+                            } else {
+                                navController.popBackStack()
+                                tab = 2
+                            }
+                        }.onFailure {
+                            accountMessage = it.message
+                        }
+                    }
+                },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Routes.ADMIN) {
+            AdminScreen(
+                vouchers = vouchers,
+                message = accountMessage,
+                onCreate = { coins, max ->
+                    scope.launch {
+                        runCatching {
+                            val v = LuvApiClient.createVoucher(coins, max)
+                            vouchers = listOf(v) + vouchers
+                            accountMessage = "Code ${v.code} erstellt"
+                        }.onFailure { accountMessage = it.message }
                     }
                 },
                 onBack = { navController.popBackStack() }
@@ -392,5 +565,68 @@ fun LuvAppNav() {
                 onBack = { navController.popBackStack() }
             )
         }
+    }
+}
+
+@Composable
+private fun HomeMenu(
+    nickname: String,
+    colorIndex: Int,
+    coins: Int,
+    freeLeft: Int,
+    versionLabel: String,
+    onOpenLobbies: () -> Unit,
+    onOpenAccount: () -> Unit,
+    onInstallUpdate: () -> Unit
+) {
+    val accent = PeerPalette.composeColor(colorIndex)
+    MenuBackdrop {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(28.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text("LUV", fontFamily = DisplayFont, fontSize = 56.sp, color = TextPrimary, letterSpacing = 3.sp)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Hallo, $nickname", fontFamily = DisplayFont, fontSize = 26.sp, color = accent)
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    "$coins Coins · $freeLeft freie Sessions heute",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp
+                )
+                if (versionLabel.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(versionLabel, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
+                }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                HomeBtn("Meine Lobbys", accent, onOpenLobbies)
+                HomeBtn("Konto & Coins", Color(0xFF171C24), onOpenAccount, bordered = true)
+                HomeBtn("Update installieren", Color(0xFF171C24), onInstallUpdate, bordered = true)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeBtn(label: String, color: Color, onClick: () -> Unit, bordered: Boolean = false) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(color)
+            .then(
+                if (bordered) Modifier.border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(18.dp))
+                else Modifier
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = TextPrimary, fontFamily = DisplayFont, fontSize = 17.sp, textAlign = TextAlign.Center)
     }
 }

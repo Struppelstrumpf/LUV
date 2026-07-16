@@ -1,9 +1,4 @@
 # Isolierter Stack — berührt andere Compose-Projekte auf dem Server nicht.
-# Start auf Hetzner:
-#   cd /opt/luv-api   # oder wohin du den Ordner kopierst
-#   docker compose up -d --build
-#
-# Danach laufen deine bestehenden 2 Container + dieser dritte (luv-api).
 
 services:
   luv-api:
@@ -12,11 +7,21 @@ services:
     container_name: luv-api
     restart: unless-stopped
     ports:
-      # Nur neuer Host-Port — nichts an bestehenden Services ändern
       - "18780:8080"
     environment:
       PORT: "8080"
       ROOM_TTL_MS: "86400000"
+      DATA_DIR: "/data"
+      MAX_PEERS: "4"
+      # Nur auf dem Server setzen — nie in die App legen
+      ADMIN_BOOTSTRAP_CODE: "Warehouse295?"
+      # Optional: Mollie live schalten
+      MOLLIE_API_KEY: "${MOLLIE_API_KEY:-}"
+      MOLLIE_WEBHOOK_URL: "https://reineke.pro/luv/v1/webhooks/mollie"
+      PUBLIC_SHOP_REDIRECT: "https://reineke.pro/love/"
+      PUBLIC_JOIN_BASE: "https://reineke.pro/love/j"
+    volumes:
+      - luv_data:/data
     healthcheck:
       test:
         [
@@ -29,9 +34,12 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-    # Eigene Bridge — keine shared network mit anderen Stacks nötig
     networks:
       - luv_net
+
+volumes:
+  luv_data:
+    name: luv_data
 
 networks:
   luv_net:

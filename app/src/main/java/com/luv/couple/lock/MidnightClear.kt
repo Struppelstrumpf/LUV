@@ -17,7 +17,7 @@ object MidnightClear {
             val today = LocalDate.now().toString()
             val last = prefs.lastClearDay()
             if (last != null && last != today) {
-                CanvasStore.clearAll(notifyPeer = true)
+                CanvasStore.clearAll(notifyPeer = false)
             }
             prefs.setLastClearDay(today)
         }

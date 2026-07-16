@@ -19,6 +19,8 @@ sealed class PairMessage {
     ) : PairMessage()
     data class Note(val text: String) : PairMessage()
     data object Clear : PairMessage()
+    data class ClearPropose(val nickname: String?) : PairMessage()
+    data class ClearVote(val proposalId: String, val yes: Boolean) : PairMessage()
     data object Ping : PairMessage()
     data object Pong : PairMessage()
 }
@@ -64,7 +66,14 @@ object PairProtocol {
             is PairMessage.Note -> JSONObject()
                 .put("type", "note")
                 .put("text", message.text.take(80))
-            PairMessage.Clear -> JSONObject().put("type", "clear")
+            PairMessage.Clear -> JSONObject().put("type", "clear_propose")
+            is PairMessage.ClearPropose -> JSONObject()
+                .put("type", "clear_propose")
+                .put("nickname", message.nickname ?: JSONObject.NULL)
+            is PairMessage.ClearVote -> JSONObject()
+                .put("type", "clear_vote")
+                .put("proposalId", message.proposalId)
+                .put("yes", message.yes)
             PairMessage.Ping -> JSONObject().put("type", "ping")
             PairMessage.Pong -> JSONObject().put("type", "pong")
         }
@@ -128,6 +137,13 @@ object PairProtocol {
                 }
                 "note" -> PairMessage.Note(json.optString("text").take(80))
                 "clear" -> PairMessage.Clear
+                "clear_propose" -> PairMessage.ClearPropose(
+                    json.optString("nickname").takeIf { it.isNotBlank() && it != "null" }
+                )
+                "clear_vote" -> PairMessage.ClearVote(
+                    proposalId = json.getString("proposalId"),
+                    yes = json.optBoolean("yes", json.optString("vote") == "yes")
+                )
                 "ping" -> PairMessage.Ping
                 "pong" -> PairMessage.Pong
                 else -> null

@@ -149,7 +149,14 @@ class PairConnectionService : Service() {
         val opened = AtomicBoolean(false)
         val closed = AtomicBoolean(false)
         val request = Request.Builder()
-            .url(LuvApiClient.wsUrl(lobby.code, lobby.token, lobby.role.name.lowercase()))
+            .url(
+                LuvApiClient.wsUrl(
+                    lobby.code,
+                    lobby.token,
+                    lobby.role.name.lowercase(),
+                    LuvApiClient.sessionToken
+                )
+            )
             .build()
 
         val listener = object : WebSocketListener() {
@@ -198,6 +205,58 @@ class PairConnectionService : Service() {
                         if (peers >= 2) ConnectionState.CONNECTED else ConnectionState.HOSTING
                     )
                     ensureForeground(statusText())
+                    return
+                }
+                "clear_vote_open" -> {
+                    AccountSession.emitClearVote(
+                        ClearVoteEvent.Open(
+                            lobbyId = lobby.id,
+                            proposalId = json.getString("proposalId"),
+                            by = json.optString("by", "Jemand"),
+                            endsAt = json.optLong("endsAt"),
+                            yes = json.optInt("yes", 1),
+                            total = json.optInt("total", 1)
+                        )
+                    )
+                    return
+                }
+                "clear_vote_update" -> {
+                    AccountSession.emitClearVote(
+                        ClearVoteEvent.Update(
+                            lobbyId = lobby.id,
+                            proposalId = json.getString("proposalId"),
+                            yes = json.optInt("yes"),
+                            no = json.optInt("no"),
+                            total = json.optInt("total")
+                        )
+                    )
+                    return
+                }
+                "clear_result" -> {
+                    AccountSession.emitClearVote(
+                        ClearVoteEvent.Result(
+                            lobbyId = lobby.id,
+                            proposalId = json.getString("proposalId"),
+                            approved = json.optBoolean("approved"),
+                            yes = json.optInt("yes"),
+                            total = json.optInt("total")
+                        )
+                    )
+                    return
+                }
+                "economy_block" -> {
+                    AccountSession.emitEconomyBlock(
+                        json.optString("message", "Keine Coins mehr — Zuschauen geht weiter.")
+                    )
+                    return
+                }
+                "economy_ok" -> {
+                    val userJson = json.optJSONObject("user")
+                    if (userJson != null) {
+                        AccountSession.setAccount(
+                            com.luv.couple.data.AccountInfo.fromApi(userJson)
+                        )
+                    }
                     return
                 }
             }
@@ -438,13 +497,32 @@ class PairConnectionService : Service() {
         }
 
         fun sendClear(context: Context, lobbyId: String? = null) {
+            // Clear = Abstimmung starten (Server)
             try {
+                val nickname = runBlocking {
+                    LuvApp.instance.prefs.snapshot().nickname
+                }
+                val payload = PairProtocol.encode(PairMessage.ClearPropose(nickname))
                 val intent = Intent(context, PairConnectionService::class.java)
-                    .setAction(ACTION_SEND_CLEAR)
+                    .setAction(ACTION_SEND_STROKE)
+                    .putExtra(EXTRA_PAYLOAD, payload)
                     .putExtra(EXTRA_LOBBY_ID, lobbyId)
                 context.startService(intent)
             } catch (t: Throwable) {
-                Log.e(TAG, "Unable to send clear", t)
+                Log.e(TAG, "Unable to propose clear", t)
+            }
+        }
+
+        fun sendClearVote(context: Context, proposalId: String, yes: Boolean, lobbyId: String? = null) {
+            try {
+                val payload = PairProtocol.encode(PairMessage.ClearVote(proposalId, yes))
+                val intent = Intent(context, PairConnectionService::class.java)
+                    .setAction(ACTION_SEND_STROKE)
+                    .putExtra(EXTRA_PAYLOAD, payload)
+                    .putExtra(EXTRA_LOBBY_ID, lobbyId)
+                context.startService(intent)
+            } catch (t: Throwable) {
+                Log.e(TAG, "Unable to send clear vote", t)
             }
         }
 

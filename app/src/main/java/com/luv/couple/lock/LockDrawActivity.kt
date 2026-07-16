@@ -25,6 +25,8 @@ import com.luv.couple.R
 import com.luv.couple.data.ConnectionState
 import com.luv.couple.data.PeerInfo
 import com.luv.couple.data.PeerPalette
+import com.luv.couple.net.AccountSession
+import com.luv.couple.net.ClearVoteEvent
 import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairEvent
 import com.luv.couple.net.PairSessionState
@@ -44,9 +46,11 @@ class LockDrawActivity : ComponentActivity() {
     private lateinit var missedBanner: TextView
     private lateinit var legendRow: LinearLayout
     private lateinit var lobbyTitle: TextView
+    private var voteBanner: TextView? = null
     private var lobbyId: String? = null
     private var pulseAnimator: ObjectAnimator? = null
     private var legendExpanded = false
+    private var activeProposalId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -103,9 +107,9 @@ class LockDrawActivity : ComponentActivity() {
             refreshLegend()
         }
         drawingView.onLongPressClear = {
-            CanvasStore.clear(notifyPeer = true, lobbyId = lobbyId)
-            drawingView.clearCanvas()
-            statusView.text = "Leinwand gelöscht"
+            // Nur Abstimmung starten — Clear erst nach Mehrheit
+            PairConnectionService.sendClear(this, lobbyId)
+            statusView.text = "Abstimmung: Leinwand löschen?"
         }
         drawingView.onDoubleTapUndo = {
             if (CanvasStore.undoLastLocalStroke(lobbyId)) {
@@ -189,6 +193,83 @@ class LockDrawActivity : ComponentActivity() {
                 showBanner(missedBanner, getString(R.string.missed_you), 2800)
             }
         }
+        lifecycleScope.launch {
+            AccountSession.clearVotes.collectLatest { event ->
+                val id = lobbyId ?: return@collectLatest
+                when (event) {
+                    is ClearVoteEvent.Open -> if (event.lobbyId == id) {
+                        activeProposalId = event.proposalId
+                        showClearVote("${event.by} will löschen (${event.yes}/${event.total})")
+                    }
+                    is ClearVoteEvent.Update -> if (event.lobbyId == id) {
+                        statusView.text = "Abstimmung ${event.yes} Ja · ${event.no} Nein"
+                    }
+                    is ClearVoteEvent.Result -> if (event.lobbyId == id) {
+                        hideClearVote()
+                        statusView.text = if (event.approved) {
+                            "Mehrheit sagt Ja — Leinwand leer"
+                        } else {
+                            "Nicht genug Stimmen"
+                        }
+                        activeProposalId = null
+                    }
+                }
+            }
+        }
+        lifecycleScope.launch {
+            AccountSession.economyBlocks.collectLatest { msg ->
+                Toast.makeText(this@LockDrawActivity, msg, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun showClearVote(text: String) {
+        val root = findViewById<android.widget.FrameLayout>(R.id.lockRoot)
+        if (voteBanner == null) {
+            voteBanner = TextView(this).apply {
+                setBackgroundResource(R.drawable.note_banner_bg)
+                setTextColor(0xFFFFFFFF.toInt())
+                textSize = 15f
+                setPadding(36, 28, 36, 28)
+                gravity = Gravity.CENTER
+                setOnClickListener {
+                    val proposalId = activeProposalId ?: return@setOnClickListener
+                    PairConnectionService.sendClearVote(
+                        this@LockDrawActivity,
+                        proposalId,
+                        yes = true,
+                        lobbyId = lobbyId
+                    )
+                    statusView.text = "Du hast Ja gestimmt"
+                }
+                setOnLongClickListener {
+                    val proposalId = activeProposalId ?: return@setOnLongClickListener true
+                    PairConnectionService.sendClearVote(
+                        this@LockDrawActivity,
+                        proposalId,
+                        yes = false,
+                        lobbyId = lobbyId
+                    )
+                    statusView.text = "Du hast Nein gestimmt"
+                    true
+                }
+            }
+            val lp = android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.CENTER
+                marginStart = 40
+                marginEnd = 40
+            }
+            root.addView(voteBanner, lp)
+        }
+        voteBanner?.text = "$text\nTipp = Ja · Lang = Nein"
+        voteBanner?.alpha = 1f
+    }
+
+    private fun hideClearVote() {
+        voteBanner?.animate()?.alpha(0f)?.setDuration(200)?.start()
     }
 
     private suspend fun prefsSetActive(id: String) {
