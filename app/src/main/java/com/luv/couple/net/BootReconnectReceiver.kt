@@ -9,9 +9,9 @@ import kotlinx.coroutines.runBlocking
 class BootReconnectReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
-        val paired = runBlocking { LuvApp.instance.prefs.snapshot().paired }
-        if (paired) {
-            PairConnectionService.start(context.applicationContext)
+        val hasLobbies = runBlocking { LuvApp.instance.prefs.snapshot().hasLobbies }
+        if (hasLobbies) {
+            PairConnectionService.startAll(context.applicationContext)
         }
     }
 }

@@ -18,11 +18,10 @@ import kotlinx.coroutines.launch
 
 object PartnerStrokeNotifier {
     const val CHANNEL_ID = "luv_partner_draw"
-    private const val NOTIFICATION_ID = 77
     private const val MIN_INTERVAL_MS = 60_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    @Volatile private var lastNotifyUptime = 0L
+    private val lastNotifyByLobby = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     fun ensureChannel(context: Context) {
         val channel = NotificationChannel(
@@ -39,7 +38,12 @@ object PartnerStrokeNotifier {
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    fun onPartnerStroke(context: Context) {
+    fun onPartnerStroke(
+        context: Context,
+        lobbyName: String,
+        nickname: String,
+        lobbyId: String
+    ) {
         scope.launch {
             val enabled = runCatching {
                 LuvApp.instance.prefs.isPartnerDrawNotifyEnabled()
@@ -47,21 +51,21 @@ object PartnerStrokeNotifier {
             if (!enabled) return@launch
 
             val now = SystemClock.elapsedRealtime()
-            if (lastNotifyUptime > 0L && now - lastNotifyUptime < MIN_INTERVAL_MS) {
-                return@launch
-            }
-            lastNotifyUptime = now
-            show(context.applicationContext)
+            val last = lastNotifyByLobby[lobbyId] ?: 0L
+            if (last > 0L && now - last < MIN_INTERVAL_MS) return@launch
+            lastNotifyByLobby[lobbyId] = now
+            show(context.applicationContext, lobbyName, nickname, lobbyId)
         }
     }
 
-    private fun show(context: Context) {
+    private fun show(context: Context, lobbyName: String, nickname: String, lobbyId: String) {
         ensureChannel(context)
         val openCanvas = PendingIntent.getActivity(
             context,
-            1,
+            lobbyId.hashCode(),
             Intent(context, LockDrawActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobbyId)
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -71,10 +75,11 @@ object PartnerStrokeNotifier {
             Intent(context, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val text = context.getString(R.string.partner_draw_text_fmt, lobbyName, nickname)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(context.getString(R.string.partner_draw_title))
-            .setContentText(context.getString(R.string.partner_draw_text))
+            .setContentTitle(context.getString(R.string.app_name))
+            .setContentText(text)
             .setContentIntent(openCanvas)
             .setDeleteIntent(openApp)
             .setAutoCancel(true)
@@ -87,6 +92,8 @@ object PartnerStrokeNotifier {
             .build()
 
         context.getSystemService(NotificationManager::class.java)
-            .notify(NOTIFICATION_ID, notification)
+            .notify(NOTIFICATION_BASE + (lobbyId.hashCode() and 0xffff), notification)
     }
+
+    private const val NOTIFICATION_BASE = 770
 }

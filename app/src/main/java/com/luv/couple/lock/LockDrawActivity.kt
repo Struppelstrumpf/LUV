@@ -2,13 +2,16 @@ package com.luv.couple.lock
 
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.InputFilter
 import android.text.format.DateFormat
+import android.util.TypedValue
+import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -20,6 +23,8 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.luv.couple.LuvApp
 import com.luv.couple.R
 import com.luv.couple.data.ConnectionState
+import com.luv.couple.data.PeerInfo
+import com.luv.couple.data.PeerPalette
 import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairEvent
 import com.luv.couple.net.PairSessionState
@@ -37,7 +42,11 @@ class LockDrawActivity : ComponentActivity() {
     private lateinit var presenceLabel: TextView
     private lateinit var noteBanner: TextView
     private lateinit var missedBanner: TextView
+    private lateinit var legendRow: LinearLayout
+    private lateinit var lobbyTitle: TextView
+    private var lobbyId: String? = null
     private var pulseAnimator: ObjectAnimator? = null
+    private var legendExpanded = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,41 +68,60 @@ class LockDrawActivity : ComponentActivity() {
         presenceLabel = findViewById(R.id.presenceLabel)
         noteBanner = findViewById(R.id.noteBanner)
         missedBanner = findViewById(R.id.missedBanner)
+        legendRow = findViewById(R.id.legendRow)
+        lobbyTitle = findViewById(R.id.lobbyTitle)
+
+        findViewById<TextView>(R.id.btnBack).setOnClickListener { finish() }
+        legendRow.setOnClickListener {
+            legendExpanded = !legendExpanded
+            refreshLegend()
+        }
 
         lifecycleScope.launch {
-            val gender = LuvApp.instance.prefs.snapshot().gender
-            root.setBackgroundColor(CanvasStore.backgroundFor(gender))
-            drawingView.myGender = gender
+            val snap = LuvApp.instance.prefs.snapshot()
+            lobbyId = intent.getStringExtra(EXTRA_LOBBY_ID)
+                ?: snap.activeLobbyId
+                ?: snap.lobbies.firstOrNull()?.id
+            lobbyId?.let {
+                prefsSetActive(it)
+                CanvasStore.setActiveLobby(it)
+            }
+            val lobby = snap.lobbies.firstOrNull { it.id == lobbyId }
+            lobbyTitle.text = lobby?.name.orEmpty()
+            root.setBackgroundColor(CanvasStore.backgroundFor(snap.colorIndex))
+            drawingView.myColorIndex = snap.colorIndex
+            drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
+            refreshLegend()
         }
 
         MidnightClear.checkAndClearIfNewDay(this)
         updateClock()
-        drawingView.setStrokes(CanvasStore.snapshot(), animateNew = false)
 
         drawingView.onStrokeFinished = { points ->
-            CanvasStore.addLocalStroke(points)
-            drawingView.setStrokes(CanvasStore.snapshot(), animateNew = true)
+            CanvasStore.addLocalStroke(points, lobbyId = lobbyId)
+            drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = true)
+            refreshLegend()
         }
         drawingView.onLongPressClear = {
-            CanvasStore.clear(notifyPeer = true)
+            CanvasStore.clear(notifyPeer = true, lobbyId = lobbyId)
             drawingView.clearCanvas()
             statusView.text = "Leinwand gelöscht"
         }
         drawingView.onDoubleTapUndo = {
-            if (CanvasStore.undoLastLocalStroke()) {
-                drawingView.setStrokes(CanvasStore.snapshot(), animateNew = false)
+            if (CanvasStore.undoLastLocalStroke(lobbyId)) {
+                drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
                 statusView.text = "Linie rückgängig"
             }
         }
         drawingView.onDotPlaced = { point ->
-            CanvasStore.addLocalDot(point.x, point.y)
-            drawingView.setStrokes(CanvasStore.snapshot(), animateNew = true)
+            CanvasStore.addLocalDot(point.x, point.y, lobbyId = lobbyId)
+            drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = true)
         }
 
         findViewById<TextView>(R.id.btnNote).setOnClickListener { showNoteDialog() }
         findViewById<TextView>(R.id.btnSave).setOnClickListener {
             lifecycleScope.launch {
-                CanvasCapture.saveMoment(this@LockDrawActivity)
+                CanvasCapture.saveMoment(this@LockDrawActivity, lobbyId)
                     .onSuccess {
                         Toast.makeText(this@LockDrawActivity, R.string.moment_saved, Toast.LENGTH_SHORT).show()
                     }
@@ -111,36 +139,44 @@ class LockDrawActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             CanvasStore.revision.collectLatest {
-                drawingView.setStrokes(CanvasStore.snapshot(), animateNew = true)
+                drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = true)
+                refreshLegend()
             }
         }
         lifecycleScope.launch {
             PairConnectionService.events.collectLatest { event ->
+                val id = lobbyId ?: return@collectLatest
                 when (event) {
-                    is PairEvent.StrokeReceived -> {
+                    is PairEvent.StrokeReceived -> if (event.lobbyId == id) {
                         drawingView.addStroke(event.stroke, fadeIn = true)
                         maybeHaptic()
+                        refreshLegend()
                     }
-                    is PairEvent.StrokeUndone -> {
-                        drawingView.setStrokes(CanvasStore.snapshot(), animateNew = false)
+                    is PairEvent.StrokeUndone -> if (event.lobbyId == id) {
+                        drawingView.setStrokes(CanvasStore.snapshot(id), animateNew = false)
                     }
-                    PairEvent.Cleared -> drawingView.clearCanvas()
+                    is PairEvent.Cleared -> if (event.lobbyId == id) {
+                        drawingView.clearCanvas()
+                    }
                 }
             }
         }
         lifecycleScope.launch {
-            PairConnectionService.state.collectLatest { state ->
-                statusView.text = when (state) {
+            PairConnectionService.lobbyStates.collectLatest { map ->
+                val id = lobbyId ?: return@collectLatest
+                statusView.text = when (map[id] ?: ConnectionState.IDLE) {
                     ConnectionState.CONNECTED -> "Verbunden · zeichnen"
-                    ConnectionState.HOSTING -> "Warte auf Partner…"
+                    ConnectionState.HOSTING -> "Warte auf Leute…"
                     ConnectionState.RECONNECTING, ConnectionState.CONNECTING -> "Verbinde erneut…"
                     ConnectionState.IDLE -> "Nicht verbunden"
                 }
             }
         }
         lifecycleScope.launch {
-            PairSessionState.partnerPresent.collectLatest { present ->
-                updatePresence(present)
+            val id = lobbyId ?: return@launch
+            PairSessionState.peers(id).collectLatest {
+                updatePresence(PairSessionState.anyonePresent(id))
+                refreshLegend()
             }
         }
         lifecycleScope.launch {
@@ -155,17 +191,86 @@ class LockDrawActivity : ComponentActivity() {
         }
     }
 
+    private suspend fun prefsSetActive(id: String) {
+        LuvApp.instance.prefs.setActiveLobby(id)
+    }
+
     override fun onResume() {
         super.onResume()
         updateClock()
         MidnightClear.checkAndClearIfNewDay(this)
-        drawingView.setStrokes(CanvasStore.snapshot(), animateNew = false)
-        PairConnectionService.sendPresence(this, active = true)
+        drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
+        PairConnectionService.sendPresence(this, active = true, lobbyId = lobbyId)
+        refreshLegend()
     }
 
     override fun onPause() {
-        PairConnectionService.sendPresence(this, active = false)
+        PairConnectionService.sendPresence(this, active = false, lobbyId = lobbyId)
         super.onPause()
+    }
+
+    private fun refreshLegend() {
+        val id = lobbyId ?: return
+        lifecycleScope.launch {
+            val snap = LuvApp.instance.prefs.snapshot()
+            val peers = PairSessionState.legendPeers(id, snap.nickname, snap.colorIndex)
+            // Auch aus Strokes ergänzen
+            val fromStrokes = CanvasStore.snapshot(id)
+                .filter { !it.isLocal && !it.nickname.isNullOrBlank() }
+                .map {
+                    PeerInfo(
+                        peerKey = it.authorId ?: it.nickname!!,
+                        nickname = it.nickname!!,
+                        colorIndex = it.colorIndex,
+                        active = false
+                    )
+                }
+            val merged = (peers + fromStrokes).distinctBy { it.nickname.lowercase() }.take(PeerPalette.MAX_PEERS)
+            legendRow.removeAllViews()
+            val pad = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 4f, resources.displayMetrics).toInt()
+            merged.forEachIndexed { index, peer ->
+                if (index > 0) {
+                    val spacer = View(this@LockDrawActivity).apply {
+                        layoutParams = LinearLayout.LayoutParams(pad * 2, 1)
+                    }
+                    legendRow.addView(spacer)
+                }
+                legendRow.addView(buildLegendChip(peer))
+            }
+        }
+    }
+
+    private fun buildLegendChip(peer: PeerInfo): View {
+        val dp = resources.displayMetrics.density
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding((6 * dp).toInt(), (2 * dp).toInt(), (8 * dp).toInt(), (2 * dp).toInt())
+        }
+        val circle = TextView(this).apply {
+            val size = (22 * dp).toInt()
+            layoutParams = LinearLayout.LayoutParams(size, size)
+            gravity = Gravity.CENTER
+            text = peer.nickname.trim().take(1).uppercase(Locale.getDefault())
+            setTextColor(0xFF1A1F2E.toInt())
+            textSize = 11f
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(PeerPalette.strokeColor(peer.colorIndex))
+            }
+            alpha = if (peer.active || peer.peerKey == "me") 1f else 0.7f
+        }
+        row.addView(circle)
+        if (legendExpanded) {
+            val name = TextView(this).apply {
+                text = peer.nickname
+                setTextColor(0xE6FFFFFF.toInt())
+                textSize = 12f
+                setPadding((8 * dp).toInt(), 0, (4 * dp).toInt(), 0)
+            }
+            row.addView(name)
+        }
+        return row
     }
 
     private fun maybeHaptic() {
@@ -188,7 +293,7 @@ class LockDrawActivity : ComponentActivity() {
             ).apply {
                 duration = 1200
                 repeatCount = ObjectAnimator.INFINITE
-                interpolator = AccelerateDecelerateInterpolator()
+                interpolator = android.view.animation.AccelerateDecelerateInterpolator()
                 start()
             }
         } else {
@@ -217,7 +322,7 @@ class LockDrawActivity : ComponentActivity() {
             .setPositiveButton(R.string.note_send) { _, _ ->
                 val text = input.text?.toString()?.trim().orEmpty()
                 if (text.isNotBlank()) {
-                    PairConnectionService.sendNote(this, text)
+                    PairConnectionService.sendNote(this, text, lobbyId)
                     showBanner(noteBanner, text, 2500)
                 }
             }
@@ -231,5 +336,9 @@ class LockDrawActivity : ComponentActivity() {
         dateView.text = DateFormat.format("EEEE, d. MMMM", now)
             .toString()
             .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
+    }
+
+    companion object {
+        const val EXTRA_LOBBY_ID = "lobby_id"
     }
 }

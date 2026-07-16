@@ -2,22 +2,25 @@
 <resources>
     <string name="app_name">LUV</string>
     <string name="widget_name">LUV Leinwand</string>
-    <string name="widget_description">Gemeinsame Sperrbildschirm-Leinwand für euch beide.</string>
-    <string name="notification_channel">Paar-Verbindung</string>
+    <string name="widget_description">Leinwand einer LUV-Lobby — Home oder Sperrbildschirm.</string>
+    <string name="widget_configure">Lobby für Widget wählen</string>
+    <string name="notification_channel">Lobby-Verbindung</string>
     <string name="notification_title">LUV verbunden</string>
     <string name="notification_connecting">Verbindung wird hergestellt…</string>
-    <string name="notification_hosting">Warte auf Partner…</string>
+    <string name="notification_hosting">Warte auf Leute…</string>
     <string name="draw_hint">Tipp = Punkt · Doppeltipp = Undo · 2 Sek. = löschen</string>
     <string name="open_canvas">Leinwand öffnen</string>
-    <string name="partner_draw_channel">Partner malt</string>
-    <string name="partner_draw_channel_desc">Stille Hinweise, wenn der Partner etwas zeichnet</string>
+    <string name="back">Zurück</string>
+    <string name="partner_draw_channel">Jemand malt</string>
+    <string name="partner_draw_channel_desc">Stille Hinweise, wenn jemand in einer Lobby zeichnet</string>
     <string name="partner_draw_title">LUV</string>
-    <string name="partner_draw_text">Dein Partner hat etwas gemalt</string>
-    <string name="partner_notify_toggle">Benachrichtigung wenn Partner malt</string>
-    <string name="partner_haptic_toggle">Vibration wenn Partner malt</string>
-    <string name="partner_here">gerade da</string>
-    <string name="partner_away">nicht auf Leinwand</string>
-    <string name="missed_you">Wieder da — ich hab dich vermisst</string>
+    <string name="partner_draw_text">Jemand hat etwas gemalt</string>
+    <string name="partner_draw_text_fmt">%1$s: %2$s hat gezeichnet!</string>
+    <string name="partner_notify_toggle">Benachrichtigung wenn jemand malt</string>
+    <string name="partner_haptic_toggle">Vibration wenn jemand malt</string>
+    <string name="partner_here">jemand da</string>
+    <string name="partner_away">niemand auf Leinwand</string>
+    <string name="missed_you">Wieder da — schön, dass du zurück bist</string>
     <string name="send_note">Nachricht</string>
     <string name="save_moment">Moment speichern</string>
     <string name="note_hint">Kurze Nachricht…</string>

@@ -5,6 +5,9 @@ const { WebSocketServer } = require("ws");
 
 const PORT = Number(process.env.PORT || 8080);
 const ROOM_TTL_MS = Number(process.env.ROOM_TTL_MS || 24 * 60 * 60 * 1000);
+const MAX_PEERS = Number(process.env.MAX_PEERS || 4);
+const PUBLIC_JOIN_BASE =
+  process.env.PUBLIC_JOIN_BASE || "https://reineke.pro/love/j";
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 /** @type {Map<string, { token: string, createdAt: number, sockets: Map<string, import('ws').WebSocket> }>} */
@@ -20,6 +23,14 @@ function randomCode(length = 6) {
 
 function randomToken() {
   return crypto.randomBytes(16).toString("hex");
+}
+
+function inviteFor(code) {
+  return {
+    code,
+    invite: `LUV-${code}`,
+    joinUrl: `${PUBLIC_JOIN_BASE.replace(/\/$/, "")}/${code}`,
+  };
 }
 
 function cleanupRooms() {
@@ -43,6 +54,7 @@ app.get("/health", (_req, res) => {
     ok: true,
     service: "luv-api",
     rooms: rooms.size,
+    maxPeers: MAX_PEERS,
     uptimeSec: Math.round(process.uptime()),
   });
 });
@@ -58,9 +70,9 @@ app.post("/v1/rooms", (_req, res) => {
     sockets: new Map(),
   });
   res.status(201).json({
-    code,
     token,
-    invite: `LUV-${code}`,
+    maxPeers: MAX_PEERS,
+    ...inviteFor(code),
   });
 });
 
@@ -72,13 +84,14 @@ app.post("/v1/rooms/:code/join", (req, res) => {
   if (!room) {
     return res.status(404).json({ error: "room_not_found" });
   }
-  if (room.sockets.size >= 2) {
+  if (room.sockets.size >= MAX_PEERS) {
     return res.status(409).json({ error: "room_full" });
   }
   return res.json({
-    code,
     token: room.token,
-    invite: `LUV-${code}`,
+    peers: room.sockets.size,
+    maxPeers: MAX_PEERS,
+    ...inviteFor(code),
   });
 });
 
@@ -91,9 +104,9 @@ app.get("/v1/rooms/:code", (req, res) => {
     return res.status(404).json({ error: "room_not_found" });
   }
   return res.json({
-    code,
     peers: room.sockets.size,
-    invite: `LUV-${code}`,
+    maxPeers: MAX_PEERS,
+    ...inviteFor(code),
   });
 });
 
@@ -104,6 +117,7 @@ function broadcastPeerCount(room) {
   const payload = JSON.stringify({
     type: "peers",
     count: room.sockets.size,
+    maxPeers: MAX_PEERS,
   });
   for (const socket of room.sockets.values()) {
     if (socket.readyState === 1) socket.send(payload);
@@ -123,7 +137,7 @@ wss.on("connection", (socket, req) => {
     socket.close(4401, "unauthorized");
     return;
   }
-  if (room.sockets.size >= 2) {
+  if (room.sockets.size >= MAX_PEERS) {
     socket.close(4409, "room_full");
     return;
   }
@@ -136,6 +150,7 @@ wss.on("connection", (socket, req) => {
       code,
       peerId,
       peers: room.sockets.size,
+      maxPeers: MAX_PEERS,
     })
   );
   broadcastPeerCount(room);
@@ -159,5 +174,5 @@ wss.on("connection", (socket, req) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`luv-api listening on :${PORT}`);
+  console.log(`luv-api listening on :${PORT} (maxPeers=${MAX_PEERS})`);
 });

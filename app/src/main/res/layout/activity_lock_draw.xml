@@ -3,14 +3,38 @@
     android:id="@+id/lockRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/male_blue">
+    android:background="#FF1A1F2E">
+
+    <TextView
+        android:id="@+id/btnBack"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="48dp"
+        android:background="@drawable/lock_action_btn"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="8dp"
+        android:text="@string/back"
+        android:textColor="@color/ink_white"
+        android:textSize="13sp" />
+
+    <TextView
+        android:id="@+id/lobbyTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="52dp"
+        android:alpha="0.85"
+        android:textColor="@color/ink_white"
+        android:textSize="13sp" />
 
     <TextView
         android:id="@+id/lockClock"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top|center_horizontal"
-        android:layout_marginTop="72dp"
+        android:layout_marginTop="84dp"
         android:gravity="center"
         android:includeFontPadding="false"
         android:textColor="@color/ink_white"
@@ -22,7 +46,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top|center_horizontal"
-        android:layout_marginTop="150dp"
+        android:layout_marginTop="162dp"
         android:gravity="center"
         android:textColor="@color/ink_white"
         android:textSize="16sp" />
@@ -32,8 +56,8 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|end"
-        android:layout_marginTop="56dp"
-        android:layout_marginEnd="20dp"
+        android:layout_marginTop="48dp"
+        android:layout_marginEnd="16dp"
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
@@ -41,8 +65,8 @@
             android:id="@+id/presenceDot"
             android:layout_width="10dp"
             android:layout_height="10dp"
-            android:background="@drawable/presence_dot"
-            android:alpha="0.35" />
+            android:alpha="0.35"
+            android:background="@drawable/presence_dot" />
 
         <TextView
             android:id="@+id/presenceLabel"
@@ -79,7 +103,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal|top"
-        android:layout_marginTop="190dp"
+        android:layout_marginTop="200dp"
         android:alpha="0"
         android:background="@drawable/note_banner_bg"
         android:paddingHorizontal="16dp"
@@ -87,6 +111,26 @@
         android:text="@string/missed_you"
         android:textColor="@color/ink_white"
         android:textSize="14sp" />
+
+    <!-- Dezent: farbige Initialen-Pillen — wer was malt -->
+    <HorizontalScrollView
+        android:id="@+id/legendScroll"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="108dp"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/legendRow"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/legend_chip_bg"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="8dp" />
+    </HorizontalScrollView>
 
     <LinearLayout
         android:layout_width="match_parent"

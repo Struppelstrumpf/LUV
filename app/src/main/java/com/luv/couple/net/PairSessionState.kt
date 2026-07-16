@@ -1,19 +1,18 @@
 package com.luv.couple.net
 
-import com.luv.couple.data.Gender
+import com.luv.couple.data.PeerInfo
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import java.util.concurrent.ConcurrentHashMap
 
 object PairSessionState {
-    private val _partnerPresent = MutableStateFlow(false)
-    val partnerPresent: StateFlow<Boolean> = _partnerPresent.asStateFlow()
-
-    private val _partnerGender = MutableStateFlow<Gender?>(null)
-    val partnerGender: StateFlow<Gender?> = _partnerGender.asStateFlow()
+    private val peersByLobby = ConcurrentHashMap<String, MutableStateFlow<Map<String, PeerInfo>>>()
+    private val peerCounts = ConcurrentHashMap<String, MutableStateFlow<Int>>()
 
     private val _notes = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val notes: SharedFlow<String> = _notes.asSharedFlow()
@@ -21,45 +20,76 @@ object PairSessionState {
     private val _missedYou = MutableSharedFlow<Unit>(extraBufferCapacity = 2)
     val missedYou: SharedFlow<Unit> = _missedYou.asSharedFlow()
 
-    private var partnerGoneSince: Long = 0L
+    private val goneSinceByLobby = ConcurrentHashMap<String, Long>()
     private const val MISS_THRESHOLD_MS = 2 * 60_000L
 
-    fun onPresence(active: Boolean, genderName: String?) {
-        genderName?.let {
-            runCatching { Gender.valueOf(it) }.getOrNull()?.let { g ->
-                _partnerGender.value = g
-            }
+    fun peers(lobbyId: String): StateFlow<Map<String, PeerInfo>> =
+        peersByLobby.getOrPut(lobbyId) { MutableStateFlow(emptyMap()) }.asStateFlow()
+
+    fun peerCount(lobbyId: String): StateFlow<Int> =
+        peerCounts.getOrPut(lobbyId) { MutableStateFlow(0) }.asStateFlow()
+
+    fun anyonePresent(lobbyId: String): Boolean =
+        peersByLobby[lobbyId]?.value?.values?.any { it.active } == true
+
+    fun onPresence(lobbyId: String, peerKey: String, nickname: String, colorIndex: Int, active: Boolean) {
+        val flow = peersByLobby.getOrPut(lobbyId) { MutableStateFlow(emptyMap()) }
+        val key = peerKey.ifBlank { nickname.ifBlank { "peer" } }
+        val wasAnyone = flow.value.values.any { it.active }
+        flow.update { current ->
+            current + (key to PeerInfo(key, nickname.ifBlank { "Jemand" }, colorIndex, active))
         }
-        val wasPresent = _partnerPresent.value
-        if (!active) {
-            if (wasPresent) partnerGoneSince = System.currentTimeMillis()
-            _partnerPresent.value = false
-            return
+        val nowAnyone = flow.value.values.any { it.active }
+        if (!active && wasAnyone && !nowAnyone) {
+            goneSinceByLobby[lobbyId] = System.currentTimeMillis()
         }
-        if (!wasPresent && partnerGoneSince > 0L) {
-            val away = System.currentTimeMillis() - partnerGoneSince
-            if (away >= MISS_THRESHOLD_MS) {
+        if (active && !wasAnyone) {
+            val since = goneSinceByLobby[lobbyId] ?: 0L
+            if (since > 0L && System.currentTimeMillis() - since >= MISS_THRESHOLD_MS) {
                 _missedYou.tryEmit(Unit)
             }
+            goneSinceByLobby.remove(lobbyId)
         }
-        partnerGoneSince = 0L
-        _partnerPresent.value = true
     }
 
-    fun onPeers(count: Int) {
+    fun onPeers(lobbyId: String, count: Int) {
+        peerCounts.getOrPut(lobbyId) { MutableStateFlow(0) }.value = count
         if (count < 2) {
-            if (_partnerPresent.value) partnerGoneSince = System.currentTimeMillis()
-            _partnerPresent.value = false
+            val flow = peersByLobby[lobbyId] ?: return
+            if (flow.value.values.any { it.active }) {
+                goneSinceByLobby[lobbyId] = System.currentTimeMillis()
+            }
+            flow.update { map -> map.mapValues { it.value.copy(active = false) } }
         }
+    }
+
+    fun legendPeers(lobbyId: String, myNickname: String?, myColor: Int): List<PeerInfo> {
+        val remote = peersByLobby[lobbyId]?.value?.values?.toList().orEmpty()
+        val me = PeerInfo(
+            peerKey = "me",
+            nickname = myNickname?.takeIf { it.isNotBlank() } ?: "Du",
+            colorIndex = myColor,
+            active = true
+        )
+        val others = remote.filter {
+            !it.nickname.equals(myNickname, ignoreCase = true)
+        }
+        return listOf(me) + others.distinctBy { it.nickname.lowercase() }
     }
 
     fun emitNote(text: String) {
         if (text.isNotBlank()) _notes.tryEmit(text.trim())
     }
 
+    fun resetLobby(lobbyId: String) {
+        peersByLobby[lobbyId]?.value = emptyMap()
+        peerCounts[lobbyId]?.value = 0
+        goneSinceByLobby.remove(lobbyId)
+    }
+
     fun reset() {
-        _partnerPresent.value = false
-        _partnerGender.value = null
-        partnerGoneSince = 0L
+        peersByLobby.clear()
+        peerCounts.clear()
+        goneSinceByLobby.clear()
     }
 }

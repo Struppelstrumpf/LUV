@@ -4,26 +4,34 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import com.luv.couple.LuvApp
-import com.luv.couple.data.Gender
+import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Stroke
+import com.luv.couple.data.StrokePoint
 import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairMessage
 import com.luv.couple.net.PairProtocol
-import com.luv.couple.net.PairSessionState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
 object CanvasStore {
-    private val strokes = CopyOnWriteArrayList<Stroke>()
-    private val localStrokeIds = CopyOnWriteArrayList<String>()
+    private data class LobbyCanvas(
+        val strokes: CopyOnWriteArrayList<Stroke> = CopyOnWriteArrayList(),
+        val localStrokeIds: CopyOnWriteArrayList<String> = CopyOnWriteArrayList(),
+        val revision: MutableStateFlow<Long> = MutableStateFlow(0L)
+    )
+
+    private val canvases = ConcurrentHashMap<String, LobbyCanvas>()
+    private val _activeLobbyId = MutableStateFlow<String?>(null)
+    val activeLobbyId: StateFlow<String?> = _activeLobbyId.asStateFlow()
+
     private val _revision = MutableStateFlow(0L)
     val revision: StateFlow<Long> = _revision.asStateFlow()
 
@@ -33,90 +41,142 @@ object CanvasStore {
         appContext = context.applicationContext
     }
 
-    fun snapshot(): List<Stroke> = strokes.toList()
+    fun setActiveLobby(lobbyId: String?) {
+        _activeLobbyId.value = lobbyId
+        bumpGlobal()
+    }
 
-    fun addLocalStroke(points: List<com.luv.couple.data.StrokePoint>, width: Float = 18f) {
+    fun resolveLobbyId(lobbyId: String? = null): String? =
+        lobbyId ?: _activeLobbyId.value ?: runBlocking {
+            LuvApp.instance.prefs.snapshot().activeLobbyId
+        }
+
+    private fun canvas(lobbyId: String): LobbyCanvas =
+        canvases.getOrPut(lobbyId) { LobbyCanvas() }
+
+    fun snapshot(lobbyId: String? = null): List<Stroke> {
+        val id = resolveLobbyId(lobbyId) ?: return emptyList()
+        return canvas(id).strokes.toList()
+    }
+
+    fun addLocalStroke(
+        points: List<StrokePoint>,
+        width: Float = 18f,
+        lobbyId: String? = null
+    ) {
         if (points.size < 2) return
-        val gender = runBlocking { LuvApp.instance.prefs.snapshot().gender?.name }
+        val id = resolveLobbyId(lobbyId) ?: return
+        val snap = runBlocking { LuvApp.instance.prefs.snapshot() }
         val stroke = Stroke(
             id = UUID.randomUUID().toString(),
             points = points,
             width = width,
             isLocal = true,
-            gender = gender
+            nickname = snap.nickname,
+            colorIndex = snap.colorIndex,
+            authorId = "local"
         )
-        strokes.add(stroke)
-        localStrokeIds.add(stroke.id)
-        bump()
+        val c = canvas(id)
+        c.strokes.add(stroke)
+        c.localStrokeIds.add(stroke.id)
+        bump(id)
         PairConnectionService.sendStroke(
             appContext,
-            PairProtocol.encode(PairMessage.StrokeMsg(stroke))
+            PairProtocol.encode(PairMessage.StrokeMsg(stroke)),
+            id
         )
         LockScreenWidgetProvider.requestUpdate(appContext)
     }
 
-    /** Einzelner Tipp-Punkt (i-Punkt, Ü-Punkte, …) */
-    fun addLocalDot(x: Float, y: Float) {
+    fun addLocalDot(x: Float, y: Float, lobbyId: String? = null) {
         val r = 0.006f
         val points = buildList {
             for (i in 0..10) {
                 val a = (Math.PI * 2.0 * i) / 10.0
                 add(
-                    com.luv.couple.data.StrokePoint(
+                    StrokePoint(
                         x = (x + r * kotlin.math.cos(a)).toFloat().coerceIn(0f, 1f),
                         y = (y + r * kotlin.math.sin(a)).toFloat().coerceIn(0f, 1f)
                     )
                 )
             }
         }
-        addLocalStroke(points, width = 16f)
+        addLocalStroke(points, width = 16f, lobbyId = lobbyId)
     }
 
-    fun addRemoteStroke(stroke: Stroke) {
-        if (strokes.any { it.id == stroke.id }) return
-        strokes.add(stroke.copy(isLocal = false))
-        bump()
+    fun addRemoteStroke(stroke: Stroke, lobbyId: String) {
+        val c = canvas(lobbyId)
+        if (c.strokes.any { it.id == stroke.id }) return
+        c.strokes.add(stroke.copy(isLocal = false))
+        bump(lobbyId)
         LockScreenWidgetProvider.requestUpdate(appContext)
     }
 
-    fun undoLastLocalStroke(): Boolean {
-        val id = localStrokeIds.lastOrNull() ?: return false
-        localStrokeIds.remove(id)
-        strokes.removeAll { it.id == id }
-        bump()
-        PairConnectionService.sendUndo(appContext, id)
+    fun undoLastLocalStroke(lobbyId: String? = null): Boolean {
+        val id = resolveLobbyId(lobbyId) ?: return false
+        val c = canvas(id)
+        val strokeId = c.localStrokeIds.lastOrNull() ?: return false
+        c.localStrokeIds.remove(strokeId)
+        c.strokes.removeAll { it.id == strokeId }
+        bump(id)
+        PairConnectionService.sendUndo(appContext, strokeId, id)
         LockScreenWidgetProvider.requestUpdate(appContext)
         return true
     }
 
-    fun removeStrokeById(strokeId: String) {
-        val removed = strokes.removeAll { it.id == strokeId }
-        localStrokeIds.remove(strokeId)
+    fun removeStrokeById(strokeId: String, lobbyId: String) {
+        val c = canvas(lobbyId)
+        val removed = c.strokes.removeAll { it.id == strokeId }
+        c.localStrokeIds.remove(strokeId)
         if (removed) {
-            bump()
+            bump(lobbyId)
             LockScreenWidgetProvider.requestUpdate(appContext)
         }
     }
 
-    fun clear(localOnly: Boolean = false, notifyPeer: Boolean = false) {
-        strokes.clear()
-        localStrokeIds.clear()
-        bump()
+    fun clear(
+        localOnly: Boolean = false,
+        notifyPeer: Boolean = false,
+        lobbyId: String? = null
+    ) {
+        val id = resolveLobbyId(lobbyId) ?: return
+        val c = canvas(id)
+        c.strokes.clear()
+        c.localStrokeIds.clear()
+        bump(id)
         if (notifyPeer && !localOnly) {
-            PairConnectionService.sendClear(appContext)
+            PairConnectionService.sendClear(appContext, id)
         }
         LockScreenWidgetProvider.requestUpdate(appContext)
     }
 
-    fun strokeColor(stroke: Stroke, myGender: Gender?): Int {
-        if (stroke.isLocal) return Color.WHITE
-        val partner = PairSessionState.partnerGender.value
-            ?: stroke.gender?.let { runCatching { Gender.valueOf(it) }.getOrNull() }
-            ?: myGender?.let { if (it == Gender.MALE) Gender.FEMALE else Gender.MALE }
-        return partner?.partnerStrokeColor ?: 0xFFFFF0F8.toInt()
+    fun clearLobby(lobbyId: String) {
+        canvases.remove(lobbyId)
+        bumpGlobal()
     }
 
-    fun renderBitmap(width: Int, height: Int, background: Int, myGender: Gender? = null): Bitmap {
+    fun clearAll(notifyPeer: Boolean = false) {
+        val ids = runBlocking {
+            LuvApp.instance.prefs.snapshot().lobbies.map { it.id }
+        }.ifEmpty { canvases.keys.toList() }
+        ids.forEach { clear(notifyPeer = notifyPeer, lobbyId = it) }
+    }
+
+    fun strokeColor(stroke: Stroke): Int {
+        if (stroke.gender != null && stroke.nickname == null) {
+            // Legacy gender stroke
+            return when (stroke.gender) {
+                "MALE" -> 0xFFFFE8F6.toInt()
+                "FEMALE" -> 0xFFE8F9FF.toInt()
+                else -> PeerPalette.strokeColor(stroke.colorIndex)
+            }
+        }
+        return PeerPalette.strokeColor(stroke.colorIndex)
+    }
+
+    fun renderBitmap(width: Int, height: Int, background: Int, lobbyId: String? = null): Bitmap {
+        val id = resolveLobbyId(lobbyId)
+        val strokes = if (id == null) emptyList() else canvas(id).strokes.toList()
         val bitmap = Bitmap.createBitmap(width.coerceAtLeast(1), height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(background)
@@ -127,7 +187,7 @@ object CanvasStore {
         }
         strokes.forEach { stroke ->
             if (stroke.points.isEmpty()) return@forEach
-            paint.color = strokeColor(stroke, myGender)
+            paint.color = strokeColor(stroke)
             paint.strokeWidth = stroke.width
             val path = Path()
             val first = stroke.points.first()
@@ -140,12 +200,22 @@ object CanvasStore {
         return bitmap
     }
 
-    fun backgroundFor(gender: Gender?): Int = gender?.lockColor ?: Gender.MALE.lockColor
+    fun backgroundFor(colorIndex: Int): Int = PeerPalette.lockBackground(colorIndex)
 
-    private fun bump() {
+    private fun bump(lobbyId: String) {
+        val c = canvas(lobbyId)
+        c.revision.value = c.revision.value + 1
+        bumpGlobal()
+        if (::appContext.isInitialized) {
+            appContext.sendBroadcast(
+                Intent(LockScreenWidgetProvider.ACTION_WIDGET_REFRESH)
+                    .setPackage(appContext.packageName)
+                    .putExtra(LockScreenWidgetProvider.EXTRA_LOBBY_ID, lobbyId)
+            )
+        }
+    }
+
+    private fun bumpGlobal() {
         _revision.value = _revision.value + 1
-        appContext.sendBroadcast(
-            Intent(LockScreenWidgetProvider.ACTION_WIDGET_REFRESH).setPackage(appContext.packageName)
-        )
     }
 }

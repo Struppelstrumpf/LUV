@@ -1,6 +1,7 @@
 package com.luv.couple
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -9,6 +10,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import com.luv.couple.net.PendingJoin
 import com.luv.couple.ui.LuvAppNav
 import com.luv.couple.ui.theme.LuvTheme
 
@@ -21,11 +23,24 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         maybeRequestNotificationPermission()
+        captureJoinIntent(intent)
         setContent {
             LuvTheme {
                 LuvAppNav()
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        captureJoinIntent(intent)
+    }
+
+    private fun captureJoinIntent(intent: Intent?) {
+        val data = intent?.data?.toString()
+        val extra = intent?.getStringExtra(Intent.EXTRA_TEXT)
+        PendingJoin.offer(data ?: extra)
     }
 
     private fun maybeRequestNotificationPermission() {

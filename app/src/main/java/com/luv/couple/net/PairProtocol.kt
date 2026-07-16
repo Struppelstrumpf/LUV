@@ -10,7 +10,13 @@ sealed class PairMessage {
     data class HelloOk(val ok: Boolean) : PairMessage()
     data class StrokeMsg(val stroke: Stroke) : PairMessage()
     data class UndoMsg(val strokeId: String) : PairMessage()
-    data class Presence(val active: Boolean, val gender: String?) : PairMessage()
+    data class Presence(
+        val active: Boolean,
+        val nickname: String?,
+        val colorIndex: Int,
+        val peerKey: String? = null,
+        @Deprecated("legacy") val gender: String? = null
+    ) : PairMessage()
     data class Note(val text: String) : PairMessage()
     data object Clear : PairMessage()
     data object Ping : PairMessage()
@@ -39,6 +45,9 @@ object PairProtocol {
                     .put("type", "stroke")
                     .put("id", message.stroke.id)
                     .put("width", message.stroke.width.toDouble())
+                    .put("nickname", message.stroke.nickname ?: JSONObject.NULL)
+                    .put("colorIndex", message.stroke.colorIndex)
+                    .put("authorId", message.stroke.authorId ?: JSONObject.NULL)
                     .put("gender", message.stroke.gender ?: JSONObject.NULL)
                     .put("points", points)
             }
@@ -48,6 +57,9 @@ object PairProtocol {
             is PairMessage.Presence -> JSONObject()
                 .put("type", "presence")
                 .put("active", message.active)
+                .put("nickname", message.nickname ?: JSONObject.NULL)
+                .put("colorIndex", message.colorIndex)
+                .put("peerKey", message.peerKey ?: JSONObject.NULL)
                 .put("gender", message.gender ?: JSONObject.NULL)
             is PairMessage.Note -> JSONObject()
                 .put("type", "note")
@@ -78,21 +90,42 @@ object PairProtocol {
                             )
                         }
                     }
+                    val nickname = json.optString("nickname").takeIf { it.isNotBlank() && it != "null" }
+                    val colorIndex = if (json.has("colorIndex")) {
+                        json.optInt("colorIndex", 0)
+                    } else {
+                        nickname?.let { com.luv.couple.data.PeerPalette.indexFor(it.lowercase()) } ?: 0
+                    }
                     PairMessage.StrokeMsg(
                         Stroke(
                             id = json.getString("id"),
                             points = points,
                             width = json.optDouble("width", 18.0).toFloat(),
                             isLocal = false,
+                            nickname = nickname,
+                            colorIndex = colorIndex,
+                            authorId = json.optString("authorId").takeIf { it.isNotBlank() && it != "null" },
                             gender = json.optString("gender").takeIf { it.isNotBlank() && it != "null" }
                         )
                     )
                 }
                 "undo" -> PairMessage.UndoMsg(json.getString("id"))
-                "presence" -> PairMessage.Presence(
-                    active = json.optBoolean("active", false),
-                    gender = json.optString("gender").takeIf { it.isNotBlank() && it != "null" }
-                )
+                "presence" -> {
+                    val nickname = json.optString("nickname").takeIf { it.isNotBlank() && it != "null" }
+                    val colorIndex = if (json.has("colorIndex")) {
+                        json.optInt("colorIndex", 0)
+                    } else {
+                        nickname?.let { com.luv.couple.data.PeerPalette.indexFor(it.lowercase()) } ?: 0
+                    }
+                    PairMessage.Presence(
+                        active = json.optBoolean("active", false),
+                        nickname = nickname,
+                        colorIndex = colorIndex,
+                        peerKey = json.optString("peerKey").takeIf { it.isNotBlank() && it != "null" }
+                            ?: nickname,
+                        gender = json.optString("gender").takeIf { it.isNotBlank() && it != "null" }
+                    )
+                }
                 "note" -> PairMessage.Note(json.optString("text").take(80))
                 "clear" -> PairMessage.Clear
                 "ping" -> PairMessage.Ping

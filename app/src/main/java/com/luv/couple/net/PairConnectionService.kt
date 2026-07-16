@@ -15,10 +15,9 @@ import com.luv.couple.LuvApp
 import com.luv.couple.MainActivity
 import com.luv.couple.R
 import com.luv.couple.data.ConnectionState
-import com.luv.couple.data.Role
+import com.luv.couple.data.Lobby
 import com.luv.couple.lock.CanvasStore
 import com.luv.couple.notify.PartnerStrokeNotifier
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,31 +32,35 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 class PairConnectionService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var sessionJob: Job? = null
-    private val running = AtomicBoolean(false)
     private val foregroundStarted = AtomicBoolean(false)
-    private val webSocket = AtomicReference<WebSocket?>(null)
-    private var bootCode: String? = null
-    private var bootToken: String? = null
-    private var bootRole: Role? = null
+    private val sessions = ConcurrentHashMap<String, LobbySession>()
 
     private val wsClient = OkHttpClient.Builder()
         .pingInterval(20, TimeUnit.SECONDS)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
+
+    private data class LobbySession(
+        val lobby: Lobby,
+        val running: AtomicBoolean = AtomicBoolean(true),
+        val webSocket: AtomicReference<WebSocket?> = AtomicReference(null),
+        var job: Job? = null
+    )
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -66,35 +69,240 @@ class PairConnectionService : Service() {
 
         when (intent?.action) {
             ACTION_STOP -> {
-                stopSelfSafely()
+                val lobbyId = intent.getStringExtra(EXTRA_LOBBY_ID)
+                if (lobbyId != null) stopLobby(lobbyId)
+                else stopAll()
                 return START_NOT_STICKY
             }
             ACTION_SEND_STROKE -> {
+                val lobbyId = intent.getStringExtra(EXTRA_LOBBY_ID)
                 val payload = intent.getStringExtra(EXTRA_PAYLOAD)
-                if (payload != null) sendRaw(payload)
+                if (payload != null) sendRaw(lobbyId, payload)
                 return START_STICKY
             }
             ACTION_SEND_CLEAR -> {
-                sendRaw(PairProtocol.encode(PairMessage.Clear))
+                sendRaw(intent.getStringExtra(EXTRA_LOBBY_ID), PairProtocol.encode(PairMessage.Clear))
                 return START_STICKY
             }
             ACTION_SEND_UNDO -> {
                 val strokeId = intent.getStringExtra(EXTRA_STROKE_ID)
                 if (!strokeId.isNullOrBlank()) {
-                    sendRaw(PairProtocol.encode(PairMessage.UndoMsg(strokeId)))
+                    sendRaw(
+                        intent.getStringExtra(EXTRA_LOBBY_ID),
+                        PairProtocol.encode(PairMessage.UndoMsg(strokeId))
+                    )
                 }
                 return START_STICKY
             }
-            ACTION_START -> {
-                bootCode = intent.getStringExtra(EXTRA_CODE)?.let { LuvApiClient.normalizeCode(it) }
-                bootToken = intent.getStringExtra(EXTRA_TOKEN)
-                bootRole = intent.getStringExtra(EXTRA_ROLE)
-                    ?.let { runCatching { Role.valueOf(it) }.getOrNull() }
-                startSession()
+            ACTION_START_ALL, ACTION_START, null -> {
+                syncSessionsFromPrefs()
             }
-            else -> startSession()
         }
         return START_STICKY
+    }
+
+    private fun syncSessionsFromPrefs() {
+        val lobbies = runBlocking { LuvApp.instance.prefs.snapshot().lobbies }
+        if (lobbies.isEmpty()) {
+            stopAll()
+            return
+        }
+        val wanted = lobbies.associateBy { it.id }
+        sessions.keys.filter { it !in wanted }.forEach { stopLobby(it) }
+        wanted.values.forEach { ensureLobbySession(it) }
+        refreshAggregateState()
+    }
+
+    private fun ensureLobbySession(lobby: Lobby) {
+        val existing = sessions[lobby.id]
+        if (existing != null) {
+            if (existing.job?.isActive == true) return
+            existing.running.set(true)
+            existing.job = scope.launch { runLobbyLoop(existing) }
+            return
+        }
+        val session = LobbySession(lobby = lobby)
+        sessions[lobby.id] = session
+        session.job = scope.launch { runLobbyLoop(session) }
+    }
+
+    private suspend fun runLobbyLoop(session: LobbySession) {
+        val lobby = session.lobby
+        try {
+            while (scope.isActive && session.running.get()) {
+                updateLobbyState(lobby.id, ConnectionState.CONNECTING)
+                ensureForeground(statusText())
+                val connected = connectOnce(session)
+                session.webSocket.getAndSet(null)?.close(1000, "bye")
+                if (!session.running.get()) break
+                updateLobbyState(lobby.id, ConnectionState.RECONNECTING)
+                ensureForeground(statusText())
+                delay(if (connected) 800 else 1500)
+            }
+        } finally {
+            session.running.set(false)
+        }
+    }
+
+    private suspend fun connectOnce(session: LobbySession): Boolean {
+        val lobby = session.lobby
+        val opened = AtomicBoolean(false)
+        val closed = AtomicBoolean(false)
+        val request = Request.Builder()
+            .url(LuvApiClient.wsUrl(lobby.code, lobby.token, lobby.role.name.lowercase()))
+            .build()
+
+        val listener = object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                opened.set(true)
+                Log.i(TAG, "ws open lobby=${lobby.name}")
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                handleIncoming(lobby, text)
+            }
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(1000, null)
+                closed.set(true)
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                closed.set(true)
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                Log.w(TAG, "ws failure lobby=${lobby.name}", t)
+                closed.set(true)
+            }
+        }
+
+        val socket = wsClient.newWebSocket(request, listener)
+        session.webSocket.set(socket)
+
+        while (session.running.get() && !closed.get()) {
+            delay(300)
+        }
+        return opened.get()
+    }
+
+    private fun handleIncoming(lobby: Lobby, text: String) {
+        runCatching {
+            val json = JSONObject(text)
+            when (json.optString("type")) {
+                "welcome", "peers" -> {
+                    val peers = json.optInt("peers", json.optInt("count", 0))
+                    PairSessionState.onPeers(lobby.id, peers)
+                    updateLobbyState(
+                        lobby.id,
+                        if (peers >= 2) ConnectionState.CONNECTED else ConnectionState.HOSTING
+                    )
+                    ensureForeground(statusText())
+                    return
+                }
+            }
+        }
+
+        when (val message = PairProtocol.decode(text)) {
+            is PairMessage.StrokeMsg -> {
+                CanvasStore.addRemoteStroke(message.stroke, lobby.id)
+                PartnerStrokeNotifier.onPartnerStroke(
+                    this,
+                    lobbyName = lobby.name,
+                    nickname = message.stroke.nickname ?: "Jemand",
+                    lobbyId = lobby.id
+                )
+                scope.launch { _events.emit(PairEvent.StrokeReceived(lobby.id, message.stroke)) }
+            }
+            is PairMessage.UndoMsg -> {
+                CanvasStore.removeStrokeById(message.strokeId, lobby.id)
+                scope.launch { _events.emit(PairEvent.StrokeUndone(lobby.id, message.strokeId)) }
+            }
+            is PairMessage.Presence -> {
+                val key = message.peerKey ?: message.nickname ?: "peer"
+                PairSessionState.onPresence(
+                    lobbyId = lobby.id,
+                    peerKey = key,
+                    nickname = message.nickname ?: "Jemand",
+                    colorIndex = message.colorIndex,
+                    active = message.active
+                )
+            }
+            is PairMessage.Note -> PairSessionState.emitNote(message.text)
+            PairMessage.Clear -> {
+                CanvasStore.clear(localOnly = true, lobbyId = lobby.id)
+                scope.launch { _events.emit(PairEvent.Cleared(lobby.id)) }
+            }
+            else -> Unit
+        }
+    }
+
+    private fun sendRaw(lobbyId: String?, line: String) {
+        val id = lobbyId ?: CanvasStore.activeLobbyId.value ?: return
+        sessions[id]?.webSocket?.get()?.send(line)
+    }
+
+    private fun stopLobby(lobbyId: String) {
+        sessions.remove(lobbyId)?.let { session ->
+            session.running.set(false)
+            session.job?.cancel()
+            session.webSocket.getAndSet(null)?.close(1000, "bye")
+            PairSessionState.resetLobby(lobbyId)
+            _lobbyStates.updateAndRemove(lobbyId)
+        }
+        refreshAggregateState()
+        if (sessions.isEmpty()) {
+            stopSelfSafely()
+        } else {
+            ensureForeground(statusText())
+        }
+    }
+
+    private fun stopAll() {
+        sessions.keys.toList().forEach { stopLobby(it) }
+        PairSessionState.reset()
+        updateAggregate(ConnectionState.IDLE)
+        runCatching {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        }
+        foregroundStarted.set(false)
+        stopSelf()
+    }
+
+    private fun stopSelfSafely() {
+        updateAggregate(ConnectionState.IDLE)
+        runCatching {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        }
+        foregroundStarted.set(false)
+        stopSelf()
+    }
+
+    private fun updateLobbyState(lobbyId: String, state: ConnectionState) {
+        _lobbyStates.value = _lobbyStates.value + (lobbyId to state)
+        refreshAggregateState()
+    }
+
+    private fun refreshAggregateState() {
+        val states = _lobbyStates.value.values
+        val aggregate = when {
+            states.any { it == ConnectionState.CONNECTED } -> ConnectionState.CONNECTED
+            states.any { it == ConnectionState.HOSTING } -> ConnectionState.HOSTING
+            states.any { it == ConnectionState.RECONNECTING } -> ConnectionState.RECONNECTING
+            states.any { it == ConnectionState.CONNECTING } -> ConnectionState.CONNECTING
+            else -> ConnectionState.IDLE
+        }
+        updateAggregate(aggregate)
+    }
+
+    private fun statusText(): String {
+        val connected = _lobbyStates.value.count { it.value == ConnectionState.CONNECTED }
+        val hosting = _lobbyStates.value.count { it.value == ConnectionState.HOSTING }
+        return when {
+            connected > 0 -> getString(R.string.notification_title)
+            hosting > 0 -> getString(R.string.notification_hosting)
+            else -> getString(R.string.notification_connecting)
+        }
     }
 
     private fun ensureForeground(text: String) {
@@ -118,170 +326,6 @@ class PairConnectionService : Service() {
             Log.e(TAG, "startForeground failed", t)
             stopSelf()
         }
-    }
-
-    private fun startSession() {
-        // Wichtig: Job neu starten dürfen, wenn vorher z. B. Prefs-Race IDLE verursacht hat
-        if (sessionJob?.isActive == true) return
-        running.set(true)
-        ensureForeground(getString(R.string.notification_connecting))
-        sessionJob = scope.launch {
-            try {
-                var missingCredsRetries = 0
-                while (isActive && running.get()) {
-                    val snapshot = runCatching { LuvApp.instance.prefs.snapshot() }.getOrNull()
-                    val code = bootCode
-                        ?: snapshot?.inviteCode?.let { LuvApiClient.normalizeCode(it) }
-                    val token = bootToken ?: snapshot?.token
-                    val role = bootRole ?: snapshot?.role
-
-                    if (code == null || token.isNullOrBlank() || role == null) {
-                        missingCredsRetries++
-                        updateState(ConnectionState.CONNECTING)
-                        if (missingCredsRetries > 10) {
-                            Log.e(TAG, "No pairing credentials — stopping session")
-                            updateState(ConnectionState.IDLE)
-                            break
-                        }
-                        delay(300)
-                        continue
-                    }
-                    missingCredsRetries = 0
-
-                    updateState(
-                        if (role == Role.HOST) ConnectionState.HOSTING else ConnectionState.CONNECTING
-                    )
-                    ensureForeground(
-                        if (role == Role.HOST) {
-                            getString(R.string.notification_hosting)
-                        } else {
-                            getString(R.string.notification_connecting)
-                        }
-                    )
-
-                    val connected = connectOnce(code, token, role.name.lowercase())
-                    closeSocket()
-                    if (!running.get()) break
-                    updateState(ConnectionState.RECONNECTING)
-                    ensureForeground(getString(R.string.notification_connecting))
-                    delay(if (connected) 800 else 1500)
-                }
-            } finally {
-                running.set(false)
-            }
-        }
-    }
-
-    private suspend fun connectOnce(code: String, token: String, role: String): Boolean {
-        val opened = AtomicBoolean(false)
-        val closed = AtomicBoolean(false)
-        val request = Request.Builder()
-            .url(LuvApiClient.wsUrl(code, token, role))
-            .build()
-
-        val listener = object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                opened.set(true)
-                Log.i(TAG, "ws open")
-            }
-
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                handleIncoming(text)
-            }
-
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                webSocket.close(1000, null)
-                closed.set(true)
-            }
-
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                closed.set(true)
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.w(TAG, "ws failure", t)
-                closed.set(true)
-            }
-        }
-
-        val socket = wsClient.newWebSocket(request, listener)
-        webSocket.set(socket)
-
-        // Warten bis Verbindung endet (Reconnect-Schleife außen)
-        while (running.get() && !closed.get()) {
-            delay(300)
-        }
-        return opened.get()
-    }
-
-    private fun handleIncoming(text: String) {
-        // Server-Steuerungsnachrichten
-        runCatching {
-            val json = JSONObject(text)
-            when (json.optString("type")) {
-                "welcome", "peers" -> {
-                    val peers = json.optInt("peers", json.optInt("count", 0))
-                    PairSessionState.onPeers(peers)
-                    if (peers >= 2) {
-                        updateState(ConnectionState.CONNECTED)
-                        ensureForeground(getString(R.string.notification_title))
-                    } else {
-                        updateState(ConnectionState.HOSTING)
-                        ensureForeground(getString(R.string.notification_hosting))
-                    }
-                    return
-                }
-            }
-        }
-
-        when (val message = PairProtocol.decode(text)) {
-            is PairMessage.StrokeMsg -> {
-                CanvasStore.addRemoteStroke(message.stroke)
-                PartnerStrokeNotifier.onPartnerStroke(this)
-                scope.launch { _events.emit(PairEvent.StrokeReceived(message.stroke)) }
-            }
-            is PairMessage.UndoMsg -> {
-                CanvasStore.removeStrokeById(message.strokeId)
-                scope.launch { _events.emit(PairEvent.StrokeUndone(message.strokeId)) }
-            }
-            is PairMessage.Presence -> {
-                PairSessionState.onPresence(message.active, message.gender)
-            }
-            is PairMessage.Note -> {
-                PairSessionState.emitNote(message.text)
-            }
-            PairMessage.Clear -> {
-                CanvasStore.clear(localOnly = true)
-                scope.launch { _events.emit(PairEvent.Cleared) }
-            }
-            is PairMessage.Hello,
-            is PairMessage.HelloOk,
-            PairMessage.Ping,
-            PairMessage.Pong,
-            null -> Unit
-        }
-    }
-
-    private fun sendRaw(line: String) {
-        val socket = webSocket.get() ?: return
-        socket.send(line)
-    }
-
-    private fun closeSocket() {
-        runCatching { webSocket.getAndSet(null)?.close(1000, "bye") }
-    }
-
-    private fun stopSelfSafely() {
-        running.set(false)
-        sessionJob?.cancel()
-        closeSocket()
-        PairSessionState.reset()
-        updateState(ConnectionState.IDLE)
-        runCatching {
-            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        }
-        foregroundStarted.set(false)
-        stopSelf()
     }
 
     private fun buildNotification(text: String): Notification {
@@ -308,11 +352,14 @@ class PairConnectionService : Service() {
     }
 
     override fun onDestroy() {
-        running.set(false)
-        sessionJob?.cancel()
-        closeSocket()
+        sessions.values.forEach {
+            it.running.set(false)
+            it.job?.cancel()
+            it.webSocket.getAndSet(null)?.close(1000, "bye")
+        }
+        sessions.clear()
         scope.cancel()
-        updateState(ConnectionState.IDLE)
+        updateAggregate(ConnectionState.IDLE)
         foregroundStarted.set(false)
         super.onDestroy()
     }
@@ -320,39 +367,37 @@ class PairConnectionService : Service() {
     companion object {
         private const val TAG = "LuvPairService"
         const val ACTION_START = "com.luv.couple.ACTION_START"
+        const val ACTION_START_ALL = "com.luv.couple.ACTION_START_ALL"
         const val ACTION_STOP = "com.luv.couple.ACTION_STOP"
         const val ACTION_SEND_STROKE = "com.luv.couple.ACTION_SEND_STROKE"
         const val ACTION_SEND_CLEAR = "com.luv.couple.ACTION_SEND_CLEAR"
         const val ACTION_SEND_UNDO = "com.luv.couple.ACTION_SEND_UNDO"
         const val EXTRA_PAYLOAD = "payload"
         const val EXTRA_STROKE_ID = "stroke_id"
-        const val EXTRA_CODE = "code"
-        const val EXTRA_TOKEN = "token"
-        const val EXTRA_ROLE = "role"
+        const val EXTRA_LOBBY_ID = "lobby_id"
         private const val NOTIFICATION_ID = 42
 
         private val _state = MutableStateFlow(ConnectionState.IDLE)
         val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
+        private val _lobbyStates = MutableStateFlow<Map<String, ConnectionState>>(emptyMap())
+        val lobbyStates: StateFlow<Map<String, ConnectionState>> = _lobbyStates.asStateFlow()
+
         private val _events = MutableSharedFlow<PairEvent>(extraBufferCapacity = 64)
         val events: SharedFlow<PairEvent> = _events.asSharedFlow()
 
-        private fun updateState(value: ConnectionState) {
+        private fun updateAggregate(value: ConnectionState) {
             _state.value = value
         }
 
-        fun start(
-            context: Context,
-            code: String? = null,
-            token: String? = null,
-            role: Role? = null
-        ): Boolean {
+        private fun MutableStateFlow<Map<String, ConnectionState>>.updateAndRemove(lobbyId: String) {
+            value = value - lobbyId
+        }
+
+        fun startAll(context: Context): Boolean {
             return try {
                 val intent = Intent(context, PairConnectionService::class.java)
-                    .setAction(ACTION_START)
-                    .putExtra(EXTRA_CODE, code)
-                    .putExtra(EXTRA_TOKEN, token)
-                    .putExtra(EXTRA_ROLE, role?.name)
+                    .setAction(ACTION_START_ALL)
                 context.startForegroundService(intent)
                 true
             } catch (t: Throwable) {
@@ -361,76 +406,101 @@ class PairConnectionService : Service() {
             }
         }
 
-        fun stop(context: Context) {
+        /** @deprecated use startAll */
+        fun start(
+            context: Context,
+            code: String? = null,
+            token: String? = null,
+            role: com.luv.couple.data.Role? = null
+        ): Boolean = startAll(context)
+
+        fun stop(context: Context, lobbyId: String? = null) {
             try {
-                val intent = Intent(context, PairConnectionService::class.java).setAction(ACTION_STOP)
+                val intent = Intent(context, PairConnectionService::class.java)
+                    .setAction(ACTION_STOP)
+                    .putExtra(EXTRA_LOBBY_ID, lobbyId)
                 context.startService(intent)
             } catch (t: Throwable) {
                 Log.e(TAG, "Unable to stop pair service", t)
             }
         }
 
-        fun sendStroke(context: Context, strokeJson: String) {
+        fun sendStroke(context: Context, strokeJson: String, lobbyId: String? = null) {
             try {
                 val intent = Intent(context, PairConnectionService::class.java)
                     .setAction(ACTION_SEND_STROKE)
                     .putExtra(EXTRA_PAYLOAD, strokeJson)
+                    .putExtra(EXTRA_LOBBY_ID, lobbyId)
                 context.startService(intent)
             } catch (t: Throwable) {
                 Log.e(TAG, "Unable to send stroke", t)
             }
         }
 
-        fun sendClear(context: Context) {
+        fun sendClear(context: Context, lobbyId: String? = null) {
             try {
                 val intent = Intent(context, PairConnectionService::class.java)
                     .setAction(ACTION_SEND_CLEAR)
+                    .putExtra(EXTRA_LOBBY_ID, lobbyId)
                 context.startService(intent)
             } catch (t: Throwable) {
                 Log.e(TAG, "Unable to send clear", t)
             }
         }
 
-        fun sendUndo(context: Context, strokeId: String) {
+        fun sendUndo(context: Context, strokeId: String, lobbyId: String? = null) {
             try {
                 val intent = Intent(context, PairConnectionService::class.java)
                     .setAction(ACTION_SEND_UNDO)
                     .putExtra(EXTRA_STROKE_ID, strokeId)
+                    .putExtra(EXTRA_LOBBY_ID, lobbyId)
                 context.startService(intent)
             } catch (t: Throwable) {
                 Log.e(TAG, "Unable to send undo", t)
             }
         }
 
-        fun sendPresence(context: Context, active: Boolean) {
+        fun sendPresence(context: Context, active: Boolean, lobbyId: String? = null) {
             try {
-                val gender = runBlocking { LuvApp.instance.prefs.snapshot().gender?.name }
-                val payload = PairProtocol.encode(PairMessage.Presence(active, gender))
+                val snap = runBlocking { LuvApp.instance.prefs.snapshot() }
+                val payload = PairProtocol.encode(
+                    PairMessage.Presence(
+                        active = active,
+                        nickname = snap.nickname,
+                        colorIndex = snap.colorIndex,
+                        peerKey = snap.nickname
+                    )
+                )
                 val intent = Intent(context, PairConnectionService::class.java)
                     .setAction(ACTION_SEND_STROKE)
                     .putExtra(EXTRA_PAYLOAD, payload)
+                    .putExtra(EXTRA_LOBBY_ID, lobbyId ?: CanvasStore.activeLobbyId.value)
                 context.startService(intent)
             } catch (t: Throwable) {
                 Log.e(TAG, "Unable to send presence", t)
             }
         }
 
-        fun sendNote(context: Context, text: String) {
+        fun sendNote(context: Context, text: String, lobbyId: String? = null) {
             try {
                 val payload = PairProtocol.encode(PairMessage.Note(text))
                 val intent = Intent(context, PairConnectionService::class.java)
                     .setAction(ACTION_SEND_STROKE)
                     .putExtra(EXTRA_PAYLOAD, payload)
+                    .putExtra(EXTRA_LOBBY_ID, lobbyId ?: CanvasStore.activeLobbyId.value)
                 context.startService(intent)
             } catch (t: Throwable) {
                 Log.e(TAG, "Unable to send note", t)
             }
         }
+
+        fun lobbyState(lobbyId: String): ConnectionState =
+            _lobbyStates.value[lobbyId] ?: ConnectionState.IDLE
     }
 }
 
 sealed class PairEvent {
-    data class StrokeReceived(val stroke: com.luv.couple.data.Stroke) : PairEvent()
-    data class StrokeUndone(val strokeId: String) : PairEvent()
-    data object Cleared : PairEvent()
+    data class StrokeReceived(val lobbyId: String, val stroke: com.luv.couple.data.Stroke) : PairEvent()
+    data class StrokeUndone(val lobbyId: String, val strokeId: String) : PairEvent()
+    data class Cleared(val lobbyId: String) : PairEvent()
 }

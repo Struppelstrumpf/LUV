@@ -20,6 +20,12 @@ class LockScreenWidgetProvider : AppWidgetProvider() {
         appWidgetIds.forEach { updateWidget(context, appWidgetManager, it) }
     }
 
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        runBlocking {
+            appWidgetIds.forEach { LuvApp.instance.prefs.unbindWidget(it) }
+        }
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         if (intent.action == ACTION_WIDGET_REFRESH ||
@@ -31,6 +37,7 @@ class LockScreenWidgetProvider : AppWidgetProvider() {
 
     companion object {
         const val ACTION_WIDGET_REFRESH = "com.luv.couple.ACTION_WIDGET_REFRESH"
+        const val EXTRA_LOBBY_ID = "lobby_id"
 
         fun requestUpdate(context: Context) {
             val manager = AppWidgetManager.getInstance(context)
@@ -50,16 +57,23 @@ class LockScreenWidgetProvider : AppWidgetProvider() {
             val pxW = (width * density).toInt().coerceIn(200, 1200)
             val pxH = (height * density).toInt().coerceIn(200, 1600)
 
-            val gender = runBlocking { LuvApp.instance.prefs.snapshot().gender }
-            val background = CanvasStore.backgroundFor(gender)
-            val bitmap = CanvasStore.renderBitmap(pxW, pxH, background, gender)
+            val snap = runBlocking { LuvApp.instance.prefs.snapshot() }
+            val lobbyId = runBlocking { LuvApp.instance.prefs.widgetLobbyId(widgetId) }
+            val lobby = snap.lobbies.firstOrNull { it.id == lobbyId }
+            val background = CanvasStore.backgroundFor(snap.colorIndex)
+            val bitmap = CanvasStore.renderBitmap(pxW, pxH, background, lobbyId)
 
             val views = RemoteViews(context.packageName, R.layout.lock_widget)
             views.setInt(R.id.widgetRoot, "setBackgroundColor", background)
             views.setImageViewBitmap(R.id.canvasImage, bitmap)
+            views.setTextViewText(
+                R.id.tapHint,
+                lobby?.name?.takeIf { it.isNotBlank() } ?: context.getString(R.string.open_canvas)
+            )
 
             val launch = Intent(context, LockDrawActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobbyId)
             }
             val pending = PendingIntent.getActivity(
                 context,

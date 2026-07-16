@@ -14,7 +14,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.animation.DecelerateInterpolator
-import com.luv.couple.data.Gender
+import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Stroke
 import com.luv.couple.data.StrokePoint
 import kotlin.math.hypot
@@ -38,7 +38,7 @@ class DrawingView @JvmOverloads constructor(
     private var movedBeyondSlop = false
     private var lastTapUptime = 0L
     private var pendingDot: StrokePoint? = null
-    var myGender: Gender? = null
+    var myColorIndex: Int = 0
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -125,12 +125,12 @@ class DrawingView @JvmOverloads constructor(
         super.onDraw(canvas)
         strokes.forEach { stroke ->
             val alpha = ((alphas[stroke.id] ?: 1f) * 255).toInt().coerceIn(0, 255)
-            val color = CanvasStore.strokeColor(stroke, myGender)
+            val color = CanvasStore.strokeColor(stroke)
             paint.color = Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
             paint.strokeWidth = stroke.width
             canvas.drawPath(pathFrom(stroke.points), paint)
         }
-        paint.color = Color.WHITE
+        paint.color = PeerPalette.strokeColor(myColorIndex)
         paint.strokeWidth = 18f
         canvas.drawPath(currentPath, paint)
     }

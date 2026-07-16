@@ -12,7 +12,7 @@ object UnlockMonitor {
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent?) {
             if (intent?.action == Intent.ACTION_USER_PRESENT) {
-                CanvasStore.clear(notifyPeer = true)
+                CanvasStore.clearAll(notifyPeer = true)
             }
         }
     }

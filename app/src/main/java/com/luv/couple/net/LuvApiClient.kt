@@ -1,6 +1,7 @@
 package com.luv.couple.net
 
 import com.luv.couple.BuildConfig
+import com.luv.couple.data.PeerPalette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -13,7 +14,9 @@ import java.util.concurrent.TimeUnit
 data class RoomSession(
     val code: String,
     val token: String,
-    val invite: String
+    val invite: String,
+    val joinUrl: String,
+    val maxPeers: Int = PeerPalette.MAX_PEERS
 )
 
 class LuvApiException(message: String) : Exception(message)
@@ -22,6 +25,11 @@ object LuvApiClient {
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
     private val emptyBody = "{}".toRequestBody(jsonMedia)
     private val inviteRegex = Regex("""LUV-?([A-Z0-9]{4,12})""", RegexOption.IGNORE_CASE)
+    private val joinUrlRegex = Regex(
+        """(?:https?://)?(?:www\.)?reineke\.pro/love/j/([A-Z0-9]{4,12})""",
+        RegexOption.IGNORE_CASE
+    )
+    private val luvSchemeRegex = Regex("""luv://join/([A-Z0-9]{4,12})""", RegexOption.IGNORE_CASE)
     private val bareCodeRegex = Regex("""\b([A-Z0-9]{6})\b""", RegexOption.IGNORE_CASE)
 
     private val http = OkHttpClient.Builder()
@@ -31,6 +39,9 @@ object LuvApiClient {
         .build()
 
     fun baseUrl(): String = BuildConfig.LUV_API_BASE_URL.trimEnd('/')
+
+    fun publicJoinUrl(code: String): String =
+        "https://reineke.pro/love/j/${code.uppercase()}"
 
     fun wsUrl(code: String, token: String, role: String): String {
         val httpBase = baseUrl()
@@ -52,7 +63,7 @@ object LuvApiClient {
 
     suspend fun joinRoom(rawCode: String): RoomSession = withContext(Dispatchers.IO) {
         val code = normalizeCode(rawCode)
-            ?: throw LuvApiException("Ungültiger Code. Bitte nur z. B. LUV-AB12CD einfügen.")
+            ?: throw LuvApiException("Ungültiger Link oder Code.")
         val request = Request.Builder()
             .url("${baseUrl()}/v1/rooms/$code/join")
             .post(emptyBody)
@@ -61,11 +72,14 @@ object LuvApiClient {
     }
 
     /**
-     * Akzeptiert kurzen Code, LUV-Code oder ganzen WhatsApp-Text.
+     * Akzeptiert Code, LUV-Code, Join-URL oder ganzen WhatsApp-Text.
      */
     fun normalizeCode(raw: String): String? {
         val text = raw.trim()
         if (text.isEmpty()) return null
+
+        joinUrlRegex.find(text)?.groupValues?.getOrNull(1)?.uppercase()?.let { return it }
+        luvSchemeRegex.find(text)?.groupValues?.getOrNull(1)?.uppercase()?.let { return it }
 
         inviteRegex.find(text)?.groupValues?.getOrNull(1)?.uppercase()?.let { extracted ->
             if (extracted.all { it.isLetterOrDigit() }) return extracted
@@ -90,17 +104,20 @@ object LuvApiClient {
                 val err = runCatching { JSONObject(body).optString("error") }.getOrNull()
                 throw LuvApiException(
                     when (err) {
-                        "room_not_found" -> "Raum nicht gefunden. Host muss online hosten, dann Code neu teilen."
-                        "room_full" -> "Raum ist schon voll"
+                        "room_not_found" -> "Lobby nicht gefunden. Host muss online sein — Link neu teilen."
+                        "room_full" -> "Lobby ist voll (max. ${PeerPalette.MAX_PEERS} Personen)."
                         else -> "API-Fehler (${response.code})"
                     }
                 )
             }
             val json = JSONObject(body)
+            val code = json.getString("code")
             return RoomSession(
-                code = json.getString("code"),
+                code = code,
                 token = json.getString("token"),
-                invite = json.optString("invite", "LUV-${json.getString("code")}")
+                invite = json.optString("invite", "LUV-$code"),
+                joinUrl = json.optString("joinUrl", publicJoinUrl(code)),
+                maxPeers = json.optInt("maxPeers", PeerPalette.MAX_PEERS)
             )
         }
     }
