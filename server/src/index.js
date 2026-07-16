@@ -820,6 +820,109 @@ app.get("/v1/rooms/:code/preview", (req, res) => {
   return res.json(publicRoom(room, code));
 });
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** WhatsApp / Social Preview + Deep-Link Landing für /luv/j/:code */
+app.get("/invite/:code", (req, res) => {
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  const room = rooms.get(code);
+  const lobbyName = room?.name || "Lobby";
+  const host = room?.hostNickname || "Jemand";
+  const joinUrl = `https://reineke.pro/luv/j/${code}`;
+  const deep = code ? `luv://join/${code}` : "https://reineke.pro/luv/";
+  const ogImage = "https://reineke.pro/downloads/luv/og.jpg";
+  const title = room
+    ? `${host} lädt dich zu LUV ein`
+    : "LUV — gemeinsam zeichnen";
+  const description = room
+    ? `Zeichnet zusammen in „${lobbyName}“. Live auf dem Sperrbildschirm — tippe zum Öffnen.`
+    : "Gemeinsam zeichnen. Live. Nur für euch.";
+  const found = Boolean(room);
+
+  res
+    .status(found ? 200 : 404)
+    .type("html")
+    .send(`<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>${escapeHtml(title)}</title>
+  <meta name="description" content="${escapeHtml(description)}" />
+  <meta name="theme-color" content="#0B0E14" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="LUV" />
+  <meta property="og:url" content="${escapeHtml(joinUrl)}" />
+  <meta property="og:title" content="${escapeHtml(title)}" />
+  <meta property="og:description" content="${escapeHtml(description)}" />
+  <meta property="og:image" content="${ogImage}" />
+  <meta property="og:image:secure_url" content="${ogImage}" />
+  <meta property="og:image:type" content="image/jpeg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="1200" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${escapeHtml(title)}" />
+  <meta name="twitter:description" content="${escapeHtml(description)}" />
+  <meta name="twitter:image" content="${ogImage}" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/luv/styles.css" />
+  <style>
+    .join-stage { min-height: 100dvh; display: grid; place-content: center; padding: 2rem 1.25rem; text-align: center; }
+    .join-stage .brand { font-family: Fraunces, serif; font-size: clamp(3rem, 10vw, 5rem); letter-spacing: 0.12em; margin: 0; }
+    .join-stage .headline { font-family: Fraunces, serif; font-weight: 500; font-size: clamp(1.4rem, 4vw, 2rem); margin: 1rem 0 0.5rem; }
+    .join-stage .lede { opacity: 0.72; max-width: 28rem; margin: 0 auto 1.75rem; line-height: 1.5; }
+    .join-stage .cta-row { display: flex; flex-direction: column; gap: 0.85rem; align-items: center; }
+    .join-stage .download { text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true">
+    <div class="wash wash-a"></div>
+    <div class="wash wash-b"></div>
+    <div class="grain"></div>
+  </div>
+  <main class="join-stage">
+    <p class="brand">LUV</p>
+    <h1 class="headline">${escapeHtml(found ? `${host} lädt dich ein` : "Einladung")}</h1>
+    <p class="lede">${escapeHtml(
+      found
+        ? `Lobby „${lobbyName}“ — tippe auf Öffnen, dann beitreten oder ablehnen.`
+        : "Diese Lobby ist gerade nicht erreichbar. Host muss online sein."
+    )}</p>
+    <div class="cta-row">
+      <a class="download" id="openApp" href="${escapeHtml(deep)}">
+        <span class="download-label">In LUV öffnen</span>
+        <span class="download-meta">Einladung ansehen</span>
+      </a>
+      <a class="download" href="https://reineke.pro/downloads/luv/LUV.apk" download="LUV.apk" style="opacity:.9">
+        <span class="download-label">App herunterladen</span>
+        <span class="download-meta">Android · APK</span>
+      </a>
+    </div>
+  </main>
+  <script>
+    (function () {
+      var deep = ${JSON.stringify(deep)};
+      if (${found ? "true" : "false"} && deep.indexOf("luv://") === 0) {
+        setTimeout(function () { window.location.href = deep; }, 450);
+      }
+    })();
+  </script>
+</body>
+</html>`);
+});
+
 app.get("/v1/rooms/:code", (req, res) => {
   const code = String(req.params.code || "")
     .toUpperCase()

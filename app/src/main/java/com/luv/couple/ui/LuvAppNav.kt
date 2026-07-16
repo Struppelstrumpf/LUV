@@ -118,9 +118,13 @@ fun LuvAppNav() {
         }
     }
 
-    fun inviteMessage(lobby: Lobby): String =
-        "Einladung zur LUV-Lobby „${lobby.name}“:\n\n${lobby.joinUrl}\n\n" +
-            "App: https://reineke.pro/luv/"
+    fun inviteMessage(lobby: Lobby): String {
+        val who = nickname?.takeIf { it.isNotBlank() }
+            ?: lobby.hostNickname.takeIf { it.isNotBlank() }
+            ?: "Jemand"
+        // Kurz & klar — Vorschaubild/Titel kommen von der Join-URL (Open Graph)
+        return "$who möchte mit dir zeichnen.\n${lobby.joinUrl}"
+    }
 
     fun openJoinPreview(code: String) {
         joinPreviewCode = code
