@@ -58,7 +58,7 @@ data class Lobby(
     val invite: String = "LUV-$code"
 ) {
     val joinUrl: String
-        get() = "https://reineke.pro/love/j/$code"
+        get() = "https://reineke.pro/luv/j/$code"
 }
 
 data class PeerInfo(

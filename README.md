@@ -26,10 +26,10 @@ API-URL (HTTPS über Caddy):
 luv.api.baseUrl=https://reineke.pro/luv
 ```
 
-Landingpage: https://reineke.pro/love/  
+Landingpage: https://reineke.pro/luv/  
 APK: https://reineke.pro/downloads/luv/LUV.apk  
 
-Auf dem Server: `luv-api` + Caddy `/luv/*` (API) und `/love/*` (Website). Reineke unverändert.
+Auf dem Server: `luv-api` + Caddy `/luv/v1/*` + `/luv/health` (API) und `/luv/` (Website). Alte `/love/*`-URLs leiten um.
 
 ## Voraussetzungen
 

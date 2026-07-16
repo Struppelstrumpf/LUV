@@ -2,10 +2,7 @@ package com.luv.couple.ui
 
 import android.content.Intent
 import android.net.Uri
-import android.provider.Settings
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -103,6 +100,7 @@ fun LuvAppNav() {
     val partnerNotify by prefs.partnerDrawNotifyFlow.collectAsStateWithLifecycle(initialValue = true)
     val partnerHaptic by prefs.partnerHapticFlow.collectAsStateWithLifecycle(initialValue = true)
     val lobbyStates by PairConnectionService.lobbyStates.collectAsStateWithLifecycle()
+    val reconnectUi by PairConnectionService.reconnectUi.collectAsStateWithLifecycle()
     val account by AccountSession.account.collectAsStateWithLifecycle()
     val pendingJoin by PendingJoin.code.collectAsStateWithLifecycle()
 
@@ -117,28 +115,6 @@ fun LuvAppNav() {
     var packs by remember { mutableStateOf<List<ShopPack>>(emptyList()) }
     var vouchers by remember { mutableStateOf<List<VoucherInfo>>(emptyList()) }
     val versionLabel = remember { AppUpdater.versionLabel() }
-
-    val apkPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        AppUpdater.installUpdate(context, uri).onFailure { error ->
-            Toast.makeText(context, error.message ?: "Update fehlgeschlagen", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    fun startUpdateFlow() {
-        if (!AppUpdater.canRequestPackageInstalls(context)) {
-            Toast.makeText(
-                context,
-                "Bitte erlaube LUV, Apps zu installieren — dann erneut tippen.",
-                Toast.LENGTH_LONG
-            ).show()
-            AppUpdater.openInstallPermissionSettings(context)
-            return
-        }
-        apkPicker.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream"))
-    }
 
     fun shareText(text: String) {
         val intent = Intent(Intent.ACTION_SEND).apply {
@@ -157,7 +133,7 @@ fun LuvAppNav() {
 
     fun inviteMessage(lobby: Lobby): String =
         "Tritt meiner LUV-Lobby „${lobby.name}“ bei:\n\n${lobby.joinUrl}\n\n" +
-            "App: https://reineke.pro/love/"
+            "App: https://reineke.pro/luv/"
 
     suspend fun ensureAuth(nick: String): Boolean {
         return try {
@@ -301,8 +277,7 @@ fun LuvAppNav() {
                             freeLeft = account?.freeSessionsLeft ?: 0,
                             versionLabel = versionLabel,
                             onOpenLobbies = { tab = 1 },
-                            onOpenAccount = { tab = 2 },
-                            onInstallUpdate = { startUpdateFlow() }
+                            onOpenAccount = { tab = 2 }
                         )
                         1 -> LobbiesScreen(
                             nickname = nickname ?: "Du",
@@ -310,6 +285,7 @@ fun LuvAppNav() {
                             lobbies = lobbies,
                             activeLobbyId = activeLobbyId,
                             lobbyStates = lobbyStates,
+                            reconnectUi = reconnectUi,
                             versionLabel = versionLabel,
                             partnerNotifyEnabled = partnerNotify,
                             onPartnerNotifyChange = { enabled ->
@@ -354,9 +330,8 @@ fun LuvAppNav() {
                                     }
                                 }
                             },
-                            onInstallUpdate = { startUpdateFlow() },
-                            onAddWidgetHelp = {
-                                runCatching { context.startActivity(Intent(Settings.ACTION_HOME_SETTINGS)) }
+                            onReconnect = { lobby ->
+                                PairConnectionService.reconnectNow(context, lobby.id)
                             },
                             onEditNickname = { navController.navigate(Routes.NICKNAME) }
                         )
@@ -602,8 +577,7 @@ private fun HomeMenu(
     freeLeft: Int,
     versionLabel: String,
     onOpenLobbies: () -> Unit,
-    onOpenAccount: () -> Unit,
-    onInstallUpdate: () -> Unit
+    onOpenAccount: () -> Unit
 ) {
     val accent = PeerPalette.composeColor(colorIndex)
     MenuBackdrop {
@@ -632,7 +606,6 @@ private fun HomeMenu(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 HomeBtn("Meine Lobbys", accent, onOpenLobbies)
                 HomeBtn("Konto & Coins", Color(0xFF171C24), onOpenAccount, bordered = true)
-                HomeBtn("Update installieren", Color(0xFF171C24), onInstallUpdate, bordered = true)
             }
         }
     }

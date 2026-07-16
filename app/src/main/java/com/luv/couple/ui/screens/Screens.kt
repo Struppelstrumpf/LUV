@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import com.luv.couple.data.ConnectionState
 import com.luv.couple.data.Lobby
 import com.luv.couple.data.PeerPalette
+import com.luv.couple.net.LobbyReconnectUi
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -206,6 +207,7 @@ fun LobbiesScreen(
     lobbies: List<Lobby>,
     activeLobbyId: String?,
     lobbyStates: Map<String, ConnectionState>,
+    reconnectUi: Map<String, LobbyReconnectUi>,
     versionLabel: String,
     partnerNotifyEnabled: Boolean,
     onPartnerNotifyChange: (Boolean) -> Unit,
@@ -218,8 +220,7 @@ fun LobbiesScreen(
     onShareLobby: (Lobby) -> Unit,
     onRenameLobby: (Lobby) -> Unit,
     onLeaveLobby: (Lobby) -> Unit,
-    onInstallUpdate: () -> Unit,
-    onAddWidgetHelp: () -> Unit,
+    onReconnect: (Lobby) -> Unit,
     onEditNickname: () -> Unit
 ) {
     val accent = PeerPalette.composeColor(colorIndex)
@@ -274,11 +275,13 @@ fun LobbiesScreen(
                     lobby = lobby,
                     active = lobby.id == activeLobbyId,
                     state = lobbyStates[lobby.id] ?: ConnectionState.IDLE,
+                    reconnect = reconnectUi[lobby.id],
                     accent = accent,
                     onOpen = { onOpenLobby(lobby) },
                     onShare = { onShareLobby(lobby) },
                     onRename = { onRenameLobby(lobby) },
-                    onLeave = { onLeaveLobby(lobby) }
+                    onLeave = { onLeaveLobby(lobby) },
+                    onReconnect = { onReconnect(lobby) }
                 )
             }
 
@@ -302,8 +305,6 @@ fun LobbiesScreen(
                 onCheckedChange = onPartnerHapticChange
             )
 
-            PrimaryButton("Update installieren", BgSoft, onInstallUpdate, bordered = true)
-            PrimaryButton("Widget hinzufügen", BgSoft, onAddWidgetHelp, bordered = true)
             Spacer(modifier = Modifier.height(12.dp))
         }
     }
@@ -314,11 +315,13 @@ private fun LobbyCard(
     lobby: Lobby,
     active: Boolean,
     state: ConnectionState,
+    reconnect: LobbyReconnectUi?,
     accent: Color,
     onOpen: () -> Unit,
     onShare: () -> Unit,
     onRename: () -> Unit,
-    onLeave: () -> Unit
+    onLeave: () -> Unit,
+    onReconnect: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -349,6 +352,9 @@ private fun LobbyCard(
             }
             StatusChip(state)
         }
+        if (state == ConnectionState.RECONNECTING || state == ConnectionState.CONNECTING || reconnect != null) {
+            ReconnectBanner(reconnect = reconnect, accent = accent, onReconnect = onReconnect)
+        }
         PrimaryButton("Leinwand öffnen", accent, onOpen)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(modifier = Modifier.weight(1f)) {
@@ -368,6 +374,47 @@ private fun LobbyCard(
                 .clickable(onClick = onLeave)
                 .padding(4.dp)
         )
+    }
+}
+
+@Composable
+private fun ReconnectBanner(
+    reconnect: LobbyReconnectUi?,
+    accent: Color,
+    onReconnect: () -> Unit
+) {
+    val pulse = remember { Animatable(0.55f) }
+    LaunchedEffect(reconnect?.waiting, reconnect?.attempt) {
+        while (true) {
+            pulse.animateTo(1f, tween(700, easing = FastOutSlowInEasing))
+            pulse.animateTo(0.55f, tween(700, easing = FastOutSlowInEasing))
+        }
+    }
+    val statusText = when {
+        reconnect == null -> "Verbindung wird aufgebaut…"
+        reconnect.waiting && reconnect.nextRetryInSec > 0 ->
+            "Getrennt · Versuch ${reconnect.attempt} · nächster Versuch in ${reconnect.nextRetryInSec}s"
+        else -> "Verbinde jetzt erneut…"
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFF121722))
+            .border(1.dp, accent.copy(alpha = 0.35f * pulse.value), RoundedCornerShape(16.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text(statusText, color = TextPrimary, fontFamily = BodyFont, fontSize = 13.sp, lineHeight = 18.sp)
+        if (reconnect != null && reconnect.waiting) {
+            Text(
+                "Automatik: ${reconnect.backoffSec}s Pause · steigert bis 120s",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 11.sp
+            )
+        }
+        PrimaryButton("Jetzt verbinden", accent, onReconnect)
     }
 }
 
@@ -514,7 +561,7 @@ fun JoinScreen(
                 SoftField(
                     value = code,
                     onValueChange = { code = it },
-                    hint = "https://reineke.pro/love/j/…"
+                    hint = "https://reineke.pro/luv/j/…"
                 )
                 if (!error.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(12.dp))
@@ -633,7 +680,7 @@ private fun StatusChip(state: ConnectionState) {
         ConnectionState.CONNECTED -> "Online" to Color(0xFF3DDC97)
         ConnectionState.HOSTING -> "Wartet" to AccentRose
         ConnectionState.CONNECTING -> "…" to AccentRose
-        ConnectionState.RECONNECTING -> "Reconnect" to AccentRose
+        ConnectionState.RECONNECTING -> "Reconnect…" to AccentRose
         ConnectionState.IDLE -> "Offline" to TextMuted
     }
     Row(

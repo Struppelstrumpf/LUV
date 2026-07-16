@@ -56,6 +56,10 @@
                 <data
                     android:scheme="https"
                     android:host="reineke.pro"
+                    android:pathPrefix="/luv/j/" />
+                <data
+                    android:scheme="https"
+                    android:host="reineke.pro"
                     android:pathPrefix="/love/j/" />
             </intent-filter>
         </activity>

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/love/styles.css" />
+  <link rel="stylesheet" href="/luv/styles.css" />
   <style>
     .join-stage { min-height: 100dvh; display: grid; place-content: center; padding: 2rem 1.25rem; text-align: center; }
     .join-stage .brand { font-family: Fraunces, serif; font-size: clamp(3rem, 10vw, 5rem); letter-spacing: 0.12em; margin: 0; }
@@ -47,7 +47,7 @@
       var code = (parts[parts.length - 1] || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
       if (!code || code === "J") code = "";
       document.getElementById("codeLabel").textContent = code ? ("LUV-" + code) : "Kein Code";
-      var deep = code ? ("luv://join/" + code) : "https://reineke.pro/love/";
+      var deep = code ? ("luv://join/" + code) : "https://reineke.pro/luv/";
       var open = document.getElementById("openApp");
       open.href = deep;
       if (code) {

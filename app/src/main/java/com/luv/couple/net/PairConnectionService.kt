@@ -58,7 +58,11 @@ class PairConnectionService : Service() {
         val lobby: Lobby,
         val running: AtomicBoolean = AtomicBoolean(true),
         val webSocket: AtomicReference<WebSocket?> = AtomicReference(null),
-        var job: Job? = null
+        var job: Job? = null,
+        val forceReconnect: AtomicBoolean = AtomicBoolean(false),
+        @Volatile var backoffMs: Long = MIN_BACKOFF_MS,
+        @Volatile var attempt: Int = 0,
+        @Volatile var nextRetryAtMs: Long = 0L
     )
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -93,11 +97,34 @@ class PairConnectionService : Service() {
                 }
                 return START_STICKY
             }
+            ACTION_RECONNECT -> {
+                val lobbyId = intent.getStringExtra(EXTRA_LOBBY_ID)
+                scope.launch { forceReconnect(lobbyId) }
+            }
             ACTION_START_ALL, ACTION_START, null -> {
                 scope.launch { syncSessionsFromPrefs() }
             }
         }
         return START_STICKY
+    }
+
+    private fun forceReconnect(lobbyId: String?) {
+        val targets = if (lobbyId == null) sessions.values else listOfNotNull(sessions[lobbyId])
+        targets.forEach { session ->
+            session.backoffMs = MIN_BACKOFF_MS
+            session.attempt = 0
+            session.nextRetryAtMs = 0L
+            session.forceReconnect.set(true)
+            session.webSocket.get()?.cancel()
+            publishReconnect(session)
+            if (session.job?.isActive != true) {
+                session.running.set(true)
+                session.job = scope.launch { runLobbyLoop(session) }
+            }
+        }
+        if (targets.isEmpty()) {
+            scope.launch { syncSessionsFromPrefs() }
+        }
     }
 
     private suspend fun syncSessionsFromPrefs() {
@@ -130,17 +157,55 @@ class PairConnectionService : Service() {
         val lobby = session.lobby
         try {
             while (scope.isActive && session.running.get()) {
+                session.forceReconnect.set(false)
                 updateLobbyState(lobby.id, ConnectionState.CONNECTING)
+                publishReconnect(session, waiting = false)
                 ensureForeground(statusText())
+
+                val openedAt = System.currentTimeMillis()
                 val connected = connectOnce(session)
+                val livedMs = System.currentTimeMillis() - openedAt
                 session.webSocket.getAndSet(null)?.close(1000, "bye")
                 if (!session.running.get()) break
+
+                val stable = connected && livedMs >= STABLE_CONNECTION_MS
+                if (stable) {
+                    session.backoffMs = MIN_BACKOFF_MS
+                    session.attempt = 0
+                    clearReconnect(lobby.id)
+                }
+
                 updateLobbyState(lobby.id, ConnectionState.RECONNECTING)
-                ensureForeground(statusText())
-                delay(if (connected) 800 else 1500)
+                ensureForeground(getString(R.string.notification_reconnecting))
+
+                val waitMs = if (stable) 800L else session.backoffMs
+                session.nextRetryAtMs = System.currentTimeMillis() + waitMs
+                if (!stable) {
+                    session.attempt += 1
+                    publishReconnect(session, waiting = true)
+                }
+
+                var forced = false
+                var waited = 0L
+                while (waited < waitMs && session.running.get()) {
+                    if (session.forceReconnect.getAndSet(false)) {
+                        session.backoffMs = MIN_BACKOFF_MS
+                        session.attempt = 0
+                        forced = true
+                        break
+                    }
+                    delay(250)
+                    waited += 250
+                    if (!stable && waited % 1000L < 250L) publishReconnect(session, waiting = true)
+                }
+
+                if (!stable && !forced) {
+                    session.backoffMs = (session.backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
+                }
             }
         } finally {
             session.running.set(false)
+            clearReconnect(lobby.id)
         }
     }
 
@@ -187,10 +252,29 @@ class PairConnectionService : Service() {
         val socket = wsClient.newWebSocket(request, listener)
         session.webSocket.set(socket)
 
-        while (session.running.get() && !closed.get()) {
+        while (session.running.get() && !closed.get() && !session.forceReconnect.get()) {
             delay(300)
         }
         return opened.get()
+    }
+
+    private fun publishReconnect(session: LobbySession, waiting: Boolean = true) {
+        val remaining = if (waiting) {
+            ((session.nextRetryAtMs - System.currentTimeMillis()) / 1000L).coerceAtLeast(0)
+        } else {
+            0L
+        }
+        _reconnectUi.value = _reconnectUi.value + (session.lobby.id to LobbyReconnectUi(
+            lobbyId = session.lobby.id,
+            attempt = session.attempt,
+            nextRetryInSec = remaining.toInt(),
+            backoffSec = (session.backoffMs / 1000L).toInt(),
+            waiting = waiting && remaining > 0
+        ))
+    }
+
+    private fun clearReconnect(lobbyId: String) {
+        _reconnectUi.value = _reconnectUi.value - lobbyId
     }
 
     private fun handleIncoming(lobby: Lobby, text: String) {
@@ -200,6 +284,13 @@ class PairConnectionService : Service() {
                 "welcome", "peers" -> {
                     val peers = json.optInt("peers", json.optInt("count", 0))
                     PairSessionState.onPeers(lobby.id, peers)
+                    if (peers >= 2) {
+                        sessions[lobby.id]?.let {
+                            it.backoffMs = MIN_BACKOFF_MS
+                            it.attempt = 0
+                        }
+                        clearReconnect(lobby.id)
+                    }
                     updateLobbyState(
                         lobby.id,
                         if (peers >= 2) ConnectionState.CONNECTED else ConnectionState.HOSTING
@@ -431,16 +522,23 @@ class PairConnectionService : Service() {
         const val ACTION_SEND_STROKE = "com.luv.couple.ACTION_SEND_STROKE"
         const val ACTION_SEND_CLEAR = "com.luv.couple.ACTION_SEND_CLEAR"
         const val ACTION_SEND_UNDO = "com.luv.couple.ACTION_SEND_UNDO"
+        const val ACTION_RECONNECT = "com.luv.couple.ACTION_RECONNECT"
         const val EXTRA_PAYLOAD = "payload"
         const val EXTRA_STROKE_ID = "stroke_id"
         const val EXTRA_LOBBY_ID = "lobby_id"
         private const val NOTIFICATION_ID = 42
+        private const val MIN_BACKOFF_MS = 5_000L
+        private const val MAX_BACKOFF_MS = 120_000L
+        private const val STABLE_CONNECTION_MS = 8_000L
 
         private val _state = MutableStateFlow(ConnectionState.IDLE)
         val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
         private val _lobbyStates = MutableStateFlow<Map<String, ConnectionState>>(emptyMap())
         val lobbyStates: StateFlow<Map<String, ConnectionState>> = _lobbyStates.asStateFlow()
+
+        private val _reconnectUi = MutableStateFlow<Map<String, LobbyReconnectUi>>(emptyMap())
+        val reconnectUi: StateFlow<Map<String, LobbyReconnectUi>> = _reconnectUi.asStateFlow()
 
         private val _events = MutableSharedFlow<PairEvent>(extraBufferCapacity = 64)
         val events: SharedFlow<PairEvent> = _events.asSharedFlow()
@@ -575,8 +673,27 @@ class PairConnectionService : Service() {
 
         fun lobbyState(lobbyId: String): ConnectionState =
             _lobbyStates.value[lobbyId] ?: ConnectionState.IDLE
+
+        fun reconnectNow(context: Context, lobbyId: String? = null) {
+            try {
+                val intent = Intent(context, PairConnectionService::class.java)
+                    .setAction(ACTION_RECONNECT)
+                    .putExtra(EXTRA_LOBBY_ID, lobbyId)
+                context.startService(intent)
+            } catch (t: Throwable) {
+                Log.e(TAG, "Unable to force reconnect", t)
+            }
+        }
     }
 }
+
+data class LobbyReconnectUi(
+    val lobbyId: String,
+    val attempt: Int,
+    val nextRetryInSec: Int,
+    val backoffSec: Int,
+    val waiting: Boolean
+)
 
 sealed class PairEvent {
     data class StrokeReceived(val lobbyId: String, val stroke: com.luv.couple.data.Stroke) : PairEvent()

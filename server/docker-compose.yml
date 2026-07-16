@@ -18,8 +18,8 @@ services:
       # Optional: Mollie live schalten
       MOLLIE_API_KEY: "${MOLLIE_API_KEY:-}"
       MOLLIE_WEBHOOK_URL: "https://reineke.pro/luv/v1/webhooks/mollie"
-      PUBLIC_SHOP_REDIRECT: "https://reineke.pro/love/"
-      PUBLIC_JOIN_BASE: "https://reineke.pro/love/j"
+      PUBLIC_SHOP_REDIRECT: "https://reineke.pro/luv/"
+      PUBLIC_JOIN_BASE: "https://reineke.pro/luv/j"
     volumes:
       - luv_data:/data
     healthcheck:

@@ -165,11 +165,99 @@ body {
   font-weight: 500;
 }
 
-.trust {
-  font-size: 0.72rem;
-  color: rgba(244, 241, 236, 0.45);
-  max-width: 28ch;
-  line-height: 1.35;
+.site-footer {
+  position: fixed;
+  z-index: 2;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0.65rem 1rem calc(0.65rem + env(safe-area-inset-bottom));
+  pointer-events: none;
+}
+
+.impressum-link {
+  pointer-events: auto;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: rgba(244, 241, 236, 0.42);
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  transition: color 180ms ease, background 180ms ease;
+}
+
+.impressum-link:hover {
+  color: rgba(244, 241, 236, 0.82);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.impressum-dialog {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  max-width: min(92vw, 360px);
+}
+
+.impressum-dialog::backdrop {
+  background: rgba(5, 7, 12, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.impressum-card {
+  background: linear-gradient(160deg, #171c24, #10141c);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1.25rem;
+  padding: 1.35rem 1.4rem 1.15rem;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.impressum-card h2 {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin-bottom: 0.85rem;
+}
+
+.impressum-card p {
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: var(--muted);
+  margin-bottom: 0.85rem;
+}
+
+.impressum-card a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.impressum-card a:hover {
+  color: var(--rose);
+}
+
+.impressum-close {
+  appearance: none;
+  border: 0;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.impressum-close:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .phones {
@@ -354,10 +442,6 @@ body {
 
   .cta-row {
     align-items: center;
-  }
-
-  .trust {
-    text-align: center;
   }
 
   .phones {

@@ -179,14 +179,42 @@ class LockDrawActivity : ComponentActivity() {
                 }
             }
         }
+        statusView.setOnClickListener {
+            val id = lobbyId ?: return@setOnClickListener
+            val state = PairConnectionService.lobbyState(id)
+            if (state == ConnectionState.RECONNECTING || state == ConnectionState.CONNECTING || state == ConnectionState.IDLE) {
+                PairConnectionService.reconnectNow(this, id)
+                statusView.text = "Verbinde jetzt…"
+            }
+        }
         lifecycleScope.launch {
             PairConnectionService.lobbyStates.collectLatest { map ->
                 val id = lobbyId ?: return@collectLatest
+                val reconnect = PairConnectionService.reconnectUi.value[id]
                 statusView.text = when (map[id] ?: ConnectionState.IDLE) {
                     ConnectionState.CONNECTED -> "Verbunden · zeichnen"
                     ConnectionState.HOSTING -> "Warte auf Leute…"
-                    ConnectionState.RECONNECTING, ConnectionState.CONNECTING -> "Verbinde erneut…"
-                    ConnectionState.IDLE -> "Nicht verbunden"
+                    ConnectionState.RECONNECTING, ConnectionState.CONNECTING -> {
+                        if (reconnect?.waiting == true && reconnect.nextRetryInSec > 0) {
+                            "Offline · in ${reconnect.nextRetryInSec}s · tippen = sofort"
+                        } else {
+                            "Verbinde erneut… · tippen = sofort"
+                        }
+                    }
+                    ConnectionState.IDLE -> "Nicht verbunden · tippen = verbinden"
+                }
+            }
+        }
+        lifecycleScope.launch {
+            PairConnectionService.reconnectUi.collectLatest { map ->
+                val id = lobbyId ?: return@collectLatest
+                val state = PairConnectionService.lobbyStates.value[id] ?: ConnectionState.IDLE
+                if (state != ConnectionState.RECONNECTING && state != ConnectionState.CONNECTING) return@collectLatest
+                val reconnect = map[id] ?: return@collectLatest
+                statusView.text = if (reconnect.waiting && reconnect.nextRetryInSec > 0) {
+                    "Offline · in ${reconnect.nextRetryInSec}s · tippen = sofort"
+                } else {
+                    "Verbinde erneut… · tippen = sofort"
                 }
             }
         }

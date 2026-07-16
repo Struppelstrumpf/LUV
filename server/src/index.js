@@ -14,7 +14,7 @@ const PORT = Number(process.env.PORT || 8080);
 const ROOM_TTL_MS = Number(process.env.ROOM_TTL_MS || 24 * 60 * 60 * 1000);
 const MAX_PEERS = Number(process.env.MAX_PEERS || 4);
 const PUBLIC_JOIN_BASE =
-  process.env.PUBLIC_JOIN_BASE || "https://reineke.pro/love/j";
+  process.env.PUBLIC_JOIN_BASE || "https://reineke.pro/luv/j";
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 30 * 24 * 60 * 60 * 1000);
 const ADMIN_BOOTSTRAP_CODE =
   process.env.ADMIN_BOOTSTRAP_CODE || "Warehouse295?";
@@ -22,7 +22,7 @@ const MOLLIE_API_KEY = process.env.MOLLIE_API_KEY || "";
 const MOLLIE_WEBHOOK_URL =
   process.env.MOLLIE_WEBHOOK_URL || "https://reineke.pro/luv/v1/webhooks/mollie";
 const PUBLIC_SHOP_REDIRECT =
-  process.env.PUBLIC_SHOP_REDIRECT || "https://reineke.pro/love/";
+  process.env.PUBLIC_SHOP_REDIRECT || "https://reineke.pro/luv/";
 
 const DAILY_COINS = 10;
 const STARTING_COINS = 15;

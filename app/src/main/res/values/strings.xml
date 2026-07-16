@@ -7,6 +7,7 @@
     <string name="notification_channel">Lobby-Verbindung</string>
     <string name="notification_title">LUV verbunden</string>
     <string name="notification_connecting">Verbindung wird hergestellt…</string>
+    <string name="notification_reconnecting">Verbindung wird wiederhergestellt…</string>
     <string name="notification_hosting">Warte auf Leute…</string>
     <string name="draw_hint">Tipp = Punkt · Doppeltipp = Undo · 2 Sek. = Abstimmung löschen</string>
     <string name="open_canvas">Leinwand öffnen</string>

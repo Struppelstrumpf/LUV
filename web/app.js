@@ -1,4 +1,8 @@
 (() => {
+  const openImpressum = document.getElementById("openImpressum");
+  const impressumDialog = document.getElementById("impressumDialog");
+  openImpressum?.addEventListener("click", () => impressumDialog?.showModal());
+
   const leftPhone = document.querySelector(".phone-him");
   const rightPhone = document.querySelector(".phone-her");
   const leftCanvas = leftPhone.querySelector("canvas.draw");

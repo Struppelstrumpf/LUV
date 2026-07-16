@@ -55,7 +55,7 @@ object LuvApiClient {
     private val emptyBody = "{}".toRequestBody(jsonMedia)
     private val inviteRegex = Regex("""LUV-?([A-Z0-9]{4,12})""", RegexOption.IGNORE_CASE)
     private val joinUrlRegex = Regex(
-        """(?:https?://)?(?:www\.)?reineke\.pro/love/j/([A-Z0-9]{4,12})""",
+        """(?:https?://)?(?:www\.)?reineke\.pro/(?:luv|love)/j/([A-Z0-9]{4,12})""",
         RegexOption.IGNORE_CASE
     )
     private val luvSchemeRegex = Regex("""luv://join/([A-Z0-9]{4,12})""", RegexOption.IGNORE_CASE)
@@ -73,7 +73,7 @@ object LuvApiClient {
     fun baseUrl(): String = BuildConfig.LUV_API_BASE_URL.trimEnd('/')
 
     fun publicJoinUrl(code: String): String =
-        "https://reineke.pro/love/j/${code.uppercase()}"
+        "https://reineke.pro/luv/j/${code.uppercase()}"
 
     fun wsUrl(code: String, token: String, role: String, session: String? = sessionToken): String {
         val httpBase = baseUrl()
