@@ -176,7 +176,8 @@ class PairConnectionService : Service() {
                 }
 
                 updateLobbyState(lobby.id, ConnectionState.RECONNECTING)
-                ensureForeground(getString(R.string.notification_reconnecting))
+                // Still reconnect — Notification bleibt ruhig (kein „wiederherstellen“)
+                ensureForeground(statusText())
 
                 val waitMs = if (stable) 800L else session.backoffMs
                 session.nextRetryAtMs = System.currentTimeMillis() + waitMs
@@ -460,12 +461,13 @@ class PairConnectionService : Service() {
     }
 
     private fun statusText(): String {
+        // Keine Reconnect-/Stör-Meldungen in der System-Notification
         val connected = _lobbyStates.value.count { it.value == ConnectionState.CONNECTED }
         val hosting = _lobbyStates.value.count { it.value == ConnectionState.HOSTING }
         return when {
             connected > 0 -> getString(R.string.notification_title)
             hosting > 0 -> getString(R.string.notification_hosting)
-            else -> getString(R.string.notification_connecting)
+            else -> getString(R.string.notification_running)
         }
     }
 

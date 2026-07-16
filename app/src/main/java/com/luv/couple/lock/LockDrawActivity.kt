@@ -20,7 +20,6 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.luv.couple.LuvApp
 import com.luv.couple.R
-import com.luv.couple.data.ConnectionState
 import com.luv.couple.data.PeerInfo
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.net.AccountSession
@@ -214,45 +213,8 @@ class LockDrawActivity : ComponentActivity() {
                 }
             }
         }
-        statusView.setOnClickListener {
-            val id = lobbyId ?: return@setOnClickListener
-            val state = PairConnectionService.lobbyState(id)
-            if (state == ConnectionState.RECONNECTING || state == ConnectionState.CONNECTING || state == ConnectionState.IDLE) {
-                PairConnectionService.reconnectNow(this, id)
-                statusView.text = "Verbinde jetzt…"
-            }
-        }
-        lifecycleScope.launch {
-            PairConnectionService.lobbyStates.collectLatest { map ->
-                val id = lobbyId ?: return@collectLatest
-                val reconnect = PairConnectionService.reconnectUi.value[id]
-                statusView.text = when (map[id] ?: ConnectionState.IDLE) {
-                    ConnectionState.CONNECTED -> "Verbunden"
-                    ConnectionState.HOSTING -> "Warte…"
-                    ConnectionState.RECONNECTING, ConnectionState.CONNECTING -> {
-                        if (reconnect?.waiting == true && reconnect.nextRetryInSec > 0) {
-                            "Offline · ${reconnect.nextRetryInSec}s"
-                        } else {
-                            "Verbinde…"
-                        }
-                    }
-                    ConnectionState.IDLE -> "Offline"
-                }
-            }
-        }
-        lifecycleScope.launch {
-            PairConnectionService.reconnectUi.collectLatest { map ->
-                val id = lobbyId ?: return@collectLatest
-                val state = PairConnectionService.lobbyStates.value[id] ?: ConnectionState.IDLE
-                if (state != ConnectionState.RECONNECTING && state != ConnectionState.CONNECTING) return@collectLatest
-                val reconnect = map[id] ?: return@collectLatest
-                statusView.text = if (reconnect.waiting && reconnect.nextRetryInSec > 0) {
-                    "Offline · ${reconnect.nextRetryInSec}s"
-                } else {
-                    "Verbinde…"
-                }
-            }
-        }
+        // Reconnect läuft still im Hintergrund — Status nur in der Lobby-Übersicht
+        statusView.text = getString(R.string.draw_hint)
         lifecycleScope.launch {
             var id = lobbyId
             var tries = 0
