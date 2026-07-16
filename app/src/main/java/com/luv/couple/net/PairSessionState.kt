@@ -13,6 +13,7 @@ import java.util.concurrent.ConcurrentHashMap
 object PairSessionState {
     private val peersByLobby = ConcurrentHashMap<String, MutableStateFlow<Map<String, PeerInfo>>>()
     private val peerCounts = ConcurrentHashMap<String, MutableStateFlow<Int>>()
+    private val capacities = ConcurrentHashMap<String, MutableStateFlow<Int>>()
 
     private val _notes = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val notes: SharedFlow<String> = _notes.asSharedFlow()
@@ -31,6 +32,9 @@ object PairSessionState {
 
     fun peerCount(lobbyId: String): StateFlow<Int> =
         peerCounts.getOrPut(lobbyId) { MutableStateFlow(0) }.asStateFlow()
+
+    fun capacity(lobbyId: String): StateFlow<Int> =
+        capacities.getOrPut(lobbyId) { MutableStateFlow(0) }.asStateFlow()
 
     fun anyonePresent(lobbyId: String): Boolean =
         peersByLobby[lobbyId]?.value?.values?.any { it.active } == true
@@ -55,14 +59,23 @@ object PairSessionState {
         }
     }
 
-    fun onPeers(lobbyId: String, count: Int) {
+    fun onPeers(lobbyId: String, count: Int, capacity: Int? = null) {
         peerCounts.getOrPut(lobbyId) { MutableStateFlow(0) }.value = count
+        if (capacity != null && capacity > 0) {
+            capacities.getOrPut(lobbyId) { MutableStateFlow(capacity) }.value = capacity
+        }
         if (count < 2) {
             val flow = peersByLobby[lobbyId] ?: return
             if (flow.value.values.any { it.active }) {
                 goneSinceByLobby[lobbyId] = System.currentTimeMillis()
             }
             flow.update { map -> map.mapValues { it.value.copy(active = false) } }
+        }
+    }
+
+    fun setCapacity(lobbyId: String, capacity: Int) {
+        if (capacity > 0) {
+            capacities.getOrPut(lobbyId) { MutableStateFlow(capacity) }.value = capacity
         }
     }
 
@@ -113,12 +126,14 @@ object PairSessionState {
     fun resetLobby(lobbyId: String) {
         peersByLobby[lobbyId]?.value = emptyMap()
         peerCounts[lobbyId]?.value = 0
+        capacities[lobbyId]?.value = 0
         goneSinceByLobby.remove(lobbyId)
     }
 
     fun reset() {
         peersByLobby.clear()
         peerCounts.clear()
+        capacities.clear()
         goneSinceByLobby.clear()
     }
 }

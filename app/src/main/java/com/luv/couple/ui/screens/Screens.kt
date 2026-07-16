@@ -26,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,12 +43,16 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.data.ConnectionState
 import com.luv.couple.data.Lobby
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Role
+import com.luv.couple.data.RoomPreview
+import com.luv.couple.net.PairSessionState
 import com.luv.couple.net.LobbyReconnectUi
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
@@ -219,7 +224,8 @@ fun LobbiesScreen(
     onOpenLobby: (Lobby) -> Unit,
     onCreateLobby: () -> Unit,
     onJoinLobby: () -> Unit,
-    onShareLobby: (Lobby) -> Unit,
+    onInviteSeat: (Lobby) -> Unit,
+    onBuySeat: (Lobby) -> Unit,
     onRenameLobby: (Lobby) -> Unit,
     onLeaveLobby: (Lobby) -> Unit,
     onReconnect: (Lobby) -> Unit,
@@ -277,7 +283,8 @@ fun LobbiesScreen(
                     reconnect = reconnectUi[lobby.id],
                     accent = accent,
                     onOpen = { onOpenLobby(lobby) },
-                    onShare = { onShareLobby(lobby) },
+                    onInviteSeat = { onInviteSeat(lobby) },
+                    onBuySeat = { onBuySeat(lobby) },
                     onRename = { onRenameLobby(lobby) },
                     onLeave = { onLeaveLobby(lobby) },
                     onReconnect = { onReconnect(lobby) }
@@ -285,17 +292,12 @@ fun LobbiesScreen(
             }
 
             if (lobbies.size < PeerPalette.MAX_LOBBIES) {
-                val hostCount = lobbies.count { it.role == Role.HOST }
                 PrimaryButton(
-                    label = if (hostCount == 0) {
-                        "Neue Lobby hosten"
-                    } else {
-                        "Neue Lobby · ${PeerPalette.LOBBY_CREATE_COST} Coins"
-                    },
+                    label = "Neue Lobby hosten",
                     color = accent,
                     onClick = onCreateLobby
                 )
-                PrimaryButton("Per Link beitreten", BgSoft, onJoinLobby, bordered = true)
+                PrimaryButton("Per Code beitreten", BgSoft, onJoinLobby, bordered = true)
             }
 
             SettingsToggleRow(
@@ -326,11 +328,37 @@ private fun LobbyCard(
     reconnect: LobbyReconnectUi?,
     accent: Color,
     onOpen: () -> Unit,
-    onShare: () -> Unit,
+    onInviteSeat: () -> Unit,
+    onBuySeat: () -> Unit,
     onRename: () -> Unit,
     onLeave: () -> Unit,
     onReconnect: () -> Unit
 ) {
+    val peerCount by PairSessionState.peerCount(lobby.id).collectAsStateWithLifecycle()
+    val liveCapacity by PairSessionState.capacity(lobby.id).collectAsStateWithLifecycle()
+    val peers by PairSessionState.peers(lobby.id).collectAsStateWithLifecycle()
+    val capacity = when {
+        liveCapacity > 0 -> liveCapacity
+        lobby.capacity > 0 -> lobby.capacity
+        else -> PeerPalette.FREE_LOBBY_START_CAPACITY
+    }
+    val occupied = peerCount.coerceAtLeast(1)
+    val nicknames = remember(peers, lobby.hostNickname, lobby.role) {
+        buildList {
+            if (lobby.role == Role.HOST) add("Du")
+            else if (lobby.hostNickname.isNotBlank()) add(lobby.hostNickname)
+            peers.values
+                .map { it.nickname }
+                .filter { it.isNotBlank() }
+                .distinctBy { it.lowercase() }
+                .forEach { nick ->
+                    if (none { it.equals(nick, ignoreCase = true) || (it == "Du" && nick.equals("Du", true)) }) {
+                        add(nick)
+                    }
+                }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -352,7 +380,11 @@ private fun LobbyCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(lobby.name, color = TextPrimary, fontFamily = DisplayFont, fontSize = 22.sp)
                 Text(
-                    if (lobby.role.name == "HOST") "Du hostest" else "Beigetreten",
+                    buildString {
+                        append(if (lobby.role == Role.HOST) "Du hostest" else "Beigetreten")
+                        append(" · $occupied/$capacity")
+                        if (lobby.isFree) append(" · gratis")
+                    },
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 12.sp
@@ -364,14 +396,25 @@ private fun LobbyCard(
             ReconnectBanner(reconnect = reconnect, accent = accent, onReconnect = onReconnect)
         }
         PrimaryButton("Leinwand öffnen", accent, onOpen)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(modifier = Modifier.weight(1f)) {
-                PrimaryButton("Link teilen", Color(0xFF25D366), onShare)
-            }
-            Box(modifier = Modifier.weight(1f)) {
-                PrimaryButton("Umbenennen", BgDeep, onRename, bordered = true)
-            }
+        if (lobby.role == Role.HOST) {
+            Text(
+                "Platz antippen: + lädt ein · gesperrt kostet ${PeerPalette.SLOT_COST} Coins",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 12.sp
+            )
+            SeatGrid(
+                capacity = capacity,
+                maxPeers = PeerPalette.MAX_PEERS,
+                occupied = occupied,
+                nicknames = nicknames,
+                accent = accent,
+                canManage = true,
+                onInvite = onInviteSeat,
+                onBuy = onBuySeat
+            )
         }
+        PrimaryButton("Umbenennen", BgDeep, onRename, bordered = true)
         Text(
             "Verlassen",
             color = TextMuted,
@@ -381,6 +424,104 @@ private fun LobbyCard(
                 .align(Alignment.End)
                 .clickable(onClick = onLeave)
                 .padding(4.dp)
+        )
+    }
+}
+
+@Composable
+private fun SeatGrid(
+    capacity: Int,
+    maxPeers: Int,
+    occupied: Int,
+    nicknames: List<String>,
+    accent: Color,
+    canManage: Boolean,
+    onInvite: () -> Unit,
+    onBuy: () -> Unit
+) {
+    val seats = maxPeers.coerceIn(2, PeerPalette.MAX_PEERS)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (rowStart in 0 until seats step 5) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                for (i in rowStart until minOf(rowStart + 5, seats)) {
+                    val filled = i < occupied
+                    val unlocked = i < capacity
+                    val label = when {
+                        filled -> nicknames.getOrNull(i) ?: "Online"
+                        unlocked -> "+"
+                        else -> "${PeerPalette.SLOT_COST}"
+                    }
+                    SeatTile(
+                        label = label,
+                        filled = filled,
+                        unlocked = unlocked,
+                        accent = accent,
+                        enabled = canManage && !filled,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            when {
+                                !canManage || filled -> Unit
+                                unlocked -> onInvite()
+                                else -> onBuy()
+                            }
+                        }
+                    )
+                }
+                // Platzhalter, damit letzte Reihe nicht auseinanderzieht
+                repeat((5 - (minOf(rowStart + 5, seats) - rowStart)).coerceAtLeast(0)) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SeatTile(
+    label: String,
+    filled: Boolean,
+    unlocked: Boolean,
+    accent: Color,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val bg = when {
+        filled -> accent.copy(alpha = 0.28f)
+        unlocked -> Color(0xFF151A24)
+        else -> Color(0xFF10141C)
+    }
+    val border = when {
+        filled -> accent.copy(alpha = 0.55f)
+        unlocked -> Color.White.copy(alpha = 0.14f)
+        else -> Color.White.copy(alpha = 0.06f)
+    }
+    Box(
+        modifier = modifier
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(14.dp))
+            .background(bg)
+            .border(1.dp, border, RoundedCornerShape(14.dp))
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = when {
+                filled -> TextPrimary
+                unlocked -> Color(0xFF25D366)
+                else -> TextMuted
+            },
+            fontFamily = if (unlocked && !filled) DisplayFont else BodyFont,
+            fontSize = if (unlocked && !filled) 26.sp else 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -453,7 +594,7 @@ fun CreateLobbyScreen(
                 Text("Neue Lobby", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "Name für Widget & Benachrichtigungen — z. B. Familie. Die erste Lobby ist gratis, jede weitere kostet ${PeerPalette.LOBBY_CREATE_COST} Coins (max. ${PeerPalette.MAX_LOBBIES}).",
+                    "1 kostenlose Lobby pro Tag (max. 1 aktiv). Weitere kosten ${PeerPalette.LOBBY_CREATE_COST} Coins. Max. ${PeerPalette.MAX_PEERS} Personen.",
                     color = TextMuted,
                     fontFamily = BodyFont
                 )
@@ -464,7 +605,7 @@ fun CreateLobbyScreen(
                     Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
                 }
             }
-            PrimaryButton("Lobby erstellen & Link teilen", AccentRose, {
+            PrimaryButton("Lobby erstellen", AccentRose, {
                 onCreate(name.trim().ifBlank { "Lobby" })
             })
         }
@@ -473,13 +614,21 @@ fun CreateLobbyScreen(
 
 @Composable
 fun HostShareScreen(
-    lobbyName: String,
-    joinUrl: String,
+    lobby: Lobby,
     connectionState: ConnectionState,
-    onShare: () -> Unit,
+    onInviteSeat: () -> Unit,
+    onBuySeat: () -> Unit,
     onContinue: () -> Unit,
     onBack: () -> Unit
 ) {
+    val peerCount by PairSessionState.peerCount(lobby.id).collectAsStateWithLifecycle()
+    val liveCapacity by PairSessionState.capacity(lobby.id).collectAsStateWithLifecycle()
+    val capacity = when {
+        liveCapacity > 0 -> liveCapacity
+        lobby.capacity > 0 -> lobby.capacity
+        else -> PeerPalette.FREE_LOBBY_START_CAPACITY
+    }
+    val occupied = peerCount.coerceAtLeast(1)
     ScreenBackdrop {
         Column(
             modifier = Modifier
@@ -498,36 +647,106 @@ fun HostShareScreen(
                         .padding(vertical = 8.dp)
                 )
                 Spacer(modifier = Modifier.height(12.dp))
-                Text(lobbyName, fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
+                Text(lobby.name, fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "Teile den Link — die App öffnet sich und tritt direkt bei (bis ${PeerPalette.MAX_PEERS} Personen).",
+                    if (lobby.isFree) {
+                        "Gratis-Lobby: 1 Einladung frei. Weitere Plätze: ${PeerPalette.SLOT_COST} Coins. Tippe auf +"
+                    } else {
+                        "3 Einladungen inklusive. Weitere Plätze: ${PeerPalette.SLOT_COST} Coins. Tippe auf +"
+                    },
                     color = TextMuted,
                     fontFamily = BodyFont
                 )
-                Spacer(modifier = Modifier.height(24.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(BgSoft)
-                        .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(24.dp))
-                        .padding(20.dp)
-                ) {
-                    Text(
-                        text = joinUrl,
-                        color = TextPrimary,
-                        fontFamily = BodyFont,
-                        fontSize = 15.sp,
-                        lineHeight = 22.sp
-                    )
-                }
+                Spacer(modifier = Modifier.height(20.dp))
+                SeatGrid(
+                    capacity = capacity,
+                    maxPeers = PeerPalette.MAX_PEERS,
+                    occupied = occupied,
+                    nicknames = listOf("Du"),
+                    accent = AccentRose,
+                    canManage = true,
+                    onInvite = onInviteSeat,
+                    onBuy = onBuySeat
+                )
                 Spacer(modifier = Modifier.height(16.dp))
                 StatusChip(connectionState)
             }
+            PrimaryButton("Zu meinen Lobbys", AccentRose, onContinue)
+        }
+    }
+}
+
+@Composable
+fun JoinPreviewScreen(
+    preview: RoomPreview?,
+    loading: Boolean,
+    error: String?,
+    onJoin: () -> Unit,
+    onDecline: () -> Unit
+) {
+    ScreenBackdrop {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(28.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(
+                    "Ablehnen",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    modifier = Modifier
+                        .clickable(onClick = onDecline)
+                        .padding(vertical = 8.dp)
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+                Text("Einladung", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
+                Spacer(modifier = Modifier.height(8.dp))
+                when {
+                    loading -> Text("Lobby wird geladen…", color = TextMuted, fontFamily = BodyFont)
+                    preview != null -> {
+                        Text(
+                            preview.name,
+                            fontFamily = DisplayFont,
+                            fontSize = 28.sp,
+                            color = TextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Host: ${preview.hostNickname}",
+                            color = AccentRose,
+                            fontFamily = BodyFont,
+                            fontSize = 18.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "${preview.peers}/${preview.capacity} online · bis ${preview.maxPeers}",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 14.sp
+                        )
+                    }
+                    else -> Text(
+                        error ?: "Lobby nicht gefunden.",
+                        color = AccentRose,
+                        fontFamily = BodyFont
+                    )
+                }
+                if (!error.isNullOrBlank() && preview != null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
+                }
+            }
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                PrimaryButton("Per WhatsApp teilen", Color(0xFF25D366), onShare)
-                PrimaryButton("Zu meinen Lobbys", AccentRose, onContinue)
+                PrimaryButton(
+                    label = "Beitreten",
+                    color = AccentRose,
+                    onClick = onJoin,
+                    enabled = preview != null && !loading
+                )
+                PrimaryButton("Ablehnen", BgSoft, onDecline, bordered = true)
             }
         }
     }
@@ -537,7 +756,7 @@ fun HostShareScreen(
 fun JoinScreen(
     error: String?,
     initialCode: String = "",
-    onJoin: (String) -> Unit,
+    onPreview: (String) -> Unit,
     onBack: () -> Unit
 ) {
     var code by remember { mutableStateOf(initialCode) }
@@ -561,7 +780,7 @@ fun JoinScreen(
                 Text("Beitreten", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "Link oder Code einfügen",
+                    "Link oder Code einfügen — danach siehst du Lobby & Host",
                     color = TextMuted,
                     fontFamily = BodyFont
                 )
@@ -577,7 +796,7 @@ fun JoinScreen(
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                PrimaryButton("Verbinden", AccentRose, { onJoin(code) })
+                PrimaryButton("Weiter", AccentRose, { onPreview(code) })
                 PrimaryButton("Abbrechen", BgSoft, onBack, bordered = true)
             }
         }
@@ -714,19 +933,20 @@ private fun PrimaryButton(
     label: String,
     color: Color,
     onClick: () -> Unit,
-    bordered: Boolean = false
+    bordered: Boolean = false,
+    enabled: Boolean = true
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(color)
+            .background(if (enabled) color else color.copy(alpha = 0.35f))
             .then(
                 if (bordered) Modifier.border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(18.dp))
                 else Modifier
             )
-            .clickable(onClick = onClick),
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier.alpha(0.7f)),
         contentAlignment = Alignment.Center
     ) {
         Text(

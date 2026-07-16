@@ -3,6 +3,7 @@ package com.luv.couple.net
 import com.luv.couple.BuildConfig
 import com.luv.couple.data.AccountInfo
 import com.luv.couple.data.PeerPalette
+import com.luv.couple.data.RoomPreview
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -17,7 +18,11 @@ data class RoomSession(
     val token: String,
     val invite: String,
     val joinUrl: String,
-    val maxPeers: Int = PeerPalette.MAX_PEERS
+    val maxPeers: Int = PeerPalette.MAX_PEERS,
+    val capacity: Int = PeerPalette.FREE_LOBBY_START_CAPACITY,
+    val isFree: Boolean = false,
+    val name: String = "Lobby",
+    val hostNickname: String = "Host"
 )
 
 data class AuthResult(
@@ -232,8 +237,9 @@ object LuvApiClient {
         }
     }
 
-    suspend fun createRoom(): RoomSession = withContext(Dispatchers.IO) {
-        val request = authedRequestBuilder("/v1/rooms").post(emptyBody).build()
+    suspend fun createRoom(name: String = "Lobby"): RoomSession = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("name", name).toString().toRequestBody(jsonMedia)
+        val request = authedRequestBuilder("/v1/rooms").post(body).build()
         executeRoom(request)
     }
 
@@ -241,6 +247,35 @@ object LuvApiClient {
         val code = normalizeCode(rawCode)
             ?: throw LuvApiException("Ungültiger Link oder Code.")
         val request = authedRequestBuilder("/v1/rooms/$code/join").post(emptyBody).build()
+        executeRoom(request)
+    }
+
+    suspend fun roomPreview(rawCode: String): RoomPreview = withContext(Dispatchers.IO) {
+        val code = normalizeCode(rawCode)
+            ?: throw LuvApiException("Ungültiger Link oder Code.")
+        val request = Request.Builder()
+            .url("${baseUrl()}/v1/rooms/$code/preview")
+            .get()
+            .build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            val json = runCatching { JSONObject(raw) }.getOrNull()
+            if (!response.isSuccessful) {
+                throw LuvApiException(
+                    json?.optString("message")?.takeIf { it.isNotBlank() }
+                        ?: when (json?.optString("error")) {
+                            "room_not_found" -> "Lobby nicht gefunden. Host muss online sein."
+                            else -> "Lobby nicht erreichbar."
+                        }
+                )
+            }
+            parsePreview(json ?: throw LuvApiException("Ungültige Server-Antwort"))
+        }
+    }
+
+    suspend fun buySlot(code: String): RoomSession = withContext(Dispatchers.IO) {
+        val clean = normalizeCode(code) ?: throw LuvApiException("Ungültiger Code.")
+        val request = authedRequestBuilder("/v1/rooms/$clean/slots").post(emptyBody).build()
         executeRoom(request)
     }
 
@@ -265,6 +300,21 @@ object LuvApiClient {
             if (bare.all { it.isLetterOrDigit() }) return bare
         }
         return null
+    }
+
+    private fun parsePreview(json: JSONObject): RoomPreview {
+        val code = json.getString("code")
+        return RoomPreview(
+            code = code,
+            name = json.optString("name", "Lobby"),
+            hostNickname = json.optString("hostNickname", "Host"),
+            peers = json.optInt("peers", 0),
+            capacity = json.optInt("capacity", PeerPalette.FREE_LOBBY_START_CAPACITY),
+            maxPeers = json.optInt("maxPeers", PeerPalette.MAX_PEERS),
+            isFree = json.optBoolean("isFree", false),
+            invite = json.optString("invite", "LUV-$code"),
+            joinUrl = json.optString("joinUrl", publicJoinUrl(code))
+        )
     }
 
     private fun authedRequestBuilder(path: String): Request.Builder {
@@ -305,7 +355,9 @@ object LuvApiClient {
                         "room_not_found" -> "Lobby nicht gefunden. Host muss online sein — Link neu teilen."
                         "room_full" -> "Lobby ist voll (max. ${PeerPalette.MAX_PEERS} Personen)."
                         "max_lobbies" -> "Maximal ${PeerPalette.MAX_LOBBIES} Lobbys."
-                        "no_coins" -> "Nicht genug Coins (weitere Lobby: ${PeerPalette.LOBBY_CREATE_COST})."
+                        "no_coins" -> "Nicht genug Coins."
+                        "capacity_full" -> "Maximal ${PeerPalette.MAX_PEERS} Personen."
+                        "not_host" -> "Nur der Host kann Plätze freischalten."
                         "unauthorized" -> "Bitte neu anmelden."
                         else -> "API-Fehler (${response.code})"
                     }
@@ -318,10 +370,17 @@ object LuvApiClient {
             val code = parsed.getString("code")
             return RoomSession(
                 code = code,
-                token = parsed.getString("token"),
+                token = parsed.optString("token").ifBlank {
+                    // Slot-Kauf liefert ggf. kein Token — Caller behält bestehendes
+                    ""
+                },
                 invite = parsed.optString("invite", "LUV-$code"),
                 joinUrl = parsed.optString("joinUrl", publicJoinUrl(code)),
-                maxPeers = parsed.optInt("maxPeers", PeerPalette.MAX_PEERS)
+                maxPeers = parsed.optInt("maxPeers", PeerPalette.MAX_PEERS),
+                capacity = parsed.optInt("capacity", PeerPalette.FREE_LOBBY_START_CAPACITY),
+                isFree = parsed.optBoolean("isFree", false),
+                name = parsed.optString("name", "Lobby"),
+                hostNickname = parsed.optString("hostNickname", "Host")
             )
         }
     }

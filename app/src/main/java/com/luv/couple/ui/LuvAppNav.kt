@@ -26,6 +26,7 @@ import com.luv.couple.LuvApp
 import com.luv.couple.data.Lobby
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Role
+import com.luv.couple.data.RoomPreview
 import com.luv.couple.lock.CanvasStore
 import com.luv.couple.lock.LockDrawActivity
 import com.luv.couple.lock.LockScreenWidgetProvider
@@ -33,6 +34,7 @@ import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.LuvApiException
 import com.luv.couple.net.PairConnectionService
+import com.luv.couple.net.PairSessionState
 import com.luv.couple.net.PendingJoin
 import com.luv.couple.net.PendingShopReturn
 import com.luv.couple.net.ShopPack
@@ -41,6 +43,7 @@ import com.luv.couple.ui.screens.AccountHomeScreen
 import com.luv.couple.ui.screens.AdminScreen
 import com.luv.couple.ui.screens.CreateLobbyScreen
 import com.luv.couple.ui.screens.HostShareScreen
+import com.luv.couple.ui.screens.JoinPreviewScreen
 import com.luv.couple.ui.screens.JoinScreen
 import com.luv.couple.ui.screens.LobbiesScreen
 import com.luv.couple.ui.screens.NicknameScreen
@@ -57,6 +60,7 @@ object Routes {
     const val CREATE = "create"
     const val HOST_SHARE = "host_share"
     const val JOIN = "join"
+    const val JOIN_PREVIEW = "join_preview"
     const val REDEEM = "redeem"
     const val ADMIN = "admin"
     const val NICKNAME = "nickname"
@@ -85,6 +89,9 @@ fun LuvAppNav() {
     var startDestination by remember { mutableStateOf<String?>(null) }
     var shareLobby by remember { mutableStateOf<Lobby?>(null) }
     var joinError by remember { mutableStateOf<String?>(null) }
+    var joinPreview by remember { mutableStateOf<RoomPreview?>(null) }
+    var joinPreviewLoading by remember { mutableStateOf(false) }
+    var joinPreviewCode by remember { mutableStateOf<String?>(null) }
     var accountMessage by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var colorIndex by remember { mutableIntStateOf(0) }
@@ -103,13 +110,33 @@ fun LuvAppNav() {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_TEXT, text)
             }
-            context.startActivity(Intent.createChooser(fallback, "Link teilen"))
+            context.startActivity(Intent.createChooser(fallback, "Einladung teilen"))
         }
     }
 
     fun inviteMessage(lobby: Lobby): String =
-        "Tritt meiner LUV-Lobby „${lobby.name}“ bei:\n\n${lobby.joinUrl}\n\n" +
+        "Einladung zur LUV-Lobby „${lobby.name}“:\n\n${lobby.joinUrl}\n\n" +
             "App: https://reineke.pro/luv/"
+
+    fun openJoinPreview(code: String) {
+        joinPreviewCode = code
+        joinPreview = null
+        joinPreviewLoading = true
+        joinError = null
+        navController.navigate(Routes.JOIN_PREVIEW) {
+            launchSingleTop = true
+        }
+        scope.launch {
+            try {
+                joinPreview = LuvApiClient.roomPreview(code)
+            } catch (e: Exception) {
+                joinError = e.message ?: "Lobby nicht gefunden."
+                joinPreview = null
+            } finally {
+                joinPreviewLoading = false
+            }
+        }
+    }
 
     suspend fun ensureAuth(nick: String): Boolean {
         return try {
@@ -148,17 +175,27 @@ fun LuvAppNav() {
             if (snap.lobbies.size >= PeerPalette.MAX_LOBBIES) {
                 joinError = "Maximal ${PeerPalette.MAX_LOBBIES} Lobbys."
                 false
+            } else if (snap.lobbies.any {
+                    it.code.equals(LuvApiClient.normalizeCode(raw).orEmpty(), ignoreCase = true)
+                }
+            ) {
+                joinError = "Du bist schon in dieser Lobby."
+                false
             } else {
                 val room = LuvApiClient.joinRoom(raw)
                 val lobby = Lobby(
                     id = UUID.randomUUID().toString(),
-                    name = "Lobby",
+                    name = room.name.ifBlank { "Lobby" },
                     role = Role.JOIN,
                     code = room.code,
                     token = room.token,
-                    invite = room.invite
+                    invite = room.invite,
+                    capacity = room.capacity,
+                    isFree = room.isFree,
+                    hostNickname = room.hostNickname
                 )
                 prefs.upsertLobby(lobby)
+                PairSessionState.setCapacity(lobby.id, room.capacity)
                 CanvasStore.setActiveLobby(lobby.id)
                 PairConnectionService.startAll(context)
                 LockScreenWidgetProvider.requestUpdate(context)
@@ -172,6 +209,42 @@ fun LuvAppNav() {
             false
         } finally {
             busy = false
+        }
+    }
+
+    fun inviteSeat(lobby: Lobby) {
+        shareText(inviteMessage(lobby))
+    }
+
+    fun buySeat(lobby: Lobby) {
+        if (busy) return
+        scope.launch {
+            busy = true
+            joinError = null
+            try {
+                val room = LuvApiClient.buySlot(lobby.code)
+                AccountSession.account.value?.let { prefs.updateAccount(it) }
+                val updated = lobby.copy(
+                    capacity = room.capacity,
+                    isFree = room.isFree,
+                    invite = room.invite.ifBlank { lobby.invite }
+                )
+                prefs.upsertLobby(updated)
+                if (shareLobby?.id == lobby.id) shareLobby = updated
+                PairSessionState.setCapacity(lobby.id, room.capacity)
+                refreshAccount()
+                Toast.makeText(
+                    context,
+                    "Platz freigeschaltet (−${PeerPalette.SLOT_COST} Coins)",
+                    Toast.LENGTH_SHORT
+                ).show()
+                inviteSeat(updated)
+            } catch (e: Exception) {
+                joinError = e.message
+                Toast.makeText(context, e.message ?: "Kauf fehlgeschlagen", Toast.LENGTH_LONG).show()
+            } finally {
+                busy = false
+            }
         }
     }
 
@@ -205,10 +278,8 @@ fun LuvAppNav() {
         if (startDestination != Routes.MAIN) return@LaunchedEffect
         if (nickname.isNullOrBlank()) return@LaunchedEffect
         val code = PendingJoin.consume() ?: return@LaunchedEffect
-        if (joinWithCode(code)) {
-            Toast.makeText(context, "Lobby beigetreten", Toast.LENGTH_SHORT).show()
-            tab = 0
-        }
+        tab = 0
+        openJoinPreview(code)
     }
 
     LaunchedEffect(startDestination, pendingShopReturn) {
@@ -290,7 +361,8 @@ fun LuvAppNav() {
                                 joinError = null
                                 navController.navigate(Routes.JOIN)
                             },
-                            onShareLobby = { lobby -> shareText(inviteMessage(lobby)) },
+                            onInviteSeat = { lobby -> inviteSeat(lobby) },
+                            onBuySeat = { lobby -> buySeat(lobby) },
                             onRenameLobby = { lobby ->
                                 navController.navigate(Routes.rename(lobby.id))
                             },
@@ -392,22 +464,21 @@ fun LuvAppNav() {
                                 joinError = "Maximal ${PeerPalette.MAX_LOBBIES} Lobbys."
                                 return@launch
                             }
-                            val hostCount = snap.lobbies.count { it.role == Role.HOST }
-                            if (hostCount >= 1 && (account?.coins ?: 0) < PeerPalette.LOBBY_CREATE_COST) {
-                                joinError = "Weitere Lobby kostet ${PeerPalette.LOBBY_CREATE_COST} Coins."
-                                return@launch
-                            }
-                            val room = LuvApiClient.createRoom()
+                            val room = LuvApiClient.createRoom(name)
                             AccountSession.account.value?.let { prefs.updateAccount(it) }
                             val lobby = Lobby(
                                 id = UUID.randomUUID().toString(),
-                                name = name,
+                                name = room.name.ifBlank { name },
                                 role = Role.HOST,
                                 code = room.code,
                                 token = room.token,
-                                invite = room.invite
+                                invite = room.invite,
+                                capacity = room.capacity,
+                                isFree = room.isFree,
+                                hostNickname = room.hostNickname.ifBlank { nickname.orEmpty() }
                             )
                             prefs.upsertLobby(lobby)
+                            PairSessionState.setCapacity(lobby.id, room.capacity)
                             CanvasStore.setActiveLobby(lobby.id)
                             PairConnectionService.startAll(context)
                             shareLobby = lobby
@@ -436,10 +507,10 @@ fun LuvAppNav() {
                 return@composable
             }
             HostShareScreen(
-                lobbyName = lobby.name,
-                joinUrl = lobby.joinUrl,
+                lobby = lobby,
                 connectionState = lobbyStates[lobby.id] ?: PairConnectionService.state.value,
-                onShare = { shareText(inviteMessage(lobby)) },
+                onInviteSeat = { inviteSeat(lobby) },
+                onBuySeat = { buySeat(lobby) },
                 onContinue = {
                     tab = 0
                     navController.navigate(Routes.MAIN) { popUpTo(Routes.MAIN) { inclusive = true } }
@@ -455,15 +526,46 @@ fun LuvAppNav() {
             JoinScreen(
                 error = joinError,
                 initialCode = PendingJoin.peek().orEmpty(),
-                onJoin = { raw ->
-                    scope.launch {
-                        if (joinWithCode(raw)) {
-                            tab = 0
-                            navController.navigate(Routes.MAIN) { popUpTo(Routes.MAIN) { inclusive = true } }
-                        }
+                onPreview = { raw ->
+                    val code = LuvApiClient.normalizeCode(raw)
+                    if (code == null) {
+                        joinError = "Ungültiger Link oder Code."
+                    } else {
+                        openJoinPreview(code)
                     }
                 },
                 onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Routes.JOIN_PREVIEW) {
+            JoinPreviewScreen(
+                preview = joinPreview,
+                loading = joinPreviewLoading,
+                error = joinError,
+                onJoin = {
+                    val code = joinPreviewCode ?: joinPreview?.code ?: return@JoinPreviewScreen
+                    scope.launch {
+                        if (joinWithCode(code)) {
+                            Toast.makeText(context, "Lobby beigetreten", Toast.LENGTH_SHORT).show()
+                            tab = 0
+                            navController.navigate(Routes.MAIN) {
+                                popUpTo(Routes.MAIN) { inclusive = true }
+                            }
+                        }
+                    }
+                },
+                onDecline = {
+                    joinPreview = null
+                    joinPreviewCode = null
+                    joinError = null
+                    PendingJoin.consume()
+                    if (!navController.popBackStack()) {
+                        navController.navigate(Routes.MAIN) {
+                            popUpTo(Routes.MAIN) { inclusive = true }
+                        }
+                    }
+                }
             )
         }
 

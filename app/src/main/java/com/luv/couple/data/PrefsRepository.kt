@@ -287,7 +287,10 @@ class PrefsRepository(private val context: Context) {
                                 role = runCatching { Role.valueOf(o.getString("role")) }.getOrDefault(Role.HOST),
                                 code = o.getString("code"),
                                 token = o.getString("token"),
-                                invite = o.optString("invite", "LUV-${o.getString("code")}")
+                                invite = o.optString("invite", "LUV-${o.getString("code")}"),
+                                capacity = o.optInt("capacity", PeerPalette.FREE_LOBBY_START_CAPACITY),
+                                isFree = o.optBoolean("isFree", false),
+                                hostNickname = o.optString("hostNickname", "")
                             )
                         )
                     }
@@ -306,6 +309,9 @@ class PrefsRepository(private val context: Context) {
                         .put("code", lobby.code)
                         .put("token", lobby.token)
                         .put("invite", lobby.invite)
+                        .put("capacity", lobby.capacity)
+                        .put("isFree", lobby.isFree)
+                        .put("hostNickname", lobby.hostNickname)
                 )
             }
             return arr.toString()

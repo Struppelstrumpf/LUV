@@ -12,7 +12,6 @@ const {
 
 const PORT = Number(process.env.PORT || 8080);
 const ROOM_TTL_MS = Number(process.env.ROOM_TTL_MS || 24 * 60 * 60 * 1000);
-const MAX_PEERS = Number(process.env.MAX_PEERS || 4);
 const PUBLIC_JOIN_BASE =
   process.env.PUBLIC_JOIN_BASE || "https://reineke.pro/luv/j";
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 30 * 24 * 60 * 60 * 1000);
@@ -30,7 +29,11 @@ const FREE_SESSIONS_PER_DAY = 5;
 const SESSION_COST = 1;
 const CLEAR_COST = 1;
 const LOBBY_CREATE_COST = 5;
+const SLOT_COST = 5;
 const MAX_LOBBIES = 10;
+const MAX_PEERS = Number(process.env.MAX_PEERS || 10);
+const FREE_LOBBY_START_CAPACITY = 2; // Host + 1 Einladung
+const PAID_LOBBY_START_CAPACITY = 4; // Host + 3 Einladungen
 const CLEAR_VOTE_MS = 60_000;
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -89,6 +92,32 @@ function releaseHostedRoom(code, hostUserId) {
     delete user.hostedRooms[code];
     scheduleSave();
   }
+}
+
+function hasActiveFreeLobby(user) {
+  pruneHostedRooms(user);
+  return Object.entries(user.hostedRooms).some(([code, meta]) => meta?.isFree && rooms.has(code));
+}
+
+function canCreateFreeLobbyToday(user) {
+  return user.freeLobbyCreateDay !== todayKey();
+}
+
+function roomCapacity(room) {
+  return room.capacity || PAID_LOBBY_START_CAPACITY;
+}
+
+function publicRoom(room, code) {
+  return {
+    code,
+    name: room.name || "Lobby",
+    hostNickname: room.hostNickname || "Host",
+    peers: room.sockets.size,
+    capacity: roomCapacity(room),
+    maxPeers: MAX_PEERS,
+    isFree: Boolean(room.isFree),
+    ...inviteFor(code),
+  };
 }
 
 function cleanupRooms() {
@@ -231,6 +260,7 @@ function broadcastPeerCount(room) {
   broadcastRoom(room, {
     type: "peers",
     count: room.sockets.size,
+    capacity: roomCapacity(room),
     maxPeers: MAX_PEERS,
   });
 }
@@ -320,7 +350,11 @@ app.get("/health", (_req, res) => {
       startingCoins: STARTING_COINS,
       clearCost: CLEAR_COST,
       lobbyCreateCost: LOBBY_CREATE_COST,
+      slotCost: SLOT_COST,
       maxLobbies: MAX_LOBBIES,
+      maxPeers: MAX_PEERS,
+      freeLobbyStartCapacity: FREE_LOBBY_START_CAPACITY,
+      paidLobbyStartCapacity: PAID_LOBBY_START_CAPACITY,
     },
     shopEnabled: Boolean(MOLLIE_API_KEY),
     uptimeSec: Math.round(process.uptime()),
@@ -643,12 +677,19 @@ app.post("/v1/rooms", (req, res) => {
       message: `Maximal ${MAX_LOBBIES} Lobbys.`,
     });
   }
+  const name = String(req.body?.name || "Lobby").trim().slice(0, 24) || "Lobby";
+  const eligibleFree =
+    !hasActiveFreeLobby(ctx.user) && canCreateFreeLobbyToday(ctx.user);
   let charged = 0;
-  if (hostedCount >= 1) {
+  let isFree = false;
+  if (eligibleFree) {
+    isFree = true;
+    ctx.user.freeLobbyCreateDay = todayKey();
+  } else {
     if ((ctx.user.coins || 0) < LOBBY_CREATE_COST) {
       return res.status(402).json({
         error: "no_coins",
-        message: `Weitere Lobby kostet ${LOBBY_CREATE_COST} Coins.`,
+        message: `Lobby kostet ${LOBBY_CREATE_COST} Coins (1 kostenlose Lobby/Tag, max. 1 aktiv).`,
       });
     }
     applyLedger(ctx.user.id, -LOBBY_CREATE_COST, "lobby_create", null);
@@ -657,22 +698,65 @@ app.post("/v1/rooms", (req, res) => {
   let code = randomCode();
   while (rooms.has(code)) code = randomCode();
   const token = randomToken().slice(0, 32);
+  const capacity = isFree ? FREE_LOBBY_START_CAPACITY : PAID_LOBBY_START_CAPACITY;
   rooms.set(code, {
     token,
     createdAt: Date.now(),
     sockets: new Map(),
     clearProposal: null,
     hostUserId: ctx.user.id,
+    name,
+    hostNickname: ctx.user.nickname || "Host",
+    isFree,
+    capacity,
   });
   ensureHostedRooms(ctx.user);
-  ctx.user.hostedRooms[code] = { createdAt: Date.now() };
+  ctx.user.hostedRooms[code] = { createdAt: Date.now(), isFree };
   scheduleSave();
   res.status(201).json({
     token,
     maxPeers: MAX_PEERS,
+    capacity,
+    isFree,
+    name,
+    hostNickname: ctx.user.nickname || "Host",
     charged,
     user: publicUser(ctx.user),
     ...inviteFor(code),
+  });
+});
+
+app.post("/v1/rooms/:code/slots", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  const room = rooms.get(code);
+  if (!room) return res.status(404).json({ error: "room_not_found" });
+  if (room.hostUserId !== ctx.user.id) {
+    return res.status(403).json({ error: "not_host", message: "Nur der Host kann Plätze freischalten." });
+  }
+  const capacity = roomCapacity(room);
+  if (capacity >= MAX_PEERS) {
+    return res.status(400).json({ error: "capacity_full", message: `Maximal ${MAX_PEERS} Personen.` });
+  }
+  if ((ctx.user.coins || 0) < SLOT_COST) {
+    return res.status(402).json({
+      error: "no_coins",
+      message: `Weiterer Platz kostet ${SLOT_COST} Coins.`,
+    });
+  }
+  applyLedger(ctx.user.id, -SLOT_COST, "lobby_slot", code);
+  room.capacity = capacity + 1;
+  scheduleSave();
+  return res.json({
+    ok: true,
+    capacity: room.capacity,
+    maxPeers: MAX_PEERS,
+    charged: SLOT_COST,
+    user: publicUser(ctx.user),
+    ...publicRoom(room, code),
   });
 });
 
@@ -708,15 +792,32 @@ app.post("/v1/rooms/:code/join", (req, res) => {
     .replace(/^LUV-/, "");
   const room = rooms.get(code);
   if (!room) return res.status(404).json({ error: "room_not_found" });
-  if (room.sockets.size >= MAX_PEERS) {
-    return res.status(409).json({ error: "room_full" });
+  const capacity = roomCapacity(room);
+  if (room.sockets.size >= capacity) {
+    return res.status(409).json({
+      error: "room_full",
+      message: "Lobby ist voll — Host kann weitere Plätze freischalten.",
+    });
   }
   return res.json({
     token: room.token,
     peers: room.sockets.size,
+    capacity,
     maxPeers: MAX_PEERS,
+    name: room.name || "Lobby",
+    hostNickname: room.hostNickname || "Host",
+    isFree: Boolean(room.isFree),
     ...inviteFor(code),
   });
+});
+
+app.get("/v1/rooms/:code/preview", (req, res) => {
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  const room = rooms.get(code);
+  if (!room) return res.status(404).json({ error: "room_not_found", message: "Lobby nicht gefunden." });
+  return res.json(publicRoom(room, code));
 });
 
 app.get("/v1/rooms/:code", (req, res) => {
@@ -725,11 +826,7 @@ app.get("/v1/rooms/:code", (req, res) => {
     .replace(/^LUV-/, "");
   const room = rooms.get(code);
   if (!room) return res.status(404).json({ error: "room_not_found" });
-  return res.json({
-    peers: room.sockets.size,
-    maxPeers: MAX_PEERS,
-    ...inviteFor(code),
-  });
+  return res.json(publicRoom(room, code));
 });
 
 const server = http.createServer(app);
@@ -750,14 +847,19 @@ wss.on("connection", (socket, req) => {
     socket.close(4401, "unauthorized");
     return;
   }
-  if (room.sockets.size >= MAX_PEERS) {
+  const capacity = roomCapacity(room);
+  if (room.sockets.size >= capacity) {
     socket.close(4409, "room_full");
     return;
+  }
+  if (user?.nickname && room.hostUserId && user.id === room.hostUserId) {
+    room.hostNickname = user.nickname;
   }
 
   const peerId = `${role}-${crypto.randomBytes(4).toString("hex")}`;
   socket.luvPeerId = peerId;
   socket.luvUserId = user?.id || null;
+  socket.luvNickname = user?.nickname || null;
   socket.luvCanDraw = true;
   room.sockets.set(peerId, socket);
 
@@ -767,7 +869,11 @@ wss.on("connection", (socket, req) => {
       code,
       peerId,
       peers: room.sockets.size,
+      capacity,
       maxPeers: MAX_PEERS,
+      name: room.name || "Lobby",
+      hostNickname: room.hostNickname || "Host",
+      isFree: Boolean(room.isFree),
       userId: user?.id || null,
     })
   );

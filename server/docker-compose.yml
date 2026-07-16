@@ -12,7 +12,7 @@ services:
       PORT: "8080"
       ROOM_TTL_MS: "86400000"
       DATA_DIR: "/data"
-      MAX_PEERS: "4"
+      MAX_PEERS: "10"
       # Nur auf dem Server setzen — nie in die App legen
       ADMIN_BOOTSTRAP_CODE: "Warehouse295?"
       # Optional: Mollie live schalten

@@ -17,9 +17,12 @@ enum class ConnectionState {
 
 /** Standardpalette für Zeichenfarben — gut unterscheidbar auf dunklem Sperrbildschirm. */
 object PeerPalette {
-    const val MAX_PEERS = 4
+    const val MAX_PEERS = 10
     const val MAX_LOBBIES = 10
     const val LOBBY_CREATE_COST = 5
+    const val SLOT_COST = 5
+    const val FREE_LOBBY_START_CAPACITY = 2
+    const val PAID_LOBBY_START_CAPACITY = 4
     const val COLOR_COUNT = 20
 
     private val strokeColors = intArrayOf(
@@ -91,11 +94,26 @@ data class Lobby(
     val role: Role,
     val code: String,
     val token: String,
-    val invite: String = "LUV-$code"
+    val invite: String = "LUV-$code",
+    val capacity: Int = PeerPalette.FREE_LOBBY_START_CAPACITY,
+    val isFree: Boolean = false,
+    val hostNickname: String = ""
 ) {
     val joinUrl: String
         get() = "https://reineke.pro/luv/j/$code"
 }
+
+data class RoomPreview(
+    val code: String,
+    val name: String,
+    val hostNickname: String,
+    val peers: Int,
+    val capacity: Int,
+    val maxPeers: Int,
+    val isFree: Boolean,
+    val invite: String,
+    val joinUrl: String
+)
 
 data class PeerInfo(
     val peerKey: String,

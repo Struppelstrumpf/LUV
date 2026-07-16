@@ -39,6 +39,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -47,6 +48,10 @@ class PairConnectionService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val foregroundStarted = AtomicBoolean(false)
     private val sessions = ConcurrentHashMap<String, LobbySession>()
+
+    init {
+        instanceRef = this
+    }
 
     private val wsClient = OkHttpClient.Builder()
         .pingInterval(20, TimeUnit.SECONDS)
@@ -58,6 +63,7 @@ class PairConnectionService : Service() {
         val lobby: Lobby,
         val running: AtomicBoolean = AtomicBoolean(true),
         val webSocket: AtomicReference<WebSocket?> = AtomicReference(null),
+        val outbox: ConcurrentLinkedQueue<String> = ConcurrentLinkedQueue(),
         var job: Job? = null,
         val forceReconnect: AtomicBoolean = AtomicBoolean(false),
         @Volatile var backoffMs: Long = MIN_BACKOFF_MS,
@@ -80,7 +86,7 @@ class PairConnectionService : Service() {
             ACTION_SEND_STROKE -> {
                 val lobbyId = intent.getStringExtra(EXTRA_LOBBY_ID)
                 val payload = intent.getStringExtra(EXTRA_PAYLOAD)
-                if (payload != null) sendRaw(lobbyId, payload)
+                if (payload != null) enqueueOrSend(lobbyId, payload)
                 return START_STICKY
             }
             ACTION_SEND_CLEAR -> {
@@ -229,6 +235,7 @@ class PairConnectionService : Service() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 opened.set(true)
                 Log.i(TAG, "ws open lobby=${lobby.name}")
+                flushOutbox(session, webSocket)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -284,7 +291,8 @@ class PairConnectionService : Service() {
             when (json.optString("type")) {
                 "welcome", "peers" -> {
                     val peers = json.optInt("peers", json.optInt("count", 0))
-                    PairSessionState.onPeers(lobby.id, peers)
+                    val capacity = json.optInt("capacity", 0).takeIf { it > 0 }
+                    PairSessionState.onPeers(lobby.id, peers, capacity)
                     if (peers >= 2) {
                         sessions[lobby.id]?.let {
                             it.backoffMs = MIN_BACKOFF_MS
@@ -422,9 +430,27 @@ class PairConnectionService : Service() {
         }
     }
 
-    private fun sendRaw(lobbyId: String?, line: String) {
+    private fun enqueueOrSend(lobbyId: String?, line: String) {
         val id = lobbyId ?: CanvasStore.activeLobbyId.value ?: return
-        sessions[id]?.webSocket?.get()?.send(line)
+        val session = sessions[id] ?: return
+        val ws = session.webSocket.get()
+        if (ws != null && ws.send(line)) return
+        while (session.outbox.size >= MAX_OUTBOX) session.outbox.poll()
+        session.outbox.offer(line)
+    }
+
+    private fun flushOutbox(session: LobbySession, webSocket: WebSocket) {
+        while (true) {
+            val line = session.outbox.poll() ?: break
+            if (!webSocket.send(line)) {
+                session.outbox.offer(line)
+                break
+            }
+        }
+    }
+
+    private fun sendRaw(lobbyId: String?, line: String) {
+        enqueueOrSend(lobbyId, line)
     }
 
     private fun stopLobby(lobbyId: String) {
@@ -538,6 +564,7 @@ class PairConnectionService : Service() {
     }
 
     override fun onDestroy() {
+        if (instanceRef === this) instanceRef = null
         sessions.values.forEach {
             it.running.set(false)
             it.job?.cancel()
@@ -566,6 +593,10 @@ class PairConnectionService : Service() {
         private const val MIN_BACKOFF_MS = 5_000L
         private const val MAX_BACKOFF_MS = 120_000L
         private const val STABLE_CONNECTION_MS = 8_000L
+        private const val MAX_OUTBOX = 80
+
+        @Volatile
+        private var instanceRef: PairConnectionService? = null
 
         private val _state = MutableStateFlow(ConnectionState.IDLE)
         val state: StateFlow<ConnectionState> = _state.asStateFlow()
@@ -576,7 +607,7 @@ class PairConnectionService : Service() {
         private val _reconnectUi = MutableStateFlow<Map<String, LobbyReconnectUi>>(emptyMap())
         val reconnectUi: StateFlow<Map<String, LobbyReconnectUi>> = _reconnectUi.asStateFlow()
 
-        private val _events = MutableSharedFlow<PairEvent>(extraBufferCapacity = 64)
+        private val _events = MutableSharedFlow<PairEvent>(extraBufferCapacity = 128)
         val events: SharedFlow<PairEvent> = _events.asSharedFlow()
 
         private fun updateAggregate(value: ConnectionState) {
@@ -585,6 +616,23 @@ class PairConnectionService : Service() {
 
         private fun MutableStateFlow<Map<String, ConnectionState>>.updateAndRemove(lobbyId: String) {
             value = value - lobbyId
+        }
+
+        private fun dispatchPayload(context: Context, payload: String, lobbyId: String?) {
+            val service = instanceRef
+            if (service != null) {
+                service.enqueueOrSend(lobbyId, payload)
+                return
+            }
+            try {
+                val intent = Intent(context, PairConnectionService::class.java)
+                    .setAction(ACTION_SEND_STROKE)
+                    .putExtra(EXTRA_PAYLOAD, payload)
+                    .putExtra(EXTRA_LOBBY_ID, lobbyId)
+                context.startService(intent)
+            } catch (t: Throwable) {
+                Log.e(TAG, "Unable to dispatch payload", t)
+            }
         }
 
         fun startAll(context: Context): Boolean {
@@ -619,48 +667,31 @@ class PairConnectionService : Service() {
         }
 
         fun sendStroke(context: Context, strokeJson: String, lobbyId: String? = null) {
-            try {
-                val intent = Intent(context, PairConnectionService::class.java)
-                    .setAction(ACTION_SEND_STROKE)
-                    .putExtra(EXTRA_PAYLOAD, strokeJson)
-                    .putExtra(EXTRA_LOBBY_ID, lobbyId)
-                context.startService(intent)
-            } catch (t: Throwable) {
-                Log.e(TAG, "Unable to send stroke", t)
-            }
+            dispatchPayload(context, strokeJson, lobbyId)
         }
 
         fun sendClear(context: Context, lobbyId: String? = null) {
-            // Clear = Abstimmung starten (Server)
-            try {
-                val nickname = CanvasStore.cachedNickname
-                    ?: AccountSession.account.value?.nickname
-                val payload = PairProtocol.encode(PairMessage.ClearPropose(nickname))
-                val intent = Intent(context, PairConnectionService::class.java)
-                    .setAction(ACTION_SEND_STROKE)
-                    .putExtra(EXTRA_PAYLOAD, payload)
-                    .putExtra(EXTRA_LOBBY_ID, lobbyId)
-                context.startService(intent)
-            } catch (t: Throwable) {
-                Log.e(TAG, "Unable to propose clear", t)
-            }
+            val nickname = CanvasStore.cachedNickname
+                ?: AccountSession.account.value?.nickname
+            val payload = PairProtocol.encode(PairMessage.ClearPropose(nickname))
+            dispatchPayload(context, payload, lobbyId)
         }
 
         fun sendClearVote(context: Context, proposalId: String, yes: Boolean, lobbyId: String? = null) {
-            try {
-                val payload = PairProtocol.encode(PairMessage.ClearVote(proposalId, yes))
-                val intent = Intent(context, PairConnectionService::class.java)
-                    .setAction(ACTION_SEND_STROKE)
-                    .putExtra(EXTRA_PAYLOAD, payload)
-                    .putExtra(EXTRA_LOBBY_ID, lobbyId)
-                context.startService(intent)
-            } catch (t: Throwable) {
-                Log.e(TAG, "Unable to send clear vote", t)
-            }
+            val payload = PairProtocol.encode(PairMessage.ClearVote(proposalId, yes))
+            dispatchPayload(context, payload, lobbyId)
         }
 
         fun sendUndo(context: Context, strokeId: String, lobbyId: String? = null) {
             try {
+                val service = instanceRef
+                if (service != null) {
+                    service.sendRaw(
+                        lobbyId,
+                        PairProtocol.encode(PairMessage.UndoMsg(strokeId))
+                    )
+                    return
+                }
                 val intent = Intent(context, PairConnectionService::class.java)
                     .setAction(ACTION_SEND_UNDO)
                     .putExtra(EXTRA_STROKE_ID, strokeId)
@@ -672,67 +703,35 @@ class PairConnectionService : Service() {
         }
 
         fun sendPresence(context: Context, active: Boolean, lobbyId: String? = null) {
-            try {
-                val nickname = CanvasStore.cachedNickname
-                    ?: AccountSession.account.value?.nickname
-                val colorIndex = CanvasStore.cachedColorIndex
-                val payload = PairProtocol.encode(
-                    PairMessage.Presence(
-                        active = active,
-                        nickname = nickname,
-                        colorIndex = colorIndex,
-                        peerKey = nickname
-                    )
+            val nickname = CanvasStore.cachedNickname
+                ?: AccountSession.account.value?.nickname
+            val colorIndex = CanvasStore.cachedColorIndex
+            val payload = PairProtocol.encode(
+                PairMessage.Presence(
+                    active = active,
+                    nickname = nickname,
+                    colorIndex = colorIndex,
+                    peerKey = nickname
                 )
-                val intent = Intent(context, PairConnectionService::class.java)
-                    .setAction(ACTION_SEND_STROKE)
-                    .putExtra(EXTRA_PAYLOAD, payload)
-                    .putExtra(EXTRA_LOBBY_ID, lobbyId ?: CanvasStore.activeLobbyId.value)
-                context.startService(intent)
-            } catch (t: Throwable) {
-                Log.e(TAG, "Unable to send presence", t)
-            }
+            )
+            dispatchPayload(context, payload, lobbyId ?: CanvasStore.activeLobbyId.value)
         }
 
         fun sendNote(context: Context, text: String, lobbyId: String? = null) {
-            try {
-                val payload = PairProtocol.encode(PairMessage.Note(text))
-                val intent = Intent(context, PairConnectionService::class.java)
-                    .setAction(ACTION_SEND_STROKE)
-                    .putExtra(EXTRA_PAYLOAD, payload)
-                    .putExtra(EXTRA_LOBBY_ID, lobbyId ?: CanvasStore.activeLobbyId.value)
-                context.startService(intent)
-            } catch (t: Throwable) {
-                Log.e(TAG, "Unable to send note", t)
-            }
+            val payload = PairProtocol.encode(PairMessage.Note(text))
+            dispatchPayload(context, payload, lobbyId ?: CanvasStore.activeLobbyId.value)
         }
 
         fun sendRecolor(context: Context, nickname: String?, colorIndex: Int, lobbyId: String? = null) {
-            try {
-                val payload = PairProtocol.encode(PairMessage.Recolor(nickname, colorIndex))
-                val intent = Intent(context, PairConnectionService::class.java)
-                    .setAction(ACTION_SEND_STROKE)
-                    .putExtra(EXTRA_PAYLOAD, payload)
-                    .putExtra(EXTRA_LOBBY_ID, lobbyId ?: CanvasStore.activeLobbyId.value)
-                context.startService(intent)
-            } catch (t: Throwable) {
-                Log.e(TAG, "Unable to send recolor", t)
-            }
+            val payload = PairProtocol.encode(PairMessage.Recolor(nickname, colorIndex))
+            dispatchPayload(context, payload, lobbyId ?: CanvasStore.activeLobbyId.value)
         }
 
         fun sendReaction(context: Context, emoji: String, lobbyId: String? = null) {
-            try {
-                val nickname = CanvasStore.cachedNickname
-                    ?: AccountSession.account.value?.nickname
-                val payload = PairProtocol.encode(PairMessage.Reaction(emoji, nickname))
-                val intent = Intent(context, PairConnectionService::class.java)
-                    .setAction(ACTION_SEND_STROKE)
-                    .putExtra(EXTRA_PAYLOAD, payload)
-                    .putExtra(EXTRA_LOBBY_ID, lobbyId ?: CanvasStore.activeLobbyId.value)
-                context.startService(intent)
-            } catch (t: Throwable) {
-                Log.e(TAG, "Unable to send reaction", t)
-            }
+            val nickname = CanvasStore.cachedNickname
+                ?: AccountSession.account.value?.nickname
+            val payload = PairProtocol.encode(PairMessage.Reaction(emoji, nickname))
+            dispatchPayload(context, payload, lobbyId ?: CanvasStore.activeLobbyId.value)
         }
 
         fun sendGameBoard(
@@ -741,16 +740,8 @@ class PairConnectionService : Service() {
             visible: Boolean,
             lobbyId: String? = null
         ) {
-            try {
-                val payload = PairProtocol.encode(PairMessage.GameBoard(game, visible))
-                val intent = Intent(context, PairConnectionService::class.java)
-                    .setAction(ACTION_SEND_STROKE)
-                    .putExtra(EXTRA_PAYLOAD, payload)
-                    .putExtra(EXTRA_LOBBY_ID, lobbyId ?: CanvasStore.activeLobbyId.value)
-                context.startService(intent)
-            } catch (t: Throwable) {
-                Log.e(TAG, "Unable to send game board", t)
-            }
+            val payload = PairProtocol.encode(PairMessage.GameBoard(game, visible))
+            dispatchPayload(context, payload, lobbyId ?: CanvasStore.activeLobbyId.value)
         }
 
         fun lobbyState(lobbyId: String): ConnectionState =
