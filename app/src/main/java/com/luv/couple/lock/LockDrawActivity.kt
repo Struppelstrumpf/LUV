@@ -57,6 +57,11 @@ class LockDrawActivity : ComponentActivity() {
     private var rootView: FrameLayout? = null
     private var ticTacToeVisible = false
     private var hasVotedClear = false
+    private val statusHideRunnable = Runnable {
+        statusView.animate().alpha(0f).setDuration(180).withEndAction {
+            statusView.visibility = View.GONE
+        }.start()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -129,23 +134,22 @@ class LockDrawActivity : ComponentActivity() {
                 topMargin = bars.top + pad
                 lobbyTitle.layoutParams = this
             }
-            (btnColor.layoutParams as FrameLayout.LayoutParams).apply {
-                topMargin = bars.top + pad
-                btnColor.layoutParams = this
-            }
             bottomDock.setPadding(
-                bottomDock.paddingLeft,
-                bottomDock.paddingTop,
-                bottomDock.paddingRight,
-                bars.bottom + (12 * dp).toInt()
+                (16 * dp).toInt(),
+                (10 * dp).toInt(),
+                (16 * dp).toInt(),
+                bars.bottom + (10 * dp).toInt()
             )
-            // Emoji kleiner, wenn die Breite eng ist
+            (statusView.layoutParams as FrameLayout.LayoutParams).apply {
+                bottomMargin = bars.bottom + (158 * dp).toInt()
+                statusView.layoutParams = this
+            }
             val emojiRow = findViewById<LinearLayout>(R.id.emojiRow)
-            val per = (resources.displayMetrics.widthPixels - (36 * dp).toInt()) / 5f
+            val per = (resources.displayMetrics.widthPixels - (48 * dp).toInt()) / 5f
             val emojiSize = when {
-                per < 48 * dp -> 18f
-                per < 56 * dp -> 20f
-                else -> 22f
+                per < 46 * dp -> 17f
+                per < 54 * dp -> 19f
+                else -> 20f
             }
             for (i in 0 until emojiRow.childCount) {
                 (emojiRow.getChildAt(i) as? TextView)?.setTextSize(TypedValue.COMPLEX_UNIT_SP, emojiSize)
@@ -186,12 +190,12 @@ class LockDrawActivity : ComponentActivity() {
         }
         drawingView.onLongPressClear = {
             PairConnectionService.sendClear(this, lobbyId)
-            statusView.text = "Löschen? Kostet dich 1 Coin"
+            flashStatus("Löschen? 1 Coin")
         }
         drawingView.onDoubleTapUndo = {
             if (CanvasStore.undoLastLocalStroke(lobbyId)) {
                 drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
-                statusView.text = "Linie rückgängig"
+                flashStatus("Rückgängig")
             }
         }
         drawingView.onDotPlaced = { point ->
@@ -242,8 +246,6 @@ class LockDrawActivity : ComponentActivity() {
                 }
             }
         }
-        // Reconnect läuft still im Hintergrund — Status nur in der Lobby-Übersicht
-        statusView.text = getString(R.string.draw_hint)
         lifecycleScope.launch {
             var id = lobbyId
             var tries = 0
@@ -276,7 +278,7 @@ class LockDrawActivity : ComponentActivity() {
                     }
                     is ClearVoteEvent.Result -> if (event.lobbyId == id) {
                         hideClearVote()
-                        statusView.text = if (event.approved) "Leinwand leer" else "Abgelehnt"
+                        flashStatus(if (event.approved) "Leinwand leer" else "Abgelehnt")
                         activeProposalId = null
                         hasVotedClear = false
                     }
@@ -298,12 +300,24 @@ class LockDrawActivity : ComponentActivity() {
     private fun setTicTacToeVisible(visible: Boolean, sync: Boolean) {
         ticTacToeVisible = visible
         drawingView.showTicTacToe = visible
-        btnGame.alpha = if (visible) 1f else 0.72f
-        btnGame.scaleX = if (visible) 1.08f else 1f
-        btnGame.scaleY = if (visible) 1.08f else 1f
+        btnGame.setBackgroundResource(
+            if (visible) R.drawable.lock_dock_slot_active else R.drawable.lock_dock_slot
+        )
+        btnGame.alpha = 1f
+        btnGame.scaleX = if (visible) 1.04f else 1f
+        btnGame.scaleY = if (visible) 1.04f else 1f
         if (sync) {
             PairConnectionService.sendGameBoard(this, game = "ttt", visible = visible, lobbyId = lobbyId)
         }
+    }
+
+    private fun flashStatus(text: String) {
+        statusView.removeCallbacks(statusHideRunnable)
+        statusView.text = text
+        statusView.visibility = View.VISIBLE
+        statusView.alpha = 0f
+        statusView.animate().alpha(1f).setDuration(160).start()
+        statusView.postDelayed(statusHideRunnable, 2200)
     }
 
     private fun showReaction(emoji: String) {
@@ -330,13 +344,11 @@ class LockDrawActivity : ComponentActivity() {
 
     private fun paintColorButton() {
         val color = PeerPalette.strokeColor(CanvasStore.cachedColorIndex)
+        val dp = resources.displayMetrics.density
         btnColor.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(color)
-            setStroke(
-                (2 * resources.displayMetrics.density).toInt(),
-                0x66FFFFFF
-            )
+            setStroke((2.5f * dp).toInt(), 0xFFFFFFFF.toInt())
         }
     }
 
@@ -556,7 +568,7 @@ class LockDrawActivity : ComponentActivity() {
             yes = yes,
             lobbyId = lobbyId
         )
-        statusView.text = if (yes) "Zugestimmt" else "Abgelehnt"
+        flashStatus(if (yes) "Zugestimmt" else "Abgelehnt")
         voteProgressView?.text = if (yes) {
             "Du hast zugestimmt — warte auf die anderen…"
         } else {
