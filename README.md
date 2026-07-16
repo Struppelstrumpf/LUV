@@ -20,12 +20,16 @@ cd server
 docker compose up -d --build
 ```
 
-In `gradle.properties` die API-URL setzen:
+API-URL (HTTPS über Caddy):
 
 ```
-luv.api.baseUrl=http://DEINE_HETZNER_IP:18780
-# oder https://luv.deinedomain.de
+luv.api.baseUrl=https://reineke.pro/luv
 ```
+
+Landingpage: https://reineke.pro/love/  
+APK: https://reineke.pro/downloads/luv/LUV.apk  
+
+Auf dem Server: `luv-api` + Caddy `/luv/*` (API) und `/love/*` (Website). Reineke unverändert.
 
 ## Voraussetzungen
 

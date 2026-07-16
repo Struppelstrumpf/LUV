@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>LUV — Sperrbildschirm zu zweit</title>
+  <meta name="description" content="LUV verbindet zwei Sperrbildschirme. Zeichnet gemeinsam — live, über Distanz, nur für euch." />
+  <meta name="theme-color" content="#0B0E14" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true">
+    <div class="wash wash-a"></div>
+    <div class="wash wash-b"></div>
+    <div class="grain"></div>
+  </div>
+
+  <main class="stage">
+    <header class="brand-block">
+      <p class="brand">LUV</p>
+      <h1 class="headline">Zwei Sperrbildschirme.<br />Ein gemeinsamer Moment.</h1>
+      <p class="lede">Zeichne auf deinem — und es erscheint auf dem anderen. Live. Nur ihr beide.</p>
+      <div class="cta-row">
+        <a class="download" href="https://reineke.pro/downloads/luv/LUV.apk" download="LUV.apk">
+          <span class="download-label">App herunterladen</span>
+          <span class="download-meta">Android · APK · kostenlos</span>
+        </a>
+        <p class="trust">Signierte App von reineke.pro · Direkter Download über HTTPS</p>
+      </div>
+    </header>
+
+    <section class="phones" aria-label="Live-Demo zweier Sperrbildschirme">
+      <div class="phone phone-him" data-side="him">
+        <div class="phone-bezel">
+          <div class="phone-notch"></div>
+          <div class="screen screen-blue">
+            <canvas class="draw" width="280" height="420" aria-hidden="true"></canvas>
+            <div class="hand" aria-hidden="true">
+              <svg viewBox="0 0 64 64" fill="none">
+                <path d="M28 10c2-1 5 1 5 4v18l8-6c2-1 5 0 5 3 0 1-1 2-2 3l-9 7v13c0 3-2 5-5 5h-2c-3 0-5-2-5-5V22c0-2 1-4 3-4l2-8z" fill="currentColor" opacity=".92"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+        <span class="phone-caption">Du</span>
+      </div>
+
+      <div class="sync-pulse" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+
+      <div class="phone phone-her" data-side="her">
+        <div class="phone-bezel">
+          <div class="phone-notch"></div>
+          <div class="screen screen-magenta">
+            <canvas class="draw" width="280" height="420" aria-hidden="true"></canvas>
+            <div class="spark" aria-hidden="true"></div>
+          </div>
+        </div>
+        <span class="phone-caption">Partner</span>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

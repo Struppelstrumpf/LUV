@@ -5,7 +5,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import com.luv.couple.data.PrefsRepository
 import com.luv.couple.lock.CanvasStore
+import com.luv.couple.lock.MidnightClear
 import com.luv.couple.lock.UnlockMonitor
+import com.luv.couple.notify.PartnerStrokeNotifier
 
 class LuvApp : Application() {
     lateinit var prefs: PrefsRepository
@@ -18,6 +20,8 @@ class LuvApp : Application() {
         CanvasStore.init(this)
         UnlockMonitor.start(this)
         createNotificationChannel()
+        PartnerStrokeNotifier.ensureChannel(this)
+        MidnightClear.checkAndClearIfNewDay(this)
     }
 
     private fun createNotificationChannel() {
@@ -25,7 +29,10 @@ class LuvApp : Application() {
             CHANNEL_ID,
             getString(R.string.notification_channel),
             NotificationManager.IMPORTANCE_LOW
-        )
+        ).apply {
+            setSound(null, null)
+            enableVibration(false)
+        }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 

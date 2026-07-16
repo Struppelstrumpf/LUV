@@ -52,7 +52,7 @@ class LockScreenWidgetProvider : AppWidgetProvider() {
 
             val gender = runBlocking { LuvApp.instance.prefs.snapshot().gender }
             val background = CanvasStore.backgroundFor(gender)
-            val bitmap = CanvasStore.renderBitmap(pxW, pxH, background)
+            val bitmap = CanvasStore.renderBitmap(pxW, pxH, background, gender)
 
             val views = RemoteViews(context.packageName, R.layout.lock_widget)
             views.setInt(R.id.widgetRoot, "setBackgroundColor", background)

@@ -1,5 +1,6 @@
 package com.luv.couple.lock
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -7,10 +8,13 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.animation.DecelerateInterpolator
+import com.luv.couple.data.Gender
 import com.luv.couple.data.Stroke
 import com.luv.couple.data.StrokePoint
 import kotlin.math.hypot
@@ -21,6 +25,8 @@ class DrawingView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     private val strokes = mutableListOf<Stroke>()
+    private val alphas = mutableMapOf<String, Float>()
+    private val animators = mutableMapOf<String, ValueAnimator>()
     private val currentPoints = mutableListOf<StrokePoint>()
     private val currentPath = Path()
     private val handler = Handler(Looper.getMainLooper())
@@ -30,9 +36,11 @@ class DrawingView @JvmOverloads constructor(
     private var downY = 0f
     private var longPressTriggered = false
     private var movedBeyondSlop = false
+    private var lastTapUptime = 0L
+    private var pendingDot: StrokePoint? = null
+    var myGender: Gender? = null
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
         style = Paint.Style.STROKE
         strokeWidth = 18f
         strokeCap = Paint.Cap.ROUND
@@ -41,10 +49,13 @@ class DrawingView @JvmOverloads constructor(
 
     var onStrokeFinished: ((List<StrokePoint>) -> Unit)? = null
     var onLongPressClear: (() -> Unit)? = null
+    var onDoubleTapUndo: (() -> Unit)? = null
+    var onDotPlaced: ((StrokePoint) -> Unit)? = null
 
     private val longPressRunnable = Runnable {
         if (!movedBeyondSlop) {
             longPressTriggered = true
+            cancelPendingDot()
             currentPoints.clear()
             currentPath.reset()
             invalidate()
@@ -53,31 +64,73 @@ class DrawingView @JvmOverloads constructor(
         }
     }
 
-    fun setStrokes(list: List<Stroke>) {
+    /** Nach 0,5 s ohne zweiten Tipp → Punkt setzen */
+    private val singleTapDotRunnable = Runnable {
+        val dot = pendingDot ?: return@Runnable
+        pendingDot = null
+        lastTapUptime = 0L
+        performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+        onDotPlaced?.invoke(dot)
+    }
+
+    fun setStrokes(list: List<Stroke>, animateNew: Boolean = false) {
+        val previous = strokes.map { it.id }.toSet()
         strokes.clear()
         strokes.addAll(list)
+        list.forEach { stroke ->
+            if (animateNew && stroke.id !in previous) {
+                animateIn(stroke.id)
+            } else {
+                alphas.putIfAbsent(stroke.id, 1f)
+            }
+        }
+        val live = list.map { it.id }.toSet()
+        alphas.keys.filter { it !in live }.forEach { alphas.remove(it) }
         invalidate()
     }
 
-    fun addStroke(stroke: Stroke) {
+    fun addStroke(stroke: Stroke, fadeIn: Boolean = true) {
         if (strokes.any { it.id == stroke.id }) return
         strokes.add(stroke)
+        if (fadeIn) animateIn(stroke.id) else alphas[stroke.id] = 1f
         invalidate()
     }
 
     fun clearCanvas() {
+        animators.values.forEach { it.cancel() }
+        animators.clear()
+        alphas.clear()
         strokes.clear()
         currentPoints.clear()
         currentPath.reset()
         invalidate()
     }
 
+    private fun animateIn(id: String) {
+        animators[id]?.cancel()
+        alphas[id] = 0f
+        val anim = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 380
+            interpolator = DecelerateInterpolator()
+            addUpdateListener {
+                alphas[id] = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+        animators[id] = anim
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         strokes.forEach { stroke ->
+            val alpha = ((alphas[stroke.id] ?: 1f) * 255).toInt().coerceIn(0, 255)
+            val color = CanvasStore.strokeColor(stroke, myGender)
+            paint.color = Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
             paint.strokeWidth = stroke.width
             canvas.drawPath(pathFrom(stroke.points), paint)
         }
+        paint.color = Color.WHITE
         paint.strokeWidth = 18f
         canvas.drawPath(currentPath, paint)
     }
@@ -108,6 +161,7 @@ class DrawingView @JvmOverloads constructor(
                 if (distance > touchSlop) {
                     movedBeyondSlop = true
                     handler.removeCallbacks(longPressRunnable)
+                    cancelPendingDot()
                 }
                 currentPoints.add(normalized)
                 currentPath.lineTo(event.x, event.y)
@@ -115,8 +169,14 @@ class DrawingView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 handler.removeCallbacks(longPressRunnable)
-                if (!longPressTriggered && currentPoints.size >= 2) {
-                    onStrokeFinished?.invoke(currentPoints.toList())
+                if (!longPressTriggered) {
+                    if (!movedBeyondSlop && event.actionMasked == MotionEvent.ACTION_UP) {
+                        handleTap(normalized)
+                    } else if (movedBeyondSlop && currentPoints.size >= 2) {
+                        cancelPendingDot()
+                        lastTapUptime = 0L
+                        onStrokeFinished?.invoke(currentPoints.toList())
+                    }
                 }
                 currentPoints.clear()
                 currentPath.reset()
@@ -127,8 +187,33 @@ class DrawingView @JvmOverloads constructor(
         return true
     }
 
+    private fun handleTap(point: StrokePoint) {
+        val now = SystemClock.uptimeMillis()
+        if (lastTapUptime > 0L && now - lastTapUptime <= DOUBLE_TAP_MS) {
+            // Zweiter Tipp innerhalb 0,5 s → Undo, kein Punkt
+            cancelPendingDot()
+            lastTapUptime = 0L
+            performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+            onDoubleTapUndo?.invoke()
+        } else {
+            // Erster Tipp: Punkt erst nach 0,5 s setzen (sonst wäre es Doppeltipp)
+            handler.removeCallbacks(singleTapDotRunnable)
+            pendingDot = point
+            lastTapUptime = now
+            handler.postDelayed(singleTapDotRunnable, DOUBLE_TAP_MS)
+        }
+    }
+
+    private fun cancelPendingDot() {
+        handler.removeCallbacks(singleTapDotRunnable)
+        pendingDot = null
+    }
+
     override fun onDetachedFromWindow() {
         handler.removeCallbacks(longPressRunnable)
+        cancelPendingDot()
+        animators.values.forEach { it.cancel() }
+        animators.clear()
         super.onDetachedFromWindow()
     }
 
@@ -144,5 +229,6 @@ class DrawingView @JvmOverloads constructor(
 
     companion object {
         private const val LONG_PRESS_MS = 2000L
+        private const val DOUBLE_TAP_MS = 500L
     }
 }

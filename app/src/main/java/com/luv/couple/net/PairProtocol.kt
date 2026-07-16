@@ -9,6 +9,9 @@ sealed class PairMessage {
     data class Hello(val token: String) : PairMessage()
     data class HelloOk(val ok: Boolean) : PairMessage()
     data class StrokeMsg(val stroke: Stroke) : PairMessage()
+    data class UndoMsg(val strokeId: String) : PairMessage()
+    data class Presence(val active: Boolean, val gender: String?) : PairMessage()
+    data class Note(val text: String) : PairMessage()
     data object Clear : PairMessage()
     data object Ping : PairMessage()
     data object Pong : PairMessage()
@@ -36,8 +39,19 @@ object PairProtocol {
                     .put("type", "stroke")
                     .put("id", message.stroke.id)
                     .put("width", message.stroke.width.toDouble())
+                    .put("gender", message.stroke.gender ?: JSONObject.NULL)
                     .put("points", points)
             }
+            is PairMessage.UndoMsg -> JSONObject()
+                .put("type", "undo")
+                .put("id", message.strokeId)
+            is PairMessage.Presence -> JSONObject()
+                .put("type", "presence")
+                .put("active", message.active)
+                .put("gender", message.gender ?: JSONObject.NULL)
+            is PairMessage.Note -> JSONObject()
+                .put("type", "note")
+                .put("text", message.text.take(80))
             PairMessage.Clear -> JSONObject().put("type", "clear")
             PairMessage.Ping -> JSONObject().put("type", "ping")
             PairMessage.Pong -> JSONObject().put("type", "pong")
@@ -68,10 +82,18 @@ object PairProtocol {
                         Stroke(
                             id = json.getString("id"),
                             points = points,
-                            width = json.optDouble("width", 18.0).toFloat()
+                            width = json.optDouble("width", 18.0).toFloat(),
+                            isLocal = false,
+                            gender = json.optString("gender").takeIf { it.isNotBlank() && it != "null" }
                         )
                     )
                 }
+                "undo" -> PairMessage.UndoMsg(json.getString("id"))
+                "presence" -> PairMessage.Presence(
+                    active = json.optBoolean("active", false),
+                    gender = json.optString("gender").takeIf { it.isNotBlank() && it != "null" }
+                )
+                "note" -> PairMessage.Note(json.optString("text").take(80))
                 "clear" -> PairMessage.Clear
                 "ping" -> PairMessage.Ping
                 "pong" -> PairMessage.Pong

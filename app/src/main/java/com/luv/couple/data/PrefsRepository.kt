@@ -1,6 +1,7 @@
 package com.luv.couple.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -18,6 +19,9 @@ class PrefsRepository(private val context: Context) {
     private val peerPortKey = stringPreferencesKey("peer_port")
     private val pairedKey = stringPreferencesKey("paired")
     private val inviteCodeKey = stringPreferencesKey("invite_code")
+    private val partnerNotifyKey = booleanPreferencesKey("partner_draw_notify")
+    private val partnerHapticKey = booleanPreferencesKey("partner_draw_haptic")
+    private val lastClearDayKey = stringPreferencesKey("last_clear_day")
 
     val genderFlow: Flow<Gender?> = context.dataStore.data.map { prefs ->
         prefs[genderKey]?.let { runCatching { Gender.valueOf(it) }.getOrNull() }
@@ -33,12 +37,42 @@ class PrefsRepository(private val context: Context) {
 
     val inviteCodeFlow: Flow<String?> = context.dataStore.data.map { it[inviteCodeKey] }
 
+    val partnerDrawNotifyFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[partnerNotifyKey] ?: true
+    }
+
+    val partnerHapticFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[partnerHapticKey] ?: true
+    }
+
     suspend fun setGender(gender: Gender) {
         context.dataStore.edit { it[genderKey] = gender.name }
     }
 
     suspend fun setRole(role: Role) {
         context.dataStore.edit { it[roleKey] = role.name }
+    }
+
+    suspend fun setPartnerDrawNotifyEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[partnerNotifyKey] = enabled }
+    }
+
+    suspend fun setPartnerHapticEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[partnerHapticKey] = enabled }
+    }
+
+    suspend fun isPartnerDrawNotifyEnabled(): Boolean {
+        return context.dataStore.data.first()[partnerNotifyKey] ?: true
+    }
+
+    suspend fun isPartnerHapticEnabled(): Boolean {
+        return context.dataStore.data.first()[partnerHapticKey] ?: true
+    }
+
+    suspend fun lastClearDay(): String? = context.dataStore.data.first()[lastClearDayKey]
+
+    suspend fun setLastClearDay(day: String) {
+        context.dataStore.edit { it[lastClearDayKey] = day }
     }
 
     suspend fun savePairing(

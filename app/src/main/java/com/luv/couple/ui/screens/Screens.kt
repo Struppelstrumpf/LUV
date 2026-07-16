@@ -28,6 +28,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -356,6 +358,10 @@ fun HomeScreen(
     connectionState: ConnectionState,
     inviteCode: String?,
     versionLabel: String,
+    partnerNotifyEnabled: Boolean,
+    onPartnerNotifyChange: (Boolean) -> Unit,
+    partnerHapticEnabled: Boolean = true,
+    onPartnerHapticChange: (Boolean) -> Unit = {},
     onOpenCanvas: () -> Unit,
     onShareCode: () -> Unit,
     onAddWidgetHelp: () -> Unit,
@@ -411,6 +417,21 @@ fun HomeScreen(
                 fontSize = 13.sp
             )
 
+            SettingsToggleRow(
+                title = "Benachrichtigung wenn Partner malt",
+                subtitle = "Still, höchstens einmal pro Minute",
+                checked = partnerNotifyEnabled,
+                accent = accent,
+                onCheckedChange = onPartnerNotifyChange
+            )
+            SettingsToggleRow(
+                title = "Vibration wenn Partner malt",
+                subtitle = "Leichter Impuls auf der Leinwand",
+                checked = partnerHapticEnabled,
+                accent = accent,
+                onCheckedChange = onPartnerHapticChange
+            )
+
             PrimaryButton("Leinwand jetzt öffnen", accent, onOpenCanvas)
             if (!inviteCode.isNullOrBlank()) {
                 PrimaryButton("Code erneut teilen", Color(0xFF25D366), onShareCode)
@@ -422,6 +443,40 @@ fun HomeScreen(
             }
             Spacer(modifier = Modifier.height(12.dp))
         }
+    }
+}
+
+@Composable
+private fun SettingsToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    accent: Color,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(BgSoft)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(title, color = TextPrimary, fontFamily = BodyFont, fontSize = 14.sp)
+            Text(subtitle, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = accent,
+                uncheckedThumbColor = TextMuted,
+                uncheckedTrackColor = Color(0xFF2A3140)
+            )
+        )
     }
 }
 

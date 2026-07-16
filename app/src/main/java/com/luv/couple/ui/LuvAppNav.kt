@@ -3,6 +3,7 @@ package com.luv.couple.ui
 import android.content.Intent
 import android.provider.Settings
 import android.widget.Toast
+import com.luv.couple.net.PairSessionState
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
@@ -51,6 +52,8 @@ fun LuvAppNav() {
     val gender by prefs.genderFlow.collectAsStateWithLifecycle(initialValue = null)
     val paired by prefs.pairedFlow.collectAsStateWithLifecycle(initialValue = false)
     val inviteCode by prefs.inviteCodeFlow.collectAsStateWithLifecycle(initialValue = null)
+    val partnerNotify by prefs.partnerDrawNotifyFlow.collectAsStateWithLifecycle(initialValue = true)
+    val partnerHaptic by prefs.partnerHapticFlow.collectAsStateWithLifecycle(initialValue = true)
     val connectionState by PairConnectionService.state.collectAsStateWithLifecycle()
 
     var startDestination by remember { mutableStateOf<String?>(null) }
@@ -86,12 +89,28 @@ fun LuvAppNav() {
     }
 
     LaunchedEffect(Unit) {
+        PairSessionState.notes.collect { text ->
+            Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+        }
+    }
+    LaunchedEffect(Unit) {
+        PairSessionState.missedYou.collect {
+            Toast.makeText(context, context.getString(com.luv.couple.R.string.missed_you), Toast.LENGTH_LONG).show()
+        }
+    }
+
+    LaunchedEffect(Unit) {
         val snapshot = prefs.snapshot()
         startDestination = when {
             snapshot.gender == null -> Routes.GENDER
             !snapshot.paired -> Routes.ROLE
             else -> {
-                val started = PairConnectionService.start(context)
+                val started = PairConnectionService.start(
+                    context,
+                    code = snapshot.inviteCode,
+                    token = snapshot.token,
+                    role = snapshot.role
+                )
                 if (started) {
                     Routes.HOME
                 } else {
@@ -138,7 +157,12 @@ fun LuvAppNav() {
                                 inviteCode = room.invite
                             )
                             hostCode = room.invite
-                            val started = PairConnectionService.start(context)
+                            val started = PairConnectionService.start(
+                                context,
+                                code = room.code,
+                                token = room.token,
+                                role = Role.HOST
+                            )
                             if (!started) {
                                 prefs.clearPairing()
                                 joinError = "Verbindungsdienst konnte nicht gestartet werden."
@@ -170,7 +194,7 @@ fun LuvAppNav() {
                 connectionState = connectionState,
                 onShareWhatsApp = {
                     val text =
-                        "Öffne LUV und tippe auf Beitreten. Unser Code:\n\n$code"
+                        "Öffne LUV → Beitreten und diesen Code eingeben:\n\n$code"
                     val intent = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
                         setPackage("com.whatsapp")
@@ -209,7 +233,12 @@ fun LuvAppNav() {
                                 token = room.token,
                                 inviteCode = room.invite
                             )
-                            val started = PairConnectionService.start(context)
+                            val started = PairConnectionService.start(
+                                context,
+                                code = room.code,
+                                token = room.token,
+                                role = Role.JOIN
+                            )
                             if (!started) {
                                 prefs.clearPairing()
                                 joinError = "Verbindungsdienst konnte nicht gestartet werden."
@@ -239,6 +268,14 @@ fun LuvAppNav() {
                 connectionState = connectionState,
                 inviteCode = inviteCode,
                 versionLabel = versionLabel,
+                partnerNotifyEnabled = partnerNotify,
+                onPartnerNotifyChange = { enabled ->
+                    scope.launch { prefs.setPartnerDrawNotifyEnabled(enabled) }
+                },
+                partnerHapticEnabled = partnerHaptic,
+                onPartnerHapticChange = { enabled ->
+                    scope.launch { prefs.setPartnerHapticEnabled(enabled) }
+                },
                 onOpenCanvas = {
                     context.startActivity(
                         Intent(context, LockDrawActivity::class.java).apply {
@@ -249,7 +286,7 @@ fun LuvAppNav() {
                 onShareCode = {
                     val code = inviteCode ?: return@HomeScreen
                     val text =
-                        "Öffne LUV und tippe auf Beitreten. Unser Code:\n\n$code"
+                        "Öffne LUV → Beitreten und diesen Code eingeben:\n\n$code"
                     val intent = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
                         setPackage("com.whatsapp")

@@ -17,6 +17,8 @@ import com.luv.couple.R
 import com.luv.couple.data.ConnectionState
 import com.luv.couple.data.Role
 import com.luv.couple.lock.CanvasStore
+import com.luv.couple.notify.PartnerStrokeNotifier
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -47,6 +49,9 @@ class PairConnectionService : Service() {
     private val running = AtomicBoolean(false)
     private val foregroundStarted = AtomicBoolean(false)
     private val webSocket = AtomicReference<WebSocket?>(null)
+    private var bootCode: String? = null
+    private var bootToken: String? = null
+    private var bootRole: Role? = null
 
     private val wsClient = OkHttpClient.Builder()
         .pingInterval(20, TimeUnit.SECONDS)
@@ -72,6 +77,20 @@ class PairConnectionService : Service() {
             ACTION_SEND_CLEAR -> {
                 sendRaw(PairProtocol.encode(PairMessage.Clear))
                 return START_STICKY
+            }
+            ACTION_SEND_UNDO -> {
+                val strokeId = intent.getStringExtra(EXTRA_STROKE_ID)
+                if (!strokeId.isNullOrBlank()) {
+                    sendRaw(PairProtocol.encode(PairMessage.UndoMsg(strokeId)))
+                }
+                return START_STICKY
+            }
+            ACTION_START -> {
+                bootCode = intent.getStringExtra(EXTRA_CODE)?.let { LuvApiClient.normalizeCode(it) }
+                bootToken = intent.getStringExtra(EXTRA_TOKEN)
+                bootRole = intent.getStringExtra(EXTRA_ROLE)
+                    ?.let { runCatching { Role.valueOf(it) }.getOrNull() }
+                startSession()
             }
             else -> startSession()
         }
@@ -102,41 +121,53 @@ class PairConnectionService : Service() {
     }
 
     private fun startSession() {
-        if (!running.compareAndSet(false, true)) return
+        // Wichtig: Job neu starten dürfen, wenn vorher z. B. Prefs-Race IDLE verursacht hat
+        if (sessionJob?.isActive == true) return
+        running.set(true)
         ensureForeground(getString(R.string.notification_connecting))
         sessionJob = scope.launch {
-            while (isActive && running.get()) {
-                val snapshot = runCatching { LuvApp.instance.prefs.snapshot() }.getOrNull()
-                val code = snapshot?.inviteCode?.let { LuvApiClient.normalizeCode(it) }
-                val token = snapshot?.token
-                val role = snapshot?.role
-                if (snapshot == null || !snapshot.paired || code == null || token.isNullOrBlank() || role == null) {
-                    updateState(ConnectionState.IDLE)
-                    break
-                }
+            try {
+                var missingCredsRetries = 0
+                while (isActive && running.get()) {
+                    val snapshot = runCatching { LuvApp.instance.prefs.snapshot() }.getOrNull()
+                    val code = bootCode
+                        ?: snapshot?.inviteCode?.let { LuvApiClient.normalizeCode(it) }
+                    val token = bootToken ?: snapshot?.token
+                    val role = bootRole ?: snapshot?.role
 
-                updateState(
-                    if (role == Role.HOST) ConnectionState.HOSTING else ConnectionState.CONNECTING
-                )
-                ensureForeground(
-                    if (role == Role.HOST) {
-                        getString(R.string.notification_hosting)
-                    } else {
-                        getString(R.string.notification_connecting)
+                    if (code == null || token.isNullOrBlank() || role == null) {
+                        missingCredsRetries++
+                        updateState(ConnectionState.CONNECTING)
+                        if (missingCredsRetries > 10) {
+                            Log.e(TAG, "No pairing credentials — stopping session")
+                            updateState(ConnectionState.IDLE)
+                            break
+                        }
+                        delay(300)
+                        continue
                     }
-                )
+                    missingCredsRetries = 0
 
-                val connected = connectOnce(code, token, role.name.lowercase())
-                closeSocket()
-                if (!running.get()) break
-                if (!connected) {
+                    updateState(
+                        if (role == Role.HOST) ConnectionState.HOSTING else ConnectionState.CONNECTING
+                    )
+                    ensureForeground(
+                        if (role == Role.HOST) {
+                            getString(R.string.notification_hosting)
+                        } else {
+                            getString(R.string.notification_connecting)
+                        }
+                    )
+
+                    val connected = connectOnce(code, token, role.name.lowercase())
+                    closeSocket()
+                    if (!running.get()) break
                     updateState(ConnectionState.RECONNECTING)
                     ensureForeground(getString(R.string.notification_connecting))
-                    delay(1500)
-                } else {
-                    updateState(ConnectionState.RECONNECTING)
-                    delay(800)
+                    delay(if (connected) 800 else 1500)
                 }
+            } finally {
+                running.set(false)
             }
         }
     }
@@ -190,6 +221,7 @@ class PairConnectionService : Service() {
             when (json.optString("type")) {
                 "welcome", "peers" -> {
                     val peers = json.optInt("peers", json.optInt("count", 0))
+                    PairSessionState.onPeers(peers)
                     if (peers >= 2) {
                         updateState(ConnectionState.CONNECTED)
                         ensureForeground(getString(R.string.notification_title))
@@ -205,7 +237,18 @@ class PairConnectionService : Service() {
         when (val message = PairProtocol.decode(text)) {
             is PairMessage.StrokeMsg -> {
                 CanvasStore.addRemoteStroke(message.stroke)
+                PartnerStrokeNotifier.onPartnerStroke(this)
                 scope.launch { _events.emit(PairEvent.StrokeReceived(message.stroke)) }
+            }
+            is PairMessage.UndoMsg -> {
+                CanvasStore.removeStrokeById(message.strokeId)
+                scope.launch { _events.emit(PairEvent.StrokeUndone(message.strokeId)) }
+            }
+            is PairMessage.Presence -> {
+                PairSessionState.onPresence(message.active, message.gender)
+            }
+            is PairMessage.Note -> {
+                PairSessionState.emitNote(message.text)
             }
             PairMessage.Clear -> {
                 CanvasStore.clear(localOnly = true)
@@ -232,6 +275,7 @@ class PairConnectionService : Service() {
         running.set(false)
         sessionJob?.cancel()
         closeSocket()
+        PairSessionState.reset()
         updateState(ConnectionState.IDLE)
         runCatching {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -279,7 +323,12 @@ class PairConnectionService : Service() {
         const val ACTION_STOP = "com.luv.couple.ACTION_STOP"
         const val ACTION_SEND_STROKE = "com.luv.couple.ACTION_SEND_STROKE"
         const val ACTION_SEND_CLEAR = "com.luv.couple.ACTION_SEND_CLEAR"
+        const val ACTION_SEND_UNDO = "com.luv.couple.ACTION_SEND_UNDO"
         const val EXTRA_PAYLOAD = "payload"
+        const val EXTRA_STROKE_ID = "stroke_id"
+        const val EXTRA_CODE = "code"
+        const val EXTRA_TOKEN = "token"
+        const val EXTRA_ROLE = "role"
         private const val NOTIFICATION_ID = 42
 
         private val _state = MutableStateFlow(ConnectionState.IDLE)
@@ -292,9 +341,18 @@ class PairConnectionService : Service() {
             _state.value = value
         }
 
-        fun start(context: Context): Boolean {
+        fun start(
+            context: Context,
+            code: String? = null,
+            token: String? = null,
+            role: Role? = null
+        ): Boolean {
             return try {
-                val intent = Intent(context, PairConnectionService::class.java).setAction(ACTION_START)
+                val intent = Intent(context, PairConnectionService::class.java)
+                    .setAction(ACTION_START)
+                    .putExtra(EXTRA_CODE, code)
+                    .putExtra(EXTRA_TOKEN, token)
+                    .putExtra(EXTRA_ROLE, role?.name)
                 context.startForegroundService(intent)
                 true
             } catch (t: Throwable) {
@@ -332,10 +390,47 @@ class PairConnectionService : Service() {
                 Log.e(TAG, "Unable to send clear", t)
             }
         }
+
+        fun sendUndo(context: Context, strokeId: String) {
+            try {
+                val intent = Intent(context, PairConnectionService::class.java)
+                    .setAction(ACTION_SEND_UNDO)
+                    .putExtra(EXTRA_STROKE_ID, strokeId)
+                context.startService(intent)
+            } catch (t: Throwable) {
+                Log.e(TAG, "Unable to send undo", t)
+            }
+        }
+
+        fun sendPresence(context: Context, active: Boolean) {
+            try {
+                val gender = runBlocking { LuvApp.instance.prefs.snapshot().gender?.name }
+                val payload = PairProtocol.encode(PairMessage.Presence(active, gender))
+                val intent = Intent(context, PairConnectionService::class.java)
+                    .setAction(ACTION_SEND_STROKE)
+                    .putExtra(EXTRA_PAYLOAD, payload)
+                context.startService(intent)
+            } catch (t: Throwable) {
+                Log.e(TAG, "Unable to send presence", t)
+            }
+        }
+
+        fun sendNote(context: Context, text: String) {
+            try {
+                val payload = PairProtocol.encode(PairMessage.Note(text))
+                val intent = Intent(context, PairConnectionService::class.java)
+                    .setAction(ACTION_SEND_STROKE)
+                    .putExtra(EXTRA_PAYLOAD, payload)
+                context.startService(intent)
+            } catch (t: Throwable) {
+                Log.e(TAG, "Unable to send note", t)
+            }
+        }
     }
 }
 
 sealed class PairEvent {
     data class StrokeReceived(val stroke: com.luv.couple.data.Stroke) : PairEvent()
+    data class StrokeUndone(val strokeId: String) : PairEvent()
     data object Cleared : PairEvent()
 }

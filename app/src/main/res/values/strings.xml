@@ -7,6 +7,20 @@
     <string name="notification_title">LUV verbunden</string>
     <string name="notification_connecting">Verbindung wird hergestellt…</string>
     <string name="notification_hosting">Warte auf Partner…</string>
-    <string name="draw_hint">Zeichnen · 2 Sek. halten zum Löschen</string>
+    <string name="draw_hint">Tipp = Punkt · Doppeltipp = Undo · 2 Sek. = löschen</string>
     <string name="open_canvas">Leinwand öffnen</string>
+    <string name="partner_draw_channel">Partner malt</string>
+    <string name="partner_draw_channel_desc">Stille Hinweise, wenn der Partner etwas zeichnet</string>
+    <string name="partner_draw_title">LUV</string>
+    <string name="partner_draw_text">Dein Partner hat etwas gemalt</string>
+    <string name="partner_notify_toggle">Benachrichtigung wenn Partner malt</string>
+    <string name="partner_haptic_toggle">Vibration wenn Partner malt</string>
+    <string name="partner_here">gerade da</string>
+    <string name="partner_away">nicht auf Leinwand</string>
+    <string name="missed_you">Wieder da — ich hab dich vermisst</string>
+    <string name="send_note">Nachricht</string>
+    <string name="save_moment">Moment speichern</string>
+    <string name="note_hint">Kurze Nachricht…</string>
+    <string name="note_send">Senden</string>
+    <string name="moment_saved">In der Galerie gespeichert</string>
 </resources>

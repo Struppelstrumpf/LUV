@@ -21,6 +21,8 @@ class LuvApiException(message: String) : Exception(message)
 object LuvApiClient {
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
     private val emptyBody = "{}".toRequestBody(jsonMedia)
+    private val inviteRegex = Regex("""LUV-?([A-Z0-9]{4,12})""", RegexOption.IGNORE_CASE)
+    private val bareCodeRegex = Regex("""\b([A-Z0-9]{6})\b""", RegexOption.IGNORE_CASE)
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(12, TimeUnit.SECONDS)
@@ -49,7 +51,8 @@ object LuvApiClient {
     }
 
     suspend fun joinRoom(rawCode: String): RoomSession = withContext(Dispatchers.IO) {
-        val code = normalizeCode(rawCode) ?: throw LuvApiException("Ungültiger Code")
+        val code = normalizeCode(rawCode)
+            ?: throw LuvApiException("Ungültiger Code. Bitte nur z. B. LUV-AB12CD einfügen.")
         val request = Request.Builder()
             .url("${baseUrl()}/v1/rooms/$code/join")
             .post(emptyBody)
@@ -57,12 +60,27 @@ object LuvApiClient {
         executeRoom(request)
     }
 
+    /**
+     * Akzeptiert kurzen Code, LUV-Code oder ganzen WhatsApp-Text.
+     */
     fun normalizeCode(raw: String): String? {
-        val cleaned = raw.trim().uppercase().replace("\\s".toRegex(), "")
-        val code = cleaned.removePrefix("LUV-").removePrefix("LUV")
-        if (code.length !in 4..12) return null
-        if (!code.all { it.isLetterOrDigit() }) return null
-        return code
+        val text = raw.trim()
+        if (text.isEmpty()) return null
+
+        inviteRegex.find(text)?.groupValues?.getOrNull(1)?.uppercase()?.let { extracted ->
+            if (extracted.all { it.isLetterOrDigit() }) return extracted
+        }
+
+        val compact = text.uppercase().replace("\\s".toRegex(), "")
+        val stripped = compact.removePrefix("LUV-").removePrefix("LUV")
+        if (stripped.length in 4..12 && stripped.all { it.isLetterOrDigit() }) {
+            return stripped
+        }
+
+        bareCodeRegex.find(text.uppercase())?.groupValues?.getOrNull(1)?.let { bare ->
+            if (bare.all { it.isLetterOrDigit() }) return bare
+        }
+        return null
     }
 
     private fun executeRoom(request: Request): RoomSession {
@@ -72,7 +90,7 @@ object LuvApiClient {
                 val err = runCatching { JSONObject(body).optString("error") }.getOrNull()
                 throw LuvApiException(
                     when (err) {
-                        "room_not_found" -> "Raum nicht gefunden"
+                        "room_not_found" -> "Raum nicht gefunden. Host muss online hosten, dann Code neu teilen."
                         "room_full" -> "Raum ist schon voll"
                         else -> "API-Fehler (${response.code})"
                     }

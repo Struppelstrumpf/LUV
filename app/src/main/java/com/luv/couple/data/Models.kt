@@ -9,6 +9,13 @@ enum class Gender {
             MALE -> 0xFF00B7E4.toInt()
             FEMALE -> 0xFFC218A8.toInt()
         }
+
+    /** Etwas hellere Mischfarbe für Partner-Striche auf der eigenen Leinwand */
+    val partnerStrokeColor: Int
+        get() = when (this) {
+            MALE -> 0xFFFFE8F6.toInt()   // zartes Rosa auf blau
+            FEMALE -> 0xFFE8F9FF.toInt() // zartes Eisblau auf lila
+        }
 }
 
 enum class Role {
@@ -39,5 +46,7 @@ data class StrokePoint(
 data class Stroke(
     val id: String,
     val points: List<StrokePoint>,
-    val width: Float = 18f
+    val width: Float = 18f,
+    val isLocal: Boolean = true,
+    val gender: String? = null
 )
