@@ -27,4 +27,8 @@
     <string name="note_hint">Kurze Nachricht…</string>
     <string name="note_send">Senden</string>
     <string name="moment_saved">In der Galerie gespeichert</string>
+    <string name="update_available_title">Neue Version</string>
+    <string name="update_available_body">LUV %1$s ist bereit — tippe zum Aktualisieren</string>
+    <string name="update_download">Jetzt aktualisieren</string>
+    <string name="update_downloading">Lädt… %1$d%%</string>
 </resources>

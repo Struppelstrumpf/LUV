@@ -8,6 +8,7 @@ import com.luv.couple.lock.CanvasStore
 import com.luv.couple.lock.MidnightClear
 import com.luv.couple.lock.UnlockMonitor
 import com.luv.couple.notify.PartnerStrokeNotifier
+import com.luv.couple.update.AppUpdater
 
 class LuvApp : Application() {
     lateinit var prefs: PrefsRepository
@@ -21,6 +22,7 @@ class LuvApp : Application() {
         UnlockMonitor.start(this)
         createNotificationChannel()
         PartnerStrokeNotifier.ensureChannel(this)
+        AppUpdater.ensureChannel(this)
         MidnightClear.checkAndClearIfNewDay(this)
     }
 

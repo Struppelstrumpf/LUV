@@ -45,6 +45,8 @@ import com.luv.couple.data.AccountInfo
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.net.ShopPack
 import com.luv.couple.net.VoucherInfo
+import com.luv.couple.update.AppUpdater
+import com.luv.couple.update.UpdateUiState
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -64,7 +66,10 @@ fun AccountHomeScreen(
     onOpenRedeem: () -> Unit,
     onOpenAdmin: () -> Unit,
     onBuyPack: (ShopPack) -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    updateState: UpdateUiState = UpdateUiState.Idle,
+    onUpdateApp: () -> Unit = {},
+    onCheckUpdate: () -> Unit = {}
 ) {
     val accent = PeerPalette.composeColor(colorIndex)
     var legalDoc by remember { mutableStateOf<LegalDoc?>(null) }
@@ -78,6 +83,7 @@ fun AccountHomeScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text("Konto", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
+            UpdateBanner(state = updateState, onUpdate = onUpdateApp)
             Text(
                 "Fair nutzbar jeden Tag — Coins nur wenn du richtig viel malst.",
                 color = TextMuted,
@@ -134,6 +140,32 @@ fun AccountHomeScreen(
                 MenuButton("Admin", Color(0xFF3A2430), onOpenAdmin)
             }
             MenuButton("Aktualisieren", BgSoft, onRefresh, bordered = true)
+            MenuButton(
+                label = when (updateState) {
+                    is UpdateUiState.Checking -> "Prüfe Version…"
+                    is UpdateUiState.UpToDate -> "App ist aktuell"
+                    is UpdateUiState.Available -> "Update ${updateState.release.versionName} laden"
+                    is UpdateUiState.Downloading -> "Lädt…"
+                    else -> "Nach Update suchen"
+                },
+                color = BgSoft,
+                onClick = {
+                    when (updateState) {
+                        is UpdateUiState.Available,
+                        is UpdateUiState.Ready,
+                        is UpdateUiState.Error -> onUpdateApp()
+                        else -> onCheckUpdate()
+                    }
+                },
+                bordered = true,
+                enabled = updateState !is UpdateUiState.Downloading && updateState !is UpdateUiState.Checking
+            )
+            Text(
+                AppUpdater.versionLabel(),
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 12.sp
+            )
 
             Spacer(modifier = Modifier.height(4.dp))
             Text("Shop", fontFamily = DisplayFont, fontSize = 22.sp, color = TextPrimary)

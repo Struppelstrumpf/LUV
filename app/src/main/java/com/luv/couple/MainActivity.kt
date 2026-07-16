@@ -14,6 +14,7 @@ import com.luv.couple.net.PendingJoin
 import com.luv.couple.net.PendingShopReturn
 import com.luv.couple.ui.LuvAppNav
 import com.luv.couple.ui.theme.LuvTheme
+import com.luv.couple.update.AppUpdater
 
 class MainActivity : ComponentActivity() {
     private val notificationPermission = registerForActivityResult(
@@ -25,6 +26,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         maybeRequestNotificationPermission()
         captureJoinIntent(intent)
+        captureUpdateIntent(intent)
         setContent {
             LuvTheme {
                 LuvAppNav()
@@ -36,6 +38,13 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         captureJoinIntent(intent)
+        captureUpdateIntent(intent)
+    }
+
+    private fun captureUpdateIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(AppUpdater.EXTRA_OPEN_UPDATE, false) == true) {
+            AppUpdater.offerFocus()
+        }
     }
 
     private fun captureJoinIntent(intent: Intent?) {

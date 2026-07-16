@@ -53,6 +53,7 @@ import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Role
 import com.luv.couple.data.RoomPreview
 import com.luv.couple.net.PairSessionState
+import com.luv.couple.update.UpdateUiState
 import com.luv.couple.net.LobbyReconnectUi
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
@@ -232,7 +233,9 @@ fun LobbiesScreen(
     onRenameLobby: (Lobby) -> Unit,
     onLeaveLobby: (Lobby) -> Unit,
     onReconnect: (Lobby) -> Unit,
-    onEditNickname: () -> Unit
+    onEditNickname: () -> Unit,
+    updateState: UpdateUiState = UpdateUiState.Idle,
+    onUpdateApp: () -> Unit = {}
 ) {
     val accent = PeerPalette.composeColor(colorIndex)
     ScreenBackdrop(includeNavigationBars = false) {
@@ -244,6 +247,7 @@ fun LobbiesScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            UpdateBanner(state = updateState, onUpdate = onUpdateApp)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)

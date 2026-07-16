@@ -51,6 +51,8 @@ import com.luv.couple.ui.screens.RedeemScreen
 import com.luv.couple.ui.screens.RenameLobbyScreen
 import com.luv.couple.ui.screens.SimpleBottomBar
 import com.luv.couple.ui.screens.TutorialFlow
+import com.luv.couple.update.AppUpdater
+import com.luv.couple.update.UpdateUiState
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -85,6 +87,8 @@ fun LuvAppNav() {
     val account by AccountSession.account.collectAsStateWithLifecycle()
     val pendingJoin by PendingJoin.code.collectAsStateWithLifecycle()
     val pendingShopReturn by PendingShopReturn.pending.collectAsStateWithLifecycle()
+    val updateState by AppUpdater.state.collectAsStateWithLifecycle()
+    val focusUpdate by AppUpdater.focusRequest.collectAsStateWithLifecycle()
 
     var startDestination by remember { mutableStateOf<String?>(null) }
     var shareLobby by remember { mutableStateOf<Lobby?>(null) }
@@ -216,6 +220,17 @@ fun LuvAppNav() {
         shareText(inviteMessage(lobby))
     }
 
+    fun startAppUpdate() {
+        scope.launch {
+            val ready = updateState as? UpdateUiState.Ready
+            if (ready != null) {
+                AppUpdater.installApkFile(context, ready.file)
+            } else {
+                AppUpdater.downloadAndInstall(context)
+            }
+        }
+    }
+
     fun buySeat(lobby: Lobby) {
         if (busy) return
         scope.launch {
@@ -270,7 +285,18 @@ fun LuvAppNav() {
                 PairConnectionService.startAll(context)
             }
             scope.launch { runCatching { LuvApiClient.claimDaily(); refreshAccount() } }
+            scope.launch { runCatching { AppUpdater.check(context, notify = true) } }
             Routes.MAIN
+        }
+    }
+
+    LaunchedEffect(focusUpdate) {
+        if (!AppUpdater.consumeFocus()) return@LaunchedEffect
+        tab = 1
+        if (updateState is UpdateUiState.Available || updateState is UpdateUiState.Ready) {
+            startAppUpdate()
+        } else {
+            runCatching { AppUpdater.check(context, notify = false) }
         }
     }
 
@@ -384,7 +410,9 @@ fun LuvAppNav() {
                             onReconnect = { lobby ->
                                 PairConnectionService.reconnectNow(context, lobby.id)
                             },
-                            onEditNickname = { navController.navigate(Routes.NICKNAME) }
+                            onEditNickname = { navController.navigate(Routes.NICKNAME) },
+                            updateState = updateState,
+                            onUpdateApp = { startAppUpdate() }
                         )
                         else -> AccountHomeScreen(
                             account = account,
@@ -392,6 +420,18 @@ fun LuvAppNav() {
                             message = accountMessage,
                             shopEnabled = shopEnabled,
                             packs = packs,
+                            updateState = updateState,
+                            onUpdateApp = { startAppUpdate() },
+                            onCheckUpdate = {
+                                scope.launch {
+                                    val release = AppUpdater.check(context, notify = false)
+                                    accountMessage = if (release != null) {
+                                        "Update ${release.versionName} verfügbar"
+                                    } else {
+                                        "Du hast die neueste Version"
+                                    }
+                                }
+                            },
                             onClaimDaily = {
                                 scope.launch {
                                     runCatching {

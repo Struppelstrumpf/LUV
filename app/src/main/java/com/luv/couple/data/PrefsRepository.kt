@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -29,6 +30,7 @@ class PrefsRepository(private val context: Context) {
     private val installSecretKey = stringPreferencesKey("install_secret")
     private val sessionTokenKey = stringPreferencesKey("session_token")
     private val accountJsonKey = stringPreferencesKey("account_json")
+    private val lastNotifiedUpdateKey = intPreferencesKey("last_notified_update_code")
 
     // Legacy keys — Migration
     private val genderKey = stringPreferencesKey("gender")
@@ -114,6 +116,13 @@ class PrefsRepository(private val context: Context) {
             it[accountJsonKey] = account.toJson()
             it[nicknameKey] = account.nickname
         }
+    }
+
+    suspend fun lastNotifiedUpdateCode(): Int =
+        context.dataStore.data.first()[lastNotifiedUpdateKey] ?: 0
+
+    suspend fun setLastNotifiedUpdateCode(code: Int) {
+        context.dataStore.edit { it[lastNotifiedUpdateKey] = code }
     }
 
     suspend fun sessionToken(): String? =
