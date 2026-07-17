@@ -192,7 +192,7 @@ object PairSessionState {
         // Für die Legende: nur noch aktive Lobby-Mitglieder (nicht departed)
         val others = remote.filter { peer ->
             !peer.departed && !isSelf(peer, myNickname, myUserId)
-        }.distinctBy { it.userId?.takeIf { id -> id.isNotBlank() } ?: it.nickname.lowercase() }
+        }.distinctBy { it.nickname.trim().lowercase() }
         return listOf(me) + others
     }
 

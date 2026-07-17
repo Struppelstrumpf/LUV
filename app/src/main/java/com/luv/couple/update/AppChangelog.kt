@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.8.90",
+            listOf(
+                "Alle Zeichner bleiben ausgegraut sichtbar, solange ihre Striche da sind",
+            )
+        ),
+        Entry(
             "1.8.89",
             listOf(
                 "Update-Schleife behoben — echte 1.8.89-APK statt falscher Datei",

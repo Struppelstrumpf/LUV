@@ -317,6 +317,12 @@ function clearRoomStrokes(room, code) {
 }
 
 function strokeFromSocketMessage(json, socket) {
+  // "local" von alten Clients ignorieren — sonst kollabieren alle Ghost-Avatare
+  const rawAuthor = String(json?.authorId || "").trim();
+  const authorId =
+    rawAuthor && rawAuthor.toLowerCase() !== "local" && rawAuthor !== "null"
+      ? rawAuthor
+      : socket?.luvUserId || socket?.luvPeerId || null;
   const base = sanitizeStoredStroke({
     id: json?.id,
     points: json?.points,
@@ -324,7 +330,7 @@ function strokeFromSocketMessage(json, socket) {
     nickname: json?.nickname || socket?.luvNickname || null,
     colorIndex:
       json?.colorIndex != null ? json.colorIndex : socket?.luvColorIndex || 0,
-    authorId: json?.authorId || socket?.luvUserId || socket?.luvPeerId || null,
+    authorId,
   });
   return base;
 }

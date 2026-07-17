@@ -9,6 +9,7 @@ import android.util.Log
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Stroke
 import com.luv.couple.data.StrokePoint
+import com.luv.couple.net.AccountSession
 import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairMessage
 import com.luv.couple.net.PairProtocol
@@ -224,7 +225,7 @@ object CanvasStore {
             isLocal = true,
             nickname = cachedNickname,
             colorIndex = cachedColorIndex,
-            authorId = "local"
+            authorId = AccountSession.account.value?.id?.takeIf { it.isNotBlank() }
         )
         val c = canvas(id)
         c.strokes.add(stroke)
@@ -319,7 +320,8 @@ object CanvasStore {
                     isLocal = true,
                     nickname = stroke.nickname ?: cachedNickname,
                     colorIndex = stroke.colorIndex,
-                    authorId = stroke.authorId ?: "local",
+                    authorId = stroke.authorId
+                        ?: AccountSession.account.value?.id?.takeIf { it.isNotBlank() },
                     gender = stroke.gender
                 )
                 c.strokes.add(neu)

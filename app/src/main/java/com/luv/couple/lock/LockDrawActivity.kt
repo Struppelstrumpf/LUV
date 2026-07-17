@@ -1471,8 +1471,11 @@ class LockDrawActivity : ComponentActivity() {
             ?: AccountSession.account.value?.nickname
         val myUserId = AccountSession.account.value?.id
         val myColor = CanvasStore.cachedColorIndex
+        // Wer noch Striche auf der Leinwand hat — Nickname ist die stabile Anzeige-ID
+        // (authorId "local" von alten Clients darf Ghosts nicht zusammenwerfen)
         val drawColorByNick = linkedMapOf<String, Int>()
         val drawAuthorByNick = linkedMapOf<String, String?>()
+        val drawDisplayNick = linkedMapOf<String, String>()
         CanvasStore.snapshot(id).forEach { stroke ->
             val nick = when {
                 !stroke.nickname.isNullOrBlank() -> stroke.nickname.trim()
@@ -1481,9 +1484,11 @@ class LockDrawActivity : ComponentActivity() {
             }
             val key = nick.lowercase(Locale.getDefault())
             drawColorByNick[key] = stroke.colorIndex
-            if (!stroke.authorId.isNullOrBlank()) {
-                drawAuthorByNick[key] = stroke.authorId
+            drawDisplayNick.putIfAbsent(key, nick)
+            val aid = stroke.authorId?.trim()?.takeIf {
+                it.isNotBlank() && !it.equals("local", ignoreCase = true) && it != "null"
             }
+            if (aid != null) drawAuthorByNick[key] = aid
         }
         val live = PairSessionState.legendPeers(id, nickname, myColor, myUserId).map { peer ->
             if (peer.peerKey == "me") {
@@ -1495,16 +1500,13 @@ class LockDrawActivity : ComponentActivity() {
         }
         val liveKeys = live.map { it.nickname.trim().lowercase(Locale.getDefault()) }.toSet()
         val myKey = nickname?.trim()?.lowercase(Locale.getDefault()).orEmpty()
+        // Jeder Zeichner mit Strichen bleibt sichtbar — ausgegraut wenn nicht mehr live
         val ghosts = drawColorByNick
             .filterKeys { it !in liveKeys && it != myKey && it.isNotBlank() }
             .map { (key, color) ->
-                val displayNick = CanvasStore.snapshot(id)
-                    .mapNotNull { it.nickname?.trim() }
-                    .firstOrNull { it.lowercase(Locale.getDefault()) == key }
-                    ?: key
                 PeerInfo(
                     peerKey = "gone:$key",
-                    nickname = displayNick,
+                    nickname = drawDisplayNick[key] ?: key,
                     colorIndex = color,
                     active = false,
                     userId = drawAuthorByNick[key],
@@ -1512,14 +1514,23 @@ class LockDrawActivity : ComponentActivity() {
                     departed = true
                 )
             }
-        val merged = (live + ghosts).distinctBy {
-            it.userId?.takeIf { uid -> uid.isNotBlank() } ?: it.nickname.lowercase(Locale.getDefault())
+        // Nach Nickname mergen — nie über authorId "local" kollabieren
+        val merged = LinkedHashMap<String, PeerInfo>()
+        for (peer in live + ghosts) {
+            val key = peer.nickname.trim().lowercase(Locale.getDefault())
+            if (key.isBlank()) continue
+            val prev = merged[key]
+            if (prev == null) {
+                merged[key] = peer
+            } else if (prev.departed && !peer.departed) {
+                merged[key] = peer
+            }
         }
 
         legendRow.removeAllViews()
         legendRow.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
         val gap = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 10f, resources.displayMetrics).toInt()
-        merged.take(PeerPalette.MAX_PEERS).forEachIndexed { index, peer ->
+        merged.values.take(PeerPalette.MAX_PEERS).forEachIndexed { index, peer ->
             if (index > 0) {
                 val spacer = View(this).apply {
                     layoutParams = LinearLayout.LayoutParams(gap, 1)
