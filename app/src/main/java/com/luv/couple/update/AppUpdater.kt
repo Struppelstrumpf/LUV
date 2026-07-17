@@ -91,6 +91,21 @@ object AppUpdater {
 
     fun versionLabel(): String = BuildConfig.VERSION_NAME
 
+    /** Installierte Version (PackageManager) — nach Update auch vor Prozess-Neustart korrekt. */
+    fun installedVersionCode(context: Context): Int {
+        return try {
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                info.longVersionCode.toInt()
+            } else {
+                @Suppress("DEPRECATION")
+                info.versionCode
+            }
+        } catch (_: Throwable) {
+            BuildConfig.VERSION_CODE
+        }
+    }
+
     fun canRequestPackageInstalls(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.packageManager.canRequestPackageInstalls()
@@ -118,12 +133,22 @@ object AppUpdater {
     }
 
     suspend fun check(context: Context, notify: Boolean = true): AppRelease? = withContext(Dispatchers.IO) {
-        // Laufenden Download nicht unterbrechen
-        when (val current = _state.value) {
-            is UpdateUiState.Downloading -> return@withContext current.release
-            is UpdateUiState.Ready -> return@withContext current.release
-            else -> Unit
+        val installed = installedVersionCode(context).coerceAtLeast(BuildConfig.VERSION_CODE)
+
+        // Download läuft — nicht abbrechen
+        val current = _state.value
+        if (current is UpdateUiState.Downloading) {
+            return@withContext current.release
         }
+        // Ready nur behalten, wenn die Version wirklich noch fehlt
+        if (current is UpdateUiState.Ready) {
+            if (current.release.versionCode > installed) {
+                return@withContext current.release
+            }
+            _state.value = UpdateUiState.UpToDate
+            return@withContext null
+        }
+
         if (!checking.compareAndSet(false, true)) {
             return@withContext currentReleaseOrNull()
         }
@@ -154,8 +179,7 @@ object AppUpdater {
                     sha256 = json.optString("sha256").takeIf { it.isNotBlank() },
                     notes = json.optString("notes", "Neue Version verfügbar")
                 )
-                if (release.versionCode > BuildConfig.VERSION_CODE) {
-                    // Ready/Downloading behalten wir oben; hier wieder Available zeigen
+                if (release.versionCode > installed) {
                     if (_state.value !is UpdateUiState.Downloading &&
                         _state.value !is UpdateUiState.Ready
                     ) {

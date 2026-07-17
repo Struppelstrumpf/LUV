@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.8.89",
+            listOf(
+                "Update-Schleife behoben — echte 1.8.89-APK statt falscher Datei",
+            )
+        ),
+        Entry(
             "1.8.88",
             listOf(
                 "Verlassen räumt den Slot wirklich — wieder mit + einladen",
