@@ -185,24 +185,26 @@ object PairSessionState {
             nickname = myNickname?.takeIf { it.isNotBlank() } ?: "Du",
             colorIndex = myColor,
             active = true,
-            userId = myUserId
+            userId = myUserId,
+            online = true,
+            departed = false
         )
+        // Für die Legende: nur noch aktive Lobby-Mitglieder (nicht departed)
         val others = remote.filter { peer ->
-            !isSelf(peer, myNickname, myUserId)
+            !peer.departed && !isSelf(peer, myNickname, myUserId)
         }.distinctBy { it.userId?.takeIf { id -> id.isNotBlank() } ?: it.nickname.lowercase() }
         return listOf(me) + others
     }
 
-    /** Alle anderen Lobby-Mitglieder für die Sitzplatz-Kachel (ohne mich). */
+    /** Belegte Sitze im Menü — nur wer wirklich online ist (Leave → sofort „+“). */
     fun seatNicknames(
         lobbyId: String,
         myNickname: String?,
         myUserId: String?,
         hostNickname: String?
     ): List<String> {
-        // Nur aktuelle Mitglieder (online oder kurz offline) — nicht departed
         val others = peersByLobby[lobbyId]?.value?.values.orEmpty()
-            .filter { !it.departed && !isSelf(it, myNickname, myUserId) }
+            .filter { it.online && !it.departed && !isSelf(it, myNickname, myUserId) }
             .map { it.nickname.trim() }
             .filter { it.isNotBlank() && !it.equals("Du", ignoreCase = true) }
             .distinctBy { it.lowercase() }

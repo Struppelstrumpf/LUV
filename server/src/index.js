@@ -545,6 +545,18 @@ function forgetMember(room, userId) {
       changed = true;
     }
   }
+  // Sonst holt healRoomMembership die Person über Farben sofort wieder rein
+  if (room.colorByUserId && typeof room.colorByUserId === "object" && room.colorByUserId[userId] != null) {
+    delete room.colorByUserId[userId];
+    changed = true;
+  }
+  if (Array.isArray(room.joinAnnouncedUserIds)) {
+    const nextAnn = room.joinAnnouncedUserIds.filter((id) => id !== userId);
+    if (nextAnn.length !== room.joinAnnouncedUserIds.length) {
+      room.joinAnnouncedUserIds = nextAnn;
+      changed = true;
+    }
+  }
   return changed;
 }
 
@@ -708,17 +720,14 @@ function roomCapacity(room) {
   return Math.min(MAX_PEERS, Math.floor(n));
 }
 
-/** Mitglieder aus Farben/Peak nachziehen — Peak allein reicht nicht für Anzeige. */
+/**
+ * Nur Kapazität heilen.
+ * Früher: colorByUserId → memberUserIds — das hat Leave sofort rückgängig gemacht
+ * (Slot blieb belegt, Leinwand zeigte „kurz offline“ statt ausgegraut).
+ */
 function healRoomMembership(room) {
   if (!room) return false;
-  let changed = false;
-  if (room.colorByUserId && typeof room.colorByUserId === "object") {
-    for (const uid of Object.keys(room.colorByUserId)) {
-      if (uid && rememberMember(room, uid)) changed = true;
-    }
-  }
-  if (healRoomCapacity(room)) changed = true;
-  return changed;
+  return healRoomCapacity(room);
 }
 
 /**

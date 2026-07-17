@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.8.88",
+            listOf(
+                "Verlassen räumt den Slot wirklich — wieder mit + einladen",
+                "Verlassen auf der Leinwand: ausgegraut statt „kurz offline“",
+            )
+        ),
+        Entry(
             "1.8.87",
             listOf(
                 "Lobby verlassen: Slot im Menü verschwindet sofort",
