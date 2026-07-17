@@ -4,160 +4,101 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.LocalTime
-import java.time.ZoneId
-import kotlin.random.Random
 
 /**
- * Plant 2–3 sanfte Stimmungs-Hinweise pro Tag (Vormittag, Nachmittag, Abend).
+ * Sanfte Stimmungs-Hinweise — maximal eine alle 12 Stunden.
  */
 object MoodNudgeScheduler {
     private const val PREFS = "luv_mood"
-    private const val KEY_PLAN_DAY = "plan_day"
-    private const val KEY_TIMES = "plan_times_ms"
-    private const val KEY_SENT = "sent_mask"
+    private const val KEY_LAST_SHOWN_MS = "last_shown_ms"
+    private const val KEY_NEXT_AT_MS = "next_at_ms"
     private const val KEY_LAST_LINE = "last_line"
-    private const val REQUEST_BASE = 4100
+    private const val REQUEST_CODE = 4100
+    private const val INTERVAL_MS = 12 * 60 * 60 * 1000L
+    private const val MIN_DELAY_MS = 15 * 60 * 1000L
 
     fun ensureScheduled(context: Context) {
         val app = context.applicationContext
+        cancelLegacySlotAlarms(app)
         val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val today = LocalDate.now().toString()
-        val planned = prefs.getString(KEY_PLAN_DAY, null)
-        when {
-            planned == null -> planDay(app, today)
-            planned < today -> planDay(app, today)
-            planned == today -> rebindFutureAlarms(app)
-            else -> rebindFutureAlarms(app) // Plan für morgen liegt schon
+        val now = System.currentTimeMillis()
+        val lastShown = prefs.getLong(KEY_LAST_SHOWN_MS, 0L)
+        val nextAt = prefs.getLong(KEY_NEXT_AT_MS, 0L)
+        val earliest = if (lastShown > 0L) lastShown + INTERVAL_MS else now + MIN_DELAY_MS
+        val trigger = when {
+            nextAt > now && nextAt >= earliest -> nextAt
+            else -> earliest.coerceAtLeast(now + MIN_DELAY_MS)
+        }
+        prefs.edit().putLong(KEY_NEXT_AT_MS, trigger).apply()
+        scheduleAlarm(app, trigger)
+    }
+
+    /** Alte 2–3×/Tag-Alarme (Request-Codes 4101/4102) entfernen. */
+    private fun cancelLegacySlotAlarms(context: Context) {
+        val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        for (slot in 1..2) {
+            val intent = Intent(context, MoodNudgeReceiver::class.java).apply {
+                action = MoodNudgeReceiver.ACTION
+                putExtra(MoodNudgeReceiver.EXTRA_SLOT, slot)
+            }
+            val pi = PendingIntent.getBroadcast(
+                context,
+                REQUEST_CODE + slot,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            am.cancel(pi)
         }
     }
 
     fun onNudgeFired(context: Context, slot: Int) {
         val app = context.applicationContext
         val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val today = LocalDate.now().toString()
-        val planned = prefs.getString(KEY_PLAN_DAY, null)
-        if (planned != today) {
-            // Alarm von gestern / Rollover — heutigen Tag neu planen
-            planDay(app, today)
+        val now = System.currentTimeMillis()
+        val lastShown = prefs.getLong(KEY_LAST_SHOWN_MS, 0L)
+        if (lastShown > 0L && now - lastShown < INTERVAL_MS - 60_000L) {
+            // Zu früh (Doppel-Alarm / Rebind) — nur neu planen
+            scheduleNext(app, lastShown + INTERVAL_MS)
             return
         }
-        val mask = prefs.getInt(KEY_SENT, 0)
-        if (mask and (1 shl slot) != 0) {
-            maybePlanTomorrow(app)
-            return
-        }
-        prefs.edit().putInt(KEY_SENT, mask or (1 shl slot)).apply()
-        LuvAlertNotifier.showMoodNudge(app, nextLine(prefs))
-        maybePlanTomorrow(app)
-    }
-
-    private fun maybePlanTomorrow(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val times = parseTimes(prefs.getString(KEY_TIMES, "") ?: "")
-        val mask = prefs.getInt(KEY_SENT, 0)
-        val now = System.currentTimeMillis()
-        val pending = times.indices.any { i ->
-            times[i] > now && mask and (1 shl i) == 0
-        }
-        if (!pending) {
-            planDay(context, LocalDate.now().plusDays(1).toString())
-        } else {
-            rebindFutureAlarms(context)
-        }
-    }
-
-    private fun planDay(context: Context, day: String) {
-        val zone = ZoneId.systemDefault()
-        val date = LocalDate.parse(day)
-        val now = System.currentTimeMillis()
-        val rng = Random(day.hashCode() xor 0x4C5556)
-
-        val slotCount = if (rng.nextInt(5) == 0) 2 else 3
-        val windows = listOf(
-            LocalTime.of(10, 0) to 75,
-            LocalTime.of(15, 0) to 90,
-            LocalTime.of(19, 30) to 75
-        ).shuffled(rng).take(slotCount).sortedBy { it.first }
-
-        val times = LongArray(3) { 0L }
-        windows.forEachIndexed { index, (base, windowMin) ->
-            val offsetMin = rng.nextInt(windowMin.coerceAtLeast(1) + 1)
-            val at = LocalDateTime.of(date, base)
-                .plusMinutes(offsetMin.toLong())
-                .atZone(zone)
-                .toInstant()
-                .toEpochMilli()
-            // Nur Zukunft — für „heute“ schon vergangene Fenster überspringen
-            times[index] = if (at > now + 90_000L) at else 0L
-        }
-
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_PLAN_DAY, day)
-            .putString(KEY_TIMES, times.joinToString(","))
-            .putInt(KEY_SENT, 0)
+        prefs.edit()
+            .putLong(KEY_LAST_SHOWN_MS, now)
+            .putLong(KEY_NEXT_AT_MS, now + INTERVAL_MS)
             .apply()
-
-        cancelAll(context)
-        var scheduled = 0
-        times.forEachIndexed { slot, trigger ->
-            if (trigger > 0L) {
-                scheduleAlarm(context, slot, trigger)
-                scheduled++
-            }
-        }
-        if (scheduled == 0 && day == LocalDate.now().toString()) {
-            planDay(context, LocalDate.now().plusDays(1).toString())
-        }
+        LuvAlertNotifier.showMoodNudge(app, nextLine(prefs))
+        scheduleAlarm(app, now + INTERVAL_MS)
     }
 
-    private fun rebindFutureAlarms(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val times = parseTimes(prefs.getString(KEY_TIMES, "") ?: "")
-        val mask = prefs.getInt(KEY_SENT, 0)
+    private fun scheduleNext(context: Context, triggerAt: Long) {
         val now = System.currentTimeMillis()
-        times.forEachIndexed { slot, trigger ->
-            if (trigger > now && mask and (1 shl slot) == 0) {
-                scheduleAlarm(context, slot, trigger)
-            }
-        }
+        val at = triggerAt.coerceAtLeast(now + MIN_DELAY_MS)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putLong(KEY_NEXT_AT_MS, at)
+            .apply()
+        scheduleAlarm(context, at)
     }
 
-    private fun scheduleAlarm(context: Context, slot: Int, triggerAt: Long) {
+    private fun scheduleAlarm(context: Context, triggerAt: Long) {
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        am.setWindow(
+        am.cancel(pending(context))
+        am.setAndAllowWhileIdle(
             AlarmManager.RTC_WAKEUP,
             triggerAt,
-            20 * 60 * 1000L,
-            pending(context, slot)
+            pending(context)
         )
     }
 
-    private fun cancelAll(context: Context) {
-        val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        for (slot in 0..2) {
-            am.cancel(pending(context, slot))
-        }
-    }
-
-    private fun pending(context: Context, slot: Int): PendingIntent {
+    private fun pending(context: Context): PendingIntent {
         val intent = Intent(context, MoodNudgeReceiver::class.java).apply {
             action = MoodNudgeReceiver.ACTION
-            putExtra(MoodNudgeReceiver.EXTRA_SLOT, slot)
+            putExtra(MoodNudgeReceiver.EXTRA_SLOT, 0)
         }
         return PendingIntent.getBroadcast(
             context,
-            REQUEST_BASE + slot,
+            REQUEST_CODE,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-    }
-
-    private fun parseTimes(raw: String): LongArray {
-        val parts = raw.split(',').mapNotNull { it.toLongOrNull() }
-        return LongArray(3) { i -> parts.getOrElse(i) { 0L } }
     }
 
     private fun nextLine(prefs: android.content.SharedPreferences): String {

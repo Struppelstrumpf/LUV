@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.8.91",
+            listOf(
+                "Stimmungs-Hinweise nur noch alle 12 Stunden",
+            )
+        ),
+        Entry(
             "1.8.90",
             listOf(
                 "Alle Zeichner bleiben ausgegraut sichtbar, solange ihre Striche da sind",

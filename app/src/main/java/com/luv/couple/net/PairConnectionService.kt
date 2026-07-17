@@ -1147,8 +1147,9 @@ class PairConnectionService : Service() {
      */
     private fun ensureForeground() {
         val now = System.currentTimeMillis()
+        // Stimmungszeile höchstens alle 12h wechseln — sonst wirkt jedes Update wie eine neue Meldung
         val refreshMood =
-            lastServiceMoodLine.isBlank() || now - lastServiceMoodAtMs >= 30 * 60_000L
+            lastServiceMoodLine.isBlank() || now - lastServiceMoodAtMs >= 12 * 60 * 60_000L
         if (refreshMood) {
             lastServiceMoodLine = MoodLines.pickText()
             lastServiceMoodAtMs = now
@@ -1204,6 +1205,7 @@ class PairConnectionService : Service() {
             .setContentIntent(pending)
             .setOngoing(true)
             .setSilent(true)
+            .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
