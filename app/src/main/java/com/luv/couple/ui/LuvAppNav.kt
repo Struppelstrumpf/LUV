@@ -759,7 +759,6 @@ fun LuvAppNav() {
                             googleBusy = googleBusy,
                             onGoogleConnect = { connectGoogle() },
                             onLogout = { logoutAccount() },
-                            onOpenProfile = { navController.navigate(Routes.NICKNAME) },
                             onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                             onOpenRedeem = { navController.navigate(Routes.REDEEM) },
                             onReplayTutorial = {

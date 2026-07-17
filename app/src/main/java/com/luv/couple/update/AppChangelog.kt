@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.8.93",
+            listOf(
+                "Profil-Button unter Konto entfernt",
+            )
+        ),
+        Entry(
             "1.8.92",
             listOf(
                 "Einstellungen unter Konto — inkl. Ruhezeiten",

@@ -81,7 +81,6 @@ fun AccountHomeScreen(
     message: String?,
     shopEnabled: Boolean,
     packs: List<ShopPack>,
-    onOpenProfile: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenRedeem: () -> Unit,
     onOpenAdmin: () -> Unit,
@@ -172,7 +171,6 @@ fun AccountHomeScreen(
                 )
             }
 
-            MenuButton("Profil", BgSoft, onOpenProfile, bordered = true)
             MenuButton("Einstellungen", BgSoft, onOpenSettings, bordered = true)
             MenuButton("Code einlösen", BgSoft, onOpenRedeem, bordered = true)
             MenuButton("Tutorial ansehen", BgSoft, onReplayTutorial, bordered = true)
