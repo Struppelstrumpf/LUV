@@ -22,8 +22,11 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -36,7 +39,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.luv.couple.data.PeerPalette
@@ -45,20 +48,59 @@ import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
+import com.luv.couple.ui.theme.LuvWordmark
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
+
+private enum class TutPage {
+    Welcome,
+    Nickname,
+    Canvas,
+    Gallery,
+    Clear
+}
 
 @Composable
 fun TutorialFlow(
     busy: Boolean,
     error: String?,
+    googleEnabled: Boolean = false,
+    googleSignedIn: Boolean = false,
+    onGoogleSignIn: () -> Unit = {},
+    replay: Boolean = false,
+    existingNickname: String = "",
+    onDismiss: (() -> Unit)? = null,
     onFinished: (nickname: String) -> Unit
 ) {
-    var step by remember { mutableIntStateOf(0) }
-    var nickname by remember { mutableStateOf("") }
+    val pages = remember(replay) {
+        if (replay) {
+            listOf(TutPage.Welcome, TutPage.Canvas, TutPage.Gallery, TutPage.Clear)
+        } else {
+            listOf(
+                TutPage.Welcome,
+                TutPage.Nickname,
+                TutPage.Canvas,
+                TutPage.Gallery,
+                TutPage.Clear
+            )
+        }
+    }
+    var index by remember { mutableIntStateOf(0) }
+    var nickname by remember {
+        mutableStateOf(if (replay) existingNickname.trim() else "")
+    }
     val color = PeerPalette.composeColor(
         PeerPalette.indexFor(nickname.trim().lowercase().ifBlank { "a" })
     )
+    val page = pages.getOrElse(index) { pages.last() }
+    val lastIndex = pages.lastIndex
+
+    LaunchedEffect(googleSignedIn, replay) {
+        if (!replay && googleSignedIn && index == 0) {
+            val nickIdx = pages.indexOf(TutPage.Nickname)
+            if (nickIdx >= 0) index = nickIdx
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -77,39 +119,39 @@ fun TutorialFlow(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "Schritt ${step + 1} von 4",
+                    "Seite ${index + 1} von ${pages.size}",
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 13.sp
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    repeat(4) { i ->
+                    pages.indices.forEach { i ->
                         Box(
                             modifier = Modifier
                                 .height(4.dp)
                                 .weight(1f)
                                 .clip(RoundedCornerShape(99.dp))
-                                .background(if (i <= step) AccentRose else Color.White.copy(0.12f))
+                                .background(if (i <= index) AccentRose else Color.White.copy(0.12f))
                         )
                     }
                 }
             }
 
             AnimatedContent(
-                targetState = step,
+                targetState = page,
                 transitionSpec = { fadeIn() togetherWith fadeOut() },
                 label = "tut"
-            ) { s ->
-                when (s) {
-                    0 -> TutorialPane(
+            ) { p ->
+                when (p) {
+                    TutPage.Welcome -> TutorialPane(
                         emojiDot = AccentRose,
-                        title = "Hey, sch\u00F6n dass du da bist",
-                        body = "LUV verbindet bis zu vier Herzen auf einer gemeinsamen Sperrbildschirm-Leinwand \u2014 live, s\u00FC\u00DF, ohne Chaos."
+                        title = if (replay) "Noch einmal kurz…" else "Hey… schön, dass du da bist",
+                        body = "Hier teilen sich zwei Herzen eine Leinwand — oder bis zu zehn, wenn ihr mehr seid. Leise, warm, nur für euch."
                     )
-                    1 -> TutorialPane(
+                    TutPage.Nickname -> TutorialPane(
                         emojiDot = color,
-                        title = "Wie sollen wir dich nennen?",
-                        body = "Dein Spitzname f\u00E4rbt deine Linien. So sieht jeder sofort, wer was gemalt hat."
+                        title = "Und wie heißt du hier?",
+                        body = "Dein Spitzname färbt deine Linien in eurer Farbe. Ganz leise sagt er: Das bin ich."
                     ) {
                         Spacer(modifier = Modifier.height(20.dp))
                         Row(
@@ -141,6 +183,12 @@ fun TutorialFlow(
                                     value = nickname,
                                     onValueChange = { nickname = it.take(18) },
                                     singleLine = true,
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(
+                                        onDone = {
+                                            if (nickname.trim().length >= 2) index += 1
+                                        }
+                                    ),
                                     textStyle = TextStyle(
                                         color = TextPrimary,
                                         fontFamily = BodyFont,
@@ -162,15 +210,23 @@ fun TutorialFlow(
                             }
                         }
                     }
-                    2 -> TutorialPane(
+                    TutPage.Canvas -> TutorialPane(
                         emojiDot = Color(0xFFFFE29A),
-                        title = "Jeden Tag ein bisschen Magie",
-                        body = "Du bekommst t\u00E4glich 10 Coins und 5 freie Lobby-Sessions. Danach kostet eine Session 1 Coin \u2014 Zuschauen bleibt immer gratis."
+                        title = "Eine Leinwand. Für euch.",
+                        body = "In eurer Lobby malt ihr live zusammen. Ein Herzchen, ein Strich, ein kleines Hi — und plötzlich fühlt sich alles näher an."
                     )
-                    else -> TutorialPane(
+                    TutPage.Gallery -> TutorialPane(
+                        emojiDot = Color(0xFF9BB8FF),
+                        title = "Eure Galerie",
+                        body = "Was du auf der Leinwand speicherst, landet hier in der App — nur bei dir. Ansehen, teilen oder wieder löschen."
+                    ) {
+                        Spacer(modifier = Modifier.height(22.dp))
+                        TutorialGalleryPreview()
+                    }
+                    TutPage.Clear -> TutorialPane(
                         emojiDot = Color(0xFFA8E6CF),
-                        title = "Gemeinsam l\u00F6schen",
-                        body = "2 Sekunden halten startet eine Abstimmung. Erst wenn mehr als die H\u00E4lfte Ja sagt, wird die Leinwand geleert. Fair f\u00FCr alle."
+                        title = "Frisch anfangen — zusammen",
+                        body = "Kurz halten, und ihr stimmt ab. Zwei Ja reichen — egal wie viele ihr seid. Ein Nein stoppt es."
                     )
                 }
             }
@@ -179,48 +235,197 @@ fun TutorialFlow(
                 if (!error.isNullOrBlank()) {
                     Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
                 }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(AccentRose)
-                        .clickable(enabled = !busy) {
-                            when {
-                                step < 3 -> {
-                                    if (step == 1 && nickname.trim().length < 2) return@clickable
-                                    step += 1
-                                }
-                                else -> onFinished(nickname.trim())
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
+                val needGoogle =
+                    !replay && page == TutPage.Welcome && googleEnabled && !googleSignedIn
+                if (needGoogle) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(AccentRose)
+                            .clickable(enabled = !busy, onClick = onGoogleSignIn),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            if (busy) "Einen Moment…" else "Mit Google anmelden",
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 18.sp
+                        )
+                    }
                     Text(
-                        when {
-                            busy -> "Einen Moment\u2026"
-                            step < 3 -> "Weiter"
-                            else -> "Los geht\u2019s"
-                        },
-                        color = TextPrimary,
-                        fontFamily = DisplayFont,
-                        fontSize = 18.sp
-                    )
-                }
-                if (step > 0) {
-                    Text(
-                        "Zur\u00FCck",
+                        "Nur ein Tippen — dann gehört dieser Platz dir.",
                         color = TextMuted,
                         fontFamily = BodyFont,
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .clickable(enabled = !busy) { step -= 1 }
-                            .padding(8.dp)
+                        fontSize = 13.sp,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
                     )
+                } else {
+                    val canAdvance = when {
+                        needGoogle -> false
+                        page == TutPage.Nickname && nickname.trim().length < 2 -> false
+                        else -> true
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(if (canAdvance) AccentRose else AccentRose.copy(alpha = 0.35f))
+                            .clickable(enabled = !busy && canAdvance) {
+                                when {
+                                    index < lastIndex -> index += 1
+                                    else -> onFinished(
+                                        nickname.trim().ifBlank { existingNickname.trim() }
+                                    )
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            when {
+                                busy -> "Einen Moment…"
+                                index < lastIndex -> "Weiter"
+                                replay -> "Fertig"
+                                else -> "Komm rein"
+                            },
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 18.sp
+                        )
+                    }
+                }
+                when {
+                    index > 0 -> {
+                        Text(
+                            "Zurück",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            modifier = Modifier
+                                .align(Alignment.CenterHorizontally)
+                                .clickable(enabled = !busy) { index -= 1 }
+                                .padding(8.dp)
+                        )
+                    }
+                    replay && onDismiss != null -> {
+                        Text(
+                            "Abbrechen",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            modifier = Modifier
+                                .align(Alignment.CenterHorizontally)
+                                .clickable(enabled = !busy, onClick = onDismiss)
+                                .padding(8.dp)
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun TutorialGalleryPreview() {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            TutorialMomentCard(
+                modifier = Modifier.weight(1f),
+                tint = Color(0xFF3D4A66),
+                accent = AccentRose,
+                label = "Ansehen"
+            )
+            TutorialMomentCard(
+                modifier = Modifier.weight(1f),
+                tint = Color(0xFF2F3D52),
+                accent = Color(0xFF9BB8FF),
+                label = "Teilen"
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(BgSoft)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TutorialHintChip("Auswählen")
+            TutorialHintChip("Löschen")
+            Text(
+                "Home · Galerie · Konto",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 12.sp,
+                modifier = Modifier.weight(1f),
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun TutorialMomentCard(
+    modifier: Modifier,
+    tint: Color,
+    accent: Color,
+    label: String
+) {
+    Box(
+        modifier = modifier
+            .height(112.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(tint)
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
+    ) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(18.dp)
+                .fillMaxWidth()
+                .height(2.dp)
+                .clip(RoundedCornerShape(99.dp))
+                .background(accent.copy(alpha = 0.55f))
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(start = 28.dp, end = 36.dp, top = 8.dp)
+                .fillMaxWidth()
+                .height(2.dp)
+                .clip(RoundedCornerShape(99.dp))
+                .background(Color.White.copy(alpha = 0.22f))
+        )
+        Text(
+            label,
+            color = TextPrimary,
+            fontFamily = DisplayFont,
+            fontSize = 13.sp,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .background(Color.Black.copy(alpha = 0.35f))
+                .padding(horizontal = 10.dp, vertical = 8.dp)
+        )
+    }
+}
+
+@Composable
+private fun TutorialHintChip(label: String) {
+    Text(
+        label,
+        color = TextPrimary,
+        fontFamily = DisplayFont,
+        fontSize = 12.sp,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(alpha = 0.08f))
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    )
 }
 
 @Composable
@@ -252,14 +457,7 @@ private fun TutorialPane(
             )
         }
         Spacer(modifier = Modifier.height(28.dp))
-        Text(
-            "LUV",
-            fontFamily = DisplayFont,
-            fontSize = 42.sp,
-            fontWeight = FontWeight.Bold,
-            color = TextPrimary,
-            letterSpacing = 3.sp
-        )
+        LuvWordmark(fontSize = 42.sp)
         Spacer(modifier = Modifier.height(12.dp))
         Text(title, fontFamily = DisplayFont, fontSize = 28.sp, color = TextPrimary, lineHeight = 34.sp)
         Spacer(modifier = Modifier.height(12.dp))

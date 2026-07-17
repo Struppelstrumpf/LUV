@@ -22,17 +22,23 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import android.widget.Toast
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -40,31 +46,43 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.luv.couple.LuvApp
 import com.luv.couple.data.ConnectionState
 import com.luv.couple.data.Lobby
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Role
 import com.luv.couple.data.RoomPreview
+import com.luv.couple.lock.CanvasStore
+import com.luv.couple.net.AccountSession
+import com.luv.couple.net.LobbyReconnectUi
 import com.luv.couple.net.PairSessionState
 import com.luv.couple.update.UpdateUiState
-import com.luv.couple.net.LobbyReconnectUi
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
+import com.luv.couple.ui.theme.LuvWordmark
+import com.luv.couple.ui.theme.FemalePurple
+import com.luv.couple.ui.theme.MaleBlue
 import com.luv.couple.ui.theme.TextMuted
+import kotlinx.coroutines.launch
 import com.luv.couple.ui.theme.TextPrimary
 
 @Composable
-private fun ScreenBackdrop(
+internal fun ScreenBackdrop(
     includeNavigationBars: Boolean = true,
     content: @Composable () -> Unit
 ) {
@@ -127,16 +145,7 @@ fun NicknameScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                 }
-                Text(
-                    text = "LUV",
-                    style = TextStyle(
-                        fontFamily = DisplayFont,
-                        fontSize = 64.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary,
-                        letterSpacing = 4.sp
-                    )
-                )
+                LuvWordmark(fontSize = 56.sp)
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
                     text = "Dein Spitzname",
@@ -190,6 +199,12 @@ fun NicknameScreen(
                             ),
                             cursorBrush = SolidColor(AccentRose),
                             singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    if (name.trim().length >= 2) onContinue(name.trim())
+                                }
+                            ),
                             modifier = Modifier.fillMaxWidth(),
                             decorationBox = { inner ->
                                 if (name.isBlank()) {
@@ -216,14 +231,12 @@ fun LobbiesScreen(
     colorIndex: Int,
     coins: Int,
     freeLeft: Int,
+    freeSessionsPerDay: Int = 5,
+    canCreateFreeLobby: Boolean = true,
     lobbies: List<Lobby>,
     activeLobbyId: String?,
     lobbyStates: Map<String, ConnectionState>,
     reconnectUi: Map<String, LobbyReconnectUi>,
-    partnerNotifyEnabled: Boolean,
-    onPartnerNotifyChange: (Boolean) -> Unit,
-    partnerHapticEnabled: Boolean,
-    onPartnerHapticChange: (Boolean) -> Unit,
     error: String?,
     onOpenLobby: (Lobby) -> Unit,
     onCreateLobby: () -> Unit,
@@ -234,10 +247,106 @@ fun LobbiesScreen(
     onLeaveLobby: (Lobby) -> Unit,
     onReconnect: (Lobby) -> Unit,
     onEditNickname: () -> Unit,
+    onQuietHours: () -> Unit = {},
     updateState: UpdateUiState = UpdateUiState.Idle,
     onUpdateApp: () -> Unit = {}
 ) {
-    val accent = PeerPalette.composeColor(colorIndex)
+    val accent = PeerPalette.menuAccent()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val lastPublic by LuvApp.instance.prefs.lastPublicCanvasFlow
+        .collectAsStateWithLifecycle(initialValue = null)
+    var showReportDialog by remember { mutableStateOf(false) }
+    var reportBusy by remember { mutableStateOf(false) }
+
+    if (showReportDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!reportBusy) showReportDialog = false },
+            containerColor = BgSoft,
+            title = {
+                Text(
+                    "Melden",
+                    fontFamily = DisplayFont,
+                    fontSize = 22.sp,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (lastPublic == null) {
+                        Text(
+                            "Beim App-Start wurde noch kein öffentliches Bild gezeigt — gerade gibt es nichts zu melden.",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp
+                        )
+                    } else {
+                        Text(
+                            "Du meldest das letzte öffentliche Bild, das du beim Start gesehen hast:",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp
+                        )
+                        Text(
+                            lastPublic!!.nameLine,
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 18.sp
+                        )
+                        Text(
+                            "Von anderen veröffentlicht · wird im Admin-Bereich geprüft.",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val target = lastPublic ?: return@TextButton
+                        if (reportBusy) return@TextButton
+                        reportBusy = true
+                        scope.launch {
+                            runCatching {
+                                com.luv.couple.net.LuvApiClient.reportPublicCanvas(target.id)
+                            }.onSuccess {
+                                Toast.makeText(context, "Meldung gesendet", Toast.LENGTH_SHORT).show()
+                                showReportDialog = false
+                            }.onFailure {
+                                Toast.makeText(
+                                    context,
+                                    it.message ?: "Melden fehlgeschlagen",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                            reportBusy = false
+                        }
+                    },
+                    enabled = lastPublic != null && !reportBusy
+                ) {
+                    Text(
+                        if (reportBusy) "…" else "Melden",
+                        color = if (lastPublic != null) AccentRose else TextMuted,
+                        fontFamily = DisplayFont,
+                        fontSize = 15.sp
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showReportDialog = false },
+                    enabled = !reportBusy
+                ) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont, fontSize = 15.sp)
+                }
+            }
+        )
+    }
+
     ScreenBackdrop(includeNavigationBars = false) {
         Column(
             modifier = Modifier
@@ -262,21 +371,42 @@ fun LobbiesScreen(
                 ) {
                     Text(
                         nickname.take(1).uppercase(),
-                        color = Color(0xFF1A1F2E),
+                        color = Color.White,
                         fontFamily = DisplayFont,
                         fontSize = 20.sp
                     )
                 }
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("LUV", fontFamily = DisplayFont, fontSize = 40.sp, color = TextPrimary, letterSpacing = 2.sp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        LuvWordmark(fontSize = 40.sp)
+                        Text(
+                            text = "⚑",
+                            fontSize = 18.sp,
+                            color = TextMuted,
+                            modifier = Modifier
+                                .clickable { showReportDialog = true }
+                                .padding(4.dp)
+                        )
+                    }
                     Text("Hallo, $nickname", color = accent, fontFamily = DisplayFont, fontSize = 18.sp)
                     Text(
-                        "$coins Coins · $freeLeft frei heute",
+                        "$coins Coins",
                         color = TextMuted,
                         fontFamily = BodyFont,
                         fontSize = 13.sp
                     )
                 }
+                Text(
+                    text = "🕐",
+                    fontSize = 22.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable(onClick = onQuietHours)
+                        .padding(8.dp)
+                )
             }
 
             if (!error.isNullOrBlank()) {
@@ -301,27 +431,16 @@ fun LobbiesScreen(
 
             if (lobbies.size < PeerPalette.MAX_LOBBIES) {
                 PrimaryButton(
-                    label = "Neue Lobby hosten",
+                    label = if (canCreateFreeLobby) {
+                        "Neue Lobby"
+                    } else {
+                        "Neue Lobby · ${PeerPalette.LOBBY_CREATE_COST} Coins"
+                    },
                     color = accent,
                     onClick = onCreateLobby
                 )
-                PrimaryButton("Per Code beitreten", BgSoft, onJoinLobby, bordered = true)
+                PrimaryButton("Beitreten", BgSoft, onJoinLobby, bordered = true)
             }
-
-            SettingsToggleRow(
-                title = "Benachrichtigung beim Malen",
-                subtitle = "z. B. Familie: Jane hat gezeichnet!",
-                checked = partnerNotifyEnabled,
-                accent = accent,
-                onCheckedChange = onPartnerNotifyChange
-            )
-            SettingsToggleRow(
-                title = "Vibration beim Malen",
-                subtitle = "Leichter Impuls auf der Leinwand",
-                checked = partnerHapticEnabled,
-                accent = accent,
-                onCheckedChange = onPartnerHapticChange
-            )
 
             Spacer(modifier = Modifier.height(12.dp))
         }
@@ -342,29 +461,144 @@ private fun LobbyCard(
     onLeave: () -> Unit,
     onReconnect: () -> Unit
 ) {
-    val peerCount by PairSessionState.peerCount(lobby.id).collectAsStateWithLifecycle()
     val liveCapacity by PairSessionState.capacity(lobby.id).collectAsStateWithLifecycle()
     val peers by PairSessionState.peers(lobby.id).collectAsStateWithLifecycle()
+    val proximityMap by LuvApp.instance.prefs.lobbyProximityFlow
+        .collectAsStateWithLifecycle(initialValue = emptyMap())
+    val proximityOn = proximityMap[lobby.id] == true
+    val scope = rememberCoroutineScope()
     val capacity = when {
         liveCapacity > 0 -> liveCapacity
         lobby.capacity > 0 -> lobby.capacity
         else -> PeerPalette.FREE_LOBBY_START_CAPACITY
     }
-    val occupied = peerCount.coerceAtLeast(1)
-    val nicknames = remember(peers, lobby.hostNickname, lobby.role) {
-        buildList {
-            if (lobby.role == Role.HOST) add("Du")
-            else if (lobby.hostNickname.isNotBlank()) add(lobby.hostNickname)
-            peers.values
-                .map { it.nickname }
-                .filter { it.isNotBlank() }
-                .distinctBy { it.lowercase() }
-                .forEach { nick ->
-                    if (none { it.equals(nick, ignoreCase = true) || (it == "Du" && nick.equals("Du", true)) }) {
-                        add(nick)
+    var confirmLeave by remember(lobby.id) { mutableStateOf(false) }
+    var showProximityDialog by remember(lobby.id) { mutableStateOf(false) }
+    val myNickname = AccountSession.account.value?.nickname
+        ?: CanvasStore.cachedNickname
+        ?: ""
+    val myUserId = AccountSession.account.value?.id
+    // Immer kompletter Server-Roster — keine Filterung über capacity
+    val nicknames = remember(peers, lobby.hostNickname, myNickname, myUserId) {
+        PairSessionState.seatNicknames(
+            lobbyId = lobby.id,
+            myNickname = myNickname,
+            myUserId = myUserId,
+            hostNickname = lobby.hostNickname
+        )
+    }
+    val occupied = nicknames.size.coerceAtLeast(1)
+
+    if (confirmLeave) {
+        AlertDialog(
+            onDismissRequest = { confirmLeave = false },
+            containerColor = BgSoft,
+            title = {
+                Text(
+                    "Lobby verlassen?",
+                    fontFamily = DisplayFont,
+                    fontSize = 22.sp,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Text(
+                    "Die anderen bleiben in der Lobby. Ausgegebene Coins (Plätze, Spiele, Leeren …) werden nicht erstattet.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmLeave = false
+                    onLeave()
+                }) {
+                    Text(
+                        "Ja, verlassen",
+                        color = Color(0xFFFF5A6A),
+                        fontFamily = DisplayFont,
+                        fontSize = 15.sp
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmLeave = false }) {
+                    Text(
+                        "Lieber bleiben",
+                        color = TextPrimary,
+                        fontFamily = BodyFont,
+                        fontSize = 15.sp
+                    )
+                }
+            }
+        )
+    }
+
+    if (showProximityDialog) {
+        var draftOn by remember(lobby.id, showProximityDialog) { mutableStateOf(proximityOn) }
+        AlertDialog(
+            onDismissRequest = { showProximityDialog = false },
+            containerColor = BgSoft,
+            title = {
+                Text(
+                    "Lebendige Nähe",
+                    fontFamily = DisplayFont,
+                    fontSize = 22.sp,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text(
+                        "Wenn jemand in dieser Lobby malt, kannst du einen kurzen Impuls bekommen — " +
+                            "z. B. Hinweis, Vibration oder Widget. Standardmäßig aus, damit es nicht nervt.",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            if (draftOn) "Impulse an" else "Impulse aus",
+                            color = TextPrimary,
+                            fontFamily = BodyFont,
+                            fontSize = 15.sp
+                        )
+                        Switch(
+                            checked = draftOn,
+                            onCheckedChange = { draftOn = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = accent,
+                                uncheckedThumbColor = Color.White.copy(alpha = 0.85f),
+                                uncheckedTrackColor = Color.White.copy(alpha = 0.18f)
+                            )
+                        )
                     }
                 }
-        }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        LuvApp.instance.prefs.setLobbyProximityEnabled(lobby.id, draftOn)
+                    }
+                    showProximityDialog = false
+                }) {
+                    Text("Fertig", color = accent, fontFamily = DisplayFont, fontSize = 15.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showProximityDialog = false }) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont, fontSize = 15.sp)
+                }
+            }
+        )
     }
 
     Column(
@@ -382,47 +616,63 @@ private fun LobbyCard(
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(lobby.name, color = TextPrimary, fontFamily = DisplayFont, fontSize = 22.sp)
+                AutoShrinkLobbyName(name = lobby.name)
                 Text(
-                    buildString {
-                        append(if (lobby.role == Role.HOST) "Du hostest" else "Beigetreten")
-                        append(" · $occupied/$capacity")
-                        if (lobby.isFree) append(" · gratis")
+                    text = when (lobby.role) {
+                        Role.HOST -> "Von dir erstellt"
+                        Role.JOIN -> "Beigetreten"
                     },
                     color = TextMuted,
                     fontFamily = BodyFont,
-                    fontSize = 12.sp
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
-            StatusChip(state)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (proximityOn) "🔔" else "🔕",
+                    fontSize = 18.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .clickable { showProximityDialog = true }
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                    color = if (proximityOn) accent else TextMuted
+                )
+                if (state == ConnectionState.CONNECTED || state == ConnectionState.HOSTING) {
+                    StatusChip(state)
+                }
+            }
         }
-        if (state == ConnectionState.RECONNECTING || state == ConnectionState.CONNECTING || reconnect != null) {
+        if (
+            (state == ConnectionState.RECONNECTING && (reconnect?.attempt ?: 0) >= 2) ||
+            (state == ConnectionState.CONNECTING && (reconnect?.attempt ?: 0) >= 2) ||
+            (reconnect?.waiting == true && (reconnect.attempt >= 2))
+        ) {
             ReconnectBanner(reconnect = reconnect, accent = accent, onReconnect = onReconnect)
         }
         PrimaryButton("Leinwand öffnen", accent, onOpen)
+        SeatGrid(
+            capacity = capacity,
+            maxPeers = PeerPalette.MAX_PEERS,
+            occupied = occupied,
+            nicknames = nicknames,
+            accent = accent,
+            canManage = true,
+            onInvite = onInviteSeat,
+            onBuy = onBuySeat
+        )
         if (lobby.role == Role.HOST) {
-            Text(
-                "Platz antippen: + lädt ein · gesperrt kostet ${PeerPalette.SLOT_COST} Coins",
-                color = TextMuted,
-                fontFamily = BodyFont,
-                fontSize = 12.sp
-            )
-            SeatGrid(
-                capacity = capacity,
-                maxPeers = PeerPalette.MAX_PEERS,
-                occupied = occupied,
-                nicknames = nicknames,
-                accent = accent,
-                canManage = true,
-                onInvite = onInviteSeat,
-                onBuy = onBuySeat
-            )
+            PrimaryButton("Umbenennen", BgDeep, onRename, bordered = true)
         }
-        PrimaryButton("Umbenennen", BgDeep, onRename, bordered = true)
         Text(
             "Verlassen",
             color = TextMuted,
@@ -430,7 +680,7 @@ private fun LobbyCard(
             fontSize = 13.sp,
             modifier = Modifier
                 .align(Alignment.End)
-                .clickable(onClick = onLeave)
+                .clickable(onClick = { confirmLeave = true })
                 .padding(4.dp)
         )
     }
@@ -447,6 +697,49 @@ private fun SeatGrid(
     onInvite: () -> Unit,
     onBuy: () -> Unit
 ) {
+    var confirmBuy by remember { mutableStateOf(false) }
+    if (confirmBuy) {
+        AlertDialog(
+            onDismissRequest = { confirmBuy = false },
+            containerColor = BgSoft,
+            title = {
+                Text(
+                    "Platz freischalten?",
+                    fontFamily = DisplayFont,
+                    fontSize = 22.sp,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Text(
+                    "Kostet ${PeerPalette.SLOT_COST} Coins. Danach kannst du eine weitere Person einladen.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmBuy = false
+                    onBuy()
+                }) {
+                    Text(
+                        "Für ${PeerPalette.SLOT_COST} Coins kaufen",
+                        color = AccentRose,
+                        fontFamily = DisplayFont,
+                        fontSize = 15.sp
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmBuy = false }) {
+                    Text("Abbrechen", color = TextPrimary, fontFamily = BodyFont, fontSize = 15.sp)
+                }
+            }
+        )
+    }
+
     val seats = maxPeers.coerceIn(2, PeerPalette.MAX_PEERS)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for (rowStart in 0 until seats step 5) {
@@ -458,7 +751,7 @@ private fun SeatGrid(
                     val filled = i < occupied
                     val unlocked = i < capacity
                     val label = when {
-                        filled -> nicknames.getOrNull(i) ?: "Online"
+                        filled -> nicknames.getOrNull(i)?.takeIf { it.isNotBlank() } ?: "…"
                         unlocked -> "+"
                         else -> "${PeerPalette.SLOT_COST}"
                     }
@@ -473,7 +766,7 @@ private fun SeatGrid(
                             when {
                                 !canManage || filled -> Unit
                                 unlocked -> onInvite()
-                                else -> onBuy()
+                                else -> confirmBuy = true
                             }
                         }
                     )
@@ -548,10 +841,10 @@ private fun ReconnectBanner(
         }
     }
     val statusText = when {
-        reconnect == null -> "Verbindung wird aufgebaut…"
+        reconnect == null -> "Verbindung zum Server wird aufgebaut…"
         reconnect.waiting && reconnect.nextRetryInSec > 0 ->
-            "Getrennt · Versuch ${reconnect.attempt} · nächster Versuch in ${reconnect.nextRetryInSec}s"
-        else -> "Verbinde jetzt erneut…"
+            "Kurz offline · neuer Versuch in ${reconnect.nextRetryInSec}s"
+        else -> "Verbinde mit dem Server…"
     }
     Column(
         modifier = Modifier
@@ -563,14 +856,6 @@ private fun ReconnectBanner(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text(statusText, color = TextPrimary, fontFamily = BodyFont, fontSize = 13.sp, lineHeight = 18.sp)
-        if (reconnect != null && reconnect.waiting) {
-            Text(
-                "Automatik: ${reconnect.backoffSec}s Pause · steigert bis 120s",
-                color = TextMuted,
-                fontFamily = BodyFont,
-                fontSize = 11.sp
-            )
-        }
         PrimaryButton("Jetzt verbinden", accent, onReconnect)
     }
 }
@@ -578,10 +863,13 @@ private fun ReconnectBanner(
 @Composable
 fun CreateLobbyScreen(
     error: String?,
-    onCreate: (String) -> Unit,
+    canCreateFree: Boolean = true,
+    lobbyCreateCost: Int = PeerPalette.LOBBY_CREATE_COST,
+    onCreate: (name: String, hostColorSide: String) -> Unit,
     onBack: () -> Unit
 ) {
     var name by remember { mutableStateOf("") }
+    var hostColorSide by remember { mutableStateOf("blue") }
     ScreenBackdrop {
         Column(
             modifier = Modifier
@@ -602,30 +890,184 @@ fun CreateLobbyScreen(
                 Text("Neue Lobby", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "1 kostenlose Lobby pro Tag (max. 1 aktiv). Weitere kosten ${PeerPalette.LOBBY_CREATE_COST} Coins. Max. ${PeerPalette.MAX_PEERS} Personen.",
-                    color = TextMuted,
-                    fontFamily = BodyFont
+                    if (canCreateFree) {
+                        "Jetzt gratis · 1 Person einladen inklusive · weitere Plätze je ${PeerPalette.SLOT_COST} Coins"
+                    } else {
+                        "Kostet $lobbyCreateCost Coins · 3 Einladungen inklusive · weitere Plätze je ${PeerPalette.SLOT_COST} Coins"
+                    },
+                    color = if (canCreateFree) Color(0xFF3DDC97) else TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 15.sp,
+                    lineHeight = 21.sp
                 )
                 Spacer(modifier = Modifier.height(24.dp))
-                SoftField(value = name, onValueChange = { name = it.take(24) }, hint = "Familie")
+                SoftField(
+                    value = name,
+                    onValueChange = { name = it.take(PeerPalette.MAX_LOBBY_NAME_LENGTH) },
+                    hint = "Zusammen",
+                    onConfirm = {
+                        onCreate(name.trim().ifBlank { "Zusammen" }, hostColorSide)
+                    }
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+                Text("Deine Farbe", color = TextPrimary, fontFamily = DisplayFont, fontSize = 18.sp)
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "Der Nächste bekommt automatisch die andere. Ab der dritten Person gibt’s weitere Farben.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HostColorChoice(
+                        label = "Blau",
+                        color = MaleBlue,
+                        selected = hostColorSide == "blue",
+                        onClick = { hostColorSide = "blue" },
+                        modifier = Modifier.weight(1f)
+                    )
+                    HostColorChoice(
+                        label = "Lila",
+                        color = FemalePurple,
+                        selected = hostColorSide == "purple",
+                        onClick = { hostColorSide = "purple" },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
                 if (!error.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
                 }
             }
-            PrimaryButton("Lobby erstellen", AccentRose, {
-                onCreate(name.trim().ifBlank { "Lobby" })
-            })
+            PrimaryButton(
+                if (canCreateFree) "Lobby erstellen" else "Für $lobbyCreateCost Coins erstellen",
+                AccentRose,
+                {
+                    onCreate(name.trim().ifBlank { "Zusammen" }, hostColorSide)
+                }
+            )
         }
     }
 }
 
 @Composable
+private fun HostColorChoice(
+    label: String,
+    color: Color,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (selected) color.copy(alpha = 0.22f) else BgSoft)
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) color else Color.White.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(18.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(vertical = 16.dp, horizontal = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Text(label, color = TextPrimary, fontFamily = DisplayFont, fontSize = 16.sp)
+    }
+}
+
+@Composable
+fun InviteLobbyDialog(
+    lobby: Lobby,
+    onShare: () -> Unit,
+    onOpen: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = BgSoft,
+        title = {
+            Text(
+                "Jemanden einladen",
+                fontFamily = DisplayFont,
+                fontSize = 22.sp,
+                color = TextPrimary
+            )
+        },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    "QR scannen oder Link teilen — dann malt ihr zusammen.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    lobby.name,
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 18.sp
+                )
+                com.luv.couple.ui.LobbyQrImage(content = lobby.joinUrl, size = 168.dp)
+                Text(
+                    lobby.joinUrl,
+                    color = AccentRose,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    "Code: ${lobby.invite.ifBlank { "LUV-${lobby.code}" }}",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onShare) {
+                Text("Teilen", color = AccentRose, fontFamily = DisplayFont, fontSize = 15.sp)
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onOpen) {
+                    Text("Öffnen", color = AccentRose, fontFamily = DisplayFont, fontSize = 15.sp)
+                }
+                TextButton(
+                    onClick = {
+                        clipboard.setText(AnnotatedString(lobby.joinUrl))
+                        Toast.makeText(context, "Link kopiert", Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text("Kopieren", color = TextPrimary, fontFamily = BodyFont, fontSize = 15.sp)
+                }
+            }
+        }
+    )
+}
+
+@Composable
 fun HostShareScreen(
     lobby: Lobby,
-    connectionState: ConnectionState,
     onInviteSeat: () -> Unit,
     onBuySeat: () -> Unit,
+    onOpen: () -> Unit,
     onContinue: () -> Unit,
     onBack: () -> Unit
 ) {
@@ -656,16 +1098,6 @@ fun HostShareScreen(
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(lobby.name, fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    if (lobby.isFree) {
-                        "Gratis-Lobby: 1 Einladung frei. Weitere Plätze: ${PeerPalette.SLOT_COST} Coins. Tippe auf +"
-                    } else {
-                        "3 Einladungen inklusive. Weitere Plätze: ${PeerPalette.SLOT_COST} Coins. Tippe auf +"
-                    },
-                    color = TextMuted,
-                    fontFamily = BodyFont
-                )
                 Spacer(modifier = Modifier.height(20.dp))
                 SeatGrid(
                     capacity = capacity,
@@ -677,10 +1109,11 @@ fun HostShareScreen(
                     onInvite = onInviteSeat,
                     onBuy = onBuySeat
                 )
-                Spacer(modifier = Modifier.height(16.dp))
-                StatusChip(connectionState)
             }
-            PrimaryButton("Zu meinen Lobbys", AccentRose, onContinue)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                PrimaryButton("Öffnen", AccentRose, onOpen)
+                PrimaryButton("Zu meinen Lobbys", BgSoft, onContinue, bordered = true)
+            }
         }
     }
 }
@@ -768,6 +1201,12 @@ fun JoinScreen(
     onBack: () -> Unit
 ) {
     var code by remember { mutableStateOf(initialCode) }
+    val scanLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = com.journeyapps.barcodescanner.ScanContract()
+    ) { result ->
+        val raw = result.contents?.trim().orEmpty()
+        if (raw.isNotBlank()) onPreview(raw)
+    }
     ScreenBackdrop {
         Column(
             modifier = Modifier
@@ -788,7 +1227,7 @@ fun JoinScreen(
                 Text("Beitreten", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "Link oder Code einfügen — danach siehst du Lobby & Host",
+                    "Link, Code — oder einfach den QR-Code scannen",
                     color = TextMuted,
                     fontFamily = BodyFont
                 )
@@ -796,7 +1235,8 @@ fun JoinScreen(
                 SoftField(
                     value = code,
                     onValueChange = { code = it },
-                    hint = "https://reineke.pro/luv/j/…"
+                    hint = "https://reineke.pro/luv/j/…",
+                    onConfirm = { onPreview(code) }
                 )
                 if (!error.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(12.dp))
@@ -805,6 +1245,22 @@ fun JoinScreen(
             }
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 PrimaryButton("Weiter", AccentRose, { onPreview(code) })
+                PrimaryButton(
+                    "QR Code scannen",
+                    BgSoft,
+                    {
+                        scanLauncher.launch(
+                            com.journeyapps.barcodescanner.ScanOptions()
+                                .setDesiredBarcodeFormats(
+                                    com.journeyapps.barcodescanner.ScanOptions.QR_CODE
+                                )
+                                .setPrompt("Lobby-QR scannen")
+                                .setBeepEnabled(false)
+                                .setOrientationLocked(true)
+                        )
+                    },
+                    bordered = true
+                )
                 PrimaryButton("Abbrechen", BgSoft, onBack, bordered = true)
             }
         }
@@ -837,7 +1293,14 @@ fun RenameLobbyScreen(
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("Lobby umbenennen", fontFamily = DisplayFont, fontSize = 30.sp, color = TextPrimary)
                 Spacer(modifier = Modifier.height(24.dp))
-                SoftField(value = name, onValueChange = { name = it.take(24) }, hint = "Familie")
+                SoftField(
+                    value = name,
+                    onValueChange = { name = it.take(PeerPalette.MAX_LOBBY_NAME_LENGTH) },
+                    hint = "Familie",
+                    onConfirm = {
+                        if (name.trim().isNotEmpty()) onSave(name.trim())
+                    }
+                )
             }
             PrimaryButton("Speichern", AccentRose, {
                 if (name.trim().isNotEmpty()) onSave(name.trim())
@@ -847,7 +1310,33 @@ fun RenameLobbyScreen(
 }
 
 @Composable
-private fun SoftField(value: String, onValueChange: (String) -> Unit, hint: String) {
+private fun AutoShrinkLobbyName(name: String) {
+    var fontSize by remember(name) { mutableStateOf(22f) }
+    Text(
+        text = name,
+        color = TextPrimary,
+        fontFamily = DisplayFont,
+        fontSize = fontSize.sp,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Clip,
+        modifier = Modifier.fillMaxWidth(),
+        onTextLayout = { layout ->
+            if (layout.hasVisualOverflow && fontSize > 13f) {
+                fontSize = (fontSize - 1.5f).coerceAtLeast(13f)
+            }
+        }
+    )
+}
+
+@Composable
+private fun SoftField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    hint: String,
+    onConfirm: (() -> Unit)? = null
+) {
+    val keyboard = LocalSoftwareKeyboardController.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -864,6 +1353,14 @@ private fun SoftField(value: String, onValueChange: (String) -> Unit, hint: Stri
                 fontSize = 15.sp
             ),
             cursorBrush = SolidColor(AccentRose),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(
+                onDone = {
+                    keyboard?.hide()
+                    onConfirm?.invoke()
+                }
+            ),
             modifier = Modifier.fillMaxWidth(),
             decorationBox = { inner ->
                 if (value.isBlank()) {
@@ -876,12 +1373,13 @@ private fun SoftField(value: String, onValueChange: (String) -> Unit, hint: Stri
 }
 
 @Composable
-private fun SettingsToggleRow(
+internal fun SettingsToggleRow(
     title: String,
     subtitle: String,
     checked: Boolean,
     accent: Color,
-    onCheckedChange: (Boolean) -> Unit
+    onCheckedChange: (Boolean) -> Unit,
+    leading: String? = null
 ) {
     Row(
         modifier = Modifier
@@ -892,6 +1390,13 @@ private fun SettingsToggleRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
+        if (!leading.isNullOrBlank()) {
+            Text(
+                leading,
+                fontSize = 22.sp,
+                modifier = Modifier.padding(end = 10.dp)
+            )
+        }
         Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
             Text(title, color = TextPrimary, fontFamily = BodyFont, fontSize = 14.sp)
             Text(subtitle, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
@@ -912,10 +1417,11 @@ private fun SettingsToggleRow(
 @Composable
 private fun StatusChip(state: ConnectionState) {
     val (label, color) = when (state) {
-        ConnectionState.CONNECTED -> "Online" to Color(0xFF3DDC97)
-        ConnectionState.HOSTING -> "Wartet" to AccentRose
-        ConnectionState.CONNECTING -> "…" to AccentRose
-        ConnectionState.RECONNECTING -> "Reconnect…" to AccentRose
+        // Allein in der Lobby = trotzdem verbunden (Server-WS offen)
+        ConnectionState.CONNECTED -> "Verbunden" to Color(0xFF3DDC97)
+        ConnectionState.HOSTING -> "Verbunden" to Color(0xFF3DDC97)
+        ConnectionState.CONNECTING -> "Verbinde…" to AccentRose
+        ConnectionState.RECONNECTING -> "Verbinde…" to AccentRose
         ConnectionState.IDLE -> "Offline" to TextMuted
     }
     Row(
@@ -937,7 +1443,7 @@ private fun StatusChip(state: ConnectionState) {
 }
 
 @Composable
-private fun PrimaryButton(
+internal fun PrimaryButton(
     label: String,
     color: Color,
     onClick: () -> Unit,

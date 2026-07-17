@@ -6,11 +6,20 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.view.View
 import android.widget.RemoteViews
 import com.luv.couple.LuvApp
 import com.luv.couple.R
+import com.luv.couple.notify.LiveProximity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 
 class LockScreenWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(
@@ -46,18 +55,32 @@ class LockScreenWidgetProvider : AppWidgetProvider() {
 
         private val widgetLobbyIds = ConcurrentHashMap<Int, String>()
         private val widgetLobbyNames = ConcurrentHashMap<Int, String>()
+        private val updateScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        private val pendingJob = AtomicReference<Job?>(null)
 
         fun bind(widgetId: Int, lobbyId: String, lobbyName: String) {
             widgetLobbyIds[widgetId] = lobbyId
             widgetLobbyNames[widgetId] = lobbyName
         }
 
+        /**
+         * Debounced + Hintergrund-Thread — Bitmap-Render darf den Mal-UI-Thread
+         * nicht blockieren (sonst wirkt die Leinwand auf schwachen Geräten schwarz/eingefroren).
+         */
         fun requestUpdate(context: Context) {
-            val manager = AppWidgetManager.getInstance(context)
-            val ids = manager.getAppWidgetIds(
-                ComponentName(context, LockScreenWidgetProvider::class.java)
-            )
-            ids.forEach { updateWidget(context, manager, it) }
+            val app = context.applicationContext
+            pendingJob.getAndSet(
+                updateScope.launch {
+                    delay(400)
+                    runCatching {
+                        val manager = AppWidgetManager.getInstance(app)
+                        val ids = manager.getAppWidgetIds(
+                            ComponentName(app, LockScreenWidgetProvider::class.java)
+                        )
+                        ids.forEach { updateWidget(app, manager, it) }
+                    }
+                }
+            )?.cancel()
         }
 
         private fun updateWidget(context: Context, manager: AppWidgetManager, widgetId: Int) {
@@ -77,11 +100,36 @@ class LockScreenWidgetProvider : AppWidgetProvider() {
             val views = RemoteViews(context.packageName, R.layout.lock_widget)
             views.setInt(R.id.widgetRoot, "setBackgroundColor", background)
             views.setImageViewBitmap(R.id.canvasImage, bitmap)
-            views.setTextViewText(
-                R.id.tapHint,
-                lobbyName?.takeIf { it.isNotBlank() }
-                    ?: context.getString(R.string.open_canvas)
-            )
+            val hot = LiveProximity.isLobbyHot(lobbyId)
+            val painter = LiveProximity.painterName(lobbyId)
+            if (hot) {
+                views.setViewVisibility(R.id.liveBadge, View.VISIBLE)
+                views.setTextViewText(
+                    R.id.liveBadge,
+                    if (!painter.isNullOrBlank()) {
+                        context.getString(R.string.widget_live_fmt, painter)
+                    } else {
+                        context.getString(R.string.widget_live_now)
+                    }
+                )
+                views.setTextViewText(
+                    R.id.tapHint,
+                    if (!painter.isNullOrBlank()) {
+                        "$painter malt — tippen"
+                    } else {
+                        "Jemand malt — tippen"
+                    }
+                )
+                views.setFloat(R.id.tapHint, "setAlpha", 0.95f)
+            } else {
+                views.setViewVisibility(R.id.liveBadge, View.GONE)
+                views.setTextViewText(
+                    R.id.tapHint,
+                    lobbyName?.takeIf { it.isNotBlank() }
+                        ?: context.getString(R.string.open_canvas)
+                )
+                views.setFloat(R.id.tapHint, "setAlpha", 0.75f)
+            }
 
             val launch = Intent(context, LockDrawActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP

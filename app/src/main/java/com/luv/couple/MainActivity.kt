@@ -11,7 +11,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.luv.couple.net.PendingJoin
+import com.luv.couple.net.PendingShop
 import com.luv.couple.net.PendingShopReturn
+import com.luv.couple.net.PendingSplashSkip
 import com.luv.couple.ui.LuvAppNav
 import com.luv.couple.ui.theme.LuvTheme
 import com.luv.couple.update.AppUpdater
@@ -25,8 +27,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         maybeRequestNotificationPermission()
+        captureNotificationFlag(intent)
         captureJoinIntent(intent)
         captureUpdateIntent(intent)
+        captureShopIntent(intent)
         setContent {
             LuvTheme {
                 LuvAppNav()
@@ -37,13 +41,27 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        captureNotificationFlag(intent)
         captureJoinIntent(intent)
         captureUpdateIntent(intent)
+        captureShopIntent(intent)
+    }
+
+    private fun captureNotificationFlag(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_FROM_NOTIFICATION, false) == true) {
+            PendingSplashSkip.offer()
+        }
     }
 
     private fun captureUpdateIntent(intent: Intent?) {
         if (intent?.getBooleanExtra(AppUpdater.EXTRA_OPEN_UPDATE, false) == true) {
             AppUpdater.offerFocus()
+        }
+    }
+
+    private fun captureShopIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_OPEN_SHOP, false) == true) {
+            PendingShop.offer()
         }
     }
 
@@ -69,5 +87,10 @@ class MainActivity : ComponentActivity() {
                 notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
+    }
+
+    companion object {
+        const val EXTRA_OPEN_SHOP = "open_shop"
+        const val EXTRA_FROM_NOTIFICATION = "from_notification"
     }
 }

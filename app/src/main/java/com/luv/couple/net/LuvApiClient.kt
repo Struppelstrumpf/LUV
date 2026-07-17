@@ -6,6 +6,8 @@ import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.RoomPreview
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.luv.couple.data.RosterMember
+import okhttp3.Dispatcher
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -22,13 +24,52 @@ data class RoomSession(
     val capacity: Int = PeerPalette.FREE_LOBBY_START_CAPACITY,
     val isFree: Boolean = false,
     val name: String = "Lobby",
-    val hostNickname: String = "Host"
+    val hostNickname: String = "Host",
+    val hostColorSide: String = "blue",
+    val suggestedColorIndex: Int? = null,
+    val peers: Int = 0,
+    val memberList: List<RosterMember> = emptyList()
 )
 
 data class AuthResult(
     val sessionToken: String,
     val user: AccountInfo,
-    val created: Boolean
+    val created: Boolean,
+    val linked: Boolean = false,
+    val remoteLobbies: List<RemoteLobby> = emptyList()
+)
+
+data class AuthConfig(
+    val googleEnabled: Boolean,
+    val googleWebClientId: String?
+)
+
+data class CanvasMemory(
+    val code: String,
+    val lobbyName: String,
+    val releasedAt: Long,
+    val expiresAt: Long,
+    val imageUrl: String
+)
+
+data class PublicCanvasPreview(
+    val id: String,
+    val lobbyName: String,
+    val hostNickname: String,
+    val memberNicknames: List<String>,
+    val nameLine: String,
+    val imageUrl: String
+)
+
+data class RemoteLobby(
+    val code: String,
+    val name: String,
+    val token: String?,
+    val capacity: Int,
+    val isFree: Boolean,
+    val hostColorSide: String,
+    val invite: String,
+    val hostNickname: String
 )
 
 data class RedeemResult(
@@ -36,6 +77,16 @@ data class RedeemResult(
     val coins: Int = 0,
     val message: String = "",
     val user: AccountInfo
+)
+
+data class PublicReportInfo(
+    val id: String,
+    val publicId: String,
+    val nameLine: String,
+    val hostNickname: String,
+    val reporterNickname: String,
+    val imageUrl: String,
+    val reportedAt: Long
 )
 
 data class VoucherInfo(
@@ -50,10 +101,18 @@ data class ShopPack(
     val id: String,
     val label: String,
     val coins: Int,
-    val amountEur: String
+    val amountEur: String,
+    val compareAtEur: String? = null
 )
 
-class LuvApiException(message: String) : Exception(message)
+class LuvApiException(
+    message: String,
+    val error: String? = null
+) : Exception(message) {
+    val isNoCoins: Boolean
+        get() = error == "no_coins" ||
+            message?.contains("coin", ignoreCase = true) == true
+}
 
 object LuvApiClient {
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
@@ -67,6 +126,12 @@ object LuvApiClient {
     private val bareCodeRegex = Regex("""\b([A-Z0-9]{6})\b""", RegexOption.IGNORE_CASE)
 
     private val http = OkHttpClient.Builder()
+        .dispatcher(
+            Dispatcher().apply {
+                maxRequests = 64
+                maxRequestsPerHost = 32
+            }
+        )
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
@@ -89,6 +154,21 @@ object LuvApiClient {
         }
         val sessionQ = session?.takeIf { it.isNotBlank() }?.let { "&session=${it.encodeURL()}" }.orEmpty()
         return "$wsBase/v1/ws?code=${code.encodeURL()}&token=${token.encodeURL()}&role=${role.encodeURL()}$sessionQ"
+    }
+
+    suspend fun authConfig(): AuthConfig = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("${baseUrl()}/v1/auth/config")
+            .get()
+            .build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            val json = runCatching { JSONObject(raw) }.getOrNull()
+            AuthConfig(
+                googleEnabled = json?.optBoolean("googleEnabled", false) == true,
+                googleWebClientId = json?.optString("googleWebClientId")?.takeIf { it.isNotBlank() }
+            )
+        }
     }
 
     suspend fun authDevice(
@@ -120,8 +200,95 @@ object LuvApiClient {
         }
     }
 
+    suspend fun authGoogle(idToken: String): AuthResult = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("idToken", idToken).toString().toRequestBody(jsonMedia)
+        val request = authedRequestBuilder("/v1/auth/google").post(body).build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            val json = runCatching { JSONObject(raw) }.getOrNull()
+            if (!response.isSuccessful) {
+                throw LuvApiException(
+                    message = json?.optString("message")?.takeIf { it.isNotBlank() }
+                        ?: when (json?.optString("error")) {
+                            "google_disabled" -> "Google-Login ist noch nicht eingerichtet."
+                            "google_in_use" -> "Dieses Google-Konto gehört schon zu einem anderen LUV-Konto."
+                            "already_linked_other" -> "Schon mit einem anderen Google-Konto verbunden."
+                            else -> "Google-Anmeldung fehlgeschlagen."
+                        },
+                    error = json?.optString("error")
+                )
+            }
+            val parsed = json ?: throw LuvApiException("Ungültige Server-Antwort")
+            val token = parsed.getString("sessionToken")
+            sessionToken = token
+            AuthResult(
+                sessionToken = token,
+                user = AccountInfo.fromApi(parsed.getJSONObject("user")),
+                created = parsed.optBoolean("created", false),
+                linked = parsed.optBoolean("linked", false),
+                remoteLobbies = parseRemoteLobbies(parsed.optJSONArray("lobbies"))
+            )
+        }
+    }
+
+    suspend fun logout(): Unit = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = authedRequestBuilder("/v1/auth/logout").post(emptyBody).build()
+            http.newCall(request).execute().use { }
+        }
+        sessionToken = null
+    }
+
+    /** Löscht Konto inkl. Google-Verknüpfung auf dem Server. */
+    suspend fun deleteAccount(): Unit = withContext(Dispatchers.IO) {
+        val request = authedRequestBuilder("/v1/me").delete(emptyBody).build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                throw LuvApiException(
+                    json?.optString("message")?.takeIf { it.isNotBlank() }
+                        ?: "Konto konnte nicht gelöscht werden."
+                )
+            }
+        }
+        sessionToken = null
+    }
+
+    suspend fun myLobbies(): List<RemoteLobby> = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/me/lobbies")
+        parseRemoteLobbies(json.optJSONArray("lobbies"))
+    }
+
+    private fun parseRemoteLobbies(arr: org.json.JSONArray?): List<RemoteLobby> {
+        if (arr == null) return emptyList()
+        val out = ArrayList<RemoteLobby>(arr.length())
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val code = o.optString("code").uppercase()
+            if (code.isBlank()) continue
+            out += RemoteLobby(
+                code = code,
+                name = o.optString("name", "Lobby"),
+                token = o.optString("token").takeIf { it.isNotBlank() },
+                capacity = o.optInt("capacity", PeerPalette.FREE_LOBBY_START_CAPACITY),
+                isFree = o.optBoolean("isFree", false),
+                hostColorSide = o.optString("hostColorSide", "blue"),
+                invite = o.optString("invite"),
+                hostNickname = o.optString("hostNickname", "Host")
+            )
+        }
+        return out
+    }
+
     suspend fun me(): AccountInfo = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/me")
+        AccountInfo.fromApi(json.getJSONObject("user"))
+    }
+
+    suspend fun updateNickname(nickname: String): AccountInfo = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("nickname", nickname.trim().take(18)).toString()
+        val json = authedPatch("/v1/me", body)
         AccountInfo.fromApi(json.getJSONObject("user"))
     }
 
@@ -200,8 +367,45 @@ object LuvApiClient {
         )
     }
 
+    suspend fun reportPublicCanvas(publicId: String): Boolean = withContext(Dispatchers.IO) {
+        val clean = publicId.trim()
+        if (clean.isBlank()) throw LuvApiException("Kein Bild zum Melden.")
+        val json = authedPost("/v1/public-canvases/${clean.encodeURL()}/report", "{}")
+        json.optBoolean("ok", true)
+    }
+
+    suspend fun listPublicReports(): List<PublicReportInfo> = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/admin/public-reports")
+        val arr = json.optJSONArray("reports") ?: return@withContext emptyList()
+        buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                add(
+                    PublicReportInfo(
+                        id = o.getString("id"),
+                        publicId = o.optString("publicId"),
+                        nameLine = o.optString("nameLine", "Öffentliche Leinwand"),
+                        hostNickname = o.optString("hostNickname", "Jemand"),
+                        reporterNickname = o.optString("reporterNickname", "Jemand"),
+                        imageUrl = o.optString("imageUrl"),
+                        reportedAt = o.optLong("reportedAt")
+                    )
+                )
+            }
+        }
+    }
+
+    suspend fun keepPublicReport(reportId: String) = withContext(Dispatchers.IO) {
+        authedPost("/v1/admin/public-reports/${reportId.encodeURL()}/keep", "{}")
+    }
+
+    suspend fun deletePublicReport(reportId: String): Boolean = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/admin/public-reports/${reportId.encodeURL()}/delete", "{}")
+        json.optBoolean("banned", false)
+    }
+
     suspend fun shopPacks(): Pair<Boolean, List<ShopPack>> = withContext(Dispatchers.IO) {
-        val request = Request.Builder().url("${baseUrl()}/v1/shop/packs").get().build()
+        val request = authedRequestBuilder("/v1/shop/packs").get().build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
             val json = JSONObject(raw)
@@ -214,7 +418,8 @@ object LuvApiClient {
                             id = o.getString("id"),
                             label = o.optString("label"),
                             coins = o.optInt("coins"),
-                            amountEur = o.optString("amountEur")
+                            amountEur = o.optString("amountEur"),
+                            compareAtEur = o.optString("compareAtEur").takeIf { it.isNotBlank() }
                         )
                     )
                 }
@@ -237,11 +442,17 @@ object LuvApiClient {
         }
     }
 
-    suspend fun createRoom(name: String = "Lobby"): RoomSession = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("name", name).toString().toRequestBody(jsonMedia)
-        val request = authedRequestBuilder("/v1/rooms").post(body).build()
-        executeRoom(request)
-    }
+    suspend fun createRoom(name: String = "Lobby", hostColorSide: String = "blue"): RoomSession =
+        withContext(Dispatchers.IO) {
+            val side = if (hostColorSide.equals("purple", ignoreCase = true)) "purple" else "blue"
+            val body = JSONObject()
+                .put("name", name.trim().take(PeerPalette.MAX_LOBBY_NAME_LENGTH).ifBlank { "Lobby" })
+                .put("hostColorSide", side)
+                .toString()
+                .toRequestBody(jsonMedia)
+            val request = authedRequestBuilder("/v1/rooms").post(body).build()
+            executeRoom(request)
+        }
 
     suspend fun joinRoom(rawCode: String): RoomSession = withContext(Dispatchers.IO) {
         val code = normalizeCode(rawCode)
@@ -261,16 +472,34 @@ object LuvApiClient {
             val raw = response.body?.string().orEmpty()
             val json = runCatching { JSONObject(raw) }.getOrNull()
             if (!response.isSuccessful) {
+                val err = json?.optString("error")
                 throw LuvApiException(
-                    json?.optString("message")?.takeIf { it.isNotBlank() }
-                        ?: when (json?.optString("error")) {
+                    message = json?.optString("message")?.takeIf { it.isNotBlank() }
+                        ?: when (err) {
                             "room_not_found" -> "Lobby nicht gefunden. Host muss online sein."
                             else -> "Lobby nicht erreichbar."
-                        }
+                        },
+                    error = err
                 )
             }
             parsePreview(json ?: throw LuvApiException("Ungültige Server-Antwort"))
         }
+    }
+
+    /** Host: Lobby nach Restart wiederherstellen */
+    suspend fun ensureRoom(code: String, token: String): RoomSession = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("token", token).toString().toRequestBody(jsonMedia)
+        val request = authedRequestBuilder("/v1/rooms/${code.encodeURL()}/ensure").post(body).build()
+        executeRoom(request)
+    }
+
+    /** Host: Lobby-Name für alle syncen */
+    suspend fun renameRoom(code: String, name: String): String = withContext(Dispatchers.IO) {
+        val clean = normalizeCode(code) ?: throw LuvApiException("Ungültiger Code.")
+        val cleanName = name.trim().take(PeerPalette.MAX_LOBBY_NAME_LENGTH)
+        val body = JSONObject().put("name", cleanName).toString()
+        val json = authedPatch("/v1/rooms/$clean", body)
+        json.optString("name", cleanName)
     }
 
     suspend fun buySlot(code: String): RoomSession = withContext(Dispatchers.IO) {
@@ -279,11 +508,14 @@ object LuvApiClient {
         executeRoom(request)
     }
 
-    suspend fun abandonRoom(code: String) = withContext(Dispatchers.IO) {
+    suspend fun leaveRoom(code: String) = withContext(Dispatchers.IO) {
         val clean = normalizeCode(code) ?: return@withContext
-        val request = authedRequestBuilder("/v1/rooms/$clean").delete().build()
-        http.newCall(request).execute().use { /* best effort */ }
+        val request = authedRequestBuilder("/v1/rooms/$clean/leave").post(emptyBody).build()
+        http.newCall(request).execute().use { /* best effort — Lobby bleibt für andere */ }
     }
+
+    @Deprecated("Use leaveRoom — abandon kicked everyone")
+    suspend fun abandonRoom(code: String) = leaveRoom(code)
 
     fun normalizeCode(raw: String): String? {
         val text = raw.trim()
@@ -313,7 +545,8 @@ object LuvApiClient {
             maxPeers = json.optInt("maxPeers", PeerPalette.MAX_PEERS),
             isFree = json.optBoolean("isFree", false),
             invite = json.optString("invite", "LUV-$code"),
-            joinUrl = json.optString("joinUrl", publicJoinUrl(code))
+            joinUrl = json.optString("joinUrl", publicJoinUrl(code)),
+            hostColorSide = json.optString("hostColorSide", "blue").ifBlank { "blue" }
         )
     }
 
@@ -343,6 +576,17 @@ object LuvApiClient {
         }
     }
 
+    private fun authedPatch(path: String, jsonBody: String): JSONObject {
+        val request = authedRequestBuilder(path)
+            .patch(jsonBody.toRequestBody(jsonMedia))
+            .build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw LuvApiException("API-Fehler (${response.code})")
+            return JSONObject(raw)
+        }
+    }
+
     private fun executeRoom(request: Request): RoomSession {
         http.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
@@ -351,7 +595,7 @@ object LuvApiClient {
                 val err = json?.optString("error")
                 val msg = json?.optString("message")?.takeIf { it.isNotBlank() }
                 throw LuvApiException(
-                    msg ?: when (err) {
+                    message = msg ?: when (err) {
                         "room_not_found" -> "Lobby nicht gefunden. Host muss online sein — Link neu teilen."
                         "room_full" -> "Lobby ist voll (max. ${PeerPalette.MAX_PEERS} Personen)."
                         "max_lobbies" -> "Maximal ${PeerPalette.MAX_LOBBIES} Lobbys."
@@ -360,7 +604,8 @@ object LuvApiClient {
                         "not_host" -> "Nur der Host kann Plätze freischalten."
                         "unauthorized" -> "Bitte neu anmelden."
                         else -> "API-Fehler (${response.code})"
-                    }
+                    },
+                    error = err
                 )
             }
             val parsed = json ?: throw LuvApiException("Ungültige Server-Antwort")
@@ -368,6 +613,11 @@ object LuvApiClient {
                 AccountSession.setAccount(AccountInfo.fromApi(userJson))
             }
             val code = parsed.getString("code")
+            val suggested = if (parsed.has("suggestedColorIndex")) {
+                parsed.optInt("suggestedColorIndex", -1).takeIf { it >= 0 }
+            } else {
+                null
+            }
             return RoomSession(
                 code = code,
                 token = parsed.optString("token").ifBlank {
@@ -380,9 +630,121 @@ object LuvApiClient {
                 capacity = parsed.optInt("capacity", PeerPalette.FREE_LOBBY_START_CAPACITY),
                 isFree = parsed.optBoolean("isFree", false),
                 name = parsed.optString("name", "Lobby"),
-                hostNickname = parsed.optString("hostNickname", "Host")
+                hostNickname = parsed.optString("hostNickname", "Host"),
+                hostColorSide = parsed.optString("hostColorSide", "blue").ifBlank { "blue" },
+                suggestedColorIndex = suggested,
+                peers = parsed.optInt("peers", parsed.optInt("count", 0)),
+                memberList = parseMemberList(parsed)
             )
         }
+    }
+
+    private fun parseMemberList(json: JSONObject): List<RosterMember> {
+        val rich = json.optJSONArray("memberList") ?: return emptyList()
+        return buildList {
+            for (i in 0 until rich.length()) {
+                val o = rich.optJSONObject(i) ?: continue
+                val nick = o.optString("nickname").trim().ifBlank { "Jemand" }
+                add(
+                    RosterMember(
+                        userId = o.optString("userId").takeIf { it.isNotBlank() && it != "null" },
+                        nickname = nick,
+                        colorIndex = o.optInt("colorIndex", -1),
+                        active = o.optBoolean("active", false) || o.optBoolean("online", false)
+                    )
+                )
+            }
+        }
+    }
+
+    suspend fun fetchRandomPublicCanvas(): PublicCanvasPreview? = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = Request.Builder()
+                .url("${baseUrl()}/v1/public-canvases/random")
+                .get()
+                .build()
+            http.newCall(request).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                if (!response.isSuccessful) return@runCatching null
+                val json = JSONObject(raw)
+                if (!json.optBoolean("available", false)) return@runCatching null
+                val names = buildList {
+                    val arr = json.optJSONArray("memberNicknames")
+                    if (arr != null) {
+                        for (i in 0 until arr.length()) {
+                            arr.optString(i).takeIf { it.isNotBlank() }?.let { add(it) }
+                        }
+                    }
+                }
+                PublicCanvasPreview(
+                    id = json.optString("id"),
+                    lobbyName = json.optString("lobbyName", "Lobby"),
+                    hostNickname = json.optString("hostNickname", "Jemand"),
+                    memberNicknames = names,
+                    nameLine = json.optString("nameLine").ifBlank {
+                        json.optString("hostNickname", "Jemand")
+                    },
+                    imageUrl = json.optString("imageUrl")
+                )
+            }
+        }.getOrNull()
+    }
+
+    suspend fun uploadCanvasSnapshot(code: String, token: String, imageBase64: String) =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject()
+                .put("token", token)
+                .put("imageBase64", imageBase64)
+                .toString()
+            authedPost("/v1/rooms/${code.uppercase()}/canvas-snapshot", body)
+        }
+
+    suspend fun touchCanvas(code: String, token: String): JSONObject = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("token", token).toString()
+        authedPost("/v1/rooms/${code.uppercase()}/canvas-touch", body)
+    }
+
+    suspend fun fetchMemories(): List<CanvasMemory> = withContext(Dispatchers.IO) {
+        runCatching {
+            val json = authedGet("/v1/me/memories")
+            val arr = json.optJSONArray("memories") ?: return@runCatching emptyList()
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    parseMemory(o)?.let { add(it) }
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    suspend fun fetchRoomMemory(code: String, token: String): CanvasMemory? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val request = authedRequestBuilder("/v1/rooms/${code.uppercase()}/memory")
+                    .header("x-room-token", token)
+                    .get()
+                    .build()
+                http.newCall(request).execute().use { response ->
+                    val raw = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) return@runCatching null
+                    val json = JSONObject(raw)
+                    if (!json.optBoolean("available", false)) return@runCatching null
+                    parseMemory(json)
+                }
+            }.getOrNull()
+        }
+
+    private fun parseMemory(o: JSONObject): CanvasMemory? {
+        val code = o.optString("code").ifBlank { return null }
+        val releasedAt = o.optLong("releasedAt", 0L)
+        if (releasedAt <= 0L) return null
+        return CanvasMemory(
+            code = code,
+            lobbyName = o.optString("lobbyName", "Lobby"),
+            releasedAt = releasedAt,
+            expiresAt = o.optLong("expiresAt", releasedAt + 24L * 60L * 60L * 1000L),
+            imageUrl = o.optString("imageUrl", "/v1/rooms/$code/memory/image")
+        )
     }
 
     private fun String.encodeURL(): String =

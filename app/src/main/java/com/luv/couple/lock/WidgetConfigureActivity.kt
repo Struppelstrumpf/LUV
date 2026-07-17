@@ -177,7 +177,7 @@ private fun WidgetPickScreen(
                         fontSize = 20.sp
                     )
                     Text(
-                        if (lobby.role == Role.HOST) "Du hostest" else "Beigetreten",
+                        if (lobby.role == Role.HOST) "Von dir erstellt" else "Beigetreten",
                         color = TextMuted,
                         fontFamily = BodyFont,
                         fontSize = 12.sp

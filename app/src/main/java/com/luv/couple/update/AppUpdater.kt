@@ -89,7 +89,7 @@ object AppUpdater {
         mgr.createNotificationChannel(channel)
     }
 
-    fun versionLabel(): String = "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+    fun versionLabel(): String = BuildConfig.VERSION_NAME
 
     fun canRequestPackageInstalls(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -109,11 +109,29 @@ object AppUpdater {
         }
     }
 
+    fun currentReleaseOrNull(): AppRelease? = when (val s = _state.value) {
+        is UpdateUiState.Available -> s.release
+        is UpdateUiState.Downloading -> s.release
+        is UpdateUiState.Ready -> s.release
+        is UpdateUiState.Error -> s.release
+        else -> null
+    }
+
     suspend fun check(context: Context, notify: Boolean = true): AppRelease? = withContext(Dispatchers.IO) {
-        if (!checking.compareAndSet(false, true)) {
-            return@withContext (_state.value as? UpdateUiState.Available)?.release
+        // Laufenden Download nicht unterbrechen
+        when (val current = _state.value) {
+            is UpdateUiState.Downloading -> return@withContext current.release
+            is UpdateUiState.Ready -> return@withContext current.release
+            else -> Unit
         }
-        _state.value = UpdateUiState.Checking
+        if (!checking.compareAndSet(false, true)) {
+            return@withContext currentReleaseOrNull()
+        }
+        val keepForcedUi = _state.value is UpdateUiState.Available ||
+            _state.value is UpdateUiState.Error
+        if (!keepForcedUi) {
+            _state.value = UpdateUiState.Checking
+        }
         try {
             val request = Request.Builder()
                 .url(MANIFEST_URL)
@@ -122,8 +140,11 @@ object AppUpdater {
                 .build()
             http.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    _state.value = UpdateUiState.Error("Update-Check fehlgeschlagen")
-                    return@withContext null
+                    val known = currentReleaseOrNull()
+                    if (known == null) {
+                        _state.value = UpdateUiState.Error("Update-Check fehlgeschlagen")
+                    }
+                    return@withContext known
                 }
                 val json = JSONObject(response.body?.string().orEmpty())
                 val release = AppRelease(
@@ -134,7 +155,12 @@ object AppUpdater {
                     notes = json.optString("notes", "Neue Version verfügbar")
                 )
                 if (release.versionCode > BuildConfig.VERSION_CODE) {
-                    _state.value = UpdateUiState.Available(release)
+                    // Ready/Downloading behalten wir oben; hier wieder Available zeigen
+                    if (_state.value !is UpdateUiState.Downloading &&
+                        _state.value !is UpdateUiState.Ready
+                    ) {
+                        _state.value = UpdateUiState.Available(release)
+                    }
                     if (notify) maybeNotify(context, release)
                     release
                 } else {
@@ -143,8 +169,11 @@ object AppUpdater {
                 }
             }
         } catch (t: Throwable) {
-            _state.value = UpdateUiState.Error(t.message ?: "Update-Check fehlgeschlagen")
-            null
+            val known = currentReleaseOrNull()
+            if (known == null) {
+                _state.value = UpdateUiState.Error(t.message ?: "Update-Check fehlgeschlagen")
+            }
+            known
         } finally {
             checking.set(false)
         }

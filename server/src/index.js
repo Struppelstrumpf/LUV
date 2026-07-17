@@ -1,4 +1,6 @@
 const http = require("http");
+const fs = require("fs");
+const path = require("path");
 const crypto = require("crypto");
 const express = require("express");
 const { WebSocketServer } = require("ws");
@@ -8,7 +10,9 @@ const {
   todayKey,
   hashSecret,
   newId,
+  DATA_DIR,
 } = require("./store");
+const { pickShareLine } = require("./share_lines");
 
 const PORT = Number(process.env.PORT || 8080);
 const ROOM_TTL_MS = Number(process.env.ROOM_TTL_MS || 24 * 60 * 60 * 1000);
@@ -22,23 +26,44 @@ const MOLLIE_WEBHOOK_URL =
   process.env.MOLLIE_WEBHOOK_URL || "https://reineke.pro/luv/v1/webhooks/mollie";
 const PUBLIC_SHOP_REDIRECT =
   process.env.PUBLIC_SHOP_REDIRECT || "https://reineke.pro/luv/shop/return";
+/** OAuth 2.0 Web-Client-ID (Google Cloud) — für Sign-In + Token-Verify */
+const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || "").trim();
+const WEB_DIR = String(process.env.WEB_DIR || "/opt/luv-web").trim();
 
 const DAILY_COINS = 10;
 const STARTING_COINS = 15;
 const FREE_SESSIONS_PER_DAY = 5;
 const SESSION_COST = 1;
 const CLEAR_COST = 1;
+const GAME_COST = 1;
 const LOBBY_CREATE_COST = 5;
 const SLOT_COST = 5;
+const WORDS_DE = require("./words_de");
+const Games = require("./games");
 const MAX_LOBBIES = 10;
+const MAX_LOBBY_NAME_LENGTH = 16;
 const MAX_PEERS = Number(process.env.MAX_PEERS || 10);
 const FREE_LOBBY_START_CAPACITY = 2; // Host + 1 Einladung
 const PAID_LOBBY_START_CAPACITY = 4; // Host + 3 Einladungen
-const CLEAR_VOTE_MS = 60_000;
+/** Lange offen, damit Offline-Mitglieder noch zustimmen können */
+const CLEAR_VOTE_MS = 24 * 60 * 60 * 1000;
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
+const INTRO_PACK_ID = "pack_intro_100";
+/** Angebot endet automatisch am 01.01.2027 00:00 UTC (Ende 2026) — nicht in der UI erwähnen */
+const INTRO_EXPIRES_AT = Date.parse("2027-01-01T00:00:00.000Z");
+
 const PACKS = {
+  [INTRO_PACK_ID]: {
+    id: INTRO_PACK_ID,
+    coins: 100,
+    amountEur: "0.99",
+    compareAtEur: "4.99",
+    label: "100 Coins",
+    oncePerUserAndIp: true,
+    expiresAt: INTRO_EXPIRES_AT,
+  },
   pack_50: { id: "pack_50", coins: 50, amountEur: "2.99", label: "50 Coins" },
   pack_150: { id: "pack_150", coins: 150, amountEur: "6.99", label: "150 Coins" },
   pack_400: { id: "pack_400", coins: 400, amountEur: "14.99", label: "400 Coins" },
@@ -46,6 +71,374 @@ const PACKS = {
 
 /** @type {Map<string, any>} */
 const rooms = new Map();
+
+function serializeRoom(code, room) {
+  return {
+    token: room.token,
+    createdAt: room.createdAt || Date.now(),
+    lastActiveAt: room.lastActiveAt || room.createdAt || Date.now(),
+    hostUserId: room.hostUserId || null,
+    name: room.name || "Lobby",
+    hostNickname: room.hostNickname || "Host",
+    isFree: Boolean(room.isFree),
+    capacity: roomCapacity(room),
+    hostColorSide: normalizeHostColorSide(room.hostColorSide),
+    colorByUserId:
+      room.colorByUserId && typeof room.colorByUserId === "object"
+        ? room.colorByUserId
+        : {},
+    peakPeers: Math.max(1, Number(room.peakPeers) || 1),
+    lastCanvasAt: Number(room.lastCanvasAt) || 0,
+    memberUserIds: Array.isArray(room.memberUserIds)
+      ? room.memberUserIds.filter((id) => typeof id === "string")
+      : [],
+    joinAnnouncedUserIds: Array.isArray(room.joinAnnouncedUserIds)
+      ? room.joinAnnouncedUserIds.filter((id) => typeof id === "string")
+      : [],
+    publicShare:
+      room.publicShare && typeof room.publicShare === "object"
+        ? {
+            day: String(room.publicShare.day || ""),
+            count: Math.max(0, Number(room.publicShare.count) || 0),
+            nextAt: Number(room.publicShare.nextAt) || 0,
+          }
+        : { day: "", count: 0, nextAt: 0 },
+  };
+}
+
+function persistRooms() {
+  const db = getDb();
+  const out = {};
+  for (const [code, room] of rooms.entries()) {
+    out[code] = serializeRoom(code, room);
+  }
+  db.rooms = out;
+  scheduleSave();
+}
+
+function touchRoom(room) {
+  if (!room) return;
+  room.lastActiveAt = Date.now();
+}
+
+function healRoomCapacity(room) {
+  if (!room) return false;
+  const need = roomCapacity(room);
+  if ((Number(room.capacity) || 0) < need) {
+    room.capacity = need;
+    return true;
+  }
+  return false;
+}
+
+function restoreRoomsFromDisk() {
+  const db = getDb();
+  const saved = db.rooms && typeof db.rooms === "object" ? db.rooms : {};
+  let n = 0;
+  for (const [rawCode, data] of Object.entries(saved)) {
+    const code = String(rawCode || "")
+      .toUpperCase()
+      .replace(/^LUV-/, "");
+    if (!code || !data || typeof data !== "object") continue;
+    if (rooms.has(code)) continue;
+    rooms.set(code, {
+      token: data.token || randomToken().slice(0, 32),
+      createdAt: Number(data.createdAt) || Date.now(),
+      lastActiveAt: Number(data.lastActiveAt) || Number(data.createdAt) || Date.now(),
+      sockets: new Map(),
+      clearProposal: null,
+      game: null,
+      gameTimer: null,
+      hostUserId: data.hostUserId || null,
+      name: String(data.name || "Lobby").slice(0, MAX_LOBBY_NAME_LENGTH),
+      hostNickname: String(data.hostNickname || "Host").slice(0, 18),
+      isFree: Boolean(data.isFree),
+      capacity: Math.min(
+        MAX_PEERS,
+        Math.max(
+          1,
+          Number(data.capacity) || defaultLobbyCapacity(Boolean(data.isFree))
+        )
+      ),
+      hostColorSide: normalizeHostColorSide(data.hostColorSide),
+      colorByUserId:
+        data.colorByUserId && typeof data.colorByUserId === "object"
+          ? data.colorByUserId
+          : {},
+      peakPeers: Math.max(1, Number(data.peakPeers) || 1),
+      lastCanvasAt: Number(data.lastCanvasAt) || 0,
+      memberUserIds: Array.isArray(data.memberUserIds)
+        ? data.memberUserIds.filter((id) => typeof id === "string")
+        : [],
+      joinAnnouncedUserIds: Array.isArray(data.joinAnnouncedUserIds)
+        ? data.joinAnnouncedUserIds.filter((id) => typeof id === "string")
+        : Array.isArray(data.memberUserIds)
+          ? data.memberUserIds.filter((id) => typeof id === "string")
+          : [],
+      publicShare:
+        data.publicShare && typeof data.publicShare === "object"
+          ? {
+              day: String(data.publicShare.day || ""),
+              count: Math.max(0, Number(data.publicShare.count) || 0),
+              nextAt: Number(data.publicShare.nextAt) || 0,
+            }
+          : { day: "", count: 0, nextAt: 0 },
+      strokes: loadRoomStrokes(code),
+    });
+    const room = rooms.get(code);
+    healRoomMembership(room);
+    n += 1;
+  }
+  if (n > 0) {
+    console.log(`restored ${n} lobby room(s) from disk`);
+    persistRooms();
+  }
+}
+
+const SNAPSHOT_DIR = path.join(DATA_DIR, "snapshots");
+const STROKES_DIR = path.join(DATA_DIR, "strokes");
+const MEMORY_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_STROKES_PER_ROOM = 2500;
+const MAX_POINTS_PER_STROKE = 420;
+const STROKE_HISTORY_CHUNK = 35;
+const strokeSaveTimers = new Map();
+
+function ensureStrokesDir() {
+  fs.mkdirSync(STROKES_DIR, { recursive: true });
+}
+
+function strokesFilePath(code) {
+  const clean = String(code || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  return path.join(STROKES_DIR, `${clean}.json`);
+}
+
+function loadRoomStrokes(code) {
+  try {
+    const raw = fs.readFileSync(strokesFilePath(code), "utf8");
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map((s) => sanitizeStoredStroke(s))
+      .filter(Boolean)
+      .slice(-MAX_STROKES_PER_ROOM);
+  } catch {
+    return [];
+  }
+}
+
+function saveRoomStrokes(code, strokes) {
+  ensureStrokesDir();
+  const file = strokesFilePath(code);
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(Array.isArray(strokes) ? strokes : []));
+  fs.renameSync(tmp, file);
+}
+
+function scheduleStrokeSave(code, room) {
+  const key = String(code || "").toUpperCase();
+  const prev = strokeSaveTimers.get(key);
+  if (prev) clearTimeout(prev);
+  strokeSaveTimers.set(
+    key,
+    setTimeout(() => {
+      strokeSaveTimers.delete(key);
+      try {
+        saveRoomStrokes(key, room?.strokes || []);
+      } catch (err) {
+        console.warn("stroke save failed", key, err?.message || err);
+      }
+    }, 700)
+  );
+}
+
+function sanitizeStoredStroke(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const id = String(raw.id || "").trim();
+  if (!id || id.length > 80) return null;
+  const pointsIn = Array.isArray(raw.points) ? raw.points : [];
+  const points = [];
+  for (const p of pointsIn) {
+    if (!p || typeof p !== "object") continue;
+    const x = Number(p.x);
+    const y = Number(p.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    points.push({
+      x: Math.min(1, Math.max(0, x)),
+      y: Math.min(1, Math.max(0, y)),
+    });
+    if (points.length >= MAX_POINTS_PER_STROKE) break;
+  }
+  if (points.length < 2) return null;
+  return {
+    id,
+    points,
+    width: Math.min(48, Math.max(4, Number(raw.width) || 18)),
+    nickname: String(raw.nickname || "").trim().slice(0, 18) || null,
+    colorIndex: Math.max(0, Math.min(31, Number(raw.colorIndex) || 0)),
+    authorId: String(raw.authorId || "").trim().slice(0, 64) || null,
+  };
+}
+
+function ensureRoomStrokes(room, code) {
+  if (!room) return [];
+  if (!Array.isArray(room.strokes)) {
+    room.strokes = loadRoomStrokes(code);
+  }
+  return room.strokes;
+}
+
+function appendRoomStroke(room, code, stroke) {
+  const list = ensureRoomStrokes(room, code);
+  if (list.some((s) => s.id === stroke.id)) return false;
+  list.push(stroke);
+  while (list.length > MAX_STROKES_PER_ROOM) list.shift();
+  room.strokes = list;
+  scheduleStrokeSave(code, room);
+  return true;
+}
+
+function removeRoomStroke(room, code, strokeId) {
+  const id = String(strokeId || "").trim();
+  if (!id) return false;
+  const list = ensureRoomStrokes(room, code);
+  const next = list.filter((s) => s.id !== id);
+  if (next.length === list.length) return false;
+  room.strokes = next;
+  scheduleStrokeSave(code, room);
+  return true;
+}
+
+function clearRoomStrokes(room, code) {
+  if (!room) return;
+  room.strokes = [];
+  scheduleStrokeSave(code, room);
+}
+
+function strokeFromSocketMessage(json, socket) {
+  const base = sanitizeStoredStroke({
+    id: json?.id,
+    points: json?.points,
+    width: json?.width,
+    nickname: json?.nickname || socket?.luvNickname || null,
+    colorIndex:
+      json?.colorIndex != null ? json.colorIndex : socket?.luvColorIndex || 0,
+    authorId: json?.authorId || socket?.luvUserId || socket?.luvPeerId || null,
+  });
+  return base;
+}
+
+function sendCanvasHistory(socket, room, code) {
+  if (!socket || socket.readyState !== 1) return;
+  const strokes = ensureRoomStrokes(room, code);
+  if (!strokes.length) {
+    socket.send(
+      JSON.stringify({
+        type: "canvas_history",
+        strokes: [],
+        done: true,
+        replace: true,
+      })
+    );
+    return;
+  }
+  for (let i = 0; i < strokes.length; i += STROKE_HISTORY_CHUNK) {
+    const chunk = strokes.slice(i, i + STROKE_HISTORY_CHUNK);
+    const done = i + STROKE_HISTORY_CHUNK >= strokes.length;
+    socket.send(
+      JSON.stringify({
+        type: "canvas_history",
+        strokes: chunk,
+        done,
+        replace: i === 0,
+      })
+    );
+  }
+}
+
+function ensureSnapshotDir() {
+  fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+}
+
+function canvasMemories() {
+  const db = getDb();
+  if (!db.canvasMemories || typeof db.canvasMemories !== "object") {
+    db.canvasMemories = {};
+  }
+  return db.canvasMemories;
+}
+
+function touchCanvasActivity(room, peerCountHint) {
+  if (!room) return;
+  const now = Date.now();
+  const prev = Number(room.lastCanvasAt) || 0;
+  room.lastCanvasAt = now;
+  const n = Math.max(
+    Number(peerCountHint) || 0,
+    room.sockets ? room.sockets.size : 0
+  );
+  room.peakPeers = Math.max(Number(room.peakPeers) || 1, n, 1);
+  touchRoom(room);
+  // Disk nicht bei jedem Strich — alle ~30s reicht
+  if (now - prev > 30_000) persistRooms();
+}
+
+function cleanupCanvasMemories() {
+  ensureSnapshotDir();
+  const mem = canvasMemories();
+  const now = Date.now();
+  let dirty = false;
+  for (const [code, meta] of Object.entries(mem)) {
+    const released = Number(meta?.releasedAt) || 0;
+    const expires = released > 0 ? released + MEMORY_TTL_MS : 0;
+    if (released > 0 && expires > 0 && now > expires) {
+      const file = meta?.file ? path.join(SNAPSHOT_DIR, path.basename(meta.file)) : null;
+      if (file && fs.existsSync(file)) {
+        try {
+          fs.unlinkSync(file);
+        } catch {
+          /* ignore */
+        }
+      }
+      delete mem[code];
+      dirty = true;
+    }
+  }
+  // Orphan files
+  try {
+    for (const name of fs.readdirSync(SNAPSHOT_DIR)) {
+      const full = path.join(SNAPSHOT_DIR, name);
+      const st = fs.statSync(full);
+      if (now - st.mtimeMs > MEMORY_TTL_MS * 2) {
+        try {
+          fs.unlinkSync(full);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  if (dirty) scheduleSave();
+}
+
+function maybeReleaseMemory(code, room) {
+  const clean = String(code || "").toUpperCase();
+  if (!clean || !room) return null;
+  const mem = canvasMemories();
+  const last = Number(room.lastCanvasAt) || 0;
+  if (!last || Date.now() - last < MEMORY_TTL_MS) return mem[clean] || null;
+  const entry = mem[clean];
+  if (!entry?.file) return null;
+  if (!entry.releasedAt) {
+    entry.releasedAt = Date.now();
+    entry.lobbyName = room.name || "Lobby";
+    scheduleSave();
+  }
+  return entry;
+}
 
 function randomCode(length = 6, alphabet = CODE_ALPHABET) {
   let out = "";
@@ -71,16 +464,159 @@ function ensureHostedRooms(user) {
   }
 }
 
+/**
+ * Früher: hat hostedRooms gelöscht, sobald der Raum nicht im RAM war —
+ * nach Restart/Deploy weg. Nie mehr so: Lobbys bleiben bis explizites Verlassen.
+ */
 function pruneHostedRooms(user) {
   ensureHostedRooms(user);
-  let dirty = false;
-  for (const code of Object.keys(user.hostedRooms)) {
-    if (!rooms.has(code)) {
-      delete user.hostedRooms[code];
-      dirty = true;
+  // No-op (bewusst): fehlende rooms-Map-Einträge dürfen Ownership nicht killen.
+  return false;
+}
+
+function hydrateRoom(code, data, tokenOverride) {
+  return {
+    token: tokenOverride || data.token || randomToken().slice(0, 32),
+    createdAt: Number(data.createdAt) || Date.now(),
+    lastActiveAt: Date.now(),
+    sockets: new Map(),
+    clearProposal: null,
+    game: null,
+    gameTimer: null,
+    hostUserId: data.hostUserId || null,
+    name: String(data.name || "Lobby").slice(0, MAX_LOBBY_NAME_LENGTH),
+    hostNickname: String(data.hostNickname || "Host").slice(0, 18),
+    isFree: Boolean(data.isFree),
+    capacity: Math.min(
+      MAX_PEERS,
+      Math.max(
+        1,
+        Number(data.capacity) || defaultLobbyCapacity(Boolean(data.isFree))
+      )
+    ),
+    hostColorSide: normalizeHostColorSide(data.hostColorSide),
+    colorByUserId:
+      data.colorByUserId && typeof data.colorByUserId === "object"
+        ? { ...data.colorByUserId }
+        : {},
+    peakPeers: Math.max(1, Number(data.peakPeers) || 1),
+    lastCanvasAt: Number(data.lastCanvasAt) || 0,
+    memberUserIds: Array.isArray(data.memberUserIds)
+      ? data.memberUserIds.filter((id) => typeof id === "string")
+      : [],
+    joinAnnouncedUserIds: Array.isArray(data.joinAnnouncedUserIds)
+      ? data.joinAnnouncedUserIds.filter((id) => typeof id === "string")
+      : Array.isArray(data.memberUserIds)
+        ? data.memberUserIds.filter((id) => typeof id === "string")
+        : [],
+    publicShare:
+      data.publicShare && typeof data.publicShare === "object"
+        ? {
+            day: String(data.publicShare.day || ""),
+            count: Math.max(0, Number(data.publicShare.count) || 0),
+            nextAt: Number(data.publicShare.nextAt) || 0,
+          }
+        : { day: "", count: 0, nextAt: 0 },
+    strokes: loadRoomStrokes(code),
+  };
+}
+
+function rememberMember(room, userId) {
+  if (!room || !userId) return false;
+  if (!Array.isArray(room.memberUserIds)) room.memberUserIds = [];
+  if (!room.memberUserIds.includes(userId)) {
+    room.memberUserIds.push(userId);
+    if (room.memberUserIds.length > 40) {
+      room.memberUserIds = room.memberUserIds.slice(-40);
+    }
+    return true;
+  }
+  return false;
+}
+
+/** Einmalige Beitritts-Meldung — nicht bei jedem Reconnect / App-Wiederöffnen */
+function claimJoinAnnouncement(room, userId) {
+  if (!room || !userId) return false;
+  if (!Array.isArray(room.joinAnnouncedUserIds)) room.joinAnnouncedUserIds = [];
+  if (room.joinAnnouncedUserIds.includes(userId)) return false;
+  room.joinAnnouncedUserIds.push(userId);
+  if (room.joinAnnouncedUserIds.length > 40) {
+    room.joinAnnouncedUserIds = room.joinAnnouncedUserIds.slice(-40);
+  }
+  return true;
+}
+
+/**
+ * Raum laden / wiederherstellen — Lobbys dürfen Updates überleben.
+ * Host mit Session darf mit seinem gespeicherten Token reclaimen.
+ */
+function resolveRoom(code, token, user) {
+  const clean = String(code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  if (!clean) return null;
+
+  let room = rooms.get(clean);
+  if (!room) {
+    const saved = getDb().rooms?.[clean];
+    if (saved && typeof saved === "object") {
+      room = hydrateRoom(clean, saved);
+      rooms.set(clean, room);
+      console.log(`rehydrated room ${clean} from disk`);
     }
   }
-  return dirty;
+
+  if (room) {
+    // Join/Preview ohne Token: bestehenden Live-Raum nutzen (nie ersetzen).
+    if (!token || room.token === token) return room;
+
+    // Bekanntes Mitglied mit veraltetem Token — trotzdem rein (nie Split-Lobby).
+    // Früher: return null → 4401 → jeder hing allein in „seiner“ Sicht.
+    if (user && Array.isArray(room.memberUserIds) && room.memberUserIds.includes(user.id)) {
+      return room;
+    }
+
+    // Host: immer rein. Token nur übernehmen, wenn niemand sonst verbunden ist
+    // (sonst verlieren Joiner den Match und sehen sich allein).
+    if (user && room.hostUserId === user.id) {
+      if ((room.sockets?.size || 0) === 0) {
+        room.token = token;
+        touchRoom(room);
+        persistRooms();
+      }
+      return room;
+    }
+    return null;
+  }
+
+  // Komplett weg aus RAM+Disk — aus hostedRooms des Hosts neu aufbauen
+  if (user) {
+    ensureHostedRooms(user);
+    const meta = user.hostedRooms[clean];
+    if (meta && typeof meta === "object") {
+      room = hydrateRoom(
+        clean,
+        {
+          token: meta.token || token,
+          createdAt: meta.createdAt,
+          hostUserId: user.id,
+          name: meta.name || "Lobby",
+          hostNickname: user.nickname || "Host",
+          isFree: Boolean(meta.isFree),
+          capacity: meta.capacity,
+          hostColorSide: meta.hostColorSide,
+          colorByUserId: meta.colorByUserId || { [user.id]: hostColorIndex(meta.hostColorSide) },
+        },
+        token || meta.token
+      );
+      rooms.set(clean, room);
+      persistRooms();
+      console.log(`recreated room ${clean} from hostedRooms for ${user.id}`);
+      return room;
+    }
+  }
+
+  return null;
 }
 
 function releaseHostedRoom(code, hostUserId) {
@@ -94,60 +630,556 @@ function releaseHostedRoom(code, hostUserId) {
   }
 }
 
+function roomExistsAnywhere(code) {
+  if (rooms.has(code)) return true;
+  const saved = getDb().rooms?.[code];
+  return Boolean(saved && typeof saved === "object");
+}
+
 function hasActiveFreeLobby(user) {
-  pruneHostedRooms(user);
-  return Object.entries(user.hostedRooms).some(([code, meta]) => meta?.isFree && rooms.has(code));
+  ensureHostedRooms(user);
+  let dirty = false;
+  let active = false;
+  for (const [code, meta] of Object.entries(user.hostedRooms)) {
+    if (!meta?.isFree) continue;
+    // Nicht löschen nur weil 0 Sockets — Host verbindet oft erst nach Create.
+    if (roomExistsAnywhere(code)) {
+      active = true;
+    } else {
+      delete user.hostedRooms[code];
+      dirty = true;
+    }
+  }
+  if (dirty) {
+    if (user.freeLobbyCreateDay === todayKey() && !active) {
+      user.freeLobbyCreateDay = null;
+    }
+    scheduleSave();
+  }
+  return active;
 }
 
 function canCreateFreeLobbyToday(user) {
-  return user.freeLobbyCreateDay !== todayKey();
+  // 1 Gratis-Lobby gleichzeitig (nicht „1× am Tag und fertig“).
+  if (hasActiveFreeLobby(user)) return false;
+  if (user.freeLobbyCreateDay === todayKey()) {
+    user.freeLobbyCreateDay = null;
+    scheduleSave();
+  }
+  return true;
+}
+
+function evaluateCanCreateFreeLobby(user) {
+  // canCreateFreeLobbyToday ruft hasActiveFreeLobby bereits auf
+  return canCreateFreeLobbyToday(user);
+}
+
+function defaultLobbyCapacity(isFree) {
+  return isFree ? FREE_LOBBY_START_CAPACITY : PAID_LOBBY_START_CAPACITY;
 }
 
 function roomCapacity(room) {
-  return room.capacity || PAID_LOBBY_START_CAPACITY;
+  const fallback = defaultLobbyCapacity(Boolean(room?.isFree));
+  let n = Number(room?.capacity);
+  if (!Number.isFinite(n) || n < 1) n = fallback;
+  // Nach Restart/Bug nie kleiner als bekannte Mitglieder — sonst room_full-Flapping
+  // (verbunden → sofort wieder raus) und jeder sieht nur sich selbst.
+  const members = Array.isArray(room?.memberUserIds) ? room.memberUserIds.length : 0;
+  const colors =
+    room?.colorByUserId && typeof room.colorByUserId === "object"
+      ? Object.keys(room.colorByUserId).length
+      : 0;
+  const peak = Math.max(1, Number(room?.peakPeers) || 1);
+  n = Math.max(n, fallback, members, colors, peak);
+  return Math.min(MAX_PEERS, Math.floor(n));
+}
+
+/** Mitglieder aus Farben/Peak nachziehen — Peak allein reicht nicht für Anzeige. */
+function healRoomMembership(room) {
+  if (!room) return false;
+  let changed = false;
+  if (room.colorByUserId && typeof room.colorByUserId === "object") {
+    for (const uid of Object.keys(room.colorByUserId)) {
+      if (uid && rememberMember(room, uid)) changed = true;
+    }
+  }
+  if (healRoomCapacity(room)) changed = true;
+  return changed;
+}
+
+/**
+ * Verbundene + offline bekannte Mitglieder — für Kachel/Avatare.
+ * Online zuerst, dann Offline (alphabetisch nach Nickname).
+ */
+function roomRosterAll(room) {
+  const connected = roomConnectedMembers(room).map((m) => ({
+    ...m,
+    online: true,
+    active: Boolean(m.active),
+  }));
+  const seen = new Set(
+    connected.map((m) => m.userId).filter((id) => typeof id === "string" && id)
+  );
+  const offline = [];
+  const memberIds = Array.isArray(room?.memberUserIds) ? room.memberUserIds : [];
+  for (const uid of memberIds) {
+    if (!uid || seen.has(uid)) continue;
+    seen.add(uid);
+    const u = getDb().users?.[uid];
+    const nick =
+      String(u?.nickname || "")
+        .trim()
+        .slice(0, 18) || "Jemand";
+    const rawColor = Number(room.colorByUserId?.[uid]);
+    const colorIndex = Number.isFinite(rawColor)
+      ? Math.max(0, Math.floor(rawColor))
+      : 0;
+    offline.push({
+      userId: uid,
+      nickname: nick,
+      colorIndex,
+      active: false,
+      online: false,
+    });
+  }
+  offline.sort((a, b) =>
+    String(a.nickname).localeCompare(String(b.nickname), "de", { sensitivity: "base" })
+  );
+  return [...connected, ...offline];
 }
 
 function publicRoom(room, code) {
+  healRoomMembership(room);
+  const roster = roomRosterAll(room);
+  const online = roster.filter((m) => m.online).length;
+  const peak = Math.max(1, Number(room.peakPeers) || 1, online);
   return {
     code,
     name: room.name || "Lobby",
     hostNickname: room.hostNickname || "Host",
-    peers: room.sockets.size,
+    peers: online,
     capacity: roomCapacity(room),
     maxPeers: MAX_PEERS,
     isFree: Boolean(room.isFree),
+    hostColorSide: normalizeHostColorSide(room.hostColorSide),
+    peakPeers: peak,
+    coupleMode: peak <= 2,
+    lastCanvasAt: Number(room.lastCanvasAt) || 0,
+    members: roster.map((m) => m.nickname),
+    memberList: roster,
     ...inviteFor(code),
   };
 }
 
+const COLOR_BLUE = 0;
+const COLOR_PURPLE = 1;
+const COLOR_COUNT = 16;
+
+function normalizeHostColorSide(side) {
+  const s = String(side || "blue").toLowerCase();
+  return s === "purple" || s === "lila" ? "purple" : "blue";
+}
+
+function hostColorIndex(side) {
+  return normalizeHostColorSide(side) === "purple" ? COLOR_PURPLE : COLOR_BLUE;
+}
+
+function oppositeHostColor(hostIdx) {
+  return hostIdx === COLOR_PURPLE ? COLOR_BLUE : COLOR_PURPLE;
+}
+
+function takenRoomColors(room, exceptUserId) {
+  const taken = new Set();
+  if (!room.colorByUserId || typeof room.colorByUserId !== "object") {
+    room.colorByUserId = {};
+  }
+  for (const [uid, idx] of Object.entries(room.colorByUserId)) {
+    if (exceptUserId && uid === exceptUserId) continue;
+    if (Number.isInteger(idx)) taken.add(idx);
+  }
+  for (const socket of room.sockets.values()) {
+    if (exceptUserId && socket.luvUserId === exceptUserId) continue;
+    if (Number.isInteger(socket.luvColorIndex)) taken.add(socket.luvColorIndex);
+  }
+  return taken;
+}
+
+/** Host: Blau/Lila · 2. Person: Gegenseite · ab 3.: weitere Farben */
+function assignRoomColor(room, userId, isHost) {
+  if (!room.colorByUserId || typeof room.colorByUserId !== "object") {
+    room.colorByUserId = {};
+  }
+  if (userId && Number.isInteger(room.colorByUserId[userId])) {
+    return room.colorByUserId[userId];
+  }
+  const hostIdx = hostColorIndex(room.hostColorSide);
+  let assigned;
+  if (isHost) {
+    assigned = hostIdx;
+  } else {
+    const taken = takenRoomColors(room, userId);
+    // Host-Farbe ist reserviert, auch wenn Host noch nicht verbunden ist
+    taken.add(hostIdx);
+    const other = oppositeHostColor(hostIdx);
+    if (!taken.has(other)) {
+      assigned = other;
+    } else {
+      assigned = 2;
+      while (taken.has(assigned) && assigned < COLOR_COUNT) assigned += 1;
+      if (assigned >= COLOR_COUNT) assigned = 2;
+    }
+  }
+  if (userId) room.colorByUserId[userId] = assigned;
+  return assigned;
+}
+
+function rememberSocketColor(room, socket, user, colorIndex) {
+  const idx = Number(colorIndex);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= COLOR_COUNT) return;
+  socket.luvColorIndex = idx;
+  if (!room.colorByUserId || typeof room.colorByUserId !== "object") {
+    room.colorByUserId = {};
+  }
+  if (user?.id) room.colorByUserId[user.id] = idx;
+}
+
 function cleanupRooms() {
   const now = Date.now();
+  let removed = false;
   for (const [code, room] of rooms.entries()) {
-    if (room.sockets.size === 0 && now - room.createdAt > ROOM_TTL_MS) {
+    if (room.sockets.size > 0) continue;
+    // Bezahlte Lobbys nie per TTL löschen (Updates/Restarts & Geldschutz)
+    if (!room.isFree) continue;
+    const idleSince = room.lastActiveAt || room.createdAt || 0;
+    if (now - idleSince > ROOM_TTL_MS) {
       const hostUserId = room.hostUserId;
       rooms.delete(code);
       releaseHostedRoom(code, hostUserId);
+      removed = true;
+    }
+  }
+  if (removed) persistRooms();
+}
+
+/** paidCoins = Käufe/Gutscheine (stackbar). dailyBalance = Tagesbonus (nicht stackbar). */
+function ensureCoinBuckets(user) {
+  if (!user) return;
+  if (user.paidCoins == null || user.dailyBalance == null) {
+    const total = Math.max(0, Number(user.coins) || 0);
+    const day = todayKey();
+    if (user.lastDailyGrantDate === day) {
+      // Heutiger Tagesbonus bleibt im Tages-Topf, Rest als bezahlt
+      user.dailyBalance = Math.min(DAILY_COINS, total);
+      user.paidCoins = Math.max(0, total - user.dailyBalance);
+    } else {
+      // Alles bisherige bleibt erhalten (als bezahlt), Tagesbonus kommt beim Grant
+      user.paidCoins = total;
+      user.dailyBalance = 0;
+    }
+  }
+  user.paidCoins = Math.max(0, Number(user.paidCoins) || 0);
+  user.dailyBalance = Math.max(0, Number(user.dailyBalance) || 0);
+}
+
+function syncCoinTotal(user) {
+  ensureCoinBuckets(user);
+  user.coins = user.paidCoins + user.dailyBalance;
+}
+
+/**
+ * Tagesbonus automatisch: setzt dailyBalance auf DAILY_COINS (kein Aufaddieren über Tage).
+ * Verpasste Tage gibt es nicht nach.
+ */
+function ensureDailyGrant(user) {
+  if (!user) return false;
+  ensureCoinBuckets(user);
+  const day = todayKey();
+  if (user.lastDailyGrantDate === day) {
+    syncCoinTotal(user);
+    return false;
+  }
+  user.dailyBalance = DAILY_COINS;
+  user.lastDailyGrantDate = day;
+  syncCoinTotal(user);
+  const db = getDb();
+  db.ledger.push({
+    id: newId("led"),
+    userId: user.id,
+    delta: DAILY_COINS,
+    reason: "daily_grant",
+    refId: day,
+    at: Date.now(),
+    balance: user.coins,
+    note: "topup_not_stack",
+  });
+  if (db.ledger.length > 5000) db.ledger.splice(0, db.ledger.length - 5000);
+  scheduleSave();
+  return true;
+}
+
+const PAID_CREDIT_REASONS = new Set([
+  "mollie_purchase",
+  "voucher",
+  "clear_refund",
+  "signup_grant",
+  "admin_grant",
+  "public_share_reward",
+]);
+
+const PUBLIC_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const PUBLIC_DIR = path.join(DATA_DIR, "public-canvases");
+const PUBLIC_COOLDOWN_FIRST_MS = 60 * 60 * 1000;
+const PUBLIC_COOLDOWN_NEXT_MS = 120 * 60 * 1000;
+/** Lange offen, damit Offline-Mitglieder noch zustimmen können */
+const PUBLIC_VOTE_MS = 24 * 60 * 60 * 1000;
+
+function ensurePublicDir() {
+  fs.mkdirSync(PUBLIC_DIR, { recursive: true });
+}
+
+function publicCanvases() {
+  const db = getDb();
+  if (!db.publicCanvases || typeof db.publicCanvases !== "object") {
+    db.publicCanvases = {};
+  }
+  return db.publicCanvases;
+}
+
+function publicReports() {
+  const db = getDb();
+  if (!db.publicReports || typeof db.publicReports !== "object") {
+    db.publicReports = {};
+  }
+  return db.publicReports;
+}
+
+const PUBLIC_DELETE_BAN_THRESHOLD = 10;
+
+function deletePublicCanvasFile(entry) {
+  if (!entry?.file) return;
+  const filePath = path.join(PUBLIC_DIR, path.basename(entry.file));
+  if (fs.existsSync(filePath)) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch {
+      /* ignore */
     }
   }
 }
 
+function banUserForPublicDeletes(user) {
+  if (!user || user.role === "admin") return;
+  user.banned = true;
+  user.bannedAt = Date.now();
+  user.bannedReason = "public_canvas_violations";
+  const db = getDb();
+  for (const [token, session] of Object.entries(db.sessions || {})) {
+    if (session?.userId === user.id) delete db.sessions[token];
+  }
+}
+
+function publicReportView(report) {
+  return {
+    id: report.id,
+    publicId: report.publicId,
+    status: report.status || "open",
+    reportedAt: report.reportedAt,
+    reporterNickname: report.reporterNickname || "Jemand",
+    lobbyName: report.lobbyName || "Lobby",
+    hostNickname: report.hostNickname || "Jemand",
+    nameLine: report.nameLine || report.hostNickname || "Jemand",
+    hostUserId: report.hostUserId || null,
+    imageUrl: report.publicId
+      ? `/v1/public-canvases/${encodeURIComponent(report.publicId)}/image`
+      : null,
+  };
+}
+
+function cleanupPublicCanvases() {
+  ensurePublicDir();
+  const all = publicCanvases();
+  const openReportIds = new Set(
+    Object.values(publicReports())
+      .filter((r) => (r.status || "open") === "open")
+      .map((r) => r.publicId)
+  );
+  const now = Date.now();
+  let dirty = false;
+  for (const [id, meta] of Object.entries(all)) {
+    const created = Number(meta?.createdAt) || 0;
+    if (created > 0 && now - created > PUBLIC_TTL_MS) {
+      // Gemeldete Bilder für Admin-Review behalten
+      if (openReportIds.has(id)) continue;
+      deletePublicCanvasFile(meta);
+      delete all[id];
+      dirty = true;
+    }
+  }
+  if (dirty) scheduleSave();
+}
+
+function listPublicCanvasEntries() {
+  cleanupPublicCanvases();
+  return Object.entries(publicCanvases())
+    .map(([id, meta]) => ({ id, ...meta }))
+    .filter((e) => e.file && Number(e.createdAt) > 0)
+    .sort((a, b) => Number(b.createdAt) - Number(a.createdAt));
+}
+
+function pickRandomPublicCanvas() {
+  const list = listPublicCanvasEntries();
+  if (!list.length) return null;
+  return list[crypto.randomInt(0, list.length)];
+}
+
+function publicCanvasImageUrl(id) {
+  if (!id) return "https://reineke.pro/downloads/luv/og.jpg?v=1813";
+  return `https://reineke.pro/luv/v1/public-canvases/${encodeURIComponent(id)}/image`;
+}
+
+function roomMemberNicknames(room) {
+  const names = [];
+  const seen = new Set();
+  const push = (raw) => {
+    const n = String(raw || "").trim().slice(0, 18);
+    if (!n) return;
+    const key = n.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    names.push(n);
+  };
+  if (room?.hostNickname) push(room.hostNickname);
+  if (room?.sockets) {
+    for (const sock of room.sockets.values()) {
+      push(sock.luvNickname);
+    }
+  }
+  if (Array.isArray(room?.memberUserIds)) {
+    const db = getDb();
+    for (const uid of room.memberUserIds) {
+      push(db.users?.[uid]?.nickname);
+    }
+  }
+  return names;
+}
+
+function invitePublicBlurb(room, hostNickname) {
+  const host = String(hostNickname || room?.hostNickname || "Jemand").trim() || "Jemand";
+  return `${host} lädt dich zu einer gemeinsamen Leinwand ein`;
+}
+
+/** Klar: Vorschaubild stammt von einer anderen Gruppe, die veröffentlicht hat. */
+function publicCanvasCredit(entry) {
+  if (!entry) return "Öffentliche Community-Leinwand — von anderen in LUV geteilt";
+  const who = String(entry.nameLine || splashNameLine(entry) || "").trim();
+  if (who) {
+    return `Öffentliche Leinwand von ${who} — von einer anderen Gruppe veröffentlicht`;
+  }
+  return "Öffentliche Community-Leinwand — von anderen in LUV geteilt";
+}
+
+function inviteShareDescription(hostNickname, picked) {
+  const host = String(hostNickname || "Jemand").trim() || "Jemand";
+  const invite = `${host} lädt dich zu LUV ein`;
+  if (!picked) return invite;
+  return `${invite}. Vorschaubild: ${publicCanvasCredit(picked)}`;
+}
+
+function landingShareDescription(line, picked) {
+  const base = String(line || "LUV — Nähe, die mitgeht").trim();
+  if (!picked) return base;
+  return `${base} · Vorschaubild: ${publicCanvasCredit(picked)}`;
+}
+
+function splashNameLine(entry) {
+  const host = String(entry?.hostNickname || "Jemand").trim() || "Jemand";
+  const others = Array.isArray(entry?.memberNicknames)
+    ? entry.memberNicknames.map((n) => String(n || "").trim()).filter(Boolean)
+    : [];
+  const ordered = [];
+  const seen = new Set();
+  const push = (n) => {
+    const t = String(n || "").trim();
+    if (!t) return;
+    const k = t.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    ordered.push(t);
+  };
+  push(host);
+  for (const n of others) push(n);
+  if (ordered.length <= 1) return ordered[0] || host;
+  if (ordered.length === 2) return `${ordered[0]} & ${ordered[1]}`;
+  return `${ordered[0]} & ${ordered.length - 1} weiteren`;
+}
+
+function getPublicShareState(room) {
+  const day = todayKey();
+  if (!room.publicShare || room.publicShare.day !== day) {
+    room.publicShare = { day, count: 0, nextAt: 0 };
+  }
+  return room.publicShare;
+}
+
+function publicShareRewardForCount(countBefore) {
+  if (countBefore <= 0) {
+    return { coins: 1, cooldownMs: PUBLIC_COOLDOWN_FIRST_MS };
+  }
+  if (countBefore === 1) {
+    return { coins: 2, cooldownMs: PUBLIC_COOLDOWN_NEXT_MS };
+  }
+  return { coins: 3, cooldownMs: PUBLIC_COOLDOWN_NEXT_MS };
+}
+
+function rewardPublicShare(room, code, proposalId) {
+  const state = getPublicShareState(room);
+  const { coins, cooldownMs } = publicShareRewardForCount(state.count);
+  const userIds = new Set();
+  if (Array.isArray(room.memberUserIds)) {
+    for (const id of room.memberUserIds) if (id) userIds.add(id);
+  }
+  if (room.hostUserId) userIds.add(room.hostUserId);
+  for (const sock of room.sockets.values()) {
+    if (sock.luvUserId) userIds.add(sock.luvUserId);
+  }
+  const rewarded = [];
+  for (const uid of userIds) {
+    const u = applyLedger(uid, coins, "public_share_reward", proposalId);
+    if (u) rewarded.push(u);
+  }
+  state.count += 1;
+  state.nextAt = Date.now() + cooldownMs;
+  persistRooms();
+  return { coins, cooldownMs, rewarded };
+}
+
 function publicUser(user) {
+  const dailyGrantedJustNow = ensureDailyGrant(user);
   const day = todayKey();
   const freeLeft = Math.max(0, FREE_SESSIONS_PER_DAY - (user.sessionsByDay?.[day] || 0));
+  const canCreateFree = evaluateCanCreateFreeLobby(user);
   return {
     id: user.id,
     nickname: user.nickname,
     coins: user.coins,
+    paidCoins: user.paidCoins || 0,
+    dailyBalance: user.dailyBalance || 0,
     role: user.role || "user",
+    banned: Boolean(user.banned),
+    publicDeletedCount: Math.max(0, Number(user.publicDeletedCount) || 0),
     freeSessionsLeft: freeLeft,
     freeSessionsPerDay: FREE_SESSIONS_PER_DAY,
     dailyCoins: DAILY_COINS,
     sessionCost: SESSION_COST,
     clearCost: CLEAR_COST,
+    gameCost: GAME_COST,
     lobbyCreateCost: LOBBY_CREATE_COST,
+    slotCost: SLOT_COST,
     maxLobbies: MAX_LOBBIES,
+    canCreateFreeLobby: canCreateFree,
     lastDailyGrantDate: user.lastDailyGrantDate || null,
-    canClaimDaily: user.lastDailyGrantDate !== day,
+    canClaimDaily: false,
+    dailyGrantedJustNow: Boolean(dailyGrantedJustNow),
     googleLinked: Boolean(user.googleSub),
   };
 }
@@ -156,11 +1188,33 @@ function applyLedger(userId, delta, reason, refId) {
   const db = getDb();
   const user = db.users[userId];
   if (!user) return null;
-  user.coins = Math.max(0, (user.coins || 0) + delta);
+  ensureCoinBuckets(user);
+  const amount = Number(delta) || 0;
+  if (amount > 0) {
+    if (reason === "daily_grant") {
+      // Nie aufaddieren — immer auf Tageswert setzen
+      user.dailyBalance = DAILY_COINS;
+      user.lastDailyGrantDate = todayKey();
+    } else if (PAID_CREDIT_REASONS.has(reason)) {
+      user.paidCoins += amount;
+    } else {
+      // Unbekannte Gutschriften stacken als bezahlt
+      user.paidCoins += amount;
+    }
+  } else if (amount < 0) {
+    let need = -amount;
+    const fromDaily = Math.min(user.dailyBalance, need);
+    user.dailyBalance -= fromDaily;
+    need -= fromDaily;
+    if (need > 0) {
+      user.paidCoins = Math.max(0, user.paidCoins - need);
+    }
+  }
+  syncCoinTotal(user);
   db.ledger.push({
     id: newId("led"),
     userId,
-    delta,
+    delta: amount,
     reason,
     refId: refId || null,
     at: Date.now(),
@@ -183,6 +1237,179 @@ function createSession(userId) {
   return token;
 }
 
+function destroySession(token) {
+  if (!token) return;
+  const db = getDb();
+  if (db.sessions[token]) {
+    delete db.sessions[token];
+    scheduleSave();
+  }
+}
+
+function destroyAllSessionsForUser(userId) {
+  if (!userId) return;
+  const db = getDb();
+  let dirty = false;
+  for (const [token, session] of Object.entries(db.sessions)) {
+    if (session?.userId === userId) {
+      delete db.sessions[token];
+      dirty = true;
+    }
+  }
+  if (dirty) scheduleSave();
+}
+
+function isChosenNickname(nick) {
+  const n = String(nick || "").trim();
+  return n.length >= 2 && n.toLowerCase() !== "luv";
+}
+
+/**
+ * Quelle in Ziel zusammenführen (Coins, Lobbys, Google, Admin).
+ * Danach wird die Quelle gelöscht — ohne deren Lobbys zu zerstören.
+ */
+function absorbUserInto(target, source) {
+  if (!target?.id || !source?.id || target.id === source.id) return target;
+  const db = getDb();
+  ensureCoinBuckets(target);
+  ensureCoinBuckets(source);
+  target.paidCoins = (target.paidCoins || 0) + (source.paidCoins || 0);
+  target.dailyBalance = Math.max(target.dailyBalance || 0, source.dailyBalance || 0);
+  syncCoinTotal(target);
+
+  if (!isChosenNickname(target.nickname) && isChosenNickname(source.nickname)) {
+    target.nickname = source.nickname;
+  }
+  if (source.role === "admin") target.role = "admin";
+
+  ensureHostedRooms(target);
+  ensureHostedRooms(source);
+  for (const [code, meta] of Object.entries(source.hostedRooms || {})) {
+    if (!target.hostedRooms[code]) {
+      target.hostedRooms[code] = { ...meta };
+    } else {
+      const a = Number(target.hostedRooms[code].capacity) || 0;
+      const b = Number(meta?.capacity) || 0;
+      target.hostedRooms[code].capacity = Math.max(a, b);
+    }
+    const live = rooms.get(code);
+    if (live && live.hostUserId === source.id) {
+      live.hostUserId = target.id;
+      live.hostNickname = target.nickname || live.hostNickname;
+      touchRoom(live);
+    }
+    if (db.rooms?.[code] && db.rooms[code].hostUserId === source.id) {
+      db.rooms[code].hostUserId = target.id;
+      db.rooms[code].hostNickname = target.nickname || db.rooms[code].hostNickname;
+    }
+  }
+  source.hostedRooms = {};
+
+  if (source.googleSub && !target.googleSub) {
+    target.googleSub = source.googleSub;
+    target.googleEmail = source.googleEmail || null;
+  }
+  source.googleSub = null;
+  source.googleEmail = null;
+
+  destroyAllSessionsForUser(source.id);
+  if (Array.isArray(db.ledger)) {
+    for (const e of db.ledger) {
+      if (e?.userId === source.id) e.userId = target.id;
+    }
+  }
+  delete db.users[source.id];
+  persistRooms();
+  scheduleSave();
+  console.log(`merged user ${source.id} into ${target.id}`);
+  return target;
+}
+
+/** Konto + Google-Link + Hosted Rooms endgültig entfernen. */
+function deleteUserAccount(user) {
+  if (!user?.id) return;
+  const db = getDb();
+  const userId = user.id;
+  ensureHostedRooms(user);
+  const hostedCodes = Object.keys(user.hostedRooms || {});
+  for (const code of hostedCodes) {
+    const room = rooms.get(code);
+    if (room && room.hostUserId === userId) {
+      for (const sock of room.sockets.values()) {
+        try {
+          sock.close(4000, "account_deleted");
+        } catch {
+          /* ignore */
+        }
+      }
+      rooms.delete(code);
+    }
+    if (db.rooms?.[code]) {
+      delete db.rooms[code];
+    }
+    delete user.hostedRooms[code];
+  }
+  destroyAllSessionsForUser(userId);
+  if (Array.isArray(db.ledger)) {
+    db.ledger = db.ledger.filter((e) => e?.userId !== userId);
+  }
+  delete db.users[userId];
+  persistRooms();
+  scheduleSave();
+}
+
+function findUserByGoogleSub(sub) {
+  if (!sub) return null;
+  return Object.values(getDb().users).find((u) => u.googleSub === sub) || null;
+}
+
+async function verifyGoogleIdToken(idToken) {
+  if (!GOOGLE_CLIENT_ID || !idToken) return null;
+  try {
+    const url =
+      "https://oauth2.googleapis.com/tokeninfo?id_token=" +
+      encodeURIComponent(idToken);
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const payload = await res.json();
+    if (payload.aud !== GOOGLE_CLIENT_ID) return null;
+    const iss = String(payload.iss || "");
+    if (iss !== "accounts.google.com" && iss !== "https://accounts.google.com") {
+      return null;
+    }
+    if (Number(payload.exp) * 1000 < Date.now()) return null;
+    const sub = String(payload.sub || "");
+    if (!sub) return null;
+    return {
+      sub,
+      email: String(payload.email || "").slice(0, 120) || null,
+      name: String(payload.name || "").trim().slice(0, 18) || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function publicHostedLobbies(user) {
+  ensureHostedRooms(user);
+  return Object.entries(user.hostedRooms).map(([code, meta]) => ({
+    code,
+    name: String(meta?.name || "Lobby").slice(0, MAX_LOBBY_NAME_LENGTH),
+    token: meta?.token || null,
+    capacity: Math.min(
+      MAX_PEERS,
+      Math.max(
+        1,
+        Number(meta?.capacity) || defaultLobbyCapacity(Boolean(meta?.isFree))
+      )
+    ),
+    isFree: Boolean(meta?.isFree),
+    hostColorSide: normalizeHostColorSide(meta?.hostColorSide),
+    invite: `${PUBLIC_JOIN_BASE}/${code}`,
+    hostNickname: user.nickname || "Host",
+  }));
+}
+
 function authUser(req) {
   const header = String(req.headers.authorization || "");
   const token = header.startsWith("Bearer ")
@@ -203,7 +1430,67 @@ function requireAuth(req, res) {
     res.status(401).json({ error: "unauthorized" });
     return null;
   }
+  if (ctx.user.banned) {
+    res.status(403).json({
+      error: "banned",
+      message: "Dieses Konto ist gesperrt.",
+    });
+    return null;
+  }
   return ctx;
+}
+
+function clientIp(req) {
+  const xf = String(req.headers["x-forwarded-for"] || "")
+    .split(",")[0]
+    .trim();
+  const raw = xf || req.socket?.remoteAddress || "";
+  return String(raw).replace(/^::ffff:/, "").slice(0, 64);
+}
+
+function ensureIntroDb(db) {
+  if (!db.introOffersByIp || typeof db.introOffersByIp !== "object") {
+    db.introOffersByIp = {};
+  }
+}
+
+function introOfferActive() {
+  return Date.now() < INTRO_EXPIRES_AT;
+}
+
+function canClaimIntroOffer(user, ip) {
+  if (!introOfferActive()) return false;
+  if (user?.introOfferUsed) return false;
+  const db = getDb();
+  ensureIntroDb(db);
+  if (ip && db.introOffersByIp[ip]) return false;
+  return true;
+}
+
+function publicPack(pack) {
+  const out = {
+    id: pack.id,
+    label: pack.label,
+    coins: pack.coins,
+    amountEur: pack.amountEur,
+  };
+  if (pack.compareAtEur) out.compareAtEur = pack.compareAtEur;
+  return out;
+}
+
+function listShopPacks(user, ip) {
+  const packs = [];
+  for (const pack of Object.values(PACKS)) {
+    if (pack.expiresAt && Date.now() >= pack.expiresAt) continue;
+    if (pack.oncePerUserAndIp && !canClaimIntroOffer(user, ip)) continue;
+    packs.push(publicPack(pack));
+  }
+  packs.sort((a, b) => {
+    if (a.id === INTRO_PACK_ID) return -1;
+    if (b.id === INTRO_PACK_ID) return 1;
+    return 0;
+  });
+  return packs;
 }
 
 function requireAdmin(req, res) {
@@ -240,6 +1527,7 @@ function consumeDrawSession(user, lobbyCode) {
     scheduleSave();
     return { ok: true, charged: false, free: true };
   }
+  ensureDailyGrant(user);
   if ((user.coins || 0) < SESSION_COST) {
     return { ok: false, error: "no_coins" };
   }
@@ -249,19 +1537,196 @@ function consumeDrawSession(user, lobbyCode) {
   return { ok: true, charged: true, free: false };
 }
 
-function broadcastRoom(room, payload) {
+function broadcastRoom(room, payload, exceptSocket = null) {
   const text = typeof payload === "string" ? payload : JSON.stringify(payload);
-  for (const socket of room.sockets.values()) {
-    if (socket.readyState === 1) socket.send(text);
+  for (const sock of room.sockets.values()) {
+    if (exceptSocket && sock === exceptSocket) continue;
+    if (sock.readyState === 1) sock.send(text);
   }
 }
 
+/**
+ * Jede verbundene Person genau einmal — immer mit Anzeigenamen.
+ * Früher: leere Nicknames wurden übersprungen → fehlten in Kachel/Avataren.
+ */
+function roomConnectedMembers(room) {
+  const out = [];
+  const seenUsers = new Set();
+  for (const [peerId, sock] of room.sockets.entries()) {
+    const userId = sock.luvUserId || null;
+    if (userId) {
+      if (seenUsers.has(userId)) continue;
+      seenUsers.add(userId);
+    }
+    let nick = String(sock.luvNickname || "").trim().slice(0, 18);
+    if (!nick && userId) {
+      const u = getDb().users[userId];
+      nick = String(u?.nickname || "").trim().slice(0, 18);
+      if (nick) sock.luvNickname = nick;
+    }
+    if (!nick) nick = "Jemand";
+    const colorIndex = Number.isFinite(Number(sock.luvColorIndex))
+      ? Math.max(0, Math.floor(Number(sock.luvColorIndex)))
+      : 0;
+    out.push({
+      userId: userId || peerId,
+      nickname: nick,
+      colorIndex,
+      active: Boolean(sock.luvCanvasActive),
+    });
+  }
+  return out;
+}
+
+function roomConnectedNicknames(room) {
+  return roomConnectedMembers(room).map((m) => m.nickname);
+}
+
+/** Eindeutige verbundene Personen (pro userId ein Slot; anonyme Sockets einzeln). */
+function uniqueConnectedCount(room) {
+  return roomConnectedMembers(room).length;
+}
+
+/** Alte WS desselben Users schließen — verhindert Doppel-Sockets / room_full beim Reconnect. */
+function evictSocketsForUser(room, userId) {
+  if (!userId) return 0;
+  let n = 0;
+  for (const [peerId, sock] of [...room.sockets.entries()]) {
+    if (sock.luvUserId !== userId) continue;
+    sock.luvReplaced = true;
+    try {
+      sock.close(4002, "replaced");
+    } catch {
+      /* ignore */
+    }
+    room.sockets.delete(peerId);
+    n += 1;
+  }
+  return n;
+}
+
+/** Verzögerte Auflösung — kurze Offline/Reconnect-Fenster dürfen Lobby nicht killen. */
+const EMPTY_FREE_LOBBY_GRACE_MS = 90_000;
+const emptyFreeLobbyTimers = new Map();
+
+function cancelEmptyFreeLobbyTimer(code) {
+  const t = emptyFreeLobbyTimers.get(code);
+  if (t) {
+    clearTimeout(t);
+    emptyFreeLobbyTimers.delete(code);
+  }
+}
+
+function dissolveEmptyFreeLobby(room, code) {
+  if (!room?.isFree) return false;
+  if ((room.sockets?.size || 0) > 0) return false;
+  cancelEmptyFreeLobbyTimer(code);
+  const hostId = room.hostUserId;
+  rooms.delete(code);
+  if (getDb().rooms?.[code]) {
+    delete getDb().rooms[code];
+  }
+  if (hostId) {
+    releaseHostedRoom(code, hostId);
+    const host = getDb().users[hostId];
+    if (host && host.freeLobbyCreateDay === todayKey()) {
+      const stillFree = Object.entries(host.hostedRooms || {}).some(
+        ([c, m]) => m?.isFree && c !== code && roomExistsAnywhere(c)
+      );
+      if (!stillFree) host.freeLobbyCreateDay = null;
+    }
+  }
+  persistRooms();
+  scheduleSave();
+  console.log(`dissolved empty free lobby ${code}`);
+  return true;
+}
+
+function scheduleEmptyFreeLobbyDissolve(room, code) {
+  if (!room?.isFree) return;
+  if ((room.sockets?.size || 0) > 0) {
+    cancelEmptyFreeLobbyTimer(code);
+    return;
+  }
+  if (emptyFreeLobbyTimers.has(code)) return;
+  const timer = setTimeout(() => {
+    emptyFreeLobbyTimers.delete(code);
+    const live = rooms.get(code);
+    if (!live || live !== room) return;
+    if ((live.sockets?.size || 0) > 0) return;
+    dissolveEmptyFreeLobby(live, code);
+  }, EMPTY_FREE_LOBBY_GRACE_MS);
+  emptyFreeLobbyTimers.set(code, timer);
+}
+
+/**
+ * Host weg (Leave oder Disconnect) → nächsten User zum Host machen oder Free-Lobby auflösen.
+ * @param immediateEmpty true nur bei bewusstem Leave-API — sonst Grace für Reconnect.
+ */
+function ensureHostOrDissolve(room, code, { immediateEmpty = false } = {}) {
+  if (!room) return;
+  if ((room.sockets?.size || 0) === 0) {
+    if (immediateEmpty) dissolveEmptyFreeLobby(room, code);
+    else scheduleEmptyFreeLobbyDissolve(room, code);
+    return;
+  }
+  cancelEmptyFreeLobbyTimer(code);
+  const hostHere = [...room.sockets.values()].some(
+    (s) => s.luvUserId && s.luvUserId === room.hostUserId
+  );
+  if (hostHere) return;
+
+  let next = null;
+  for (const sock of room.sockets.values()) {
+    if (sock.luvUserId) {
+      next = sock;
+      break;
+    }
+  }
+  if (!next) {
+    if (immediateEmpty) dissolveEmptyFreeLobby(room, code);
+    else scheduleEmptyFreeLobbyDissolve(room, code);
+    return;
+  }
+
+  const prevHost = room.hostUserId;
+  if (prevHost) releaseHostedRoom(code, prevHost);
+  room.hostUserId = next.luvUserId;
+  if (next.luvNickname) room.hostNickname = next.luvNickname;
+  const newHost = getDb().users[next.luvUserId];
+  if (newHost) {
+    ensureHostedRooms(newHost);
+    newHost.hostedRooms[code] = {
+      createdAt: Date.now(),
+      isFree: Boolean(room.isFree),
+      name: room.name,
+      capacity: roomCapacity(room),
+      token: room.token,
+      hostColorSide: room.hostColorSide,
+    };
+    scheduleSave();
+  }
+  broadcastRoom(room, {
+    type: "host_changed",
+    hostNickname: room.hostNickname || "Host",
+    hostUserId: room.hostUserId,
+  });
+  touchRoom(room);
+  persistRooms();
+}
+
 function broadcastPeerCount(room) {
+  healRoomMembership(room);
+  const memberList = roomRosterAll(room);
+  const online = memberList.filter((m) => m.online).length;
   broadcastRoom(room, {
     type: "peers",
-    count: room.sockets.size,
+    count: online,
+    peers: online,
     capacity: roomCapacity(room),
     maxPeers: MAX_PEERS,
+    members: memberList.map((m) => m.nickname),
+    memberList,
   });
 }
 
@@ -272,53 +1737,483 @@ function refundClearCharge(proposal) {
   return user;
 }
 
-function resolveClear(room, code) {
+function normalizeGuess(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/ä/g, "ae")
+    .replace(/ö/g, "oe")
+    .replace(/ü/g, "ue")
+    .replace(/ß/g, "ss")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function pickWordOptions(count = 3) {
+  const pool = WORDS_DE;
+  const picks = new Set();
+  let guard = 0;
+  while (picks.size < count && guard < 40) {
+    picks.add(pool[Math.floor(Math.random() * pool.length)]);
+    guard += 1;
+  }
+  return [...picks];
+}
+
+const WORDS_ROUND_MS = 100_000;
+
+function clearGameTimer(room) {
+  if (room.gameTimer) {
+    clearTimeout(room.gameTimer);
+    room.gameTimer = null;
+  }
+}
+
+function stopRoomGame(room) {
+  if (!room.game && !room.gameTimer) return;
+  clearGameTimer(room);
+  room.game = null;
+  broadcastRoom(room, { type: "game_stop" });
+  broadcastRoom(room, { type: "game_board", game: "ttt", visible: false });
+}
+
+function broadcastPlayState(room) {
+  if (!room.game) return;
+  if (Games.isInteractive(room.game.type)) {
+    broadcastRoom(room, {
+      type: "game_play",
+      game: Games.publicState(room.game),
+    });
+  } else {
+    broadcastRoom(room, {
+      type: "game_state",
+      game: publicGameState(room.game),
+    });
+  }
+}
+
+function publicGameState(game) {
+  if (!game) return null;
+  return {
+    type: game.type,
+    status: game.status,
+    drawerPeerId: game.drawerPeerId,
+    drawerNickname: game.drawerNickname,
+    overlay: Boolean(game.overlay),
+    endsAt: game.endsAt || 0,
+  };
+}
+
+function startWordsRoundTimer(room) {
+  clearGameTimer(room);
+  const game = room.game;
+  if (!game || game.type !== "words" || game.status !== "draw") return;
+  const endsAt = game.endsAt || Date.now() + WORDS_ROUND_MS;
+  game.endsAt = endsAt;
+  const wait = Math.max(0, endsAt - Date.now());
+  room.gameTimer = setTimeout(() => {
+    room.gameTimer = null;
+    const g = room.game;
+    if (!g || g.type !== "words" || g.status !== "draw") return;
+    const word = g.word;
+    g.status = "timeout";
+    g.endsAt = 0;
+    broadcastRoom(room, {
+      type: "game_words_timeout",
+      word,
+      drawerNickname: g.drawerNickname,
+    });
+    broadcastRoom(room, {
+      type: "game_state",
+      game: publicGameState(g),
+    });
+  }, wait);
+}
+
+/** Leinwand leeren: immer max. 2 Ja nötig (allein reicht 1). */
+function clearVotesNeeded(room) {
+  return Math.min(2, Math.max(1, room.sockets.size));
+}
+
+function clearProposalTotals(proposal) {
+  const yes = new Set(proposal.yesUserIds || []).size;
+  const no = new Set(proposal.noUserIds || []).size;
+  const needed = Math.max(1, Number(proposal.neededYes) || 2);
+  return { yes, no, total: needed };
+}
+
+function clearYesEnough(proposal) {
+  const t = clearProposalTotals(proposal);
+  return t.yes >= t.total;
+}
+
+function clearVoteOpenPayload(room, proposal, forUserId = null) {
+  const t = clearProposalTotals(proposal);
+  const alreadyVoted =
+    Boolean(forUserId) &&
+    ((proposal.yesUserIds || []).includes(forUserId) ||
+      (proposal.noUserIds || []).includes(forUserId));
+  return {
+    type: "clear_vote_open",
+    proposalId: proposal.id,
+    by: proposal.byNickname,
+    byPeerId: proposal.byPeerId,
+    byUserId: proposal.byUserId || null,
+    endsAt: proposal.endsAt,
+    yes: t.yes,
+    no: t.no,
+    total: t.total,
+    alreadyVoted,
+    isInitiator: Boolean(forUserId) && forUserId === proposal.byUserId,
+  };
+}
+
+function sendClearVoteOpen(socket, room) {
   const proposal = room.clearProposal;
   if (!proposal || proposal.status !== "open") return;
-  const voters = [...room.sockets.keys()];
-  const total = Math.max(1, voters.length);
-  const yes = proposal.yes.filter((id) => voters.includes(id) || id === proposal.byPeerId).length;
-  // Recount only current peers + ensure proposer counted
-  const yesSet = new Set(proposal.yes.filter((id) => voters.includes(id)));
-  yesSet.add(proposal.byPeerId);
-  const yesCount = yesSet.size;
-  const approved = yesCount * 2 > total; // strict majority
-  proposal.status = approved ? "approved" : "rejected";
+  socket.send(JSON.stringify(clearVoteOpenPayload(room, proposal, socket.luvUserId || null)));
+}
 
-  let refundedUser = null;
-  if (!approved) {
-    refundedUser = refundClearCharge(proposal);
-  }
-
+function rejectClear(room, code, reason = "rejected") {
+  const proposal = room.clearProposal;
+  if (!proposal) return;
+  const t = clearProposalTotals(proposal);
+  proposal.status = "rejected";
+  const refundedUser = refundClearCharge(proposal);
   broadcastRoom(room, {
     type: "clear_result",
     proposalId: proposal.id,
-    approved,
-    yes: yesCount,
-    total,
+    approved: false,
+    yes: t.yes,
+    total: t.total,
+    reason,
   });
-  if (approved) {
-    broadcastRoom(room, { type: "clear" });
-  }
   if (refundedUser) {
-    const sock = room.sockets.get(proposal.byPeerId);
-    if (sock?.readyState === 1) {
-      sock.send(
-        JSON.stringify({
-          type: "economy_ok",
-          charged: false,
-          refunded: true,
-          user: publicUser(refundedUser),
-        })
-      );
+    for (const sock of room.sockets.values()) {
+      if (sock.luvUserId === proposal.chargedUserId && sock.readyState === 1) {
+        sock.send(
+          JSON.stringify({
+            type: "economy_ok",
+            charged: false,
+            refunded: true,
+            user: publicUser(refundedUser),
+          })
+        );
+      }
     }
   }
   room.clearProposal = null;
   void code;
-  void yes;
+}
+
+function approveClear(room, code) {
+  const proposal = room.clearProposal;
+  if (!proposal || proposal.status !== "open") return;
+  if (!clearYesEnough(proposal)) return;
+  const t = clearProposalTotals(proposal);
+  proposal.status = "approved";
+  broadcastRoom(room, {
+    type: "clear_result",
+    proposalId: proposal.id,
+    approved: true,
+    yes: t.yes,
+    total: t.total,
+  });
+  stopRoomGame(room);
+  clearRoomStrokes(room, code);
+  broadcastRoom(room, { type: "clear" });
+  room.clearProposal = null;
+}
+
+/** Timeout — leeren nur mit genug Ja-Stimmen (2, oder 1 allein) */
+function resolveClear(room, code) {
+  const proposal = room.clearProposal;
+  if (!proposal || proposal.status !== "open") return;
+  if (clearYesEnough(proposal)) {
+    approveClear(room, code);
+    return;
+  }
+  rejectClear(room, code, "timeout");
+}
+
+/** User-IDs, die gerade auf der Leinwand aktiv sind (presence active). */
+function onlineCanvasUserIds(room) {
+  const ids = [];
+  const seen = new Set();
+  for (const sock of room.sockets.values()) {
+    if (sock.readyState !== 1) continue;
+    if (!sock.luvCanvasActive) continue;
+    const id = sock.luvUserId;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * Nur wer gerade in der Leinwand online ist, muss zustimmen —
+ * Offline-Mitglieder der Lobby zählen nicht.
+ */
+function buildPublicRequiredVoters(room, proposerUserId) {
+  const ids = [];
+  const seen = new Set();
+  const add = (id) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    ids.push(id);
+  };
+  add(proposerUserId);
+  for (const id of onlineCanvasUserIds(room)) add(id);
+  return ids;
+}
+
+function syncPublicRequiredVoters(room) {
+  const proposal = room.publicProposal;
+  if (!proposal || proposal.status !== "open") return false;
+  const next = buildPublicRequiredVoters(room, proposal.byUserId);
+  const prev = Array.isArray(proposal.requiredUserIds) ? proposal.requiredUserIds : [];
+  const prevSet = new Set(prev);
+  const nextSet = new Set(next);
+  const same =
+    prevSet.size === nextSet.size && [...prevSet].every((id) => nextSet.has(id));
+  if (same) return false;
+  proposal.requiredUserIds = next;
+  return true;
+}
+
+function broadcastPublicVoteOpen(room) {
+  const proposal = room.publicProposal;
+  if (!proposal || proposal.status !== "open") return;
+  for (const sock of room.sockets.values()) {
+    if (sock.readyState !== 1) continue;
+    // Strikt: nur aktive Leinwand — Lobby-Online ohne Leinwand wird nicht gefragt
+    if (!sock.luvCanvasActive) continue;
+    sock.send(
+      JSON.stringify(publicVoteOpenPayload(room, proposal, sock.luvUserId || null))
+    );
+  }
+}
+
+function publicProposalTotals(proposal) {
+  const required = Array.isArray(proposal.requiredUserIds) ? proposal.requiredUserIds : [];
+  const yes = new Set(proposal.yesUserIds || []);
+  const no = new Set(proposal.noUserIds || []);
+  // Fortschritt nur anhand der aktuell erforderlichen Online-Stimmen
+  let yesRequired = 0;
+  for (const id of required) if (yes.has(id)) yesRequired += 1;
+  return {
+    yes: yesRequired,
+    no: no.size,
+    total: Math.max(1, required.length),
+    required,
+  };
+}
+
+function allRequiredYes(proposal) {
+  const { required } = publicProposalTotals(proposal);
+  if (required.length === 0) return false;
+  const yes = new Set(proposal.yesUserIds || []);
+  return required.every((id) => yes.has(id));
+}
+
+function publicVoteOpenPayload(room, proposal, forUserId = null) {
+  const t = publicProposalTotals(proposal);
+  const alreadyVoted =
+    Boolean(forUserId) &&
+    ((proposal.yesUserIds || []).includes(forUserId) ||
+      (proposal.noUserIds || []).includes(forUserId));
+  return {
+    type: "public_vote_open",
+    proposalId: proposal.id,
+    by: proposal.byNickname,
+    byPeerId: proposal.byPeerId,
+    byUserId: proposal.byUserId || null,
+    endsAt: proposal.endsAt,
+    yes: t.yes,
+    no: t.no,
+    total: t.total,
+    rewardCoins: proposal.rewardCoins || 1,
+    alreadyVoted,
+    isInitiator: Boolean(forUserId) && forUserId === proposal.byUserId,
+  };
+}
+
+function sendPublicVoteOpen(socket, room, code) {
+  const proposal = room.publicProposal;
+  if (!proposal) return;
+  if (proposal.status === "capturing") {
+    maybeRequestPublicCapture(room, code || proposal.lobbyCode);
+    return;
+  }
+  if (proposal.status !== "open") return;
+  socket.send(JSON.stringify(publicVoteOpenPayload(room, proposal, socket.luvUserId || null)));
+}
+
+function maybeRequestPublicCapture(room, code) {
+  const proposal = room.publicProposal;
+  if (!proposal) return;
+  if (proposal.status === "open" && allRequiredYes(proposal)) {
+    proposal.status = "capturing";
+  }
+  if (proposal.status !== "capturing") return;
+  let target = null;
+  for (const sock of room.sockets.values()) {
+    if (sock.readyState !== 1) continue;
+    if (sock.luvUserId && sock.luvUserId === proposal.byUserId) {
+      target = sock;
+      break;
+    }
+  }
+  if (!target) {
+    for (const sock of room.sockets.values()) {
+      if (sock.readyState !== 1) continue;
+      if (sock.luvUserId && (proposal.yesUserIds || []).includes(sock.luvUserId)) {
+        target = sock;
+        break;
+      }
+    }
+  }
+  if (!target) return;
+  target.send(
+    JSON.stringify({
+      type: "public_capture_request",
+      proposalId: proposal.id,
+    })
+  );
+  void code;
+}
+
+function rejectPublicShare(room, code, reason = "rejected") {
+  const proposal = room.publicProposal;
+  if (!proposal) return;
+  const t = publicProposalTotals(proposal);
+  broadcastRoom(room, {
+    type: "public_result",
+    proposalId: proposal.id,
+    approved: false,
+    yes: t.yes,
+    total: t.total,
+    rewardCoins: 0,
+    publicId: null,
+    nameLine: "",
+    imageUrl: null,
+    reason,
+  });
+  room.publicProposal = null;
+}
+
+function finishPublicShare(room, code, imageBuf) {
+  const proposal = room.publicProposal;
+  if (!proposal) return;
+  const t = publicProposalTotals(proposal);
+  let rewardCoins = 0;
+  let publicId = null;
+  let nameLine = "";
+
+  if (imageBuf && imageBuf.length >= 64) {
+    ensurePublicDir();
+    publicId = newId("pub");
+    const fileName = `${publicId}.png`;
+    const filePath = path.join(PUBLIC_DIR, fileName);
+    fs.writeFileSync(filePath, imageBuf);
+    const nicknames = roomMemberNicknames(room);
+    const hostNick = room.hostNickname || proposal.byNickname || "Jemand";
+    const entry = {
+      file: fileName,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + PUBLIC_TTL_MS,
+      lobbyCode: code,
+      lobbyName: room.name || "Lobby",
+      hostNickname: hostNick,
+      hostUserId: room.hostUserId || null,
+      memberNicknames: nicknames,
+      memberUserIds: Array.isArray(room.memberUserIds) ? [...room.memberUserIds] : [],
+      nameLine: "",
+    };
+    entry.nameLine = splashNameLine(entry);
+    nameLine = entry.nameLine;
+    publicCanvases()[publicId] = entry;
+    scheduleSave();
+
+    const reward = rewardPublicShare(room, code, proposal.id);
+    rewardCoins = reward.coins;
+    for (const u of reward.rewarded) {
+      for (const sock of room.sockets.values()) {
+        if (sock.luvUserId === u.id && sock.readyState === 1) {
+          sock.send(
+            JSON.stringify({
+              type: "economy_ok",
+              charged: false,
+              reason: "public_share_reward",
+              rewardCoins,
+              user: publicUser(u),
+            })
+          );
+        }
+      }
+    }
+  }
+
+  broadcastRoom(room, {
+    type: "public_result",
+    proposalId: proposal.id,
+    approved: Boolean(publicId),
+    yes: t.yes,
+    total: t.total,
+    rewardCoins,
+    publicId,
+    nameLine,
+    imageUrl: publicId ? `/v1/public-canvases/${publicId}/image` : null,
+  });
+  room.publicProposal = null;
+}
+
+/** Timeout / Abbruch — nie automatisch freigeben ohne volle Zustimmung */
+function resolvePublicShare(room, code) {
+  const proposal = room.publicProposal;
+  if (!proposal) return;
+  if (proposal.status === "capturing") {
+    // Capture hängt — verwerfen
+    rejectPublicShare(room, code, "timeout");
+    return;
+  }
+  if (proposal.status !== "open") return;
+  if (allRequiredYes(proposal)) {
+    maybeRequestPublicCapture(room, code);
+    return;
+  }
+  rejectPublicShare(room, code, "timeout");
 }
 
 setInterval(cleanupRooms, 60_000).unref();
+setInterval(() => {
+  cleanupCanvasMemories();
+  cleanupPublicCanvases();
+  for (const [code, room] of rooms.entries()) {
+    maybeReleaseMemory(code, room);
+  }
+  for (const [code, data] of Object.entries(getDb().rooms || {})) {
+    if (rooms.has(code)) continue;
+    const last = Number(data.lastCanvasAt) || 0;
+    if (!last || Date.now() - last < MEMORY_TTL_MS) continue;
+    const hydrated = hydrateRoom(code, data);
+    rooms.set(code, hydrated);
+    maybeReleaseMemory(code, hydrated);
+  }
+}, 60_000).unref();
+
+// Interaktive Spiele: Timer / Phasen fortschreiben
+setInterval(() => {
+  for (const room of rooms.values()) {
+    if (!room.game || !Games.isInteractive(room.game.type)) continue;
+    const { changed, game } = Games.tickGame(room.game);
+    if (changed) {
+      room.game = game;
+      broadcastPlayState(room);
+    }
+  }
+}, 200).unref();
 setInterval(() => {
   const db = getDb();
   const now = Date.now();
@@ -333,7 +2228,7 @@ setInterval(() => {
 }, 3600_000).unref();
 
 const app = express();
-app.use(express.json({ limit: "64kb" }));
+app.use(express.json({ limit: "8mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 app.get("/health", (_req, res) => {
@@ -349,6 +2244,7 @@ app.get("/health", (_req, res) => {
       sessionCost: SESSION_COST,
       startingCoins: STARTING_COINS,
       clearCost: CLEAR_COST,
+      gameCost: GAME_COST,
       lobbyCreateCost: LOBBY_CREATE_COST,
       slotCost: SLOT_COST,
       maxLobbies: MAX_LOBBIES,
@@ -358,6 +2254,13 @@ app.get("/health", (_req, res) => {
     },
     shopEnabled: Boolean(MOLLIE_API_KEY),
     uptimeSec: Math.round(process.uptime()),
+  });
+});
+
+app.get("/v1/auth/config", (_req, res) => {
+  return res.json({
+    googleEnabled: Boolean(GOOGLE_CLIENT_ID),
+    googleWebClientId: GOOGLE_CLIENT_ID || null,
   });
 });
 
@@ -379,6 +2282,8 @@ app.post("/v1/auth/device", (req, res) => {
       secretHash,
       installIdHash: hashSecret(installId),
       nickname,
+      paidCoins: 0,
+      dailyBalance: STARTING_COINS,
       coins: STARTING_COINS,
       role: "user",
       lastDailyGrantDate: todayKey(),
@@ -386,6 +2291,8 @@ app.post("/v1/auth/device", (req, res) => {
       drawLocks: {},
       createdAt: Date.now(),
       googleSub: null,
+      googleEmail: null,
+      hostedRooms: {},
     };
     db.users[user.id] = user;
     db.ledger.push({
@@ -396,6 +2303,7 @@ app.post("/v1/auth/device", (req, res) => {
       refId: null,
       at: Date.now(),
       balance: STARTING_COINS,
+      note: "starter_daily_bucket",
     });
     scheduleSave();
     created = true;
@@ -403,12 +2311,141 @@ app.post("/v1/auth/device", (req, res) => {
     user.nickname = nickname;
     scheduleSave();
   }
+  if (user.banned) {
+    return res.status(403).json({
+      error: "banned",
+      message: "Dieses Konto ist gesperrt.",
+    });
+  }
+  ensureDailyGrant(user);
   const token = createSession(user.id);
   return res.json({
     sessionToken: token,
     created,
     user: publicUser(user),
   });
+});
+
+/**
+ * Mit Google anmelden / Konto verknüpfen.
+ * - Mit Session: Google an aktuelles Konto hängen (Coins bleiben).
+ * - Ohne Session: bestehendes Google-Konto laden oder neu anlegen.
+ */
+app.post("/v1/auth/google", async (req, res) => {
+  if (!GOOGLE_CLIENT_ID) {
+    return res.status(503).json({
+      error: "google_disabled",
+      message: "Google-Login ist noch nicht eingerichtet.",
+    });
+  }
+  const idToken = String(req.body?.idToken || "").trim();
+  if (!idToken) return res.status(400).json({ error: "missing_token" });
+  const profile = await verifyGoogleIdToken(idToken);
+  if (!profile) {
+    return res.status(401).json({
+      error: "invalid_google_token",
+      message: "Google-Anmeldung fehlgeschlagen.",
+    });
+  }
+
+  const db = getDb();
+  const existingByGoogle = findUserByGoogleSub(profile.sub);
+  const authed = authUser(req);
+  let user = null;
+  let linked = false;
+  let created = false;
+
+  if (authed?.user) {
+    // Verknüpfen mit aktuellem Geräte-Konto
+    if (authed.user.googleSub && authed.user.googleSub !== profile.sub) {
+      return res.status(409).json({
+        error: "already_linked_other",
+        message: "Dieses Konto ist schon mit einem anderen Google-Konto verbunden.",
+      });
+    }
+    if (existingByGoogle && existingByGoogle.id !== authed.user.id) {
+      // Google hing an einem anderen LUV-Konto → zusammenführen in das aktuelle.
+      // Coins, Lobbys und Spitzname bleiben erhalten (aktueller Nick hat Vorrang).
+      absorbUserInto(authed.user, existingByGoogle);
+    }
+    authed.user.googleSub = profile.sub;
+    authed.user.googleEmail = profile.email;
+    // Nickname bewusst nicht aus Google übernehmen — Nutzer wählt selbst.
+    user = authed.user;
+    linked = true;
+    scheduleSave();
+    destroySession(authed.token);
+  } else if (existingByGoogle) {
+    user = existingByGoogle;
+    if (profile.email) user.googleEmail = profile.email;
+    scheduleSave();
+  } else {
+    user = {
+      id: newId("u"),
+      secretHash: hashSecret(`google:${profile.sub}:${crypto.randomBytes(16).toString("hex")}`),
+      installIdHash: null,
+      nickname: "Luv",
+      paidCoins: 0,
+      dailyBalance: STARTING_COINS,
+      coins: STARTING_COINS,
+      role: "user",
+      lastDailyGrantDate: todayKey(),
+      sessionsByDay: {},
+      drawLocks: {},
+      createdAt: Date.now(),
+      googleSub: profile.sub,
+      googleEmail: profile.email,
+      hostedRooms: {},
+    };
+    db.users[user.id] = user;
+    db.ledger.push({
+      id: newId("led"),
+      userId: user.id,
+      delta: STARTING_COINS,
+      reason: "signup_grant",
+      refId: null,
+      at: Date.now(),
+      balance: STARTING_COINS,
+      note: "google_signup",
+    });
+    scheduleSave();
+    created = true;
+  }
+
+  if (user.banned) {
+    return res.status(403).json({
+      error: "banned",
+      message: "Dieses Konto ist gesperrt.",
+    });
+  }
+  ensureDailyGrant(user);
+  const token = createSession(user.id);
+  return res.json({
+    sessionToken: token,
+    created,
+    linked,
+    user: publicUser(user),
+    lobbies: publicHostedLobbies(user),
+  });
+});
+
+app.post("/v1/auth/logout", (req, res) => {
+  const ctx = authUser(req);
+  if (ctx) destroySession(ctx.token);
+  return res.json({ ok: true });
+});
+
+app.delete("/v1/me", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  deleteUserAccount(ctx.user);
+  return res.json({ ok: true, deleted: true });
+});
+
+app.get("/v1/me/lobbies", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  return res.json({ lobbies: publicHostedLobbies(ctx.user) });
 });
 
 app.get("/v1/me", (req, res) => {
@@ -431,14 +2468,13 @@ app.patch("/v1/me", (req, res) => {
 app.post("/v1/me/daily-claim", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
-  const day = todayKey();
-  if (ctx.user.lastDailyGrantDate === day) {
-    return res.json({ user: publicUser(ctx.user), claimed: false });
-  }
-  applyLedger(ctx.user.id, DAILY_COINS, "daily_grant", day);
-  ctx.user.lastDailyGrantDate = day;
-  scheduleSave();
-  return res.json({ user: publicUser(ctx.user), claimed: true, amount: DAILY_COINS });
+  // Automatisch — kein manueller Claim mehr; Endpoint bleibt für alte Clients
+  const claimed = ensureDailyGrant(ctx.user);
+  return res.json({
+    user: publicUser(ctx.user),
+    claimed,
+    amount: claimed ? DAILY_COINS : 0,
+  });
 });
 
 app.post("/v1/economy/draw-session", (req, res) => {
@@ -574,10 +2610,12 @@ app.post("/v1/admin/vouchers/:code/revoke", (req, res) => {
   return res.json({ ok: true });
 });
 
-app.get("/v1/shop/packs", (_req, res) => {
+app.get("/v1/shop/packs", (req, res) => {
+  const ctx = authUser(req);
+  const ip = clientIp(req);
   res.json({
     enabled: Boolean(MOLLIE_API_KEY),
-    packs: Object.values(PACKS),
+    packs: listShopPacks(ctx?.user || null, ip),
   });
 });
 
@@ -592,13 +2630,28 @@ app.post("/v1/shop/checkout", async (req, res) => {
   }
   const pack = PACKS[String(req.body?.packId || "")];
   if (!pack) return res.status(400).json({ error: "invalid_pack" });
+  if (pack.expiresAt && Date.now() >= pack.expiresAt) {
+    return res.status(400).json({ error: "offer_gone", message: "Dieses Angebot ist nicht mehr verfügbar." });
+  }
+  const ip = clientIp(req);
+  if (pack.oncePerUserAndIp && !canClaimIntroOffer(ctx.user, ip)) {
+    return res.status(403).json({
+      error: "offer_used",
+      message: "Dieses Angebot hast du schon genutzt.",
+    });
+  }
   try {
     const body = {
       amount: { currency: "EUR", value: pack.amountEur },
       description: `LUV ${pack.label}`,
       redirectUrl: PUBLIC_SHOP_REDIRECT,
       webhookUrl: MOLLIE_WEBHOOK_URL,
-      metadata: { userId: ctx.user.id, packId: pack.id, coins: String(pack.coins) },
+      metadata: {
+        userId: ctx.user.id,
+        packId: pack.id,
+        coins: String(pack.coins),
+        ip: ip || "",
+      },
     };
     const resp = await fetch("https://api.mollie.com/v2/payments", {
       method: "POST",
@@ -618,6 +2671,7 @@ app.post("/v1/shop/checkout", async (req, res) => {
       userId: ctx.user.id,
       packId: pack.id,
       coins: pack.coins,
+      ip: ip || "",
       status: data.status,
       createdAt: Date.now(),
       credited: false,
@@ -657,6 +2711,15 @@ app.post("/v1/webhooks/mollie", async (req, res) => {
     if (data.status === "paid" && !payment.credited && payment.userId && payment.coins > 0) {
       applyLedger(payment.userId, payment.coins, "mollie_purchase", id);
       payment.credited = true;
+      const packId = payment.packId || data.metadata?.packId;
+      const pack = PACKS[packId];
+      if (pack?.oncePerUserAndIp) {
+        const user = db.users[payment.userId];
+        if (user) user.introOfferUsed = true;
+        ensureIntroDb(db);
+        const ip = payment.ip || data.metadata?.ip || "";
+        if (ip) db.introOffersByIp[ip] = payment.userId;
+      }
     }
     scheduleSave();
   } catch {
@@ -677,15 +2740,17 @@ app.post("/v1/rooms", (req, res) => {
       message: `Maximal ${MAX_LOBBIES} Lobbys.`,
     });
   }
-  const name = String(req.body?.name || "Lobby").trim().slice(0, 24) || "Lobby";
-  const eligibleFree =
-    !hasActiveFreeLobby(ctx.user) && canCreateFreeLobbyToday(ctx.user);
+  const name = String(req.body?.name || "Zusammen").trim().slice(0, MAX_LOBBY_NAME_LENGTH) || "Zusammen";
+  const hostColorSide = normalizeHostColorSide(req.body?.hostColorSide);
+  const hostIdx = hostColorIndex(hostColorSide);
+  const eligibleFree = evaluateCanCreateFreeLobby(ctx.user);
   let charged = 0;
   let isFree = false;
   if (eligibleFree) {
     isFree = true;
     ctx.user.freeLobbyCreateDay = todayKey();
   } else {
+    ensureDailyGrant(ctx.user);
     if ((ctx.user.coins || 0) < LOBBY_CREATE_COST) {
       return res.status(402).json({
         error: "no_coins",
@@ -698,10 +2763,11 @@ app.post("/v1/rooms", (req, res) => {
   let code = randomCode();
   while (rooms.has(code)) code = randomCode();
   const token = randomToken().slice(0, 32);
-  const capacity = isFree ? FREE_LOBBY_START_CAPACITY : PAID_LOBBY_START_CAPACITY;
+  const capacity = defaultLobbyCapacity(isFree);
   rooms.set(code, {
     token,
     createdAt: Date.now(),
+    lastActiveAt: Date.now(),
     sockets: new Map(),
     clearProposal: null,
     hostUserId: ctx.user.id,
@@ -709,9 +2775,27 @@ app.post("/v1/rooms", (req, res) => {
     hostNickname: ctx.user.nickname || "Host",
     isFree,
     capacity,
+    hostColorSide,
+    colorByUserId: { [ctx.user.id]: hostIdx },
+    peakPeers: 1,
+    lastCanvasAt: 0,
+    memberUserIds: [ctx.user.id],
+    joinAnnouncedUserIds: [ctx.user.id],
+    publicShare: { day: "", count: 0, nextAt: 0 },
+    publicProposal: null,
+    strokes: [],
   });
   ensureHostedRooms(ctx.user);
-  ctx.user.hostedRooms[code] = { createdAt: Date.now(), isFree };
+  ctx.user.hostedRooms[code] = {
+    createdAt: Date.now(),
+    isFree,
+    name,
+    capacity,
+    token,
+    hostColorSide,
+    colorByUserId: { [ctx.user.id]: hostIdx },
+  };
+  persistRooms();
   scheduleSave();
   res.status(201).json({
     token,
@@ -720,6 +2804,8 @@ app.post("/v1/rooms", (req, res) => {
     isFree,
     name,
     hostNickname: ctx.user.nickname || "Host",
+    hostColorSide,
+    suggestedColorIndex: hostIdx,
     charged,
     user: publicUser(ctx.user),
     ...inviteFor(code),
@@ -732,15 +2818,47 @@ app.post("/v1/rooms/:code/slots", (req, res) => {
   const code = String(req.params.code || "")
     .toUpperCase()
     .replace(/^LUV-/, "");
-  const room = rooms.get(code);
-  if (!room) return res.status(404).json({ error: "room_not_found" });
-  if (room.hostUserId !== ctx.user.id) {
-    return res.status(403).json({ error: "not_host", message: "Nur der Host kann Plätze freischalten." });
+  let room = rooms.get(code);
+  if (!room) {
+    const saved = getDb().rooms?.[code];
+    if (saved && typeof saved === "object" && !rooms.has(code)) {
+      room = hydrateRoom(code, saved);
+      rooms.set(code, room);
+    } else {
+      room = rooms.get(code) || null;
+    }
   }
+  if (!room) {
+    ensureHostedRooms(ctx.user);
+    const meta = ctx.user.hostedRooms[code];
+    // Nur neu aufbauen, wenn wirklich kein Live-Raum existiert
+    if (meta && typeof meta === "object" && !rooms.has(code)) {
+      room = hydrateRoom(code, {
+        token: meta.token,
+        createdAt: meta.createdAt,
+        hostUserId: ctx.user.id,
+        name: meta.name || "Lobby",
+        hostNickname: ctx.user.nickname || "Host",
+        isFree: Boolean(meta.isFree),
+        capacity: meta.capacity,
+        hostColorSide: meta.hostColorSide,
+        colorByUserId: meta.colorByUserId || {
+          [ctx.user.id]: hostColorIndex(meta.hostColorSide),
+        },
+      });
+      rooms.set(code, room);
+      persistRooms();
+    } else {
+      room = rooms.get(code) || null;
+    }
+  }
+  if (!room) return res.status(404).json({ error: "room_not_found" });
+  // Jedes Mitglied darf Plätze freischalten (nicht nur der Host)
   const capacity = roomCapacity(room);
   if (capacity >= MAX_PEERS) {
     return res.status(400).json({ error: "capacity_full", message: `Maximal ${MAX_PEERS} Personen.` });
   }
+  ensureDailyGrant(ctx.user);
   if ((ctx.user.coins || 0) < SLOT_COST) {
     return res.status(402).json({
       error: "no_coins",
@@ -749,7 +2867,20 @@ app.post("/v1/rooms/:code/slots", (req, res) => {
   }
   applyLedger(ctx.user.id, -SLOT_COST, "lobby_slot", code);
   room.capacity = capacity + 1;
+  touchRoom(room);
+  if (room.hostUserId) {
+    const host = getDb().users[room.hostUserId];
+    if (host) {
+      ensureHostedRooms(host);
+      if (host.hostedRooms[code]) {
+        host.hostedRooms[code].capacity = room.capacity;
+        scheduleSave();
+      }
+    }
+  }
+  persistRooms();
   scheduleSave();
+  broadcastPeerCount(room);
   return res.json({
     ok: true,
     capacity: room.capacity,
@@ -758,6 +2889,56 @@ app.post("/v1/rooms/:code/slots", (req, res) => {
     user: publicUser(ctx.user),
     ...publicRoom(room, code),
   });
+});
+
+/** Verlassen ohne die Lobby für andere zu zerstören */
+app.post("/v1/rooms/:code/leave", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  let room = rooms.get(code);
+  if (!room) {
+    const saved = getDb().rooms?.[code];
+    if (saved && typeof saved === "object") {
+      room = hydrateRoom(code, saved);
+      rooms.set(code, room);
+    }
+  }
+  if (!room) {
+    releaseHostedRoom(code, ctx.user.id);
+    if (ctx.user.freeLobbyCreateDay === todayKey()) {
+      const stillFree = Object.entries(ctx.user.hostedRooms || {}).some(
+        ([c, m]) => m?.isFree && c !== code && roomExistsAnywhere(c)
+      );
+      if (!stillFree) {
+        ctx.user.freeLobbyCreateDay = null;
+        scheduleSave();
+      }
+    }
+    return res.json({ ok: true, alreadyGone: true });
+  }
+
+  for (const [peerId, sock] of [...room.sockets.entries()]) {
+    if (sock.luvUserId && sock.luvUserId === ctx.user.id) {
+      sock.luvLeft = true;
+      try {
+        sock.close(4001, "left");
+      } catch {
+        /* ignore */
+      }
+      room.sockets.delete(peerId);
+    }
+  }
+  broadcastPeerCount(room);
+  ensureHostOrDissolve(room, code, { immediateEmpty: true });
+  if (rooms.has(code)) {
+    touchRoom(room);
+    persistRooms();
+  }
+
+  return res.json({ ok: true });
 });
 
 app.delete("/v1/rooms/:code", (req, res) => {
@@ -771,8 +2952,22 @@ app.delete("/v1/rooms/:code", (req, res) => {
     releaseHostedRoom(code, ctx.user.id);
     return res.json({ ok: true, alreadyGone: true });
   }
-  if (room.hostUserId && room.hostUserId !== ctx.user.id) {
-    return res.status(403).json({ error: "not_host", message: "Nur der Host kann die Lobby auflösen." });
+  // Auflösen nur noch, wenn niemand sonst verbunden ist
+  const others = [...room.sockets.values()].filter(
+    (s) => s.luvUserId && s.luvUserId !== ctx.user.id
+  );
+  if (others.length > 0 && room.hostUserId && room.hostUserId !== ctx.user.id) {
+    return res.status(403).json({
+      error: "not_host",
+      message: "Nur der Host kann die Lobby auflösen — oder einfach verlassen.",
+    });
+  }
+  if (others.length > 0) {
+    // Host mit anderen: lieber leave-Verhalten statt Kick
+    return res.status(409).json({
+      error: "others_present",
+      message: "Andere sind noch in der Lobby — bitte verlassen statt auflösen.",
+    });
   }
   for (const sock of room.sockets.values()) {
     try {
@@ -783,30 +2978,70 @@ app.delete("/v1/rooms/:code", (req, res) => {
   }
   rooms.delete(code);
   releaseHostedRoom(code, ctx.user.id);
+  persistRooms();
   return res.json({ ok: true });
 });
 
 app.post("/v1/rooms/:code/join", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
   const code = String(req.params.code || "")
     .toUpperCase()
     .replace(/^LUV-/, "");
-  const room = rooms.get(code);
-  if (!room) return res.status(404).json({ error: "room_not_found" });
-  const capacity = roomCapacity(room);
-  if (room.sockets.size >= capacity) {
-    return res.status(409).json({
-      error: "room_full",
-      message: "Lobby ist voll — Host kann weitere Plätze freischalten.",
-    });
+  // Token optional — Host kann Raum wiederbeleben; Join braucht existierenden Raum
+  const tokenHint = String(req.body?.token || "").trim();
+  // Live-Raum hat Vorrang — niemals über einen verbundenen Host hydraten.
+  let room = rooms.get(code) || resolveRoom(code, tokenHint, ctx.user);
+  if (!room) {
+    const saved = getDb().rooms?.[code];
+    if (saved && !rooms.has(code)) {
+      room = hydrateRoom(code, saved);
+      rooms.set(code, room);
+    } else {
+      room = rooms.get(code) || null;
+    }
   }
+  if (!room) return res.status(404).json({ error: "room_not_found" });
+  healRoomMembership(room);
+  let capacity = roomCapacity(room);
+  // Reconnect desselben Users zählt nicht extra
+  const alreadyHere = [...room.sockets.values()].some((s) => s.luvUserId === ctx.user.id);
+  const isKnownMember =
+    (Array.isArray(room.memberUserIds) && room.memberUserIds.includes(ctx.user.id)) ||
+    room.hostUserId === ctx.user.id;
+  if (!alreadyHere && uniqueConnectedCount(room) >= capacity) {
+    if (isKnownMember) {
+      room.capacity = Math.min(MAX_PEERS, Math.max(capacity, uniqueConnectedCount(room) + 1));
+      capacity = room.capacity;
+    } else {
+      return res.status(409).json({
+        error: "room_full",
+        message: "Lobby ist voll — jemand kann weitere Plätze freischalten.",
+      });
+    }
+  }
+  rememberMember(room, ctx.user.id);
+  healRoomMembership(room);
+  capacity = roomCapacity(room);
+  cancelEmptyFreeLobbyTimer(code);
+  touchRoom(room);
+  persistRooms();
+  const isHost = Boolean(room.hostUserId && ctx.user.id === room.hostUserId);
+  const suggestedColorIndex = assignRoomColor(room, ctx.user.id, isHost);
+  const roster = roomRosterAll(room);
   return res.json({
     token: room.token,
-    peers: room.sockets.size,
+    peers: uniqueConnectedCount(room),
     capacity,
     maxPeers: MAX_PEERS,
     name: room.name || "Lobby",
     hostNickname: room.hostNickname || "Host",
+    hostUserId: room.hostUserId || null,
     isFree: Boolean(room.isFree),
+    hostColorSide: normalizeHostColorSide(room.hostColorSide),
+    suggestedColorIndex,
+    members: roster.map((m) => m.nickname),
+    memberList: roster,
     ...inviteFor(code),
   });
 });
@@ -815,7 +3050,14 @@ app.get("/v1/rooms/:code/preview", (req, res) => {
   const code = String(req.params.code || "")
     .toUpperCase()
     .replace(/^LUV-/, "");
-  const room = rooms.get(code);
+  let room = rooms.get(code);
+  if (!room) {
+    const saved = getDb().rooms?.[code];
+    if (saved) {
+      room = hydrateRoom(code, saved);
+      rooms.set(code, room);
+    }
+  }
   if (!room) return res.status(404).json({ error: "room_not_found", message: "Lobby nicht gefunden." });
   return res.json(publicRoom(room, code));
 });
@@ -829,24 +3071,283 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+app.get("/v1/share-line", (_req, res) => {
+  return res.json({ line: pickShareLine() });
+});
+
+app.get("/v1/public-canvases/random", (_req, res) => {
+  const entry = pickRandomPublicCanvas();
+  if (!entry) return res.json({ available: false });
+  return res.json({
+    available: true,
+    id: entry.id,
+    lobbyName: entry.lobbyName || "Lobby",
+    hostNickname: entry.hostNickname || "Jemand",
+    memberNicknames: Array.isArray(entry.memberNicknames) ? entry.memberNicknames : [],
+    nameLine: entry.nameLine || splashNameLine(entry),
+    imageUrl: `/v1/public-canvases/${entry.id}/image`,
+    createdAt: entry.createdAt,
+    expiresAt: entry.expiresAt || Number(entry.createdAt) + PUBLIC_TTL_MS,
+  });
+});
+
+app.get("/v1/public-canvases/:id/image", (req, res) => {
+  const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  if (!id) return res.status(404).end();
+  // Offene/gelöschte Meldungen: Datei ggf. noch für Admin-Review
+  const entry = publicCanvases()[id];
+  let fileName = entry?.file;
+  if (!fileName) {
+    const report = Object.values(publicReports()).find(
+      (r) => r.publicId === id && r.file
+    );
+    fileName = report?.file;
+  }
+  if (!fileName) return res.status(404).end();
+  const created = Number(entry?.createdAt) || 0;
+  if (entry && created > 0 && Date.now() - created > PUBLIC_TTL_MS) {
+    return res.status(404).end();
+  }
+  const filePath = path.join(PUBLIC_DIR, path.basename(fileName));
+  if (!fs.existsSync(filePath)) return res.status(404).end();
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "public, max-age=600");
+  return fs.createReadStream(filePath).pipe(res);
+});
+
+/** Nutzer meldet eine öffentliche Community-Leinwand */
+app.post("/v1/public-canvases/:id/report", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const publicId = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  if (!publicId) return res.status(400).json({ error: "bad_id" });
+  const entry = publicCanvases()[publicId];
+  if (!entry?.file) {
+    return res.status(404).json({
+      error: "not_found",
+      message: "Bild nicht mehr verfügbar.",
+    });
+  }
+  const reports = publicReports();
+  const already = Object.values(reports).find(
+    (r) =>
+      r.publicId === publicId &&
+      r.reporterUserId === ctx.user.id &&
+      (r.status || "open") === "open"
+  );
+  if (already) {
+    return res.json({ ok: true, already: true, report: publicReportView(already) });
+  }
+  const report = {
+    id: newId("rep"),
+    publicId,
+    status: "open",
+    reportedAt: Date.now(),
+    reporterUserId: ctx.user.id,
+    reporterNickname: ctx.user.nickname || "Jemand",
+    lobbyName: entry.lobbyName || "Lobby",
+    hostNickname: entry.hostNickname || "Jemand",
+    nameLine: entry.nameLine || splashNameLine(entry),
+    hostUserId: entry.hostUserId || null,
+    file: entry.file,
+  };
+  reports[report.id] = report;
+  scheduleSave();
+  return res.status(201).json({ ok: true, report: publicReportView(report) });
+});
+
+app.get("/v1/admin/public-reports", (req, res) => {
+  const ctx = requireAdmin(req, res);
+  if (!ctx) return;
+  const list = Object.values(publicReports())
+    .filter((r) => (r.status || "open") === "open")
+    .sort((a, b) => Number(b.reportedAt) - Number(a.reportedAt))
+    .slice(0, 80)
+    .map(publicReportView);
+  return res.json({ reports: list });
+});
+
+app.post("/v1/admin/public-reports/:id/keep", (req, res) => {
+  const ctx = requireAdmin(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  const report = publicReports()[id];
+  if (!report) return res.status(404).json({ error: "not_found" });
+  report.status = "kept";
+  report.resolvedAt = Date.now();
+  report.resolvedBy = ctx.user.id;
+  scheduleSave();
+  return res.json({ ok: true, report: publicReportView(report) });
+});
+
+app.post("/v1/admin/public-reports/:id/delete", (req, res) => {
+  const ctx = requireAdmin(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  const report = publicReports()[id];
+  if (!report) return res.status(404).json({ error: "not_found" });
+  const publicId = report.publicId;
+  const entry = publicCanvases()[publicId];
+  const fileMeta = entry || report;
+  deletePublicCanvasFile(fileMeta);
+  if (entry) {
+    delete publicCanvases()[publicId];
+  }
+  report.status = "deleted";
+  report.resolvedAt = Date.now();
+  report.resolvedBy = ctx.user.id;
+  // Andere offene Meldungen zum selben Bild schließen
+  for (const r of Object.values(publicReports())) {
+    if (r.publicId === publicId && (r.status || "open") === "open") {
+      r.status = "deleted";
+      r.resolvedAt = Date.now();
+      r.resolvedBy = ctx.user.id;
+    }
+  }
+  let banned = false;
+  const hostId = report.hostUserId || entry?.hostUserId;
+  if (hostId) {
+    const host = getDb().users[hostId];
+    if (host && host.role !== "admin") {
+      host.publicDeletedCount = Math.max(0, Number(host.publicDeletedCount) || 0) + 1;
+      if (host.publicDeletedCount >= PUBLIC_DELETE_BAN_THRESHOLD) {
+        banUserForPublicDeletes(host);
+        banned = true;
+      }
+    }
+  }
+  scheduleSave();
+  return res.json({
+    ok: true,
+    banned,
+    publicDeletedCount: hostId
+      ? Math.max(0, Number(getDb().users[hostId]?.publicDeletedCount) || 0)
+      : 0,
+    report: publicReportView(report),
+  });
+});
+
+/** Landing /luv — OG-Preview mit zufälligem cozy Spruch (für WhatsApp & Co.). */
+function serveLandingHtml(req, res) {
+  const line = pickShareLine();
+  const picked = pickRandomPublicCanvas();
+  const ogImage = picked
+    ? publicCanvasImageUrl(picked.id)
+    : "https://reineke.pro/downloads/luv/og.jpg?v=1813";
+  const ogType = picked ? "image/png" : "image/jpeg";
+  const description = landingShareDescription(line, picked);
+  const imageAlt = picked
+    ? publicCanvasCredit(picked)
+    : "LUV — Nähe, die mitgeht";
+  const title = "LUV — Nähe, die mitgeht";
+  const indexPath = path.join(WEB_DIR, "index.html");
+  let html = "";
+  try {
+    html = fs.readFileSync(indexPath, "utf8");
+  } catch {
+    html = `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8" /><title>${escapeHtml(
+      title
+    )}</title></head><body><p>LUV</p></body></html>`;
+  }
+  html = html
+    .replace(/href="styles\.css"/g, 'href="/luv/styles.css"')
+    .replace(/src="app\.js"/g, 'src="/luv/app.js"')
+    .replace(
+      /<meta name="description" content="[^"]*"\s*\/?>/i,
+      `<meta name="description" content="${escapeHtml(description)}" />`
+    );
+  if (!/property="og:description"/i.test(html)) {
+    const og = `
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="LUV" />
+  <meta property="og:url" content="https://reineke.pro/luv/" />
+  <meta property="og:title" content="${escapeHtml(title)}" />
+  <meta property="og:description" content="${escapeHtml(description)}" />
+  <meta property="og:image" content="${ogImage}" />
+  <meta property="og:image:secure_url" content="${ogImage}" />
+  <meta property="og:image:alt" content="${escapeHtml(imageAlt)}" />
+  <meta property="og:image:type" content="${ogType}" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="1200" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${escapeHtml(title)}" />
+  <meta name="twitter:description" content="${escapeHtml(description)}" />
+  <meta name="twitter:image" content="${ogImage}" />
+  <meta name="twitter:image:alt" content="${escapeHtml(imageAlt)}" />`;
+    html = html.replace(/<\/head>/i, `${og}\n</head>`);
+  } else {
+    html = html
+      .replace(
+        /property="og:description" content="[^"]*"/i,
+        `property="og:description" content="${escapeHtml(description)}"`
+      )
+      .replace(
+        /name="twitter:description" content="[^"]*"/i,
+        `name="twitter:description" content="${escapeHtml(description)}"`
+      )
+      .replace(
+        /property="og:image" content="[^"]*"/gi,
+        `property="og:image" content="${ogImage}"`
+      )
+      .replace(
+        /property="og:image:secure_url" content="[^"]*"/i,
+        `property="og:image:secure_url" content="${ogImage}"`
+      )
+      .replace(
+        /name="twitter:image" content="[^"]*"/i,
+        `name="twitter:image" content="${ogImage}"`
+      );
+    if (/property="og:image:alt"/i.test(html)) {
+      html = html.replace(
+        /property="og:image:alt" content="[^"]*"/i,
+        `property="og:image:alt" content="${escapeHtml(imageAlt)}"`
+      );
+    } else {
+      html = html.replace(
+        /(<meta property="og:image" content="[^"]*"\s*\/?>)/i,
+        `$1\n  <meta property="og:image:alt" content="${escapeHtml(imageAlt)}" />`
+      );
+    }
+  }
+  res.status(200).type("html").send(html);
+}
+
+app.get("/", serveLandingHtml);
+app.get("/landing", serveLandingHtml);
+
 /** WhatsApp / Social Preview + Deep-Link Landing für /luv/j/:code */
 app.get("/invite/:code", (req, res) => {
   const code = String(req.params.code || "")
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "");
   const room = rooms.get(code);
-  const lobbyName = room?.name || "Lobby";
   const host = room?.hostNickname || "Jemand";
   const joinUrl = `https://reineke.pro/luv/j/${code}`;
   const deep = code ? `luv://join/${code}` : "https://reineke.pro/luv/";
-  const ogImage = "https://reineke.pro/downloads/luv/og.jpg";
+  const picked = pickRandomPublicCanvas();
+  const ogImage = picked
+    ? publicCanvasImageUrl(picked.id)
+    : "https://reineke.pro/downloads/luv/og.jpg?v=1813";
+  const ogType = picked ? "image/png" : "image/jpeg";
+  const imageAlt = picked
+    ? publicCanvasCredit(picked)
+    : "LUV — Nähe, die mitgeht";
   const title = room
-    ? `${host} lädt dich zu LUV ein`
-    : "LUV — gemeinsam zeichnen";
+    ? `${host} will mit dir verbunden sein`
+    : "LUV — Nähe, die mitgeht";
   const description = room
-    ? `Zeichnet zusammen in „${lobbyName}“. Live auf dem Sperrbildschirm — tippe zum Öffnen.`
-    : "Gemeinsam zeichnen. Live. Nur für euch.";
+    ? inviteShareDescription(host, picked)
+    : landingShareDescription(pickShareLine(), picked);
+  const inviteLede = room
+    ? invitePublicBlurb(room, host)
+    : "Diese Verbindung ist gerade still. Der Host muss online sein — dann seid ihr wieder nah.";
   const found = Boolean(room);
+  const previewBlock = picked
+    ? `<figure class="public-preview">
+      <img src="${escapeHtml(ogImage)}" alt="${escapeHtml(imageAlt)}" width="1200" height="1200" loading="lazy" />
+      <figcaption>${escapeHtml(imageAlt)}</figcaption>
+    </figure>`
+    : "";
 
   // Immer 200 — WhatsApp/Link-Preview crawlen keine 404-Seiten für OG-Tags
   res
@@ -867,24 +3368,59 @@ app.get("/invite/:code", (req, res) => {
   <meta property="og:description" content="${escapeHtml(description)}" />
   <meta property="og:image" content="${ogImage}" />
   <meta property="og:image:secure_url" content="${ogImage}" />
-  <meta property="og:image:type" content="image/jpeg" />
+  <meta property="og:image:alt" content="${escapeHtml(imageAlt)}" />
+  <meta property="og:image:type" content="${ogType}" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="1200" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="${escapeHtml(title)}" />
   <meta name="twitter:description" content="${escapeHtml(description)}" />
   <meta name="twitter:image" content="${ogImage}" />
+  <meta name="twitter:image:alt" content="${escapeHtml(imageAlt)}" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/luv/styles.css" />
   <style>
     .join-stage { min-height: 100dvh; display: grid; place-content: center; padding: 2rem 1.25rem; text-align: center; }
-    .join-stage .brand { font-family: Fraunces, serif; font-size: clamp(3rem, 10vw, 5rem); letter-spacing: 0.12em; margin: 0; }
+    .join-stage .brand { font-family: Fraunces, serif; font-size: clamp(3rem, 10vw, 5rem); letter-spacing: 0.12em; margin: 0; color: #f4f1ec; }
+    .join-stage .brand .c-l { color: #00b7e4; }
+    .join-stage .brand .c-u {
+      display: inline-block;
+      background: linear-gradient(90deg, #00b7e4 0%, #c218a8 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+    }
+    .join-stage .brand .c-v { color: #c218a8; }
     .join-stage .headline { font-family: Fraunces, serif; font-weight: 500; font-size: clamp(1.4rem, 4vw, 2rem); margin: 1rem 0 0.5rem; }
-    .join-stage .lede { opacity: 0.72; max-width: 28rem; margin: 0 auto 1.75rem; line-height: 1.5; }
+    .join-stage .lede { opacity: 0.72; max-width: 28rem; margin: 0 auto 1.25rem; line-height: 1.5; }
     .join-stage .cta-row { display: flex; flex-direction: column; gap: 0.85rem; align-items: center; }
     .join-stage .download { text-decoration: none; }
+    .public-preview {
+      margin: 0 auto 1.5rem;
+      max-width: min(22rem, 88vw);
+      border-radius: 1.1rem;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(0,0,0,0.28);
+    }
+    .public-preview img {
+      display: block;
+      width: 100%;
+      height: auto;
+      aspect-ratio: 1;
+      object-fit: cover;
+    }
+    .public-preview figcaption {
+      font-family: Outfit, system-ui, sans-serif;
+      font-size: 0.78rem;
+      line-height: 1.35;
+      padding: 0.7rem 0.85rem 0.85rem;
+      color: rgba(244,241,236,0.78);
+      text-align: left;
+    }
   </style>
 </head>
 <body>
@@ -894,17 +3430,14 @@ app.get("/invite/:code", (req, res) => {
     <div class="grain"></div>
   </div>
   <main class="join-stage">
-    <p class="brand">LUV</p>
-    <h1 class="headline">${escapeHtml(found ? `${host} lädt dich ein` : "Einladung")}</h1>
-    <p class="lede">${escapeHtml(
-      found
-        ? `Lobby „${lobbyName}“ — tippe auf Öffnen, dann beitreten oder ablehnen.`
-        : "Diese Lobby ist gerade nicht erreichbar. Host muss online sein."
-    )}</p>
+    <p class="brand" aria-label="LUV"><span class="c-l">L</span><span class="c-u">U</span><span class="c-v">V</span></p>
+    <h1 class="headline">${escapeHtml(found ? `${host} will mit dir verbunden sein` : "Einladung")}</h1>
+    <p class="lede">${escapeHtml(inviteLede)}</p>
+    ${previewBlock}
     <div class="cta-row">
       <a class="download" id="openApp" href="${escapeHtml(deep)}">
-        <span class="download-label">In LUV öffnen</span>
-        <span class="download-meta">Einladung ansehen</span>
+        <span class="download-label">Jetzt verbinden</span>
+        <span class="download-meta">Einladung öffnen</span>
       </a>
       <a class="download" href="https://reineke.pro/downloads/luv/LUV.apk" download="LUV.apk" style="opacity:.9">
         <span class="download-label">App herunterladen</span>
@@ -928,9 +3461,260 @@ app.get("/v1/rooms/:code", (req, res) => {
   const code = String(req.params.code || "")
     .toUpperCase()
     .replace(/^LUV-/, "");
-  const room = rooms.get(code);
+  let room = rooms.get(code);
+  if (!room) {
+    const saved = getDb().rooms?.[code];
+    if (saved) {
+      room = hydrateRoom(code, saved);
+      rooms.set(code, room);
+    }
+  }
   if (!room) return res.status(404).json({ error: "room_not_found" });
   return res.json(publicRoom(room, code));
+});
+
+/** Host: Lobby umbenennen — sync an alle verbundenen Clients */
+app.patch("/v1/rooms/:code", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  let room = rooms.get(code);
+  if (!room) {
+    const saved = getDb().rooms?.[code];
+    if (saved) {
+      room = hydrateRoom(code, saved);
+      rooms.set(code, room);
+    } else {
+      const meta = ctx.user.hostedRooms?.[code];
+      if (meta) {
+        room = hydrateRoom(code, {
+          token: meta.token,
+          hostUserId: ctx.user.id,
+          name: meta.name || "Lobby",
+          hostNickname: ctx.user.nickname || "Host",
+          isFree: Boolean(meta.isFree),
+          capacity: meta.capacity,
+          hostColorSide: meta.hostColorSide,
+          colorByUserId: meta.colorByUserId,
+        });
+        rooms.set(code, room);
+      }
+    }
+  }
+  if (!room) {
+    return res.status(404).json({ error: "room_not_found", message: "Lobby nicht gefunden." });
+  }
+  if (room.hostUserId !== ctx.user.id) {
+    return res.status(403).json({ error: "not_host", message: "Nur der Host kann umbenennen." });
+  }
+  const name = String(req.body?.name || "").trim().slice(0, MAX_LOBBY_NAME_LENGTH);
+  if (!name) {
+    return res.status(400).json({ error: "bad_name", message: "Name fehlt." });
+  }
+  room.name = name;
+  ensureHostedRooms(ctx.user);
+  if (ctx.user.hostedRooms[code]) {
+    ctx.user.hostedRooms[code].name = name;
+  }
+  touchRoom(room);
+  persistRooms();
+  scheduleSave();
+  broadcastRoom(room, { type: "lobby_rename", name });
+  return res.json({
+    name,
+    ...inviteFor(code),
+  });
+});
+
+/** Host: Lobby bewusst wiederherstellen (z. B. nach Deploy) */
+app.post("/v1/rooms/:code/ensure", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  const token = String(req.body?.token || "").trim();
+  const room = resolveRoom(code, token, ctx.user);
+  if (!room) {
+    return res.status(404).json({
+      error: "room_not_found",
+      message: "Lobby konnte nicht wiederhergestellt werden.",
+    });
+  }
+  healRoomMembership(room);
+  const roster = roomRosterAll(room);
+  return res.json({
+    token: room.token,
+    peers: uniqueConnectedCount(room),
+    capacity: roomCapacity(room),
+    maxPeers: MAX_PEERS,
+    name: room.name || "Lobby",
+    hostNickname: room.hostNickname || "Host",
+    isFree: Boolean(room.isFree),
+    hostColorSide: normalizeHostColorSide(room.hostColorSide),
+    members: roster.map((m) => m.nickname),
+    memberList: roster,
+    ...inviteFor(code),
+  });
+});
+
+function roomForAuth(code, token, user) {
+  const clean = String(code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  let room = rooms.get(clean) || resolveRoom(clean, token, user);
+  if (!room) {
+    const saved = getDb().rooms?.[clean];
+    if (saved) {
+      room = hydrateRoom(clean, saved);
+      rooms.set(clean, room);
+    }
+  }
+  return room ? { code: clean, room } : null;
+}
+
+function memoryPublic(code, entry) {
+  if (!entry?.file || !entry.releasedAt) return null;
+  const expiresAt = Number(entry.releasedAt) + MEMORY_TTL_MS;
+  if (Date.now() > expiresAt) return null;
+  return {
+    code,
+    lobbyName: entry.lobbyName || "Lobby",
+    releasedAt: entry.releasedAt,
+    expiresAt,
+    imageUrl: `/v1/rooms/${code}/memory/image`,
+  };
+}
+
+/** Client lädt ein Abbild der Leinwand hoch (PNG base64) — bleibt bis Release, dann 24h. */
+app.post("/v1/rooms/:code/canvas-snapshot", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const token = String(req.body?.token || "").trim();
+  const found = roomForAuth(req.params.code, token, ctx.user);
+  if (!found) return res.status(404).json({ error: "room_not_found" });
+  const { code, room } = found;
+  if (token && room.token !== token && room.hostUserId !== ctx.user.id) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  rememberMember(room, ctx.user.id);
+  const b64 = String(req.body?.imageBase64 || "").replace(/^data:image\/\w+;base64,/, "");
+  if (!b64 || b64.length < 80 || b64.length > 6_000_000) {
+    return res.status(400).json({ error: "bad_image" });
+  }
+  let buf;
+  try {
+    buf = Buffer.from(b64, "base64");
+  } catch {
+    return res.status(400).json({ error: "bad_image" });
+  }
+  if (buf.length < 64 || buf.length > 4_500_000) {
+    return res.status(400).json({ error: "bad_image" });
+  }
+  ensureSnapshotDir();
+  const fileName = `${code}.png`;
+  const filePath = path.join(SNAPSHOT_DIR, fileName);
+  fs.writeFileSync(filePath, buf);
+  const mem = canvasMemories();
+  const prev = mem[code] || {};
+  mem[code] = {
+    file: fileName,
+    updatedAt: Date.now(),
+    lobbyName: room.name || prev.lobbyName || "Lobby",
+    // Neues Abbild vor Release überschreibt — releasedAt bleibt bis Cleanup
+    releasedAt: prev.releasedAt || null,
+  };
+  // Frisches Bild vor Ablauf: wenn noch nicht released, nur speichern
+  scheduleSave();
+  persistRooms();
+  return res.json({ ok: true, updatedAt: mem[code].updatedAt });
+});
+
+/** Aktivität auf der Leinwand melden (Presence / Öffnen). */
+app.post("/v1/rooms/:code/canvas-touch", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const token = String(req.body?.token || "").trim();
+  const found = roomForAuth(req.params.code, token, ctx.user);
+  if (!found) return res.status(404).json({ error: "room_not_found" });
+  const { code, room } = found;
+  rememberMember(room, ctx.user.id);
+  touchCanvasActivity(room, room.sockets.size);
+  // Bei neuer Aktivität: pending Release zurücknehmen, wenn wieder jemand malt
+  const mem = canvasMemories();
+  if (mem[code]?.releasedAt) {
+    // Nach Release bleibt das Abbild 24h zum Teilen — nicht löschen.
+  }
+  return res.json({
+    ok: true,
+    lastCanvasAt: room.lastCanvasAt,
+    peakPeers: room.peakPeers || 1,
+    coupleMode: (room.peakPeers || 1) <= 2,
+  });
+});
+
+app.get("/v1/rooms/:code/memory", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const token = String(req.query?.token || req.headers["x-room-token"] || "").trim();
+  const found = roomForAuth(req.params.code, token, ctx.user);
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  const room = found?.room || rooms.get(code) || null;
+  if (room) maybeReleaseMemory(code, room);
+  const pub = memoryPublic(code, canvasMemories()[code]);
+  if (!pub) return res.json({ available: false });
+  return res.json({ available: true, ...pub });
+});
+
+app.get("/v1/rooms/:code/memory/image", (req, res) => {
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  const entry = canvasMemories()[code];
+  const pub = memoryPublic(code, entry);
+  if (!pub || !entry?.file) return res.status(404).end();
+  const filePath = path.join(SNAPSHOT_DIR, path.basename(entry.file));
+  if (!fs.existsSync(filePath)) return res.status(404).end();
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "private, max-age=300");
+  return fs.createReadStream(filePath).pipe(res);
+});
+
+app.get("/v1/me/memories", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  cleanupCanvasMemories();
+  const codes = new Set();
+  for (const code of Object.keys(ctx.user.hostedRooms || {})) codes.add(code);
+  for (const [code, room] of rooms.entries()) {
+    if (Array.isArray(room.memberUserIds) && room.memberUserIds.includes(ctx.user.id)) {
+      codes.add(code);
+    }
+  }
+  for (const [code, data] of Object.entries(getDb().rooms || {})) {
+    if (Array.isArray(data.memberUserIds) && data.memberUserIds.includes(ctx.user.id)) {
+      codes.add(code);
+    }
+  }
+  const list = [];
+  for (const code of codes) {
+    let room = rooms.get(code);
+    if (!room) {
+      const saved = getDb().rooms?.[code];
+      if (saved) {
+        room = hydrateRoom(code, saved);
+        rooms.set(code, room);
+      }
+    }
+    if (room) maybeReleaseMemory(code, room);
+    const pub = memoryPublic(code, canvasMemories()[code]);
+    if (pub) list.push(pub);
+  }
+  return res.json({ memories: list });
 });
 
 const server = http.createServer(app);
@@ -945,16 +3729,44 @@ wss.on("connection", (socket, req) => {
   const role = String(url.searchParams.get("role") || "peer");
   const sessionToken = String(url.searchParams.get("session") || "");
   const user = userFromSessionToken(sessionToken);
+  if (user?.banned) {
+    socket.close(4403, "banned");
+    return;
+  }
 
-  const room = rooms.get(code);
-  if (!room || room.token !== token) {
+  const room = resolveRoom(code, token, user);
+  if (!room) {
     socket.close(4401, "unauthorized");
     return;
   }
-  const capacity = roomCapacity(room);
-  if (room.sockets.size >= capacity) {
-    socket.close(4409, "room_full");
-    return;
+  // Reconnect: alten Socket desselben Users ersetzen (kein Doppelplatz)
+  if (user?.id) {
+    evictSocketsForUser(room, user.id);
+  }
+  healRoomMembership(room);
+  let capacity = roomCapacity(room);
+  if ((Number(room.capacity) || 0) < capacity) {
+    room.capacity = capacity;
+  }
+  const others = uniqueConnectedCount(room);
+  const isKnownMember = Boolean(
+    user?.id &&
+      ((Array.isArray(room.memberUserIds) && room.memberUserIds.includes(user.id)) ||
+        room.hostUserId === user.id)
+  );
+  if (others >= capacity) {
+    if (isKnownMember) {
+      // Bekanntes Mitglied nie aussperren — Platz nachziehen
+      room.capacity = Math.min(MAX_PEERS, Math.max(capacity, others + 1));
+      capacity = room.capacity;
+      persistRooms();
+    } else {
+      console.log(
+        `ws room_full code=${code} others=${others} cap=${capacity} user=${user?.id || "?"}`
+      );
+      socket.close(4409, "room_full");
+      return;
+    }
   }
   if (user?.nickname && room.hostUserId && user.id === room.hostUserId) {
     room.hostNickname = user.nickname;
@@ -963,28 +3775,93 @@ wss.on("connection", (socket, req) => {
   const peerId = `${role}-${crypto.randomBytes(4).toString("hex")}`;
   socket.luvPeerId = peerId;
   socket.luvUserId = user?.id || null;
-  socket.luvNickname = user?.nickname || null;
+  socket.luvNickname =
+    String(user?.nickname || "")
+      .trim()
+      .slice(0, 18) || "Jemand";
   socket.luvCanDraw = true;
+  socket.luvCanvasActive = false;
+  const isHost = Boolean(user && room.hostUserId && user.id === room.hostUserId);
+  const suggestedColorIndex = assignRoomColor(room, user?.id || null, isHost);
+  socket.luvColorIndex = suggestedColorIndex;
   room.sockets.set(peerId, socket);
+  cancelEmptyFreeLobbyTimer(code);
+  rememberMember(room, user?.id);
+  healRoomMembership(room);
+  capacity = roomCapacity(room);
+  const announceJoin = claimJoinAnnouncement(room, user?.id);
+  const memberList = roomRosterAll(room);
+  const connectedNow = memberList.filter((m) => m.online).length;
+  room.peakPeers = Math.max(Number(room.peakPeers) || 1, connectedNow);
+  touchRoom(room);
+  persistRooms();
 
   socket.send(
     JSON.stringify({
       type: "welcome",
       code,
       peerId,
-      peers: room.sockets.size,
+      peers: connectedNow,
+      count: connectedNow,
       capacity,
       maxPeers: MAX_PEERS,
       name: room.name || "Lobby",
       hostNickname: room.hostNickname || "Host",
+      hostUserId: room.hostUserId || null,
       isFree: Boolean(room.isFree),
       userId: user?.id || null,
+      hostColorSide: normalizeHostColorSide(room.hostColorSide),
+      suggestedColorIndex,
+      peakPeers: room.peakPeers || 1,
+      coupleMode: (room.peakPeers || 1) <= 2,
+      members: memberList.map((m) => m.nickname),
+      memberList,
+      // Client kann veraltetes Token angleichen (verhindert Split-Lobbys)
+      token: room.token || null,
     })
   );
+  // Leinwand-Historie nach Welcome — überlebt App-/Server-Updates
+  sendCanvasHistory(socket, room, code);
+  // Offene Public-Abstimmung: erst relevant, wenn die Person die Leinwand öffnet (presence)
+  if (room.publicProposal?.status === "capturing") {
+    sendPublicVoteOpen(socket, room, code);
+  }
+  // Offene Clear-Abstimmung nachreichen (Quorum bleibt bei 2 Ja)
+  if (room.clearProposal?.status === "open") {
+    sendClearVoteOpen(socket, room);
+  }
+  // Nur beim allerersten Beitritt — nicht bei Offline/Reconnect
+  if (announceJoin) {
+    const joinedList = roomRosterAll(room);
+    const joinedOnline = joinedList.filter((m) => m.online).length;
+    broadcastRoom(
+      room,
+      {
+        type: "peer_joined",
+        nickname: socket.luvNickname || "Jemand",
+        userId: user?.id || null,
+        peers: joinedOnline,
+        count: joinedOnline,
+        capacity,
+        members: joinedList.map((m) => m.nickname),
+        memberList: joinedList,
+        firstJoin: true,
+      },
+      socket
+    );
+  }
   broadcastPeerCount(room);
+  console.log(
+    `ws join code=${code} peer=${peerId} user=${user?.id || "?"} nick=${socket.luvNickname} members=${connectedNow}`
+  );
+
+  socket.on("error", (err) => {
+    // Muss gehandelt werden — sonst crasht der ganze Node-Prozess (MASK-Fehler etc.)
+    console.warn(`ws error code=${code} peer=${peerId}:`, err?.message || err);
+  });
 
   socket.on("message", (data) => {
-    const text = typeof data === "string" ? data : data.toString("utf8");
+    let text = typeof data === "string" ? data : data.toString("utf8");
     let json;
     try {
       json = JSON.parse(text);
@@ -992,6 +3869,49 @@ wss.on("connection", (socket, req) => {
       return;
     }
     const type = json?.type;
+
+    if (type === "presence" || type === "recolor") {
+      rememberSocketColor(room, socket, user, json.colorIndex);
+    }
+
+    if (type === "presence") {
+      const wasActive = Boolean(socket.luvCanvasActive);
+      socket.luvCanvasActive = json.active === true;
+      if (socket.luvNickname && !json.nickname) {
+        json.nickname = socket.luvNickname;
+      } else if (json.nickname) {
+        socket.luvNickname = String(json.nickname).trim().slice(0, 18) || socket.luvNickname;
+      }
+      // Stabile IDs für Clients — verhindert doppelte/fehlende Avatare
+      json.userId = socket.luvUserId || null;
+      json.peerKey = socket.luvUserId || socket.luvNickname || peerId;
+      if (Number.isFinite(Number(socket.luvColorIndex))) {
+        json.colorIndex = socket.luvColorIndex;
+      }
+      text = JSON.stringify(json);
+      if (room.publicProposal?.status === "open") {
+        const changed = syncPublicRequiredVoters(room);
+        if (socket.luvCanvasActive && user?.id) {
+          sendPublicVoteOpen(socket, room, code);
+        }
+        if (changed) {
+          const t = publicProposalTotals(room.publicProposal);
+          broadcastRoom(room, {
+            type: "public_vote_update",
+            proposalId: room.publicProposal.id,
+            yes: t.yes,
+            no: t.no,
+            total: t.total,
+            rewardCoins: room.publicProposal.rewardCoins || 1,
+          });
+          if (allRequiredYes(room.publicProposal)) {
+            maybeRequestPublicCapture(room, code);
+          }
+        } else if (wasActive !== socket.luvCanvasActive && allRequiredYes(room.publicProposal)) {
+          maybeRequestPublicCapture(room, code);
+        }
+      }
+    }
 
     if (type === "clear") {
       // Clients may not force-clear anymore — start proposal instead
@@ -1013,6 +3933,7 @@ wss.on("connection", (socket, req) => {
         );
         return;
       }
+      ensureDailyGrant(user);
       if ((user.coins || 0) < CLEAR_COST) {
         socket.send(
           JSON.stringify({
@@ -1025,13 +3946,16 @@ wss.on("connection", (socket, req) => {
       }
       const proposalId = newId("clr");
       applyLedger(user.id, -CLEAR_COST, "clear_canvas", proposalId);
+      const neededYes = clearVotesNeeded(room);
       room.clearProposal = {
         id: proposalId,
+        lobbyCode: code,
         byPeerId: peerId,
         byUserId: user.id,
         byNickname: String(json.nickname || user.nickname || "Jemand").slice(0, 18),
-        yes: [peerId],
-        no: [],
+        yesUserIds: [user.id],
+        noUserIds: [],
+        neededYes,
         status: "open",
         endsAt: Date.now() + CLEAR_VOTE_MS,
         charged: true,
@@ -1045,20 +3969,19 @@ wss.on("connection", (socket, req) => {
           user: publicUser(user),
         })
       );
-      broadcastRoom(room, {
-        type: "clear_vote_open",
-        proposalId,
-        by: room.clearProposal.byNickname,
-        byPeerId: peerId,
-        endsAt: room.clearProposal.endsAt,
-        yes: 1,
-        total: room.sockets.size,
-      });
+      for (const sock of room.sockets.values()) {
+        if (sock.readyState === 1) {
+          sock.send(JSON.stringify(clearVoteOpenPayload(room, room.clearProposal, sock.luvUserId || null)));
+        }
+      }
       setTimeout(() => {
         if (room.clearProposal?.id === proposalId && room.clearProposal.status === "open") {
           resolveClear(room, code);
         }
       }, CLEAR_VOTE_MS + 50);
+      if (clearYesEnough(room.clearProposal)) {
+        approveClear(room, code);
+      }
       return;
     }
 
@@ -1066,20 +3989,422 @@ wss.on("connection", (socket, req) => {
       const proposal = room.clearProposal;
       if (!proposal || proposal.status !== "open") return;
       if (proposal.id !== json.proposalId) return;
-      proposal.yes = proposal.yes.filter((id) => id !== peerId);
-      proposal.no = proposal.no.filter((id) => id !== peerId);
-      if (json.yes === true || json.vote === "yes") proposal.yes.push(peerId);
-      else proposal.no.push(peerId);
+      if (!user?.id) return;
+      proposal.yesUserIds = (proposal.yesUserIds || []).filter((id) => id !== user.id);
+      proposal.noUserIds = (proposal.noUserIds || []).filter((id) => id !== user.id);
+      if (json.yes === true || json.vote === "yes") proposal.yesUserIds.push(user.id);
+      else proposal.noUserIds.push(user.id);
+      const t = clearProposalTotals(proposal);
       broadcastRoom(room, {
         type: "clear_vote_update",
         proposalId: proposal.id,
-        yes: new Set(proposal.yes).size,
-        no: new Set(proposal.no).size,
-        total: room.sockets.size,
+        yes: t.yes,
+        no: t.no,
+        total: t.total,
       });
-      const voted = new Set([...proposal.yes, ...proposal.no]);
-      if (voted.size >= room.sockets.size) {
-        resolveClear(room, code);
+      if ((proposal.noUserIds || []).length > 0) {
+        rejectClear(room, code, "rejected");
+        return;
+      }
+      if (clearYesEnough(proposal)) {
+        approveClear(room, code);
+      }
+      return;
+    }
+
+    if (type === "public_propose") {
+      if (!user) {
+        socket.send(
+          JSON.stringify({
+            type: "public_blocked",
+            error: "unauthorized",
+            message: "Zum Teilen musst du angemeldet sein.",
+          })
+        );
+        return;
+      }
+      if (room.publicProposal?.status === "open" || room.publicProposal?.status === "capturing") {
+        const canRestart =
+          user.id === room.hostUserId || user.id === room.publicProposal.byUserId;
+        if (!canRestart) {
+          socket.send(
+            JSON.stringify({
+              type: "public_blocked",
+              error: "busy",
+              message: "Abstimmung läuft schon.",
+            })
+          );
+          return;
+        }
+        // Festhängende / alte Abstimmung überschreiben — alle werden neu gefragt
+        rejectPublicShare(room, code, "restarted");
+      }
+      const state = getPublicShareState(room);
+      if (state.nextAt && Date.now() < state.nextAt) {
+        const mins = Math.max(1, Math.ceil((state.nextAt - Date.now()) / 60000));
+        socket.send(
+          JSON.stringify({
+            type: "public_blocked",
+            error: "cooldown",
+            message: `Öffentlich teilen geht in etwa ${mins} Min. wieder.`,
+            nextAt: state.nextAt,
+          })
+        );
+        return;
+      }
+      const rewardPreview = publicShareRewardForCount(state.count);
+      const proposalId = newId("pubv");
+      // Initiator ist gerade auf der Leinwand
+      socket.luvCanvasActive = true;
+      const requiredUserIds = buildPublicRequiredVoters(room, user.id);
+      room.publicProposal = {
+        id: proposalId,
+        lobbyCode: code,
+        byPeerId: peerId,
+        byUserId: user.id,
+        byNickname: String(json.nickname || user.nickname || "Jemand").slice(0, 18),
+        yesUserIds: [user.id],
+        noUserIds: [],
+        requiredUserIds,
+        status: "open",
+        endsAt: Date.now() + PUBLIC_VOTE_MS,
+        rewardCoins: rewardPreview.coins,
+      };
+      broadcastPublicVoteOpen(room);
+      setTimeout(() => {
+        if (
+          room.publicProposal?.id === proposalId &&
+          (room.publicProposal.status === "open" || room.publicProposal.status === "capturing")
+        ) {
+          resolvePublicShare(room, code);
+        }
+      }, PUBLIC_VOTE_MS + 50);
+      if (allRequiredYes(room.publicProposal)) {
+        maybeRequestPublicCapture(room, code);
+      }
+      return;
+    }
+
+    if (type === "public_vote") {
+      const proposal = room.publicProposal;
+      if (!proposal || proposal.status !== "open") return;
+      if (proposal.id !== json.proposalId) return;
+      if (!user?.id) return;
+      // Wer abstimmt, ist auf der Leinwand
+      socket.luvCanvasActive = true;
+      syncPublicRequiredVoters(room);
+      if (!proposal.requiredUserIds.includes(user.id)) {
+        // Nicht (mehr) auf der Leinwand / nicht erforderlich
+        return;
+      }
+      proposal.yesUserIds = (proposal.yesUserIds || []).filter((id) => id !== user.id);
+      proposal.noUserIds = (proposal.noUserIds || []).filter((id) => id !== user.id);
+      if (json.yes === true || json.vote === "yes") proposal.yesUserIds.push(user.id);
+      else proposal.noUserIds.push(user.id);
+      const t = publicProposalTotals(proposal);
+      broadcastRoom(room, {
+        type: "public_vote_update",
+        proposalId: proposal.id,
+        yes: t.yes,
+        no: t.no,
+        total: t.total,
+        rewardCoins: proposal.rewardCoins || 1,
+      });
+      if ((proposal.noUserIds || []).length > 0) {
+        rejectPublicShare(room, code, "rejected");
+        return;
+      }
+      if (allRequiredYes(proposal)) {
+        maybeRequestPublicCapture(room, code);
+      }
+      return;
+    }
+
+    if (type === "public_capture") {
+      const proposal = room.publicProposal;
+      if (!proposal || proposal.status !== "capturing") return;
+      if (proposal.id !== json.proposalId) return;
+      const b64 = String(json.imageBase64 || "").replace(/^data:image\/\w+;base64,/, "");
+      if (!b64 || b64.length < 80 || b64.length > 6_000_000) {
+        socket.send(
+          JSON.stringify({
+            type: "public_blocked",
+            error: "bad_image",
+            message: "Leinwand-Abbild fehlt oder ist zu groß.",
+          })
+        );
+        return;
+      }
+      let imageBuf;
+      try {
+        imageBuf = Buffer.from(b64, "base64");
+      } catch {
+        socket.send(
+          JSON.stringify({
+            type: "public_blocked",
+            error: "bad_image",
+            message: "Leinwand-Abbild ungültig.",
+          })
+        );
+        return;
+      }
+      if (imageBuf.length < 64 || imageBuf.length > 4_500_000) {
+        socket.send(
+          JSON.stringify({
+            type: "public_blocked",
+            error: "bad_image",
+            message: "Leinwand-Abbild ungültig.",
+          })
+        );
+        return;
+      }
+      finishPublicShare(room, code, imageBuf);
+      return;
+    }
+
+    if (type === "game_start") {
+      const gameType = String(json.game || "").toLowerCase();
+      const allowed =
+        gameType === "ttt" ||
+        gameType === "words" ||
+        Games.isInteractive(gameType);
+      if (!allowed) return;
+      if (!user) {
+        socket.send(
+          JSON.stringify({
+            type: "economy_block",
+            error: "unauthorized",
+            message: "Zum Spielen musst du angemeldet sein.",
+          })
+        );
+        return;
+      }
+      ensureDailyGrant(user);
+      if ((user.coins || 0) < GAME_COST) {
+        socket.send(
+          JSON.stringify({
+            type: "economy_block",
+            error: "no_coins",
+            message: `Spiel starten kostet ${GAME_COST} Coin.`,
+          })
+        );
+        return;
+      }
+      applyLedger(user.id, -GAME_COST, "game_start", gameType);
+      socket.send(
+        JSON.stringify({
+          type: "economy_ok",
+          charged: true,
+          reason: "game_start",
+          user: publicUser(user),
+        })
+      );
+
+      clearGameTimer(room);
+
+      if (gameType === "words") {
+        const options = pickWordOptions(3);
+        room.game = {
+          type: "words",
+          status: "pick",
+          overlay: false,
+          drawerPeerId: peerId,
+          drawerNickname: String(json.nickname || user.nickname || "Jemand").slice(0, 18),
+          options,
+          word: null,
+          wordNorm: null,
+          endsAt: 0,
+          solvedBy: null,
+        };
+        broadcastPlayState(room);
+        socket.send(
+          JSON.stringify({
+            type: "game_words_pick",
+            options,
+            drawerNickname: room.game.drawerNickname,
+          })
+        );
+      } else if (Games.isInteractive(gameType)) {
+        const peers = [...room.sockets.entries()].map(([id, sock]) => ({
+          peerId: id,
+          nickname: sock.luvNickname || "Jemand",
+        }));
+        if (!peers.some((p) => p.peerId === peerId)) {
+          peers.unshift({
+            peerId,
+            nickname: String(json.nickname || user.nickname || "Jemand").slice(0, 18),
+          });
+        }
+        room.game = Games.createGame(
+          gameType,
+          peerId,
+          String(json.nickname || user.nickname || "Jemand").slice(0, 18),
+          peers
+        );
+        broadcastPlayState(room);
+      } else {
+        // Tic-Tac-Toe Overlay
+        room.game = {
+          type: gameType,
+          status: "active",
+          overlay: true,
+          drawerPeerId: peerId,
+          drawerNickname: String(json.nickname || user.nickname || "Jemand").slice(0, 18),
+        };
+        broadcastPlayState(room);
+        broadcastRoom(room, {
+          type: "game_board",
+          game: gameType,
+          visible: true,
+        });
+      }
+      return;
+    }
+
+    if (type === "game_stop") {
+      stopRoomGame(room);
+      return;
+    }
+
+    if (type === "game_action") {
+      const game = room.game;
+      if (!game || !Games.isInteractive(game.type)) return;
+      const result = Games.applyAction(
+        game,
+        peerId,
+        String(json.nickname || user?.nickname || socket.luvNickname || "Jemand"),
+        json.action,
+        json.payload || {}
+      );
+      room.game = result.game;
+      if (result.chat) {
+        broadcastRoom(room, {
+          type: "game_guess_chat",
+          nickname: result.chat.nickname,
+          text: result.chat.text,
+          ok: Boolean(result.chat.ok),
+        });
+      }
+      if (result.error && result.error !== "early") {
+        socket.send(
+          JSON.stringify({
+            type: "game_action_result",
+            ok: false,
+            error: result.error,
+          })
+        );
+      }
+      broadcastPlayState(room);
+      return;
+    }
+
+    if (type === "game_pick") {
+      const game = room.game;
+      if (!game || game.type !== "words" || game.status !== "pick") return;
+      if (game.drawerPeerId !== peerId) return;
+      const choice = String(json.word || "");
+      if (!game.options.includes(choice)) return;
+      game.word = choice;
+      game.wordNorm = normalizeGuess(choice);
+      game.status = "draw";
+      game.endsAt = Date.now() + WORDS_ROUND_MS;
+      game.solvedBy = null;
+      socket.send(
+        JSON.stringify({
+          type: "game_words_secret",
+          word: choice,
+          endsAt: game.endsAt,
+        })
+      );
+      broadcastRoom(room, {
+        type: "game_state",
+        game: publicGameState(game),
+      });
+      startWordsRoundTimer(room);
+      return;
+    }
+
+    if (type === "game_guess") {
+      const game = room.game;
+      if (!game || game.type !== "words" || game.status !== "draw") return;
+      if (game.drawerPeerId === peerId) {
+        socket.send(
+          JSON.stringify({
+            type: "game_guess_result",
+            ok: false,
+            message: "Du malst — die anderen raten.",
+          })
+        );
+        return;
+      }
+      if (game.solvedBy) {
+        socket.send(
+          JSON.stringify({
+            type: "game_guess_result",
+            ok: false,
+            message: "Schon erraten.",
+          })
+        );
+        return;
+      }
+      const guess = String(json.text || "").trim().slice(0, 48);
+      if (!guess) return;
+      const nick = String(json.nickname || user?.nickname || "Jemand").slice(0, 18);
+      const ok = normalizeGuess(guess) === game.wordNorm;
+
+      // Jeder sieht alle Tipps als Blasen
+      broadcastRoom(room, {
+        type: "game_guess_chat",
+        nickname: nick,
+        text: guess,
+        ok,
+      });
+
+      if (!ok) {
+        socket.send(
+          JSON.stringify({
+            type: "game_guess_result",
+            ok: false,
+            message: "Leider nicht — weiter raten!",
+          })
+        );
+        return;
+      }
+
+      // Erster Treffer beendet die Runde — Käufer bleibt Zeichner (kein Auto-Weiter)
+      game.solvedBy = nick;
+      game.status = "done";
+      clearGameTimer(room);
+      game.endsAt = 0;
+      const secret = game.word;
+      broadcastRoom(room, {
+        type: "game_words_correct",
+        winner: nick,
+        word: secret,
+        drawerNickname: game.drawerNickname,
+      });
+      broadcastRoom(room, {
+        type: "game_state",
+        game: publicGameState(game),
+      });
+      socket.send(
+        JSON.stringify({
+          type: "game_guess_result",
+          ok: true,
+          message: "Richtig!",
+        })
+      );
+      return;
+    }
+
+    // Legacy free toggle — only hide; starting costs coins via game_start
+    if (type === "game_board" && json.visible === false) {
+      if (room.game && (room.game.type === json.game || !json.game)) {
+        stopRoomGame(room);
+      }
+      for (const [id, peer] of room.sockets.entries()) {
+        if (id === peerId) continue;
+        if (peer.readyState === 1) peer.send(text);
       }
       return;
     }
@@ -1108,6 +4433,33 @@ wss.on("connection", (socket, req) => {
           );
         }
       }
+      const stored = strokeFromSocketMessage(json, socket);
+      if (!stored) return;
+      appendRoomStroke(room, code, stored);
+      touchCanvasActivity(room, room.sockets.size);
+      // Relayed payload aus normalisiertem Stroke (stabile History)
+      const relay = JSON.stringify({
+        type: "stroke",
+        id: stored.id,
+        width: stored.width,
+        nickname: stored.nickname,
+        colorIndex: stored.colorIndex,
+        authorId: stored.authorId,
+        points: stored.points,
+      });
+      for (const [id, peer] of room.sockets.entries()) {
+        if (id === peerId) continue;
+        if (peer.readyState === 1) peer.send(relay);
+      }
+      return;
+    }
+
+    if (type === "undo") {
+      removeRoomStroke(room, code, json.id);
+    }
+
+    if (type === "presence" && json.active === true) {
+      touchCanvasActivity(room, room.sockets.size);
     }
 
     // Relay to others
@@ -1118,35 +4470,64 @@ wss.on("connection", (socket, req) => {
   });
 
   socket.on("close", () => {
-    room.sockets.delete(peerId);
+    const stillMapped = room.sockets.get(peerId) === socket;
+    if (stillMapped) {
+      room.sockets.delete(peerId);
+    }
+    // Ersetzt durch Reconnect oder schon per Leave entfernt — kein Extra-Broadcast
+    if (socket.luvReplaced || socket.luvLeft) {
+      return;
+    }
+    if (!stillMapped && !rooms.has(code)) {
+      return;
+    }
+    if (!rooms.has(code)) return;
+
+    const leftMembers = roomConnectedMembers(room).length;
+    console.log(
+      `ws close code=${code} peer=${peerId} leftMembers=${leftMembers} replaced=${!!socket.luvReplaced}`
+    );
     broadcastPeerCount(room);
+    ensureHostOrDissolve(room, code);
+    if (!rooms.has(code)) return;
+
+    // Clear-Abstimmung bleibt offen — Offline zählt nicht als Ablehnung
     if (room.clearProposal?.status === "open") {
-      // Re-evaluate majority if people leave
-      const total = room.sockets.size;
-      if (total === 0) {
-        room.clearProposal = null;
-      } else {
-        const yesSet = new Set(
-          room.clearProposal.yes.filter((id) => room.sockets.has(id) || id === room.clearProposal.byPeerId)
-        );
+      const t = clearProposalTotals(room.clearProposal);
+      broadcastRoom(room, {
+        type: "clear_vote_update",
+        proposalId: room.clearProposal.id,
+        yes: t.yes,
+        no: t.no,
+        total: t.total,
+      });
+    }
+    // Public: wer die Leinwand verlässt, muss nicht mehr zustimmen
+    if (room.publicProposal?.status === "open") {
+      const changed = syncPublicRequiredVoters(room);
+      if (changed) {
+        const t = publicProposalTotals(room.publicProposal);
         broadcastRoom(room, {
-          type: "clear_vote_update",
-          proposalId: room.clearProposal.id,
-          yes: yesSet.size,
-          no: room.clearProposal.no.filter((id) => room.sockets.has(id)).length,
-          total,
+          type: "public_vote_update",
+          proposalId: room.publicProposal.id,
+          yes: t.yes,
+          no: t.no,
+          total: t.total,
+          rewardCoins: room.publicProposal.rewardCoins || 1,
         });
+        if (allRequiredYes(room.publicProposal)) {
+          maybeRequestPublicCapture(room, code);
+        }
       }
     }
   });
 
-  socket.on("error", () => {
-    room.sockets.delete(peerId);
-  });
 });
+
+restoreRoomsFromDisk();
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(
-    `luv-api :${PORT} maxPeers=${MAX_PEERS} maxLobbies=${MAX_LOBBIES} clearCost=${CLEAR_COST} lobbyCreate=${LOBBY_CREATE_COST} shop=${Boolean(MOLLIE_API_KEY)}`
+    `luv-api :${PORT} rooms=${rooms.size} maxPeers=${MAX_PEERS} maxLobbies=${MAX_LOBBIES} clearCost=${CLEAR_COST} lobbyCreate=${LOBBY_CREATE_COST} shop=${Boolean(MOLLIE_API_KEY)}`
   );
 });

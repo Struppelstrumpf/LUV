@@ -30,18 +30,46 @@ class DrawingView @JvmOverloads constructor(
     private val animators = mutableMapOf<String, ValueAnimator>()
     private val currentPoints = mutableListOf<StrokePoint>()
     private val currentPath = Path()
+    private val eraserPath = Path()
     private val handler = Handler(Looper.getMainLooper())
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
 
     private var downX = 0f
     private var downY = 0f
-    private var longPressTriggered = false
+    private var eraseLastX = 0f
+    private var eraseLastY = 0f
     private var movedBeyondSlop = false
     private var lastTapUptime = 0L
     private var pendingDot: StrokePoint? = null
     var myColorIndex: Int = 0
 
+    /** Expliziter Leinwand-Ton — verhindert „schwarzen“ Flash ohne Strokes. */
+    var canvasBackground: Int = 0xFF0E1A24.toInt()
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
+
+    /** Aktiv: Tippen/Ziehen radiert nur die Stelle, über die man wischt. */
+    var eraserEnabled: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            if (!value) {
+                eraserPath.reset()
+                invalidate()
+            }
+        }
+
     var showTicTacToe: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
+
+    var showDotGrid: Boolean = false
         set(value) {
             if (field == value) return
             field = value
@@ -68,21 +96,10 @@ class DrawingView @JvmOverloads constructor(
     }
 
     var onStrokeFinished: ((List<StrokePoint>) -> Unit)? = null
-    var onLongPressClear: (() -> Unit)? = null
     var onDoubleTapUndo: (() -> Unit)? = null
     var onDotPlaced: ((StrokePoint) -> Unit)? = null
-
-    private val longPressRunnable = Runnable {
-        if (!movedBeyondSlop) {
-            longPressTriggered = true
-            cancelPendingDot()
-            currentPoints.clear()
-            currentPath.reset()
-            invalidate()
-            performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-            onLongPressClear?.invoke()
-        }
-    }
+    /** Normalisierte Brush-Proben — nur eigene Malerei an diesen Stellen. */
+    var onErasePath: ((List<StrokePoint>) -> Unit)? = null
 
     /** Nach 0,5 s ohne zweiten Tipp → Punkt setzen */
     private val singleTapDotRunnable = Runnable {
@@ -143,6 +160,8 @@ class DrawingView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        canvas.drawColor(canvasBackground)
+        if (showDotGrid) drawDotGrid(canvas)
         if (showTicTacToe) drawTicTacToeBoard(canvas)
         strokes.forEach { stroke ->
             val alpha = ((alphas[stroke.id] ?: 1f) * 255).toInt().coerceIn(0, 255)
@@ -151,9 +170,20 @@ class DrawingView @JvmOverloads constructor(
             paint.strokeWidth = stroke.width
             canvas.drawPath(pathFrom(stroke.points), paint)
         }
-        paint.color = PeerPalette.strokeColor(myColorIndex)
-        paint.strokeWidth = 18f
-        canvas.drawPath(currentPath, paint)
+        if (eraserEnabled) {
+            if (!eraserPath.isEmpty) { // Path.isEmpty() API 19+
+                paint.color = 0xCCFFD56A.toInt()
+                paint.strokeWidth = 28f
+                canvas.drawPath(eraserPath, paint)
+                paint.color = 0x66FFD56A.toInt()
+                paint.strokeWidth = 44f
+                canvas.drawPath(eraserPath, paint)
+            }
+        } else {
+            paint.color = PeerPalette.strokeColor(myColorIndex)
+            paint.strokeWidth = 18f
+            canvas.drawPath(currentPath, paint)
+        }
     }
 
     private fun drawTicTacToeBoard(canvas: Canvas) {
@@ -185,14 +215,81 @@ class DrawingView @JvmOverloads constructor(
         hLine(top + third * 2f)
     }
 
+    private fun drawDotGrid(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        val dens = resources.displayMetrics.density
+        val cols = 8
+        val rows = 10
+        val padX = w * 0.12f
+        val padY = h * 0.14f
+        val usableW = w - padX * 2f
+        val usableH = h - padY * 2f
+        val stepX = usableW / (cols - 1)
+        val stepY = usableH / (rows - 1)
+        val r = 2.4f * dens
+        val paintDots = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = 0x55FFFFFF
+        }
+        val paintSoft = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = 0x22FFFFFF
+        }
+        for (row in 0 until rows) {
+            for (col in 0 until cols) {
+                val x = padX + col * stepX
+                val y = padY + row * stepY
+                canvas.drawCircle(x, y, r * 1.8f, paintSoft)
+                canvas.drawCircle(x, y, r, paintDots)
+            }
+        }
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        val w = width.toFloat().coerceAtLeast(1f)
+        val h = height.toFloat().coerceAtLeast(1f)
         val normalized = StrokePoint(
-            x = (event.x / width.toFloat()).coerceIn(0f, 1f),
-            y = (event.y / height.toFloat()).coerceIn(0f, 1f)
+            x = (event.x / w).coerceIn(0f, 1f),
+            y = (event.y / h).coerceIn(0f, 1f)
         )
+        if (eraserEnabled) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    cancelPendingDot()
+                    eraserPath.reset()
+                    eraserPath.moveTo(event.x, event.y)
+                    eraseLastX = event.x
+                    eraseLastY = event.y
+                    parent.requestDisallowInterceptTouchEvent(true)
+                    onErasePath?.invoke(listOf(normalized))
+                    invalidate()
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    eraserPath.lineTo(event.x, event.y)
+                    val samples = sampleEraseSegment(
+                        fromX = eraseLastX,
+                        fromY = eraseLastY,
+                        toX = event.x,
+                        toY = event.y,
+                        w = w,
+                        h = h
+                    )
+                    eraseLastX = event.x
+                    eraseLastY = event.y
+                    if (samples.isNotEmpty()) onErasePath?.invoke(samples)
+                    invalidate()
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    eraserPath.reset()
+                    invalidate()
+                }
+            }
+            return true
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                longPressTriggered = false
                 movedBeyondSlop = false
                 downX = event.x
                 downY = event.y
@@ -201,16 +298,12 @@ class DrawingView @JvmOverloads constructor(
                 currentPoints.add(normalized)
                 currentPath.moveTo(event.x, event.y)
                 parent.requestDisallowInterceptTouchEvent(true)
-                handler.removeCallbacks(longPressRunnable)
-                handler.postDelayed(longPressRunnable, LONG_PRESS_MS)
                 invalidate()
             }
             MotionEvent.ACTION_MOVE -> {
-                if (longPressTriggered) return true
                 val distance = hypot(event.x - downX, event.y - downY)
                 if (distance > touchSlop) {
                     movedBeyondSlop = true
-                    handler.removeCallbacks(longPressRunnable)
                     cancelPendingDot()
                 }
                 currentPoints.add(normalized)
@@ -218,25 +311,20 @@ class DrawingView @JvmOverloads constructor(
                 invalidate()
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                handler.removeCallbacks(longPressRunnable)
-                if (!longPressTriggered) {
-                    if (!movedBeyondSlop && event.actionMasked == MotionEvent.ACTION_UP) {
-                        handleTap(normalized)
-                    } else if (movedBeyondSlop && currentPoints.size >= 2) {
-                        cancelPendingDot()
-                        lastTapUptime = 0L
-                        onStrokeFinished?.invoke(currentPoints.toList())
-                    }
+                if (!movedBeyondSlop && event.actionMasked == MotionEvent.ACTION_UP) {
+                    handleTap(normalized)
+                } else if (movedBeyondSlop && currentPoints.size >= 2) {
+                    cancelPendingDot()
+                    lastTapUptime = 0L
+                    onStrokeFinished?.invoke(currentPoints.toList())
                 }
                 currentPoints.clear()
                 currentPath.reset()
-                longPressTriggered = false
                 invalidate()
             }
         }
         return true
     }
-
     private fun handleTap(point: StrokePoint) {
         val now = SystemClock.uptimeMillis()
         if (lastTapUptime > 0L && now - lastTapUptime <= DOUBLE_TAP_MS) {
@@ -260,7 +348,6 @@ class DrawingView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
-        handler.removeCallbacks(longPressRunnable)
         cancelPendingDot()
         animators.values.forEach { it.cancel() }
         animators.clear()
@@ -277,8 +364,33 @@ class DrawingView @JvmOverloads constructor(
         return path
     }
 
+    private fun sampleEraseSegment(
+        fromX: Float,
+        fromY: Float,
+        toX: Float,
+        toY: Float,
+        w: Float,
+        h: Float
+    ): List<StrokePoint> {
+        val dist = hypot(toX - fromX, toY - fromY)
+        val stepPx = 10f * resources.displayMetrics.density
+        val steps = (dist / stepPx).toInt().coerceAtLeast(1)
+        return buildList(steps) {
+            for (i in 1..steps) {
+                val t = i / steps.toFloat()
+                val x = fromX + (toX - fromX) * t
+                val y = fromY + (toY - fromY) * t
+                add(
+                    StrokePoint(
+                        x = (x / w).coerceIn(0f, 1f),
+                        y = (y / h).coerceIn(0f, 1f)
+                    )
+                )
+            }
+        }
+    }
+
     companion object {
-        private const val LONG_PRESS_MS = 2000L
         private const val DOUBLE_TAP_MS = 500L
     }
 }

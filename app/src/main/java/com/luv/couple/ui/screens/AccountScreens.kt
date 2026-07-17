@@ -1,5 +1,8 @@
 package com.luv.couple.ui.screens
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,12 +23,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,15 +42,23 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.luv.couple.data.AccountInfo
 import com.luv.couple.data.PeerPalette
+import com.luv.couple.net.LuvApiClient
+import com.luv.couple.net.PublicReportInfo
 import com.luv.couple.net.ShopPack
 import com.luv.couple.net.VoucherInfo
+import com.luv.couple.update.AppChangelog
 import com.luv.couple.update.AppUpdater
 import com.luv.couple.update.UpdateUiState
 import com.luv.couple.ui.theme.AccentRose
@@ -54,6 +68,11 @@ import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 @Composable
 fun AccountHomeScreen(
@@ -62,17 +81,31 @@ fun AccountHomeScreen(
     message: String?,
     shopEnabled: Boolean,
     packs: List<ShopPack>,
-    onClaimDaily: () -> Unit,
+    partnerNotifyEnabled: Boolean,
+    onPartnerNotifyChange: (Boolean) -> Unit,
+    partnerHapticEnabled: Boolean,
+    onPartnerHapticChange: (Boolean) -> Unit,
+    liveProximityRichEnabled: Boolean = true,
+    onLiveProximityRichChange: (Boolean) -> Unit = {},
+    liveProximityWakeEnabled: Boolean = false,
+    onLiveProximityWakeChange: (Boolean) -> Unit = {},
     onOpenRedeem: () -> Unit,
     onOpenAdmin: () -> Unit,
     onBuyPack: (ShopPack) -> Unit,
-    onRefresh: () -> Unit,
+    onReplayTutorial: () -> Unit = {},
+    googleEnabled: Boolean = false,
+    googleBusy: Boolean = false,
+    onGoogleConnect: () -> Unit = {},
+    onLogout: () -> Unit = {},
+    onDeleteAccount: () -> Unit = {},
     updateState: UpdateUiState = UpdateUiState.Idle,
-    onUpdateApp: () -> Unit = {},
-    onCheckUpdate: () -> Unit = {}
+    onUpdateApp: () -> Unit = {}
 ) {
-    val accent = PeerPalette.composeColor(colorIndex)
+    val accent = PeerPalette.menuAccent()
     var legalDoc by remember { mutableStateOf<LegalDoc?>(null) }
+    var showChangelog by remember { mutableStateOf(false) }
+    var confirmLogout by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     MenuBackdrop(includeNavigationBars = false) {
         Column(
             modifier = Modifier
@@ -85,7 +118,7 @@ fun AccountHomeScreen(
             Text("Konto", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
             UpdateBanner(state = updateState, onUpdate = onUpdateApp)
             Text(
-                "Fair nutzbar jeden Tag — Coins nur wenn du richtig viel malst.",
+                "Jeden Tag automatisch +${account?.dailyCoins ?: 10} Coins — nicht stapelbar. Gekaufte Coins bleiben.",
                 color = TextMuted,
                 fontFamily = BodyFont,
                 fontSize = 14.sp
@@ -109,7 +142,7 @@ fun AccountHomeScreen(
                 ) {
                     Text(
                         (account?.nickname ?: "?").take(1).uppercase(),
-                        color = Color(0xFF1A1F2E),
+                        color = Color.White,
                         fontFamily = DisplayFont,
                         fontSize = 22.sp
                     )
@@ -117,7 +150,10 @@ fun AccountHomeScreen(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(account?.nickname ?: "…", color = TextPrimary, fontFamily = DisplayFont, fontSize = 22.sp)
                     Text(
-                        "${account?.coins ?: 0} Coins · ${account?.freeSessionsLeft ?: 0}/${account?.freeSessionsPerDay ?: 5} frei heute",
+                        buildString {
+                            append("${account?.coins ?: 0} Coins")
+                            if (account?.googleLinked == true) append(" · mit Google gesichert")
+                        },
                         color = TextMuted,
                         fontFamily = BodyFont,
                         fontSize = 13.sp
@@ -129,68 +165,94 @@ fun AccountHomeScreen(
                 Text(message, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
             }
 
-            MenuButton(
-                label = if (account?.canClaimDaily == true) "Tagesbonus +${account.dailyCoins} holen" else "Tagesbonus schon abgeholt",
-                color = if (account?.canClaimDaily == true) accent else BgSoft,
-                onClick = onClaimDaily,
-                enabled = account?.canClaimDaily == true
+            if (googleEnabled && account?.googleLinked != true) {
+                MenuButton(
+                    if (googleBusy) "Google…" else "Mit Google speichern",
+                    AccentRose,
+                    onGoogleConnect,
+                    enabled = !googleBusy
+                )
+                Text(
+                    "Coins und Lobbys bleiben erhalten, auch auf einem neuen Handy.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 12.sp
+                )
+            }
+
+            SettingsToggleRow(
+                title = if (partnerNotifyEnabled) "Glocke an" else "Glocke aus",
+                subtitle = if (partnerNotifyEnabled) {
+                    "Beitritt, Malen und sanfte Impulse erreichen dich"
+                } else {
+                    "Ruhe — keine Hinweise, keine Impulse"
+                },
+                checked = partnerNotifyEnabled,
+                accent = accent,
+                onCheckedChange = onPartnerNotifyChange,
+                leading = if (partnerNotifyEnabled) "🔔" else "🔕"
             )
+            SettingsToggleRow(
+                title = "Vibration beim Malen",
+                subtitle = "Leichter Impuls auf der Leinwand",
+                checked = partnerHapticEnabled,
+                accent = accent,
+                onCheckedChange = onPartnerHapticChange
+            )
+            SettingsToggleRow(
+                title = "Lebendige Nähe",
+                subtitle = if (liveProximityRichEnabled) {
+                    "Wenn die Glocke bei einer Lobby an ist: Vorschau & Widget"
+                } else {
+                    "Wenn die Glocke an ist: nur einfache, ruhige Hinweise"
+                },
+                checked = liveProximityRichEnabled,
+                accent = accent,
+                onCheckedChange = onLiveProximityRichChange
+            )
+            SettingsToggleRow(
+                title = "Bildschirm wecken",
+                subtitle = if (liveProximityWakeEnabled) {
+                    "Intensiv — Display geht kurz an, wenn jemand malt"
+                } else {
+                    "Aus — besser für Akku & Hosentasche"
+                },
+                checked = liveProximityWakeEnabled,
+                accent = accent,
+                onCheckedChange = onLiveProximityWakeChange
+            )
+
             MenuButton("Code einlösen", BgSoft, onOpenRedeem, bordered = true)
+            MenuButton("Tutorial ansehen", BgSoft, onReplayTutorial, bordered = true)
             if (account?.isAdmin == true) {
                 MenuButton("Admin", Color(0xFF3A2430), onOpenAdmin)
             }
-            MenuButton("Aktualisieren", BgSoft, onRefresh, bordered = true)
-            MenuButton(
-                label = when (updateState) {
-                    is UpdateUiState.Checking -> "Prüfe Version…"
-                    is UpdateUiState.UpToDate -> "App ist aktuell"
-                    is UpdateUiState.Available -> "Update ${updateState.release.versionName} laden"
-                    is UpdateUiState.Downloading -> "Lädt…"
-                    else -> "Nach Update suchen"
-                },
-                color = BgSoft,
-                onClick = {
-                    when (updateState) {
-                        is UpdateUiState.Available,
-                        is UpdateUiState.Ready,
-                        is UpdateUiState.Error -> onUpdateApp()
-                        else -> onCheckUpdate()
-                    }
-                },
-                bordered = true,
-                enabled = updateState !is UpdateUiState.Downloading && updateState !is UpdateUiState.Checking
-            )
-            Text(
-                AppUpdater.versionLabel(),
-                color = TextMuted,
-                fontFamily = BodyFont,
-                fontSize = 12.sp
-            )
+            MenuButton("Abmelden", BgSoft, { confirmLogout = true }, bordered = true)
+            MenuButton("Konto löschen", Color(0xFF3A2430), { confirmDelete = true })
 
             Spacer(modifier = Modifier.height(4.dp))
             Text("Shop", fontFamily = DisplayFont, fontSize = 22.sp, color = TextPrimary)
             if (!shopEnabled) {
                 Text(
-                    "Shop bald mit Mollie — bis dahin reichen Daily Coins & Gutscheine völlig.",
+                    "Shop bald mit Mollie — bis dahin reichen Tagesbonus & Gutscheine völlig.",
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 13.sp
                 )
             }
             packs.forEach { pack ->
-                MenuButton(
-                    label = "${pack.label} · ${pack.amountEur} €",
-                    color = if (shopEnabled) accent else BgSoft,
-                    onClick = { if (shopEnabled) onBuyPack(pack) },
+                ShopPackButton(
+                    pack = pack,
+                    accent = accent,
                     enabled = shopEnabled,
-                    bordered = !shopEnabled
+                    onClick = { if (shopEnabled) onBuyPack(pack) }
                 )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(18.dp)
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     "Impressum",
@@ -201,6 +263,7 @@ fun AccountHomeScreen(
                         .clickable { legalDoc = LegalDoc.Impressum }
                         .padding(vertical = 6.dp)
                 )
+                Spacer(modifier = Modifier.width(18.dp))
                 Text(
                     "AGB",
                     color = TextMuted,
@@ -208,6 +271,17 @@ fun AccountHomeScreen(
                     fontSize = 13.sp,
                     modifier = Modifier
                         .clickable { legalDoc = LegalDoc.Agb }
+                        .padding(vertical = 6.dp)
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    AppUpdater.versionLabel(),
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    textDecoration = TextDecoration.Underline,
+                    modifier = Modifier
+                        .clickable { showChangelog = true }
                         .padding(vertical = 6.dp)
                 )
             }
@@ -218,9 +292,123 @@ fun AccountHomeScreen(
     legalDoc?.let { doc ->
         LegalDialog(doc = doc, onDismiss = { legalDoc = null })
     }
+    if (showChangelog) {
+        ChangelogDialog(onDismiss = { showChangelog = false })
+    }
+    if (confirmLogout) {
+        AlertDialog(
+            onDismissRequest = { confirmLogout = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmLogout = false
+                    onLogout()
+                }) {
+                    Text("Abmelden", color = AccentRose, fontFamily = BodyFont)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmLogout = false }) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
+                }
+            },
+            title = {
+                Text("Abmelden?", color = TextPrimary, fontFamily = DisplayFont, fontSize = 20.sp)
+            },
+            text = {
+                Text(
+                    if (account?.googleLinked == true) {
+                        "Du kannst dich später mit Google wieder anmelden — Coins bleiben auf dem Konto."
+                    } else {
+                        "Ohne Google gehen Coins auf diesem Gerät verloren. Besser vorher „Mit Google speichern“."
+                    },
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            containerColor = BgSoft
+        )
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    onDeleteAccount()
+                }) {
+                    Text("Endgültig löschen", color = AccentRose, fontFamily = BodyFont)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
+                }
+            },
+            title = {
+                Text("Konto löschen?", color = TextPrimary, fontFamily = DisplayFont, fontSize = 20.sp)
+            },
+            text = {
+                Text(
+                    "Dein LUV-Konto inkl. Google-Verknüpfung, Coins und Lobbys wird unwiderruflich gelöscht. Danach startest du wieder von vorn.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            containerColor = BgSoft
+        )
+    }
 }
 
 private enum class LegalDoc { Impressum, Agb }
+
+@Composable
+private fun ChangelogDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Schließen", color = AccentRose, fontFamily = BodyFont)
+            }
+        },
+        title = {
+            Text("Was ist neu", color = TextPrimary, fontFamily = DisplayFont, fontSize = 22.sp)
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                AppChangelog.entries.forEach { entry ->
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            entry.version,
+                            color = AccentRose,
+                            fontFamily = DisplayFont,
+                            fontSize = 16.sp
+                        )
+                        entry.highlights.forEach { line ->
+                            Text(
+                                "· $line",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 13.sp,
+                                lineHeight = 18.sp
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        containerColor = BgDeep
+    )
+}
 
 @Composable
 private fun LegalDialog(doc: LegalDoc, onDismiss: () -> Unit) {
@@ -275,8 +463,8 @@ Tel: 015561 048098
 
 Verantwortlich für den Inhalt der App LUV.
 
-Hinweis zu Käufen:
-Coins und sonstige kostenpflichtige Inhalte sind an dein Geräte-/App-Konto gebunden. Wenn du die App deinstallierst, das Gerät wechselst oder App-Daten löschst, kann es sein, dass gekaufte Inhalte, Coins und Fortschritt verloren gehen und nicht wiederherstellbar sind.
+Hinweis zu Käufen / Konto:
+Coins und sonstige kostenpflichtige Inhalte sind an dein App-Konto gebunden. Mit optionaler Google-Anmeldung kannst du dein Konto geräteübergreifend wiederherstellen. Ohne Google-Verknüpfung kann bei Deinstallation, Gerätewechsel oder Löschen der App-Daten Guthaben verloren gehen.
 """.trimIndent()
 
 private val AGB_TEXT = """
@@ -294,8 +482,8 @@ Käufe erfolgen über den integrierten Shop (z. B. Mollie). Mit Abschluss der Za
 4. Widerruf
 Bei digitalen Inhalten, deren Ausführung mit ausdrücklicher Zustimmung vor Ablauf der Widerrufsfrist begonnen hat und bei denen du zur Kenntnis genommen hast, dass du dein Widerrufsrecht verlierst, kann das Widerrufsrecht entfallen (§ 356 Abs. 5 BGB). Details dazu werden im Checkout-Prozess berücksichtigt, soweit anwendbar.
 
-5. Verlust bei Deinstallation
-Coins, gekaufte Inhalte und sonstiger Fortschritt sind an die App-Installation bzw. das lokale Gerätekonto gebunden. Bei Deinstallation der App, Löschen der App-Daten, Gerätewechsel ohne erfolgreiche Wiederherstellung oder ähnlichen Maßnahmen kann Guthaben und gekaufte Inhalte unwiderruflich verloren gehen. Eine Wiederherstellung ist nicht geschuldet und technisch möglicherweise nicht möglich. Bewahre dein Gerät und die App entsprechend auf, wenn du Guthaben behalten möchtest.
+5. Konto, Google-Anmeldung und Verlust
+Du kannst dein LUV-Konto optional mit einem Google-Konto verknüpfen. Dabei werden zur Anmeldung die von Google bereitgestellten Basisdaten (insbesondere Google-Nutzer-ID, ggf. Name/E-Mail) an unsere Server übermittelt und zur Kontowiederherstellung genutzt. Ohne Google-Verknüpfung sind Coins und Fortschritt an die lokale App-Installation gebunden; bei Deinstallation, Datenlöschen oder Gerätewechsel ohne Wiederherstellung kann Guthaben verloren gehen. Mit erfolgreicher Google-Anmeldung auf einem neuen Gerät kann das bestehende Konto wiederhergestellt werden, soweit technisch verfügbar.
 
 6. Missbrauch
 Manipulation, Mehrfach-Konten zur Umgehung von Limits oder Missbrauch des Shops können zur Sperrung führen. Bereits gezahlte Beträge werden in solchen Fällen nicht erstattet, soweit gesetzlich zulässig.
@@ -342,7 +530,12 @@ fun RedeemScreen(
                     fontSize = 14.sp
                 )
                 Spacer(modifier = Modifier.height(20.dp))
-                SoftInput(value = code, onValueChange = { code = it }, hint = "Gutscheincode")
+                SoftInput(
+                    value = code,
+                    onValueChange = { code = it },
+                    hint = "Gutscheincode",
+                    onConfirm = { onRedeem(code.trim()) }
+                )
                 if (!error.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
@@ -364,8 +557,11 @@ data class AdminVoucherDraft(
 @Composable
 fun AdminScreen(
     vouchers: List<VoucherInfo>,
+    reports: List<PublicReportInfo> = emptyList(),
     message: String?,
     onCreate: (AdminVoucherDraft) -> Unit,
+    onKeepReport: (PublicReportInfo) -> Unit = {},
+    onDeleteReport: (PublicReportInfo) -> Unit = {},
     onBack: () -> Unit
 ) {
     var code by remember { mutableStateOf("") }
@@ -439,7 +635,21 @@ fun AdminScreen(
             SoftInput(
                 value = maxPeople,
                 onValueChange = { maxPeople = it.filter { c -> c.isDigit() }.take(5) },
-                hint = "100"
+                hint = "100",
+                onConfirm = {
+                    val cleaned = code.trim()
+                    if (cleaned.length >= 4) {
+                        onCreate(
+                            AdminVoucherDraft(
+                                code = cleaned,
+                                coins = coins.toIntOrNull()?.coerceAtLeast(1) ?: 50,
+                                forever = forever,
+                                validDays = validDays.toIntOrNull()?.coerceIn(1, 365) ?: 30,
+                                maxPeople = maxPeople.toIntOrNull()?.coerceAtLeast(1) ?: 100
+                            )
+                        )
+                    }
+                }
             )
 
             if (!message.isNullOrBlank()) {
@@ -484,6 +694,109 @@ fun AdminScreen(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Gemeldete Bilder", fontFamily = DisplayFont, fontSize = 24.sp, color = TextPrimary)
+            Text(
+                "Behalten = bleibt öffentlich. Löschen = weg — nach 10 Löschungen vom selben Host wird das Konto gesperrt.",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 13.sp,
+                lineHeight = 18.sp
+            )
+            if (reports.isEmpty()) {
+                Text(
+                    "Keine offenen Meldungen.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp
+                )
+            } else {
+                reports.forEach { report ->
+                    AdminReportCard(
+                        report = report,
+                        onKeep = { onKeepReport(report) },
+                        onDelete = { onDeleteReport(report) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdminReportCard(
+    report: PublicReportInfo,
+    onKeep: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var bitmap by remember(report.id) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(report.id, report.imageUrl) {
+        bitmap = withContext(Dispatchers.IO) {
+            runCatching {
+                val raw = report.imageUrl
+                if (raw.isBlank()) return@runCatching null
+                val url = if (raw.startsWith("http")) raw
+                else LuvApiClient.baseUrl().trimEnd('/') + raw
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(8, TimeUnit.SECONDS)
+                    .readTimeout(12, TimeUnit.SECONDS)
+                    .build()
+                client.newCall(Request.Builder().url(url).get().build()).execute().use { resp ->
+                    if (!resp.isSuccessful) return@runCatching null
+                    resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
+                }
+            }.getOrNull()
+        }
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(BgSoft)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text(report.nameLine, color = TextPrimary, fontFamily = DisplayFont, fontSize = 18.sp)
+        Text(
+            "Host: ${report.hostNickname} · gemeldet von ${report.reporterNickname}",
+            color = TextMuted,
+            fontFamily = BodyFont,
+            fontSize = 12.sp
+        )
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp)
+                    .clip(RoundedCornerShape(12.dp))
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(100.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(BgDeep),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Bild lädt…", color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(modifier = Modifier.weight(1f)) {
+                MenuButton("Behalten", BgDeep, onKeep, bordered = true)
+            }
+            Box(modifier = Modifier.weight(1f)) {
+                MenuButton("Löschen", Color(0xFF3A2430), onDelete)
+            }
         }
     }
 }
@@ -521,7 +834,13 @@ fun MenuBackdrop(
 }
 
 @Composable
-fun SoftInput(value: String, onValueChange: (String) -> Unit, hint: String) {
+fun SoftInput(
+    value: String,
+    onValueChange: (String) -> Unit,
+    hint: String,
+    onConfirm: (() -> Unit)? = null
+) {
+    val keyboard = LocalSoftwareKeyboardController.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -534,12 +853,81 @@ fun SoftInput(value: String, onValueChange: (String) -> Unit, hint: String) {
             onValueChange = onValueChange,
             textStyle = TextStyle(color = TextPrimary, fontFamily = BodyFont, fontSize = 15.sp),
             cursorBrush = SolidColor(AccentRose),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(
+                onDone = {
+                    keyboard?.hide()
+                    onConfirm?.invoke()
+                }
+            ),
             modifier = Modifier.fillMaxWidth(),
             decorationBox = { inner ->
                 if (value.isBlank()) Text(hint, color = TextMuted, fontFamily = BodyFont)
                 inner()
             }
         )
+    }
+}
+
+@Composable
+private fun ShopPackButton(
+    pack: ShopPack,
+    accent: Color,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    val compare = pack.compareAtEur
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(if (compare != null) 64.dp else 54.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (enabled) accent else BgSoft)
+            .then(
+                if (!enabled) Modifier.border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(16.dp))
+                else Modifier
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        if (compare != null) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    pack.label,
+                    color = if (enabled) TextPrimary else TextMuted,
+                    fontFamily = DisplayFont,
+                    fontSize = 16.sp
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "${compare.replace('.', ',')} €",
+                        color = if (enabled) TextPrimary.copy(alpha = 0.65f) else TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp,
+                        textDecoration = TextDecoration.LineThrough
+                    )
+                    Text(
+                        "${pack.amountEur.replace('.', ',')} €",
+                        color = if (enabled) TextPrimary else TextMuted,
+                        fontFamily = DisplayFont,
+                        fontSize = 18.sp
+                    )
+                }
+            }
+        } else {
+            Text(
+                "${pack.label} · ${pack.amountEur.replace('.', ',')} €",
+                color = if (enabled) TextPrimary else TextMuted,
+                fontFamily = DisplayFont,
+                fontSize = 16.sp,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }
 
@@ -579,7 +967,7 @@ fun SimpleBottomBar(
     selected: Int,
     onSelect: (Int) -> Unit
 ) {
-    val labels = listOf("Home", "Konto")
+    val labels = listOf("Home", "Galerie", "Konto")
     Box(
         modifier = Modifier
             .fillMaxWidth()

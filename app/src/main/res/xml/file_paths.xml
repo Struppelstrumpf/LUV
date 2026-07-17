@@ -3,6 +3,12 @@
     <cache-path
         name="apk_updates"
         path="updates/" />
+    <cache-path
+        name="memories"
+        path="memories/" />
+    <files-path
+        name="moments"
+        path="moments/" />
     <external-cache-path
         name="external_apk_updates"
         path="updates/" />

@@ -6,8 +6,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
 import android.os.Build
 import android.os.IBinder
+import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -16,8 +18,15 @@ import com.luv.couple.MainActivity
 import com.luv.couple.R
 import com.luv.couple.data.ConnectionState
 import com.luv.couple.data.Lobby
+import com.luv.couple.data.PeerPalette
+import com.luv.couple.data.Role
+import com.luv.couple.data.RosterMember
 import com.luv.couple.lock.CanvasStore
-import com.luv.couple.notify.PartnerStrokeNotifier
+import com.luv.couple.lock.LockDrawActivity
+import com.luv.couple.lock.LockScreenWidgetProvider
+import com.luv.couple.notify.LuvAlertNotifier
+import com.luv.couple.notify.MoodLines
+import androidx.core.app.NotificationManagerCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,12 +41,15 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
@@ -47,20 +59,30 @@ import java.util.concurrent.atomic.AtomicReference
 class PairConnectionService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val foregroundStarted = AtomicBoolean(false)
+    @Volatile private var lastServiceMoodAtMs = 0L
+    @Volatile private var lastServiceMoodLine: String = ""
     private val sessions = ConcurrentHashMap<String, LobbySession>()
 
     init {
         instanceRef = this
     }
 
+    // Default maxRequestsPerHost=5 → bei vielen Lobbys bleiben WS hängen
+    // (nur 2er-Lobbys „verbunden“, größere nur „Du“ + Plus).
     private val wsClient = OkHttpClient.Builder()
+        .dispatcher(
+            Dispatcher().apply {
+                maxRequests = 64
+                maxRequestsPerHost = 32
+            }
+        )
         .pingInterval(20, TimeUnit.SECONDS)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
 
     private data class LobbySession(
-        val lobby: Lobby,
+        @Volatile var lobby: Lobby,
         val running: AtomicBoolean = AtomicBoolean(true),
         val webSocket: AtomicReference<WebSocket?> = AtomicReference(null),
         val outbox: ConcurrentLinkedQueue<String> = ConcurrentLinkedQueue(),
@@ -68,13 +90,23 @@ class PairConnectionService : Service() {
         val forceReconnect: AtomicBoolean = AtomicBoolean(false),
         @Volatile var backoffMs: Long = MIN_BACKOFF_MS,
         @Volatile var attempt: Int = 0,
-        @Volatile var nextRetryAtMs: Long = 0L
+        @Volatile var nextRetryAtMs: Long = 0L,
+        /** Lobby auf dem Server weg (z. B. nach API-Neustart) — nicht endlos reconnecten */
+        @Volatile var lobbyGone: Boolean = false,
+        /** true nur nach bewusstem Verlassen — 4001 sonst nicht Session killen */
+        @Volatile var intentionalLeave: Boolean = false
+    )
+
+    private data class ConnectResult(
+        val opened: Boolean,
+        val closeCode: Int = 0,
+        val closeReason: String = ""
     )
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        ensureForeground(getString(R.string.notification_running))
+        ensureForeground()
 
         when (intent?.action) {
             ACTION_STOP -> {
@@ -117,6 +149,7 @@ class PairConnectionService : Service() {
     private fun forceReconnect(lobbyId: String?) {
         val targets = if (lobbyId == null) sessions.values else listOfNotNull(sessions[lobbyId])
         targets.forEach { session ->
+            session.lobbyGone = false
             session.backoffMs = MIN_BACKOFF_MS
             session.attempt = 0
             session.nextRetryAtMs = 0L
@@ -139,16 +172,50 @@ class PairConnectionService : Service() {
             stopAll()
             return
         }
-        CanvasStore.updateKnownLobbies(lobbies.map { it.id })
-        val wanted = lobbies.associateBy { it.id }
+        // Ein Session pro Lobby-Code — Doppel-Einträge erzeugen sonst 4002-Flapping
+        val byCode = linkedMapOf<String, Lobby>()
+        lobbies.forEach { lobby ->
+            val key = lobby.code.trim().uppercase()
+            if (key.isBlank()) return@forEach
+            val prev = byCode[key]
+            if (prev == null || (lobby.role == Role.HOST && prev.role != Role.HOST)) {
+                byCode[key] = lobby
+            }
+        }
+        val unique = byCode.values.toList()
+        CanvasStore.updateKnownLobbies(unique.map { it.id })
+        val wanted = unique.associateBy { it.id }
         sessions.keys.filter { it !in wanted }.forEach { stopLobby(it) }
-        wanted.values.forEach { ensureLobbySession(it) }
+        // Alte Sessions mit gleichem Code aber anderer ID stoppen
+        val wantedCodes = unique.map { it.code.trim().uppercase() }.toSet()
+        sessions.values
+            .filter { it.lobby.code.trim().uppercase() in wantedCodes && it.lobby.id !in wanted }
+            .map { it.lobby.id }
+            .forEach { stopLobby(it) }
+        unique.forEach { ensureLobbySession(it) }
         refreshAggregateState()
     }
 
     private fun ensureLobbySession(lobby: Lobby) {
+        val codeKey = lobby.code.trim().uppercase()
+        // Bereits eine Session für diesen Code? Nicht zweite aufmachen.
+        val sameCode = sessions.values.firstOrNull {
+            it.lobby.code.trim().uppercase() == codeKey && it.lobby.id != lobby.id
+        }
+        if (sameCode != null) {
+            val oldId = sameCode.lobby.id
+            sameCode.lobby = lobby
+            sessions.remove(oldId)
+            sessions[lobby.id] = sameCode
+            if (sameCode.job?.isActive == true) return
+            sameCode.running.set(true)
+            sameCode.job = scope.launch { runLobbyLoop(sameCode) }
+            return
+        }
         val existing = sessions[lobby.id]
         if (existing != null) {
+            // Prefs-Sync (z. B. neuer Name vom Partner)
+            existing.lobby = lobby
             if (existing.job?.isActive == true) return
             existing.running.set(true)
             existing.job = scope.launch { runLobbyLoop(existing) }
@@ -160,66 +227,130 @@ class PairConnectionService : Service() {
     }
 
     private suspend fun runLobbyLoop(session: LobbySession) {
-        val lobby = session.lobby
         try {
-            while (scope.isActive && session.running.get()) {
+            while (scope.isActive && session.running.get() && !session.lobbyGone) {
+                val lobby = session.lobby
                 session.forceReconnect.set(false)
                 updateLobbyState(lobby.id, ConnectionState.CONNECTING)
-                publishReconnect(session, waiting = false)
-                ensureForeground(statusText())
+                clearReconnect(lobby.id)
+                ensureForeground()
 
                 val openedAt = System.currentTimeMillis()
-                val connected = connectOnce(session)
+                val result = connectOnce(session)
                 val livedMs = System.currentTimeMillis() - openedAt
                 session.webSocket.getAndSet(null)?.close(1000, "bye")
                 if (!session.running.get()) break
 
-                val stable = connected && livedMs >= STABLE_CONNECTION_MS
+                // Bewusst verlassen — nur mit Flag (sonst Reconnect nach Server-Close)
+                if (
+                    session.intentionalLeave &&
+                    (result.closeCode == 4001 ||
+                        result.closeReason.equals("left", ignoreCase = true))
+                ) {
+                    Log.i(TAG, "ws left lobby=${lobby.code} — stop session")
+                    session.running.set(false)
+                    break
+                }
+                // Durch Reconnect ersetzt — Loop verbindet gleich neu
+                if (result.closeCode == 4002 ||
+                    result.closeReason.equals("replaced", ignoreCase = true)
+                ) {
+                    delay(500L)
+                    continue
+                }
+                // Nach Server-Update / Token-Drift: Token heilen, dann reconnecten.
+                if (result.closeCode == 4401) {
+                    Log.w(TAG, "ws 4401 lobby=${lobby.code} — refresh token & retry")
+                    session.attempt += 1
+                    updateLobbyState(lobby.id, ConnectionState.RECONNECTING)
+                    publishReconnect(session, waiting = true)
+                    runCatching { refreshLobbyAccess(session) }
+                    delay(1200L)
+                    continue
+                }
+                // Lobby voll — nicht alle 1–2s hämmern (sonst „verbunden → weg“-Flackern)
+                if (result.closeCode == 4409) {
+                    Log.w(TAG, "ws 4409 room_full lobby=${lobby.code} — backoff retry")
+                    session.attempt += 1
+                    updateLobbyState(lobby.id, ConnectionState.RECONNECTING)
+                    publishReconnect(session, waiting = true)
+                    runCatching { refreshLobbyAccess(session) }
+                    delay((4_000L + session.attempt * 2_000L).coerceAtMost(20_000L))
+                    continue
+                }
+
+                val stable = result.opened && livedMs >= STABLE_CONNECTION_MS
                 if (stable) {
-                    session.backoffMs = MIN_BACKOFF_MS
                     session.attempt = 0
                     clearReconnect(lobby.id)
                 }
 
                 updateLobbyState(lobby.id, ConnectionState.RECONNECTING)
-                // Still reconnect — Notification bleibt ruhig (kein „wiederherstellen“)
-                ensureForeground(statusText())
+                ensureForeground()
 
-                val waitMs = if (stable) 800L else session.backoffMs
+                val waitMs = if (stable) 800L else RECONNECT_DELAY_MS
                 session.nextRetryAtMs = System.currentTimeMillis() + waitMs
                 if (!stable) {
                     session.attempt += 1
                     publishReconnect(session, waiting = true)
                 }
 
-                var forced = false
                 var waited = 0L
                 while (waited < waitMs && session.running.get()) {
                     if (session.forceReconnect.getAndSet(false)) {
-                        session.backoffMs = MIN_BACKOFF_MS
                         session.attempt = 0
-                        forced = true
                         break
                     }
                     delay(250)
                     waited += 250
                     if (!stable && waited % 1000L < 250L) publishReconnect(session, waiting = true)
                 }
-
-                if (!stable && !forced) {
-                    session.backoffMs = (session.backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
-                }
             }
         } finally {
             session.running.set(false)
-            clearReconnect(lobby.id)
+            clearReconnect(session.lobby.id)
         }
     }
 
-    private suspend fun connectOnce(session: LobbySession): Boolean {
+    private suspend fun isLobbyGone(result: ConnectResult, lobby: Lobby): Boolean {
+        if (result.closeCode == 4401) return true
+        val reason = result.closeReason.lowercase()
+        if (reason.contains("unauthorized")) return true
+        if (result.opened) return false
+        val attempt = sessions[lobby.id]?.attempt ?: 0
+        if (attempt < 2) return false
+        return !roomStillExists(lobby.code)
+    }
+
+    private suspend fun roomStillExists(code: String): Boolean {
+        return try {
+            LuvApiClient.roomPreview(code)
+            true
+        } catch (e: LuvApiException) {
+            val missing = e.error == "room_not_found" ||
+                e.message?.contains("nicht gefunden", ignoreCase = true) == true
+            !missing
+        } catch (_: Exception) {
+            true
+        }
+    }
+
+    private suspend fun connectOnce(session: LobbySession): ConnectResult {
+        // Kapazität/Token vor WS angleichen — sonst room_full oder veraltete Plus-Slots
+        runCatching { refreshLobbyAccess(session) }
         val lobby = session.lobby
+        // Host: vor WS sicherstellen, dass die Lobby auf dem Server wieder da ist
+        if (lobby.role == Role.HOST && lobby.code.isNotBlank() && lobby.token.isNotBlank()) {
+            runCatching {
+                LuvApiClient.ensureRoom(lobby.code, lobby.token)
+            }.onFailure {
+                Log.w(TAG, "ensureRoom failed code=${lobby.code}: ${it.message}")
+            }
+        }
         val opened = AtomicBoolean(false)
         val closed = AtomicBoolean(false)
+        val closeCode = AtomicReference(0)
+        val closeReason = AtomicReference("")
         val request = Request.Builder()
             .url(
                 LuvApiClient.wsUrl(
@@ -235,19 +366,26 @@ class PairConnectionService : Service() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 opened.set(true)
                 Log.i(TAG, "ws open lobby=${lobby.name}")
+                // Noch nicht CONNECTED — erst nach welcome (sonst Flackern bei room_full)
+                session.lobbyGone = false
+                updateLobbyState(lobby.id, ConnectionState.CONNECTING)
+                ensureForeground()
                 flushOutbox(session, webSocket)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                handleIncoming(lobby, text)
+                handleIncoming(session.lobby, text)
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                webSocket.close(1000, null)
+                closeCode.set(code)
+                closeReason.set(reason.orEmpty())
                 closed.set(true)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                closeCode.set(code)
+                closeReason.set(reason.orEmpty())
                 closed.set(true)
             }
 
@@ -263,21 +401,30 @@ class PairConnectionService : Service() {
         while (session.running.get() && !closed.get() && !session.forceReconnect.get()) {
             delay(300)
         }
-        return opened.get()
+        return ConnectResult(
+            opened = opened.get(),
+            closeCode = closeCode.get() ?: 0,
+            closeReason = closeReason.get().orEmpty()
+        )
     }
 
     private fun publishReconnect(session: LobbySession, waiting: Boolean = true) {
-        val remaining = if (waiting) {
+        if (!waiting) {
+            clearReconnect(session.lobby.id)
+            return
+        }
+        val remaining =
             ((session.nextRetryAtMs - System.currentTimeMillis()) / 1000L).coerceAtLeast(0)
-        } else {
-            0L
+        if (remaining <= 0) {
+            clearReconnect(session.lobby.id)
+            return
         }
         _reconnectUi.value = _reconnectUi.value + (session.lobby.id to LobbyReconnectUi(
             lobbyId = session.lobby.id,
             attempt = session.attempt,
             nextRetryInSec = remaining.toInt(),
-            backoffSec = (session.backoffMs / 1000L).toInt(),
-            waiting = waiting && remaining > 0
+            backoffSec = (RECONNECT_DELAY_MS / 1000L).toInt(),
+            waiting = true
         ))
     }
 
@@ -292,32 +439,204 @@ class PairConnectionService : Service() {
                 "welcome", "peers" -> {
                     val peers = json.optInt("peers", json.optInt("count", 0))
                     val capacity = json.optInt("capacity", 0).takeIf { it > 0 }
-                    PairSessionState.onPeers(lobby.id, peers, capacity)
-                    if (peers >= 2) {
+                    val roster = parseRosterMembers(json)
+                    if (roster.isNotEmpty()) {
+                        PairSessionState.onRoster(lobby.id, roster, peers, capacity)
+                    } else {
+                        PairSessionState.onPeers(lobby.id, peers, capacity)
+                    }
+                    if (json.optString("type") == "welcome") {
+                        sessions[lobby.id]?.attempt = 0
+                        clearReconnect(lobby.id)
+                        updateLobbyState(lobby.id, connectedStateFor(lobby))
+                        ensureForeground()
+                    }
+                    val peakHint = json.optInt("peakPeers", peers).coerceAtLeast(peers)
+                    if (peakHint > 0) {
+                        scope.launch {
+                            LuvApp.instance.prefs.bumpPeakPeers(lobby.id, peakHint)
+                        }
+                    }
+                    if (json.optString("type") == "welcome") {
+                        val serverName = json.optString("name").trim()
+                        if (serverName.isNotBlank()) {
+                            applyLobbyName(lobby.id, serverName)
+                        }
+                        val serverToken = json.optString("token").trim()
+                            .takeIf { it.isNotBlank() && it != "null" }
+                        if (!serverToken.isNullOrBlank()) {
+                            applyLobbyToken(lobby.id, serverToken)
+                        }
+                        val hostNick = json.optString("hostNickname").trim()
+                        val hostUserId = json.optString("hostUserId").trim()
+                            .takeIf { it.isNotBlank() && it != "null" }
+                        if (hostNick.isNotBlank() || hostUserId != null) {
+                            scope.launch {
+                                LuvApp.instance.prefs.updateLobbyHost(
+                                    lobby.id,
+                                    hostNick.ifBlank { lobby.hostNickname },
+                                    hostUserId
+                                )
+                            }
+                            val myId = AccountSession.account.value?.id
+                            val amHost = hostUserId != null && hostUserId == myId
+                            sessions[lobby.id]?.let { s ->
+                                s.lobby = s.lobby.copy(
+                                    hostNickname = hostNick.ifBlank { s.lobby.hostNickname },
+                                    role = when {
+                                        amHost -> Role.HOST
+                                        s.lobby.role == Role.HOST && hostUserId != null && hostUserId != myId ->
+                                            Role.JOIN
+                                        else -> s.lobby.role
+                                    }
+                                )
+                            }
+                        }
+                        if (json.has("suggestedColorIndex")) {
+                            val suggested = json.optInt("suggestedColorIndex", -1)
+                            val activeId = CanvasStore.activeLobbyId.value
+                            val appliesHere = activeId == null || activeId == lobby.id
+                            if (appliesHere && suggested in 0 until PeerPalette.COLOR_COUNT) {
+                                scope.launch {
+                                    LuvApp.instance.prefs.setColorIndex(suggested)
+                                    CanvasStore.updateProfile(CanvasStore.cachedNickname, suggested)
+                                    CanvasStore.recolorOwnStrokes(
+                                        suggested,
+                                        lobby.id,
+                                        broadcast = LockDrawActivity.isCanvasForeground(lobby.id)
+                                    )
+                                    _events.emit(PairEvent.ColorAssigned(lobby.id, suggested))
+                                    // Nur echte Leinwand-Präsenz — nicht schon bei Lobby-Verbindung
+                                    sendPresence(
+                                        applicationContext,
+                                        active = LockDrawActivity.isCanvasForeground(lobby.id),
+                                        lobbyId = lobby.id
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    // CONNECTED nur nach welcome (peers allein reicht nicht / room_full-Flackern)
+                    if (json.optString("type") == "welcome") {
                         sessions[lobby.id]?.let {
-                            it.backoffMs = MIN_BACKOFF_MS
+                            it.backoffMs = RECONNECT_DELAY_MS
                             it.attempt = 0
                         }
                         clearReconnect(lobby.id)
+                        updateLobbyState(lobby.id, connectedStateFor(lobby))
+                        ensureForeground()
+                    } else if (capacity != null) {
+                        PairSessionState.setCapacity(lobby.id, capacity)
                     }
-                    updateLobbyState(
-                        lobby.id,
-                        if (peers >= 2) ConnectionState.CONNECTED else ConnectionState.HOSTING
+                    return
+                }
+                "lobby_rename" -> {
+                    val serverName = json.optString("name").trim()
+                    if (serverName.isNotBlank()) {
+                        applyLobbyName(lobby.id, serverName)
+                    }
+                    return
+                }
+                "host_changed" -> {
+                    val hostNick = json.optString("hostNickname").trim()
+                    val hostUserId = json.optString("hostUserId").trim()
+                        .takeIf { it.isNotBlank() && it != "null" }
+                    val myId = AccountSession.account.value?.id
+                    val session = sessions[lobby.id]
+                    if (session != null) {
+                        val amHost = hostUserId != null && hostUserId == myId
+                        session.lobby = session.lobby.copy(
+                            hostNickname = hostNick.ifBlank { session.lobby.hostNickname },
+                            role = when {
+                                amHost -> Role.HOST
+                                session.lobby.role == Role.HOST && hostUserId != null && hostUserId != myId ->
+                                    Role.JOIN
+                                else -> session.lobby.role
+                            }
+                        )
+                    }
+                    scope.launch {
+                        LuvApp.instance.prefs.updateLobbyHost(lobby.id, hostNick, hostUserId)
+                        LockScreenWidgetProvider.requestUpdate(applicationContext)
+                    }
+                    return
+                }
+                "canvas_history" -> {
+                    val replace = json.optBoolean("replace", false)
+                    val done = json.optBoolean("done", true)
+                    val arr = json.optJSONArray("strokes")
+                    val strokes = buildList {
+                        if (arr == null) return@buildList
+                        for (i in 0 until arr.length()) {
+                            val o = arr.optJSONObject(i) ?: continue
+                            val encoded = o.put("type", "stroke").toString()
+                            val msg = PairProtocol.decode(encoded) as? PairMessage.StrokeMsg ?: continue
+                            add(msg.stroke)
+                        }
+                    }
+                    CanvasStore.applyServerHistory(
+                        lobbyId = lobby.id,
+                        incoming = strokes,
+                        replace = replace,
+                        done = done
                     )
-                    ensureForeground(statusText())
+                    if (done) {
+                        scope.launch { _events.emit(PairEvent.HistoryApplied(lobby.id)) }
+                    }
+                    return
+                }
+                "peer_joined" -> {
+                    val nick = json.optString("nickname").ifBlank { "Jemand" }
+                    val joinUserId = json.optString("userId").takeIf { it.isNotBlank() && it != "null" }
+                    PairSessionState.rememberPeer(lobby.id, nick, userId = joinUserId)
+                    LuvAlertNotifier.onPeerJoined(
+                        this,
+                        lobbyName = lobby.name,
+                        nickname = nick,
+                        lobbyId = lobby.id,
+                        userId = joinUserId,
+                        firstJoin = json.optBoolean("firstJoin", true)
+                    )
+                    val roster = parseRosterMembers(json)
+                    val peers = json.optInt("peers", json.optInt("count", 0))
+                    val capacity = json.optInt("capacity", 0).takeIf { it > 0 }
+                    if (roster.isNotEmpty()) {
+                        PairSessionState.onRoster(
+                            lobby.id,
+                            roster,
+                            peers.coerceAtLeast(roster.size),
+                            capacity
+                        )
+                    } else if (peers > 0) {
+                        PairSessionState.onPeers(lobby.id, peers, capacity)
+                    }
                     return
                 }
                 "clear_vote_open" -> {
+                    val isInitiator = json.optBoolean("isInitiator", false)
+                    val alreadyVoted = json.optBoolean("alreadyVoted", false)
+                    val by = json.optString("by", "Jemand")
                     AccountSession.emitClearVote(
                         ClearVoteEvent.Open(
                             lobbyId = lobby.id,
                             proposalId = json.getString("proposalId"),
-                            by = json.optString("by", "Jemand"),
+                            by = by,
+                            byPeerId = json.optString("byPeerId").takeIf { it.isNotBlank() },
                             endsAt = json.optLong("endsAt"),
                             yes = json.optInt("yes", 1),
-                            total = json.optInt("total", 1)
+                            total = json.optInt("total", 1),
+                            alreadyVoted = alreadyVoted,
+                            isInitiator = isInitiator
                         )
                     )
+                    if (!isInitiator && !alreadyVoted) {
+                        LuvAlertNotifier.onClearAsk(
+                            this,
+                            lobbyName = lobby.name,
+                            nickname = by,
+                            lobbyId = lobby.id
+                        )
+                    }
                     return
                 }
                 "clear_vote_update" -> {
@@ -357,6 +676,68 @@ class PairConnectionService : Service() {
                     )
                     return
                 }
+                "public_vote_open" -> {
+                    val isInitiator = json.optBoolean("isInitiator", false)
+                    val alreadyVoted = json.optBoolean("alreadyVoted", false)
+                    val by = json.optString("by", "Jemand")
+                    val onCanvas = LockDrawActivity.isCanvasForeground(lobby.id)
+                    // Nur fragen, wer wirklich in der Leinwand ist — Lobby allein reicht nicht
+                    if (!onCanvas && !isInitiator) return
+                    AccountSession.emitPublicVote(
+                        PublicVoteEvent.Open(
+                            lobbyId = lobby.id,
+                            proposalId = json.getString("proposalId"),
+                            by = by,
+                            byPeerId = json.optString("byPeerId").takeIf { it.isNotBlank() },
+                            endsAt = json.optLong("endsAt"),
+                            yes = json.optInt("yes", 1),
+                            total = json.optInt("total", 1),
+                            rewardCoins = json.optInt("rewardCoins", 1),
+                            alreadyVoted = alreadyVoted,
+                            isInitiator = isInitiator
+                        )
+                    )
+                    return
+                }
+                "public_vote_update" -> {
+                    AccountSession.emitPublicVote(
+                        PublicVoteEvent.Update(
+                            lobbyId = lobby.id,
+                            proposalId = json.getString("proposalId"),
+                            yes = json.optInt("yes"),
+                            no = json.optInt("no"),
+                            total = json.optInt("total"),
+                            rewardCoins = json.optInt("rewardCoins", 1)
+                        )
+                    )
+                    return
+                }
+                "public_result" -> {
+                    AccountSession.emitPublicVote(
+                        PublicVoteEvent.Result(
+                            lobbyId = lobby.id,
+                            proposalId = json.getString("proposalId"),
+                            approved = json.optBoolean("approved"),
+                            yes = json.optInt("yes"),
+                            total = json.optInt("total"),
+                            rewardCoins = json.optInt("rewardCoins", 0),
+                            reason = json.optString("reason", "")
+                        )
+                    )
+                    return
+                }
+                "public_capture_request" -> {
+                    val proposalId = json.optString("proposalId")
+                    if (proposalId.isBlank()) return
+                    scope.launch { fulfillPublicCapture(lobby.id, proposalId) }
+                    return
+                }
+                "public_blocked" -> {
+                    AccountSession.emitEconomyBlock(
+                        json.optString("message", "Öffentlich teilen gerade nicht möglich.")
+                    )
+                    return
+                }
                 "economy_block" -> {
                     AccountSession.emitEconomyBlock(
                         json.optString("message", "Keine Coins mehr — Zuschauen geht weiter.")
@@ -372,13 +753,129 @@ class PairConnectionService : Service() {
                     }
                     return
                 }
+                "game_state" -> {
+                    val g = json.optJSONObject("game")
+                    scope.launch {
+                        _events.emit(
+                            PairEvent.GameState(
+                                lobbyId = lobby.id,
+                                gameType = g?.optString("type").orEmpty(),
+                                status = g?.optString("status").orEmpty(),
+                                drawerPeerId = g?.optString("drawerPeerId"),
+                                drawerNickname = g?.optString("drawerNickname"),
+                                overlay = g?.optBoolean("overlay", false) == true,
+                                endsAt = g?.optLong("endsAt", 0L) ?: 0L
+                            )
+                        )
+                    }
+                    return
+                }
+                "game_play" -> {
+                    val g = json.optJSONObject("game") ?: return
+                    scope.launch {
+                        _events.emit(PairEvent.GamePlay(lobby.id, g))
+                    }
+                    return
+                }
+                "game_stop" -> {
+                    scope.launch { _events.emit(PairEvent.GameStopped(lobby.id)) }
+                    return
+                }
+                "game_words_pick" -> {
+                    val opts = json.optJSONArray("options")
+                    val list = buildList {
+                        if (opts != null) {
+                            for (i in 0 until opts.length()) {
+                                add(opts.optString(i))
+                            }
+                        }
+                    }
+                    scope.launch {
+                        _events.emit(
+                            PairEvent.GameWordsPick(
+                                lobbyId = lobby.id,
+                                options = list,
+                                drawerNickname = json.optString("drawerNickname")
+                            )
+                        )
+                    }
+                    return
+                }
+                "game_words_secret" -> {
+                    scope.launch {
+                        _events.emit(
+                            PairEvent.GameWordsSecret(
+                                lobbyId = lobby.id,
+                                word = json.optString("word"),
+                                endsAt = json.optLong("endsAt", 0L)
+                            )
+                        )
+                    }
+                    return
+                }
+                "game_words_correct" -> {
+                    scope.launch {
+                        _events.emit(
+                            PairEvent.GameWordsCorrect(
+                                lobbyId = lobby.id,
+                                winner = json.optString("winner"),
+                                word = json.optString("word"),
+                                drawerNickname = json.optString("drawerNickname")
+                            )
+                        )
+                    }
+                    return
+                }
+                "game_words_timeout" -> {
+                    scope.launch {
+                        _events.emit(
+                            PairEvent.GameWordsTimeout(
+                                lobbyId = lobby.id,
+                                word = json.optString("word"),
+                                drawerNickname = json.optString("drawerNickname")
+                            )
+                        )
+                    }
+                    return
+                }
+                "game_guess_chat" -> {
+                    scope.launch {
+                        _events.emit(
+                            PairEvent.GameGuessChat(
+                                lobbyId = lobby.id,
+                                nickname = json.optString("nickname"),
+                                text = json.optString("text"),
+                                correct = json.optBoolean("ok")
+                            )
+                        )
+                    }
+                    return
+                }
+                "game_guess_result" -> {
+                    scope.launch {
+                        _events.emit(
+                            PairEvent.GameGuessResult(
+                                lobbyId = lobby.id,
+                                ok = json.optBoolean("ok"),
+                                message = json.optString("message")
+                            )
+                        )
+                    }
+                    return
+                }
             }
         }
 
         when (val message = PairProtocol.decode(text)) {
             is PairMessage.StrokeMsg -> {
                 CanvasStore.addRemoteStroke(message.stroke, lobby.id)
-                PartnerStrokeNotifier.onPartnerStroke(
+                // Avatar-Farbe = Zeichenfarbe
+                PairSessionState.updatePeerColor(
+                    lobby.id,
+                    message.stroke.nickname,
+                    message.stroke.colorIndex
+                )
+                LuvAlertNotifier.onPartnerStroke(
                     this,
                     lobbyName = lobby.name,
                     nickname = message.stroke.nickname ?: "Jemand",
@@ -391,13 +888,17 @@ class PairConnectionService : Service() {
                 scope.launch { _events.emit(PairEvent.StrokeUndone(lobby.id, message.strokeId)) }
             }
             is PairMessage.Presence -> {
-                val key = message.peerKey ?: message.nickname ?: "peer"
+                val key = message.userId
+                    ?: message.peerKey
+                    ?: message.nickname
+                    ?: "peer"
                 PairSessionState.onPresence(
                     lobbyId = lobby.id,
                     peerKey = key,
                     nickname = message.nickname ?: "Jemand",
                     colorIndex = message.colorIndex,
-                    active = message.active
+                    active = message.active,
+                    userId = message.userId
                 )
             }
             is PairMessage.Note -> PairSessionState.emitNote(message.text)
@@ -455,6 +956,7 @@ class PairConnectionService : Service() {
 
     private fun stopLobby(lobbyId: String) {
         sessions.remove(lobbyId)?.let { session ->
+            session.intentionalLeave = true
             session.running.set(false)
             session.job?.cancel()
             session.webSocket.getAndSet(null)?.close(1000, "bye")
@@ -465,7 +967,7 @@ class PairConnectionService : Service() {
         if (sessions.isEmpty()) {
             stopSelfSafely()
         } else {
-            ensureForeground(statusText())
+            ensureForeground()
         }
     }
 
@@ -489,6 +991,86 @@ class PairConnectionService : Service() {
         stopSelf()
     }
 
+    private fun connectedStateFor(lobby: Lobby): ConnectionState =
+        if (lobby.role == com.luv.couple.data.Role.HOST) {
+            ConnectionState.HOSTING
+        } else {
+            ConnectionState.CONNECTED
+        }
+
+    private fun applyLobbyName(lobbyId: String, name: String) {
+        val clean = name.trim().take(PeerPalette.MAX_LOBBY_NAME_LENGTH)
+        if (clean.isBlank()) return
+        val session = sessions[lobbyId] ?: return
+        if (session.lobby.name == clean) return
+        session.lobby = session.lobby.copy(name = clean)
+        scope.launch {
+            LuvApp.instance.prefs.renameLobby(lobbyId, clean)
+            LockScreenWidgetProvider.requestUpdate(applicationContext)
+        }
+    }
+
+    private fun applyLobbyToken(lobbyId: String, token: String) {
+        val clean = token.trim()
+        if (clean.isBlank()) return
+        val session = sessions[lobbyId] ?: return
+        if (session.lobby.token == clean) return
+        session.lobby = session.lobby.copy(token = clean)
+        scope.launch {
+            runCatching {
+                val snap = LuvApp.instance.prefs.snapshot()
+                val lobby = snap.lobbies.firstOrNull { it.id == lobbyId } ?: return@launch
+                LuvApp.instance.prefs.upsertLobby(lobby.copy(token = clean))
+            }
+        }
+    }
+
+    /** Token/Kapazität/Roster vom Server holen — alle wieder im selben Raum. */
+    private suspend fun refreshLobbyAccess(session: LobbySession) {
+        val lobby = session.lobby
+        val refreshed = runCatching {
+            if (lobby.role == Role.HOST) {
+                LuvApiClient.ensureRoom(lobby.code, lobby.token)
+            } else {
+                LuvApiClient.joinRoom(lobby.code)
+            }
+        }.getOrNull() ?: return
+        val token = refreshed.token.trim()
+        if (token.isBlank()) return
+        session.lobby = session.lobby.copy(
+            token = token,
+            name = refreshed.name.ifBlank { session.lobby.name },
+            capacity = refreshed.capacity.takeIf { it > 0 } ?: session.lobby.capacity,
+            hostNickname = refreshed.hostNickname.ifBlank { session.lobby.hostNickname }
+        )
+        if (refreshed.capacity > 0) {
+            PairSessionState.setCapacity(lobby.id, refreshed.capacity)
+        }
+        // Roster inkl. Offline-Mitglieder (falls API sie mitschickt)
+        val roster = refreshed.memberList
+        if (roster.isNotEmpty()) {
+            PairSessionState.onRoster(
+                lobby.id,
+                roster,
+                refreshed.peers.coerceAtLeast(1),
+                refreshed.capacity.takeIf { it > 0 }
+            )
+        }
+        runCatching {
+            val snap = LuvApp.instance.prefs.snapshot()
+            val local = snap.lobbies.firstOrNull { it.id == lobby.id } ?: return@runCatching
+            LuvApp.instance.prefs.upsertLobby(
+                local.copy(
+                    token = token,
+                    name = session.lobby.name,
+                    capacity = session.lobby.capacity,
+                    hostNickname = session.lobby.hostNickname
+                )
+            )
+        }
+        Log.i(TAG, "refreshed lobby access code=${lobby.code} cap=${session.lobby.capacity}")
+    }
+
     private fun updateLobbyState(lobbyId: String, state: ConnectionState) {
         _lobbyStates.value = _lobbyStates.value + (lobbyId to state)
         refreshAggregateState()
@@ -506,27 +1088,31 @@ class PairConnectionService : Service() {
         updateAggregate(aggregate)
     }
 
-    private fun statusText(): String {
-        // Keine Reconnect-/Stör-Meldungen in der System-Notification
-        val connected = _lobbyStates.value.count { it.value == ConnectionState.CONNECTED }
-        val hosting = _lobbyStates.value.count { it.value == ConnectionState.HOSTING }
-        return when {
-            connected > 0 -> getString(R.string.notification_title)
-            hosting > 0 -> getString(R.string.notification_hosting)
-            else -> getString(R.string.notification_running)
+    /**
+     * Android verlangt eine Foreground-Notification.
+     * Statt leerem „LUV“: warmer Impuls-Text (kein „verbunden“).
+     */
+    private fun ensureForeground() {
+        val now = System.currentTimeMillis()
+        val refreshMood =
+            lastServiceMoodLine.isBlank() || now - lastServiceMoodAtMs >= 30 * 60_000L
+        if (refreshMood) {
+            lastServiceMoodLine = MoodLines.pickText()
+            lastServiceMoodAtMs = now
         }
-    }
-
-    private fun ensureForeground(text: String) {
+        val line = lastServiceMoodLine.ifBlank { MoodLines.pickText() }
         if (foregroundStarted.get()) {
-            updateNotification(text)
+            if (refreshMood) {
+                NotificationManagerCompat.from(this)
+                    .notify(NOTIFICATION_ID, buildQuietServiceNotification(line))
+            }
             return
         }
         try {
             ServiceCompat.startForeground(
                 this,
                 NOTIFICATION_ID,
-                buildNotification(text),
+                buildQuietServiceNotification(line),
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
                 } else {
@@ -540,27 +1126,73 @@ class PairConnectionService : Service() {
         }
     }
 
-    private fun buildNotification(text: String): Notification {
+    private fun buildQuietServiceNotification(line: String): Notification {
         val pending = PendingIntent.getActivity(
             this,
             0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val behavior = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            NotificationCompat.FOREGROUND_SERVICE_DEFERRED
+        } else {
+            NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE
+        }
+        val text = line.ifBlank { getString(R.string.notification_service_text) }
         return NotificationCompat.Builder(this, LuvApp.CHANNEL_ID)
-            .setContentTitle(getString(R.string.app_name))
-            .setContentText(text)
+            .setContentTitle(text)
+            .setContentText("LUV · tippen zum Öffnen")
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText(text)
+                    .setBigContentTitle("LUV")
+            )
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pending)
             .setOngoing(true)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setSilent(true)
+            .setShowWhen(false)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setForegroundServiceBehavior(behavior)
             .build()
     }
 
-    private fun updateNotification(text: String) {
-        if (!foregroundStarted.get()) return
-        val manager = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-        manager.notify(NOTIFICATION_ID, buildNotification(text))
+    private suspend fun fulfillPublicCapture(lobbyId: String, proposalId: String) {
+        val bitmap = withContext(Dispatchers.IO) {
+            runCatching {
+                val bg = CanvasStore.backgroundFor(CanvasStore.cachedColorIndex)
+                CanvasStore.renderBitmap(720, 1280, bg, lobbyId)
+            }.getOrNull()
+        }
+        if (bitmap == null) {
+            Log.w(TAG, "public capture failed lobby=$lobbyId")
+            return
+        }
+        // Auch in die lokale Galerie — unabhängig vom Konto
+        runCatching {
+            com.luv.couple.data.LocalMoments.save(applicationContext, bitmap, "LUV_public_")
+        }
+        val b64 = withContext(Dispatchers.IO) {
+            runCatching {
+                val stream = ByteArrayOutputStream()
+                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 88, stream)) return@runCatching null
+                Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+            }.getOrNull()
+        }
+        if (b64.isNullOrBlank()) {
+            Log.w(TAG, "public capture encode failed lobby=$lobbyId")
+            return
+        }
+        sendRaw(
+            lobbyId,
+            JSONObject()
+                .put("type", "public_capture")
+                .put("proposalId", proposalId)
+                .put("imageBase64", b64)
+                .toString()
+        )
     }
 
     override fun onDestroy() {
@@ -590,8 +1222,8 @@ class PairConnectionService : Service() {
         const val EXTRA_STROKE_ID = "stroke_id"
         const val EXTRA_LOBBY_ID = "lobby_id"
         private const val NOTIFICATION_ID = 42
-        private const val MIN_BACKOFF_MS = 5_000L
-        private const val MAX_BACKOFF_MS = 120_000L
+        private const val MIN_BACKOFF_MS = 2_000L
+        private const val RECONNECT_DELAY_MS = 2_000L
         private const val STABLE_CONNECTION_MS = 8_000L
         private const val MAX_OUTBOX = 80
 
@@ -682,6 +1314,34 @@ class PairConnectionService : Service() {
             dispatchPayload(context, payload, lobbyId)
         }
 
+        fun sendPublicPropose(context: Context, lobbyId: String? = null) {
+            val nickname = CanvasStore.cachedNickname
+                ?: AccountSession.account.value?.nickname
+            val payload = JSONObject()
+                .put("type", "public_propose")
+                .put("nickname", nickname ?: JSONObject.NULL)
+                .toString()
+            dispatchPayload(context, payload, lobbyId)
+        }
+
+        fun sendPublicVote(context: Context, proposalId: String, yes: Boolean, lobbyId: String? = null) {
+            val payload = JSONObject()
+                .put("type", "public_vote")
+                .put("proposalId", proposalId)
+                .put("yes", yes)
+                .toString()
+            dispatchPayload(context, payload, lobbyId)
+        }
+
+        fun sendPublicCapture(context: Context, proposalId: String, imageBase64: String, lobbyId: String? = null) {
+            val payload = JSONObject()
+                .put("type", "public_capture")
+                .put("proposalId", proposalId)
+                .put("imageBase64", imageBase64)
+                .toString()
+            dispatchPayload(context, payload, lobbyId)
+        }
+
         fun sendUndo(context: Context, strokeId: String, lobbyId: String? = null) {
             try {
                 val service = instanceRef
@@ -705,16 +1365,47 @@ class PairConnectionService : Service() {
         fun sendPresence(context: Context, active: Boolean, lobbyId: String? = null) {
             val nickname = CanvasStore.cachedNickname
                 ?: AccountSession.account.value?.nickname
+            val userId = AccountSession.account.value?.id
             val colorIndex = CanvasStore.cachedColorIndex
             val payload = PairProtocol.encode(
                 PairMessage.Presence(
                     active = active,
                     nickname = nickname,
                     colorIndex = colorIndex,
-                    peerKey = nickname
+                    peerKey = userId ?: nickname,
+                    userId = userId
                 )
             )
             dispatchPayload(context, payload, lobbyId ?: CanvasStore.activeLobbyId.value)
+        }
+
+        private fun parseRosterMembers(json: JSONObject): List<RosterMember> {
+            val rich = json.optJSONArray("memberList")
+            if (rich != null && rich.length() > 0) {
+                return buildList {
+                    for (i in 0 until rich.length()) {
+                        val o = rich.optJSONObject(i) ?: continue
+                        val nick = o.optString("nickname").trim().ifBlank { "Jemand" }
+                        add(
+                            RosterMember(
+                                userId = o.optString("userId").takeIf { it.isNotBlank() && it != "null" },
+                                nickname = nick,
+                                colorIndex = o.optInt("colorIndex", -1),
+                                active = o.optBoolean("active", false)
+                            )
+                        )
+                    }
+                }
+            }
+            val arr = json.optJSONArray("members") ?: return emptyList()
+            return buildList {
+                for (i in 0 until arr.length()) {
+                    val nick = arr.optString(i).trim()
+                    if (nick.isNotBlank()) {
+                        add(RosterMember(userId = null, nickname = nick))
+                    }
+                }
+            }
         }
 
         fun sendNote(context: Context, text: String, lobbyId: String? = null) {
@@ -744,6 +1435,67 @@ class PairConnectionService : Service() {
             dispatchPayload(context, payload, lobbyId ?: CanvasStore.activeLobbyId.value)
         }
 
+        fun sendGameStart(context: Context, game: String, lobbyId: String? = null) {
+            val nickname = CanvasStore.cachedNickname
+                ?: AccountSession.account.value?.nickname
+            val payload = JSONObject()
+                .put("type", "game_start")
+                .put("game", game)
+                .put("nickname", nickname ?: JSONObject.NULL)
+                .toString()
+            dispatchPayload(context, payload, lobbyId ?: CanvasStore.activeLobbyId.value)
+        }
+
+        fun sendGameStop(context: Context, lobbyId: String? = null) {
+            dispatchPayload(
+                context,
+                JSONObject().put("type", "game_stop").toString(),
+                lobbyId ?: CanvasStore.activeLobbyId.value
+            )
+        }
+
+        fun sendGameAction(
+            context: Context,
+            action: String,
+            payload: JSONObject = JSONObject(),
+            lobbyId: String? = null
+        ) {
+            val nickname = CanvasStore.cachedNickname
+                ?: AccountSession.account.value?.nickname
+            dispatchPayload(
+                context,
+                JSONObject()
+                    .put("type", "game_action")
+                    .put("action", action)
+                    .put("payload", payload)
+                    .put("nickname", nickname ?: JSONObject.NULL)
+                    .toString(),
+                lobbyId ?: CanvasStore.activeLobbyId.value
+            )
+        }
+
+        fun sendGamePick(context: Context, word: String, lobbyId: String? = null) {
+            dispatchPayload(
+                context,
+                JSONObject().put("type", "game_pick").put("word", word).toString(),
+                lobbyId ?: CanvasStore.activeLobbyId.value
+            )
+        }
+
+        fun sendGameGuess(context: Context, text: String, lobbyId: String? = null) {
+            val nickname = CanvasStore.cachedNickname
+                ?: AccountSession.account.value?.nickname
+            dispatchPayload(
+                context,
+                JSONObject()
+                    .put("type", "game_guess")
+                    .put("text", text)
+                    .put("nickname", nickname ?: JSONObject.NULL)
+                    .toString(),
+                lobbyId ?: CanvasStore.activeLobbyId.value
+            )
+        }
+
         fun lobbyState(lobbyId: String): ConnectionState =
             _lobbyStates.value[lobbyId] ?: ConnectionState.IDLE
 
@@ -771,8 +1523,50 @@ data class LobbyReconnectUi(
 sealed class PairEvent {
     data class StrokeReceived(val lobbyId: String, val stroke: com.luv.couple.data.Stroke) : PairEvent()
     data class StrokeUndone(val lobbyId: String, val strokeId: String) : PairEvent()
+    data class HistoryApplied(val lobbyId: String) : PairEvent()
     data class Cleared(val lobbyId: String) : PairEvent()
+    data class LobbyGone(val lobbyId: String, val name: String) : PairEvent()
+    data class ColorAssigned(val lobbyId: String, val colorIndex: Int) : PairEvent()
     data class RecolorReceived(val lobbyId: String, val nickname: String?, val colorIndex: Int) : PairEvent()
     data class ReactionReceived(val lobbyId: String, val emoji: String, val nickname: String?) : PairEvent()
     data class GameBoardReceived(val lobbyId: String, val game: String, val visible: Boolean) : PairEvent()
+    data class GameState(
+        val lobbyId: String,
+        val gameType: String,
+        val status: String,
+        val drawerPeerId: String?,
+        val drawerNickname: String?,
+        val overlay: Boolean,
+        val endsAt: Long = 0L
+    ) : PairEvent()
+    data class GameStopped(val lobbyId: String) : PairEvent()
+    data class GamePlay(val lobbyId: String, val game: JSONObject) : PairEvent()
+    data class GameWordsPick(
+        val lobbyId: String,
+        val options: List<String>,
+        val drawerNickname: String?
+    ) : PairEvent()
+    data class GameWordsSecret(
+        val lobbyId: String,
+        val word: String,
+        val endsAt: Long = 0L
+    ) : PairEvent()
+    data class GameWordsCorrect(
+        val lobbyId: String,
+        val winner: String,
+        val word: String,
+        val drawerNickname: String?
+    ) : PairEvent()
+    data class GameWordsTimeout(
+        val lobbyId: String,
+        val word: String,
+        val drawerNickname: String?
+    ) : PairEvent()
+    data class GameGuessChat(
+        val lobbyId: String,
+        val nickname: String,
+        val text: String,
+        val correct: Boolean
+    ) : PairEvent()
+    data class GameGuessResult(val lobbyId: String, val ok: Boolean, val message: String) : PairEvent()
 }

@@ -8,6 +8,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
+/**
+ * Früher: Leinwand bei Tageswechsel lokal leeren.
+ * Das kollidiert mit Persistenz nach Updates — deshalb nur noch Tagesmarker,
+ * kein Wipe mehr. Bewusstes Leeren bleibt die Clear-Abstimmung.
+ */
 object MidnightClear {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -15,10 +20,6 @@ object MidnightClear {
         scope.launch {
             val prefs = LuvApp.instance.prefs
             val today = LocalDate.now().toString()
-            val last = prefs.lastClearDay()
-            if (last != null && last != today) {
-                CanvasStore.clearAll(notifyPeer = false)
-            }
             prefs.setLastClearDay(today)
         }
     }

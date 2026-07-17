@@ -15,6 +15,7 @@ sealed class PairMessage {
         val nickname: String?,
         val colorIndex: Int,
         val peerKey: String? = null,
+        val userId: String? = null,
         @Deprecated("legacy") val gender: String? = null
     ) : PairMessage()
     data class Note(val text: String) : PairMessage()
@@ -65,6 +66,7 @@ object PairProtocol {
                 .put("nickname", message.nickname ?: JSONObject.NULL)
                 .put("colorIndex", message.colorIndex)
                 .put("peerKey", message.peerKey ?: JSONObject.NULL)
+                .put("userId", message.userId ?: JSONObject.NULL)
                 .put("gender", message.gender ?: JSONObject.NULL)
             is PairMessage.Note -> JSONObject()
                 .put("type", "note")
@@ -146,7 +148,9 @@ object PairProtocol {
                         nickname = nickname,
                         colorIndex = colorIndex,
                         peerKey = json.optString("peerKey").takeIf { it.isNotBlank() && it != "null" }
+                            ?: json.optString("userId").takeIf { it.isNotBlank() && it != "null" }
                             ?: nickname,
+                        userId = json.optString("userId").takeIf { it.isNotBlank() && it != "null" },
                         gender = json.optString("gender").takeIf { it.isNotBlank() && it != "null" }
                     )
                 }

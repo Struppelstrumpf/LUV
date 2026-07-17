@@ -3,28 +3,38 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>LUV — gemeinsam zeichnen</title>
-  <meta name="description" content="Gemeinsam zeichnen. Live auf dem Sperrbildschirm — nur für euch." />
+  <title>LUV — jemand will mit dir verbunden sein</title>
+  <meta name="description" content="Jemand möchte mit dir auf LUV zeichnen — live, nah, auf dem Sperrbildschirm. Nur für euch." />
   <meta name="theme-color" content="#0B0E14" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="LUV" />
-  <meta property="og:title" content="LUV — gemeinsam zeichnen" />
-  <meta property="og:description" content="Gemeinsam zeichnen. Live auf dem Sperrbildschirm — nur für euch." />
-  <meta property="og:image" content="https://reineke.pro/downloads/luv/og.jpg" />
+  <meta property="og:title" content="LUV — jemand will mit dir verbunden sein" />
+  <meta property="og:description" content="Ein Moment nur für euch: gemeinsam zeichnen, live auf dem Sperrbildschirm." />
+  <meta property="og:image" content="https://reineke.pro/downloads/luv/og.jpg?v=1813" />
   <meta property="og:image:type" content="image/jpeg" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="1200" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="LUV — gemeinsam zeichnen" />
-  <meta name="twitter:description" content="Gemeinsam zeichnen. Live auf dem Sperrbildschirm — nur für euch." />
-  <meta name="twitter:image" content="https://reineke.pro/downloads/luv/og.jpg" />
+  <meta name="twitter:title" content="LUV — jemand will mit dir verbunden sein" />
+  <meta name="twitter:description" content="Ein Moment nur für euch: gemeinsam zeichnen, live auf dem Sperrbildschirm." />
+  <meta name="twitter:image" content="https://reineke.pro/downloads/luv/og.jpg?v=1813" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/luv/styles.css" />
   <style>
     .join-stage { min-height: 100dvh; display: grid; place-content: center; padding: 2rem 1.25rem; text-align: center; }
-    .join-stage .brand { font-family: Fraunces, serif; font-size: clamp(3rem, 10vw, 5rem); letter-spacing: 0.12em; margin: 0; }
+    .join-stage .brand { font-family: Fraunces, serif; font-size: clamp(3rem, 10vw, 5rem); letter-spacing: 0.12em; margin: 0; color: #f4f1ec; }
+    .join-stage .brand .c-l { color: #00b7e4; }
+    .join-stage .brand .c-u {
+      display: inline-block;
+      background: linear-gradient(90deg, #00b7e4 0%, #c218a8 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+    }
+    .join-stage .brand .c-v { color: #c218a8; }
     .join-stage .headline { font-family: Fraunces, serif; font-weight: 500; font-size: clamp(1.4rem, 4vw, 2rem); margin: 1rem 0 0.5rem; }
     .join-stage .lede { opacity: 0.72; max-width: 28rem; margin: 0 auto 1.75rem; line-height: 1.5; }
     .join-stage .code { font-family: Outfit, sans-serif; font-weight: 600; letter-spacing: 0.08em; opacity: 0.9; margin-bottom: 1.5rem; }
@@ -39,14 +49,14 @@
     <div class="grain"></div>
   </div>
   <main class="join-stage">
-    <p class="brand">LUV</p>
-    <h1 class="headline">Einladung öffnen</h1>
-    <p class="lede">Tippe auf „In LUV öffnen“ — die App zeigt Lobby & Host, dann kannst du beitreten oder ablehnen.</p>
+    <p class="brand" aria-label="LUV"><span class="c-l">L</span><span class="c-u">U</span><span class="c-v">V</span></p>
+    <h1 class="headline">Jemand denkt an dich.</h1>
+    <p class="lede">Öffne die Einladung — und teilt denselben Moment auf dem Sperrbildschirm. Nah. Live. Nur für euch.</p>
     <p class="code" id="codeLabel">…</p>
     <div class="cta-row">
       <a class="download" id="openApp" href="#">
-        <span class="download-label">In LUV öffnen</span>
-        <span class="download-meta">Einladung ansehen</span>
+        <span class="download-label">Jetzt verbinden</span>
+        <span class="download-meta">Einladung öffnen</span>
       </a>
       <a class="download" href="https://reineke.pro/downloads/luv/LUV.apk" download="LUV.apk" style="opacity:.9">
         <span class="download-label">App herunterladen</span>

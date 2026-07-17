@@ -3,64 +3,102 @@
   const impressumDialog = document.getElementById("impressumDialog");
   openImpressum?.addEventListener("click", () => impressumDialog?.showModal());
 
-  // Fake „live“ Nutzerzähler — zufälliger Drift, kein erkennbarer Loop
+  // Fake „live“ Nutzerzähler — ruhig (~100/min), selten abrupte Wellen, nie gerade
   (function liveUsersHook() {
     const el = document.getElementById("liveCount");
     if (!el) return;
 
-    const MIN = 3000;
-    const MAX = 80000;
-    let value = 14293;
-    let velocity = 0;
+    const HARD_MIN = 1847;
+    const HARD_MAX = 4891;
 
-    const fmt = (n) =>
-      Math.round(n).toLocaleString("de-DE", { maximumFractionDigits: 0 });
+    // Zielniveau ~2.800 über den Tag (Lokalzeit) — nie glatte Tausender
+    const HOUR_TARGET = [
+      2147, 1983, 1871, 1793, 1927, 2311, // 0–5 Nacht
+      2547, 2711, 2893, // 6–8 Morgen
+      3017, 3147, 3213, 3107, 2973, // 9–13
+      3041, 3173, 3319, // 14–16
+      3487, 3621, 3517, 3273, 3089, // 17–21 Abend
+      2683, 2397, // 22–23
+    ];
 
     const rand = (a, b) => a + Math.random() * (b - a);
+    const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
     const pick = (arr) => arr[(Math.random() * arr.length) | 0];
 
+    // Nur ungerade, keine …x00 / …x50
+    function displayInt(n) {
+      let v = Math.round(n);
+      v = clamp(v, HARD_MIN, HARD_MAX);
+      if (v % 2 === 0) v += 1;
+      const mod100 = ((v % 100) + 100) % 100;
+      if (mod100 === 0 || mod100 === 50) v += pick([3, 5, 7, 9, 11, 13]);
+      if (v % 2 === 0) v += 1;
+      return clamp(v, HARD_MIN, HARD_MAX) | 1;
+    }
+
+    function dayTarget() {
+      const d = new Date();
+      const h = d.getHours();
+      const m = d.getMinutes() + d.getSeconds() / 60;
+      const a = HOUR_TARGET[h];
+      const b = HOUR_TARGET[(h + 1) % 24];
+      const t = m / 60;
+      const daySeed = d.getFullYear() * 1000 + d.getMonth() * 40 + d.getDate();
+      const frac = Math.abs(Math.sin(daySeed * 12.9898) * 43758.5453) % 1;
+      const dayJitter = frac * 0.05 - 0.025;
+      return (a + (b - a) * t) * (1 + dayJitter);
+    }
+
+    let value = dayTarget() * rand(0.98, 1.02);
+    let shown = displayInt(value);
+    let waveRemaining = 0; // Ticks einer längeren Welle
+    let waveStep = 0; // Delta pro Tick während der Welle
+    let lastJumpAt = 0;
+
     function tick() {
-      // Gelegentlich starke „Wellen“, sonst kleine Fluktuation
-      const mood = Math.random();
-      if (mood < 0.08) {
-        velocity += rand(-2200, 2200);
-      } else if (mood < 0.28) {
-        velocity += rand(-480, 480);
-      } else {
-        velocity += rand(-90, 90);
+      const now = Date.now();
+      const target = dayTarget();
+      const delay = rand(900, 1800); // ~40–65 Ticks/min
+      // ~100 Veränderung / Minute → grob 1.5–3 pro Tick im Schnitt
+      let delta = rand(-2.8, 2.8);
+
+      // Sehr leichte Drift zum Tagesziel (kein hektisches Nachziehen)
+      delta += (target - value) * 0.0008;
+
+      // Seltene abrupte Sprünge (alle paar Minuten)
+      if (now - lastJumpAt > 90000 && Math.random() < 0.04) {
+        delta += pick([-1, 1]) * rand(55, 160);
+        lastJumpAt = now;
+        waveRemaining = 0;
       }
 
-      // Dämpfung + leichte Tendenz zur Mitte (kein fester Zyklus)
-      velocity *= rand(0.72, 0.92);
-      const midBias = (41500 - value) * rand(0.0004, 0.0022);
-      velocity += midBias;
-
-      // Seltene Sprünge (wie „Server-Batches“)
-      if (Math.random() < 0.045) {
-        value += pick([-1, 1]) * rand(800, 4200);
-        velocity *= 0.3;
+      // Oder eine Welle über einige Minuten (~2–5 min)
+      if (waveRemaining <= 0 && now - lastJumpAt > 120000 && Math.random() < 0.025) {
+        const dir = pick([-1, 1]);
+        const ticks = (rand(80, 180)) | 0; // bei ~1.3s ≈ 2–4 min
+        const total = rand(70, 220);
+        waveStep = (dir * total) / ticks;
+        waveRemaining = ticks;
+        lastJumpAt = now;
+      }
+      if (waveRemaining > 0) {
+        delta += waveStep + rand(-0.6, 0.6);
+        waveRemaining -= 1;
       }
 
-      value += velocity;
+      value = clamp(value + delta, HARD_MIN, HARD_MAX);
 
-      // Weiche Begrenzung statt hartem Bounce-Loop
-      if (value < MIN) {
-        value = MIN + rand(0, 180);
-        velocity = Math.abs(velocity) * rand(0.2, 0.7);
-      } else if (value > MAX) {
-        value = MAX - rand(0, 220);
-        velocity = -Math.abs(velocity) * rand(0.2, 0.7);
-      }
+      let next = displayInt(value);
+      if (next === shown) next = displayInt(shown + pick([-2, 2, -4, 4]));
+      if (next % 2 === 0) next += 1;
+      shown = next;
+      el.textContent = shown.toLocaleString("de-DE");
 
-      el.textContent = fmt(value);
-
-      // Unregelmäßiges Intervall — verhindert Takt-/Loop-Erkennung
-      const delay = rand(480, 2400) * (Math.random() < 0.12 ? rand(1.6, 3.2) : 1);
       setTimeout(tick, delay);
     }
 
-    el.textContent = fmt(value);
-    setTimeout(tick, rand(600, 1400));
+    el.textContent = shown.toLocaleString("de-DE");
+    setTimeout(tick, rand(600, 1200));
   })();
 
   const leftPhone = document.querySelector(".phone-him");

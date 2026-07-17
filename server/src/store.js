@@ -12,6 +12,9 @@ const DEFAULT = {
   redeems: {},
   payments: {},
   ledger: [],
+  rooms: {},
+  canvasMemories: {},
+  publicCanvases: {},
 };
 
 function ensureDir() {
@@ -33,6 +36,7 @@ function load() {
       redeems: raw.redeems || {},
       payments: raw.payments || {},
       ledger: Array.isArray(raw.ledger) ? raw.ledger : [],
+      rooms: raw.rooms && typeof raw.rooms === "object" ? raw.rooms : {},
     };
   } catch {
     return structuredClone(DEFAULT);
