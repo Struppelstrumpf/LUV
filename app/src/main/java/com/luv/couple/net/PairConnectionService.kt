@@ -76,7 +76,7 @@ class PairConnectionService : Service() {
                 maxRequestsPerHost = 32
             }
         )
-        .pingInterval(20, TimeUnit.SECONDS)
+        // Kein Client-Ping — zusammen mit Proxy/Caddy sonst kaputte Frames (MASK) → Server-Crash
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
@@ -94,7 +94,9 @@ class PairConnectionService : Service() {
         /** Lobby auf dem Server weg (z. B. nach API-Neustart) — nicht endlos reconnecten */
         @Volatile var lobbyGone: Boolean = false,
         /** true nur nach bewusstem Verlassen — 4001 sonst nicht Session killen */
-        @Volatile var intentionalLeave: Boolean = false
+        @Volatile var intentionalLeave: Boolean = false,
+        /** Token/Roster einmalig geholt — nicht bei jedem Reconnect hämmern */
+        @Volatile var accessHealed: Boolean = false
     )
 
     private data class ConnectResult(
@@ -192,7 +194,13 @@ class PairConnectionService : Service() {
             .filter { it.lobby.code.trim().uppercase() in wantedCodes && it.lobby.id !in wanted }
             .map { it.lobby.id }
             .forEach { stopLobby(it) }
-        unique.forEach { ensureLobbySession(it) }
+        // Gestaffelt starten — sonst alle WS gleichzeitig → Proxy-Frame-Fehler
+        unique.forEachIndexed { index, lobby ->
+            scope.launch {
+                if (index > 0) delay(350L * index)
+                ensureLobbySession(lobby)
+            }
+        }
         refreshAggregateState()
     }
 
@@ -238,7 +246,6 @@ class PairConnectionService : Service() {
                 val openedAt = System.currentTimeMillis()
                 val result = connectOnce(session)
                 val livedMs = System.currentTimeMillis() - openedAt
-                session.webSocket.getAndSet(null)?.close(1000, "bye")
                 if (!session.running.get()) break
 
                 // Bewusst verlassen — nur mit Flag (sonst Reconnect nach Server-Close)
@@ -262,9 +269,11 @@ class PairConnectionService : Service() {
                 if (result.closeCode == 4401) {
                     Log.w(TAG, "ws 4401 lobby=${lobby.code} — refresh token & retry")
                     session.attempt += 1
+                    session.accessHealed = false
                     updateLobbyState(lobby.id, ConnectionState.RECONNECTING)
                     publishReconnect(session, waiting = true)
                     runCatching { refreshLobbyAccess(session) }
+                    session.accessHealed = true
                     delay(1200L)
                     continue
                 }
@@ -272,9 +281,11 @@ class PairConnectionService : Service() {
                 if (result.closeCode == 4409) {
                     Log.w(TAG, "ws 4409 room_full lobby=${lobby.code} — backoff retry")
                     session.attempt += 1
+                    session.accessHealed = false
                     updateLobbyState(lobby.id, ConnectionState.RECONNECTING)
                     publishReconnect(session, waiting = true)
                     runCatching { refreshLobbyAccess(session) }
+                    session.accessHealed = true
                     delay((4_000L + session.attempt * 2_000L).coerceAtMost(20_000L))
                     continue
                 }
@@ -336,17 +347,22 @@ class PairConnectionService : Service() {
     }
 
     private suspend fun connectOnce(session: LobbySession): ConnectResult {
-        // Kapazität/Token vor WS angleichen — sonst room_full oder veraltete Plus-Slots
-        runCatching { refreshLobbyAccess(session) }
-        val lobby = session.lobby
-        // Host: vor WS sicherstellen, dass die Lobby auf dem Server wieder da ist
-        if (lobby.role == Role.HOST && lobby.code.isNotBlank() && lobby.token.isNotBlank()) {
-            runCatching {
-                LuvApiClient.ensureRoom(lobby.code, lobby.token)
-            }.onFailure {
-                Log.w(TAG, "ensureRoom failed code=${lobby.code}: ${it.message}")
+        if (!session.accessHealed) {
+            runCatching { refreshLobbyAccess(session) }
+            if (
+                session.lobby.role == Role.HOST &&
+                session.lobby.code.isNotBlank() &&
+                session.lobby.token.isNotBlank()
+            ) {
+                runCatching {
+                    LuvApiClient.ensureRoom(session.lobby.code, session.lobby.token)
+                }.onFailure {
+                    Log.w(TAG, "ensureRoom failed code=${session.lobby.code}: ${it.message}")
+                }
             }
+            session.accessHealed = true
         }
+        val lobbyNow = session.lobby
         val opened = AtomicBoolean(false)
         val closed = AtomicBoolean(false)
         val closeCode = AtomicReference(0)
@@ -354,9 +370,9 @@ class PairConnectionService : Service() {
         val request = Request.Builder()
             .url(
                 LuvApiClient.wsUrl(
-                    lobby.code,
-                    lobby.token,
-                    lobby.role.name.lowercase(),
+                    lobbyNow.code,
+                    lobbyNow.token,
+                    lobbyNow.role.name.lowercase(),
                     LuvApiClient.sessionToken
                 )
             )
@@ -365,10 +381,10 @@ class PairConnectionService : Service() {
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 opened.set(true)
-                Log.i(TAG, "ws open lobby=${lobby.name}")
+                Log.i(TAG, "ws open lobby=${lobbyNow.name}")
                 // Noch nicht CONNECTED — erst nach welcome (sonst Flackern bei room_full)
                 session.lobbyGone = false
-                updateLobbyState(lobby.id, ConnectionState.CONNECTING)
+                updateLobbyState(lobbyNow.id, ConnectionState.CONNECTING)
                 ensureForeground()
                 flushOutbox(session, webSocket)
             }
@@ -390,16 +406,36 @@ class PairConnectionService : Service() {
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.w(TAG, "ws failure lobby=${lobby.name}", t)
+                Log.w(TAG, "ws failure lobby=${lobbyNow.name}", t)
                 closed.set(true)
             }
         }
 
+        // Alte Socket sauber weg, bevor eine neue aufgeht
+        session.webSocket.getAndSet(null)?.let { old ->
+            try {
+                old.cancel()
+            } catch (_: Throwable) {
+            }
+        }
         val socket = wsClient.newWebSocket(request, listener)
         session.webSocket.set(socket)
 
         while (session.running.get() && !closed.get() && !session.forceReconnect.get()) {
             delay(300)
+        }
+        // Nur canceln wenn wir selbst reconnecten — nicht doppelt closen nach Server-Close
+        if (session.forceReconnect.get() || session.running.get()) {
+            val current = session.webSocket.get()
+            if (current === socket && closed.get()) {
+                session.webSocket.compareAndSet(socket, null)
+            } else if (current === socket && session.forceReconnect.get()) {
+                try {
+                    socket.cancel()
+                } catch (_: Throwable) {
+                }
+                session.webSocket.compareAndSet(socket, null)
+            }
         }
         return ConnectResult(
             opened = opened.get(),

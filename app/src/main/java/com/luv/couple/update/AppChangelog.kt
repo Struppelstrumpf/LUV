@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.8.85",
+            listOf(
+                "Gemeinsames Malen wieder stabil — Server stürzt nicht mehr ab",
+                "Alle in derselben Lobby sehen sich und die Striche wieder",
+            )
+        ),
+        Entry(
             "1.8.83",
             listOf(
                 "Keine Verbindungs-Flackerei mehr in größeren Lobbys",

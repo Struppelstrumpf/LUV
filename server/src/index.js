@@ -3720,7 +3720,30 @@ app.get("/v1/me/memories", (req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/v1/ws" });
 
+// Ohne Listener crasht ein einzelner MASK-/Proxy-Fehler den ganzen API-Prozess —
+// dann sehen alle nur noch sich selbst und Strokes kommen nicht an.
+function attachWsErrorGuard(socket, label) {
+  if (!socket || socket.luvErrorGuarded) return;
+  socket.luvErrorGuarded = true;
+  socket.on("error", (err) => {
+    const msg = err?.message || String(err || "ws error");
+    console.warn(`ws error ${label}:`, msg);
+    try {
+      socket.terminate();
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
+wss.on("error", (err) => {
+  console.warn("wss error:", err?.message || err);
+});
+
 wss.on("connection", (socket, req) => {
+  // SOFORT — vor close/send/history, sonst unhandled error → Prozess tot
+  attachWsErrorGuard(socket, "pre-auth");
+
   const url = new URL(req.url || "", `http://${req.headers.host}`);
   const code = String(url.searchParams.get("code") || "")
     .toUpperCase()
@@ -3730,13 +3753,21 @@ wss.on("connection", (socket, req) => {
   const sessionToken = String(url.searchParams.get("session") || "");
   const user = userFromSessionToken(sessionToken);
   if (user?.banned) {
-    socket.close(4403, "banned");
+    try {
+      socket.close(4403, "banned");
+    } catch {
+      /* ignore */
+    }
     return;
   }
 
   const room = resolveRoom(code, token, user);
   if (!room) {
-    socket.close(4401, "unauthorized");
+    try {
+      socket.close(4401, "unauthorized");
+    } catch {
+      /* ignore */
+    }
     return;
   }
   // Reconnect: alten Socket desselben Users ersetzen (kein Doppelplatz)
@@ -3773,6 +3804,7 @@ wss.on("connection", (socket, req) => {
   }
 
   const peerId = `${role}-${crypto.randomBytes(4).toString("hex")}`;
+  attachWsErrorGuard(socket, `code=${code} peer=${peerId}`);
   socket.luvPeerId = peerId;
   socket.luvUserId = user?.id || null;
   socket.luvNickname =
@@ -3854,11 +3886,6 @@ wss.on("connection", (socket, req) => {
   console.log(
     `ws join code=${code} peer=${peerId} user=${user?.id || "?"} nick=${socket.luvNickname} members=${connectedNow}`
   );
-
-  socket.on("error", (err) => {
-    // Muss gehandelt werden — sonst crasht der ganze Node-Prozess (MASK-Fehler etc.)
-    console.warn(`ws error code=${code} peer=${peerId}:`, err?.message || err);
-  });
 
   socket.on("message", (data) => {
     let text = typeof data === "string" ? data : data.toString("utf8");
@@ -4525,6 +4552,31 @@ wss.on("connection", (socket, req) => {
 });
 
 restoreRoomsFromDisk();
+
+// Letzter Sicherheitsnetz: ein WS-Protokollfehler darf die API nie killen.
+process.on("uncaughtException", (err) => {
+  const msg = String(err?.message || err || "");
+  const code = err?.code || "";
+  if (
+    code === "WS_ERR_EXPECTED_MASK" ||
+    code === "WS_ERR_INVALID_OPCODE" ||
+    code === "WS_ERR_INVALID_UTF8" ||
+    code === "WS_ERR_UNSUPPORTED_DATA_PAYLOAD_LENGTH" ||
+    code === "WS_ERR_UNEXPECTED_RSV_1" ||
+    code === "WS_ERR_UNEXPECTED_RSV_2_3" ||
+    msg.includes("MASK must be set") ||
+    msg.includes("Invalid WebSocket frame")
+  ) {
+    console.error("swallowed fatal ws frame error (kept process alive):", msg);
+    return;
+  }
+  console.error("uncaughtException", err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("unhandledRejection", reason);
+});
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(
