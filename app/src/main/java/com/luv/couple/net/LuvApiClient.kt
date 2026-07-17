@@ -10,6 +10,7 @@ import com.luv.couple.data.RosterMember
 import okhttp3.Dispatcher
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -132,6 +133,7 @@ object LuvApiClient {
                 maxRequestsPerHost = 32
             }
         )
+        .protocols(listOf(Protocol.HTTP_1_1))
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)

@@ -1608,12 +1608,23 @@ function evictSocketsForUser(room, userId) {
 /** Verzögerte Auflösung — kurze Offline/Reconnect-Fenster dürfen Lobby nicht killen. */
 const EMPTY_FREE_LOBBY_GRACE_MS = 90_000;
 const emptyFreeLobbyTimers = new Map();
+/** Host nicht bei jedem MASK-/Reconnect-Drop sofort umhängen (1.8.80-Regression). */
+const HOST_FAILOVER_GRACE_MS = 60_000;
+const hostFailoverTimers = new Map();
 
 function cancelEmptyFreeLobbyTimer(code) {
   const t = emptyFreeLobbyTimers.get(code);
   if (t) {
     clearTimeout(t);
     emptyFreeLobbyTimers.delete(code);
+  }
+}
+
+function cancelHostFailoverTimer(code) {
+  const t = hostFailoverTimers.get(code);
+  if (t) {
+    clearTimeout(t);
+    hostFailoverTimers.delete(code);
   }
 }
 
@@ -1659,23 +1670,8 @@ function scheduleEmptyFreeLobbyDissolve(room, code) {
   emptyFreeLobbyTimers.set(code, timer);
 }
 
-/**
- * Host weg (Leave oder Disconnect) → nächsten User zum Host machen oder Free-Lobby auflösen.
- * @param immediateEmpty true nur bei bewusstem Leave-API — sonst Grace für Reconnect.
- */
-function ensureHostOrDissolve(room, code, { immediateEmpty = false } = {}) {
-  if (!room) return;
-  if ((room.sockets?.size || 0) === 0) {
-    if (immediateEmpty) dissolveEmptyFreeLobby(room, code);
-    else scheduleEmptyFreeLobbyDissolve(room, code);
-    return;
-  }
-  cancelEmptyFreeLobbyTimer(code);
-  const hostHere = [...room.sockets.values()].some(
-    (s) => s.luvUserId && s.luvUserId === room.hostUserId
-  );
-  if (hostHere) return;
-
+function promoteNextHost(room, code) {
+  if (!room || !rooms.has(code)) return false;
   let next = null;
   for (const sock of room.sockets.values()) {
     if (sock.luvUserId) {
@@ -1683,11 +1679,7 @@ function ensureHostOrDissolve(room, code, { immediateEmpty = false } = {}) {
       break;
     }
   }
-  if (!next) {
-    if (immediateEmpty) dissolveEmptyFreeLobby(room, code);
-    else scheduleEmptyFreeLobbyDissolve(room, code);
-    return;
-  }
+  if (!next) return false;
 
   const prevHost = room.hostUserId;
   if (prevHost) releaseHostedRoom(code, prevHost);
@@ -1713,6 +1705,61 @@ function ensureHostOrDissolve(room, code, { immediateEmpty = false } = {}) {
   });
   touchRoom(room);
   persistRooms();
+  console.log(
+    `host failover code=${code} -> ${room.hostNickname || "?"} (${room.hostUserId})`
+  );
+  return true;
+}
+
+function scheduleHostFailover(room, code) {
+  if (hostFailoverTimers.has(code)) return;
+  const timer = setTimeout(() => {
+    hostFailoverTimers.delete(code);
+    const live = rooms.get(code);
+    if (!live || live !== room) return;
+    if ((live.sockets?.size || 0) === 0) return;
+    const hostHere = [...live.sockets.values()].some(
+      (s) => s.luvUserId && s.luvUserId === live.hostUserId
+    );
+    if (hostHere) return;
+    if (!promoteNextHost(live, code)) {
+      scheduleEmptyFreeLobbyDissolve(live, code);
+    }
+  }, HOST_FAILOVER_GRACE_MS);
+  hostFailoverTimers.set(code, timer);
+}
+
+/**
+ * Host weg (Leave oder Disconnect) → nächsten User zum Host machen oder Free-Lobby auflösen.
+ * @param immediateEmpty true nur bei bewusstem Leave-API — sonst Grace für Reconnect.
+ */
+function ensureHostOrDissolve(room, code, { immediateEmpty = false } = {}) {
+  if (!room) return;
+  if ((room.sockets?.size || 0) === 0) {
+    cancelHostFailoverTimer(code);
+    if (immediateEmpty) dissolveEmptyFreeLobby(room, code);
+    else scheduleEmptyFreeLobbyDissolve(room, code);
+    return;
+  }
+  cancelEmptyFreeLobbyTimer(code);
+  const hostHere = [...room.sockets.values()].some(
+    (s) => s.luvUserId && s.luvUserId === room.hostUserId
+  );
+  if (hostHere) {
+    cancelHostFailoverTimer(code);
+    return;
+  }
+
+  // Kurzer Drop (MASK/Reconnect): Host NICHT sofort umhängen — sonst Split-Lobby
+  if (!immediateEmpty) {
+    scheduleHostFailover(room, code);
+    return;
+  }
+
+  cancelHostFailoverTimer(code);
+  if (!promoteNextHost(room, code)) {
+    dissolveEmptyFreeLobby(room, code);
+  }
 }
 
 function broadcastPeerCount(room) {
@@ -3728,10 +3775,15 @@ function attachWsErrorGuard(socket, label) {
   socket.on("error", (err) => {
     const msg = err?.message || String(err || "ws error");
     console.warn(`ws error ${label}:`, msg);
+    // Nicht sofort terminate — Close reicht; sonst Reconnect-Sturm
     try {
-      socket.terminate();
+      if (socket.readyState === 1) socket.close(1002, "protocol");
     } catch {
-      /* ignore */
+      try {
+        socket.terminate();
+      } catch {
+        /* ignore */
+      }
     }
   });
 }

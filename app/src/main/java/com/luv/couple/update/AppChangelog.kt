@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.8.86",
+            listOf(
+                "Lobby bleibt zusammen — Host wechselt nicht mehr bei kurzem Drop",
+                "WebSocket stabiler (HTTP/1.1) — gegenseitig sehen und malen",
+            )
+        ),
+        Entry(
             "1.8.85",
             listOf(
                 "Gemeinsames Malen wieder stabil — Server stürzt nicht mehr ab",

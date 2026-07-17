@@ -44,6 +44,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
@@ -76,7 +77,9 @@ class PairConnectionService : Service() {
                 maxRequestsPerHost = 32
             }
         )
-        // Kein Client-Ping — zusammen mit Proxy/Caddy sonst kaputte Frames (MASK) → Server-Crash
+        // HTTP/2 + Proxy zerlegt WS-Frames (MASK) → alle sehen nur sich selbst
+        .protocols(listOf(Protocol.HTTP_1_1))
+        // Kein Client-Ping — sonst kaputte Frames hinter Caddy
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
