@@ -1,0 +1,18 @@
+---
+description: Nach jedem Deploy immer Git committen und pushen
+alwaysApply: true
+---
+
+# Deploy → Git-Backup (pflicht)
+
+Nach **jedem** erfolgreichen Deploy (z. B. `python scripts/full_deploy.py` / SSH-Upload auf reineke.pro):
+
+1. Alle relevanten Änderungen `git add` (keine Secrets/Keystores).
+2. Commit mit klarer Message inkl. **versionName** und kurzem Warum.
+3. Sofort `git push origin HEAD` (bzw. aktueller Branch, meist `main`).
+4. Mit `git status` prüfen, dass Branch mit `origin` übereinstimmt.
+5. Dem User Commit-Hash / Version nennen.
+
+Nicht auf „User hat Commit nicht explizit verlangt“ warten — der User will nach jedem Deploy Versionsverlauf auf GitHub.
+
+`scripts/full_deploy.py` macht das am Ende ebenfalls automatisch; trotzdem als Agent nachziehen, falls das Skript fehlschlägt oder Deploy anders lief.
