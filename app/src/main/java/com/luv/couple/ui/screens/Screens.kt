@@ -247,7 +247,6 @@ fun LobbiesScreen(
     onLeaveLobby: (Lobby) -> Unit,
     onReconnect: (Lobby) -> Unit,
     onEditNickname: () -> Unit,
-    onQuietHours: () -> Unit = {},
     updateState: UpdateUiState = UpdateUiState.Idle,
     onUpdateApp: () -> Unit = {}
 ) {
@@ -399,14 +398,6 @@ fun LobbiesScreen(
                         fontSize = 13.sp
                     )
                 }
-                Text(
-                    text = "🕐",
-                    fontSize = 22.sp,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable(onClick = onQuietHours)
-                        .padding(8.dp)
-                )
             }
 
             if (!error.isNullOrBlank()) {

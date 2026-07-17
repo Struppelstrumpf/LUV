@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.8.92",
+            listOf(
+                "Einstellungen unter Konto — inkl. Ruhezeiten",
+                "Konto löschen nur mit 10-Sekunden-Schieberegler",
+            )
+        ),
+        Entry(
             "1.8.91",
             listOf(
                 "Stimmungs-Hinweise nur noch alle 12 Stunden",

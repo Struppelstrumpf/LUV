@@ -81,14 +81,8 @@ fun AccountHomeScreen(
     message: String?,
     shopEnabled: Boolean,
     packs: List<ShopPack>,
-    partnerNotifyEnabled: Boolean,
-    onPartnerNotifyChange: (Boolean) -> Unit,
-    partnerHapticEnabled: Boolean,
-    onPartnerHapticChange: (Boolean) -> Unit,
-    liveProximityRichEnabled: Boolean = true,
-    onLiveProximityRichChange: (Boolean) -> Unit = {},
-    liveProximityWakeEnabled: Boolean = false,
-    onLiveProximityWakeChange: (Boolean) -> Unit = {},
+    onOpenProfile: () -> Unit,
+    onOpenSettings: () -> Unit,
     onOpenRedeem: () -> Unit,
     onOpenAdmin: () -> Unit,
     onBuyPack: (ShopPack) -> Unit,
@@ -97,7 +91,6 @@ fun AccountHomeScreen(
     googleBusy: Boolean = false,
     onGoogleConnect: () -> Unit = {},
     onLogout: () -> Unit = {},
-    onDeleteAccount: () -> Unit = {},
     updateState: UpdateUiState = UpdateUiState.Idle,
     onUpdateApp: () -> Unit = {}
 ) {
@@ -105,7 +98,6 @@ fun AccountHomeScreen(
     var legalDoc by remember { mutableStateOf<LegalDoc?>(null) }
     var showChangelog by remember { mutableStateOf(false) }
     var confirmLogout by remember { mutableStateOf(false) }
-    var confirmDelete by remember { mutableStateOf(false) }
     MenuBackdrop(includeNavigationBars = false) {
         Column(
             modifier = Modifier
@@ -180,55 +172,14 @@ fun AccountHomeScreen(
                 )
             }
 
-            SettingsToggleRow(
-                title = if (partnerNotifyEnabled) "Glocke an" else "Glocke aus",
-                subtitle = if (partnerNotifyEnabled) {
-                    "Beitritt, Malen und sanfte Impulse erreichen dich"
-                } else {
-                    "Ruhe — keine Hinweise, keine Impulse"
-                },
-                checked = partnerNotifyEnabled,
-                accent = accent,
-                onCheckedChange = onPartnerNotifyChange,
-                leading = if (partnerNotifyEnabled) "🔔" else "🔕"
-            )
-            SettingsToggleRow(
-                title = "Vibration beim Malen",
-                subtitle = "Leichter Impuls auf der Leinwand",
-                checked = partnerHapticEnabled,
-                accent = accent,
-                onCheckedChange = onPartnerHapticChange
-            )
-            SettingsToggleRow(
-                title = "Lebendige Nähe",
-                subtitle = if (liveProximityRichEnabled) {
-                    "Wenn die Glocke bei einer Lobby an ist: Vorschau & Widget"
-                } else {
-                    "Wenn die Glocke an ist: nur einfache, ruhige Hinweise"
-                },
-                checked = liveProximityRichEnabled,
-                accent = accent,
-                onCheckedChange = onLiveProximityRichChange
-            )
-            SettingsToggleRow(
-                title = "Bildschirm wecken",
-                subtitle = if (liveProximityWakeEnabled) {
-                    "Intensiv — Display geht kurz an, wenn jemand malt"
-                } else {
-                    "Aus — besser für Akku & Hosentasche"
-                },
-                checked = liveProximityWakeEnabled,
-                accent = accent,
-                onCheckedChange = onLiveProximityWakeChange
-            )
-
+            MenuButton("Profil", BgSoft, onOpenProfile, bordered = true)
+            MenuButton("Einstellungen", BgSoft, onOpenSettings, bordered = true)
             MenuButton("Code einlösen", BgSoft, onOpenRedeem, bordered = true)
             MenuButton("Tutorial ansehen", BgSoft, onReplayTutorial, bordered = true)
             if (account?.isAdmin == true) {
                 MenuButton("Admin", Color(0xFF3A2430), onOpenAdmin)
             }
             MenuButton("Abmelden", BgSoft, { confirmLogout = true }, bordered = true)
-            MenuButton("Konto löschen", Color(0xFF3A2430), { confirmDelete = true })
 
             Spacer(modifier = Modifier.height(4.dp))
             Text("Shop", fontFamily = DisplayFont, fontSize = 22.sp, color = TextPrimary)
@@ -321,37 +272,6 @@ fun AccountHomeScreen(
                     } else {
                         "Ohne Google gehen Coins auf diesem Gerät verloren. Besser vorher „Mit Google speichern“."
                     },
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp
-                )
-            },
-            containerColor = BgSoft
-        )
-    }
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    onDeleteAccount()
-                }) {
-                    Text("Endgültig löschen", color = AccentRose, fontFamily = BodyFont)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) {
-                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
-                }
-            },
-            title = {
-                Text("Konto löschen?", color = TextPrimary, fontFamily = DisplayFont, fontSize = 20.sp)
-            },
-            text = {
-                Text(
-                    "Dein LUV-Konto inkl. Google-Verknüpfung, Coins und Lobbys wird unwiderruflich gelöscht. Danach startest du wieder von vorn.",
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 14.sp,

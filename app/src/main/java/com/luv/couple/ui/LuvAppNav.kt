@@ -62,6 +62,7 @@ import com.luv.couple.ui.screens.JoinScreen
 import com.luv.couple.ui.screens.LobbiesScreen
 import com.luv.couple.ui.screens.NicknameScreen
 import com.luv.couple.ui.screens.QuietHoursScreen
+import com.luv.couple.ui.screens.SettingsScreen
 import com.luv.couple.ui.screens.RedeemScreen
 import com.luv.couple.ui.screens.RenameLobbyScreen
 import com.luv.couple.ui.screens.SimpleBottomBar
@@ -81,6 +82,7 @@ object Routes {
     const val REDEEM = "redeem"
     const val ADMIN = "admin"
     const val NICKNAME = "nickname"
+    const val SETTINGS = "settings"
     const val QUIET_HOURS = "quiet_hours"
     const val RENAME = "rename/{lobbyId}"
     fun rename(lobbyId: String) = "rename/$lobbyId"
@@ -96,10 +98,6 @@ fun LuvAppNav() {
     val nickname by prefs.nicknameFlow.collectAsStateWithLifecycle(initialValue = null)
     val lobbies by prefs.lobbiesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val activeLobbyId by prefs.activeLobbyIdFlow.collectAsStateWithLifecycle(initialValue = null)
-    val partnerNotify by prefs.partnerDrawNotifyFlow.collectAsStateWithLifecycle(initialValue = true)
-    val partnerHaptic by prefs.partnerHapticFlow.collectAsStateWithLifecycle(initialValue = true)
-    val liveProximityRich by prefs.liveProximityRichFlow.collectAsStateWithLifecycle(initialValue = true)
-    val liveProximityWake by prefs.liveProximityWakeFlow.collectAsStateWithLifecycle(initialValue = false)
     val lobbyStates by PairConnectionService.lobbyStates.collectAsStateWithLifecycle()
     val reconnectUi by PairConnectionService.reconnectUi.collectAsStateWithLifecycle()
     val account by AccountSession.account.collectAsStateWithLifecycle()
@@ -745,7 +743,6 @@ fun LuvAppNav() {
                                 PairConnectionService.reconnectNow(context, lobby.id)
                             },
                             onEditNickname = { navController.navigate(Routes.NICKNAME) },
-                            onQuietHours = { navController.navigate(Routes.QUIET_HOURS) },
                             updateState = updateState,
                             onUpdateApp = { startAppUpdate() }
                         )
@@ -756,29 +753,14 @@ fun LuvAppNav() {
                             message = accountMessage,
                             shopEnabled = shopEnabled,
                             packs = packs,
-                            partnerNotifyEnabled = partnerNotify,
-                            onPartnerNotifyChange = { enabled ->
-                                scope.launch { prefs.setPartnerDrawNotifyEnabled(enabled) }
-                            },
-                            partnerHapticEnabled = partnerHaptic,
-                            onPartnerHapticChange = { enabled ->
-                                scope.launch { prefs.setPartnerHapticEnabled(enabled) }
-                            },
-                            liveProximityRichEnabled = liveProximityRich,
-                            onLiveProximityRichChange = { enabled ->
-                                scope.launch { prefs.setLiveProximityRichEnabled(enabled) }
-                            },
-                            liveProximityWakeEnabled = liveProximityWake,
-                            onLiveProximityWakeChange = { enabled ->
-                                scope.launch { prefs.setLiveProximityWakeEnabled(enabled) }
-                            },
                             updateState = updateState,
                             onUpdateApp = { startAppUpdate() },
                             googleEnabled = googleEnabled,
                             googleBusy = googleBusy,
                             onGoogleConnect = { connectGoogle() },
                             onLogout = { logoutAccount() },
-                            onDeleteAccount = { deleteAccountCompletely() },
+                            onOpenProfile = { navController.navigate(Routes.NICKNAME) },
+                            onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                             onOpenRedeem = { navController.navigate(Routes.REDEEM) },
                             onReplayTutorial = {
                                 joinError = null
@@ -836,6 +818,14 @@ fun LuvAppNav() {
                         navController.popBackStack()
                     }
                 }
+            )
+        }
+
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenQuietHours = { navController.navigate(Routes.QUIET_HOURS) },
+                onDeleteAccount = { deleteAccountCompletely() }
             )
         }
 
