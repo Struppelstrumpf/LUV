@@ -651,6 +651,20 @@ class PairConnectionService : Service() {
                     }
                     return
                 }
+                "peer_left" -> {
+                    val leftUserId = json.optString("userId").takeIf { it.isNotBlank() && it != "null" }
+                    val leftNick = json.optString("nickname").trim().takeIf { it.isNotBlank() }
+                    PairSessionState.removePeer(lobby.id, leftUserId, leftNick)
+                    val roster = parseRosterMembers(json)
+                    val peers = json.optInt("peers", json.optInt("count", 0))
+                    val capacity = json.optInt("capacity", 0).takeIf { it > 0 }
+                    if (roster.isNotEmpty()) {
+                        PairSessionState.onRoster(lobby.id, roster, peers, capacity)
+                    } else {
+                        PairSessionState.onPeers(lobby.id, peers, capacity)
+                    }
+                    return
+                }
                 "clear_vote_open" -> {
                     val isInitiator = json.optBoolean("isInitiator", false)
                     val alreadyVoted = json.optBoolean("alreadyVoted", false)
@@ -1430,7 +1444,8 @@ class PairConnectionService : Service() {
                                 userId = o.optString("userId").takeIf { it.isNotBlank() && it != "null" },
                                 nickname = nick,
                                 colorIndex = o.optInt("colorIndex", -1),
-                                active = o.optBoolean("active", false)
+                                active = o.optBoolean("active", false),
+                                online = if (o.has("online")) o.optBoolean("online", true) else true
                             )
                         )
                     }

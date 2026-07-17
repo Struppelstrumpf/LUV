@@ -12,6 +12,14 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.8.87",
+            listOf(
+                "Lobby verlassen: Slot im Menü verschwindet sofort",
+                "Wer schon gemalt hat, bleibt ausgegraut auf der Leinwand",
+                "Avatar antippen: Profil sehen und Person melden (mit Galerie-Screenshot)",
+            )
+        ),
+        Entry(
             "1.8.86",
             listOf(
                 "Lobby bleibt zusammen — Host wechselt nicht mehr bei kurzem Drop",

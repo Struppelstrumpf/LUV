@@ -156,7 +156,11 @@ data class PeerInfo(
     val colorIndex: Int,
     val active: Boolean = false,
     /** Server-User-ID — stabiler als Nickname für Roster/Anzeige */
-    val userId: String? = null
+    val userId: String? = null,
+    /** Noch in der Lobby (auch kurz offline) */
+    val online: Boolean = true,
+    /** Hat die Lobby verlassen, Avatar nur noch wegen gezeichneter Striche */
+    val departed: Boolean = false
 )
 
 /** Ein Eintrag aus peers/welcome memberList */
@@ -164,7 +168,8 @@ data class RosterMember(
     val userId: String?,
     val nickname: String,
     val colorIndex: Int = -1,
-    val active: Boolean = false
+    val active: Boolean = false,
+    val online: Boolean = true
 )
 
 data class StrokePoint(val x: Float, val y: Float)

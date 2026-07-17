@@ -3,9 +3,11 @@ package com.luv.couple.lock
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.util.Base64
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -14,6 +16,8 @@ import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -26,10 +30,13 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.luv.couple.LuvApp
 import com.luv.couple.R
+import com.luv.couple.data.LocalMoment
+import com.luv.couple.data.LocalMoments
 import com.luv.couple.data.PeerInfo
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.ClearVoteEvent
+import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairEvent
 import com.luv.couple.net.PairSessionState
@@ -42,6 +49,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.min
@@ -1460,20 +1468,24 @@ class LockDrawActivity : ComponentActivity() {
     private fun refreshLegend() {
         val id = lobbyId ?: return
         val nickname = CanvasStore.cachedNickname
-            ?: com.luv.couple.net.AccountSession.account.value?.nickname
-        val myUserId = com.luv.couple.net.AccountSession.account.value?.id
+            ?: AccountSession.account.value?.nickname
+        val myUserId = AccountSession.account.value?.id
         val myColor = CanvasStore.cachedColorIndex
-        // Letzte Zeichenfarbe nur für aktuelle Mitglieder (kein Geister-Avatar nach Leave)
         val drawColorByNick = linkedMapOf<String, Int>()
+        val drawAuthorByNick = linkedMapOf<String, String?>()
         CanvasStore.snapshot(id).forEach { stroke ->
             val nick = when {
                 !stroke.nickname.isNullOrBlank() -> stroke.nickname.trim()
                 stroke.isLocal && !nickname.isNullOrBlank() -> nickname.trim()
                 else -> return@forEach
             }
-            drawColorByNick[nick.lowercase(Locale.getDefault())] = stroke.colorIndex
+            val key = nick.lowercase(Locale.getDefault())
+            drawColorByNick[key] = stroke.colorIndex
+            if (!stroke.authorId.isNullOrBlank()) {
+                drawAuthorByNick[key] = stroke.authorId
+            }
         }
-        val merged = PairSessionState.legendPeers(id, nickname, myColor, myUserId).map { peer ->
+        val live = PairSessionState.legendPeers(id, nickname, myColor, myUserId).map { peer ->
             if (peer.peerKey == "me") {
                 peer.copy(colorIndex = myColor)
             } else {
@@ -1481,9 +1493,30 @@ class LockDrawActivity : ComponentActivity() {
                 if (drawn != null) peer.copy(colorIndex = drawn) else peer
             }
         }
+        val liveKeys = live.map { it.nickname.trim().lowercase(Locale.getDefault()) }.toSet()
+        val myKey = nickname?.trim()?.lowercase(Locale.getDefault()).orEmpty()
+        val ghosts = drawColorByNick
+            .filterKeys { it !in liveKeys && it != myKey && it.isNotBlank() }
+            .map { (key, color) ->
+                val displayNick = CanvasStore.snapshot(id)
+                    .mapNotNull { it.nickname?.trim() }
+                    .firstOrNull { it.lowercase(Locale.getDefault()) == key }
+                    ?: key
+                PeerInfo(
+                    peerKey = "gone:$key",
+                    nickname = displayNick,
+                    colorIndex = color,
+                    active = false,
+                    userId = drawAuthorByNick[key],
+                    online = false,
+                    departed = true
+                )
+            }
+        val merged = (live + ghosts).distinctBy {
+            it.userId?.takeIf { uid -> uid.isNotBlank() } ?: it.nickname.lowercase(Locale.getDefault())
+        }
 
         legendRow.removeAllViews()
-        // Mehr Platz nach oben für Sprachblasen
         legendRow.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
         val gap = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 10f, resources.displayMetrics).toInt()
         merged.take(PeerPalette.MAX_PEERS).forEachIndexed { index, peer ->
@@ -1536,8 +1569,7 @@ class LockDrawActivity : ComponentActivity() {
         }
 
         val painting = LiveProximity.isPeerPainting(lobbyId, peer.nickname)
-        val onCanvas = peer.active || peer.peerKey == "me" || painting
-        // Nur ein runder weißer Ring wenn online — kein Glow (sonst eckige Boxen)
+        val onCanvas = !peer.departed && (peer.active || peer.peerKey == "me" || painting)
         val ringPad = if (onCanvas) (3 * dp).toInt() else 0
         val wrap = FrameLayout(this).apply {
             clipChildren = true
@@ -1554,17 +1586,22 @@ class LockDrawActivity : ComponentActivity() {
                 clipToOutline = true
             }
         }
+        val fillColor = if (peer.departed) {
+            0xFF6B7280.toInt()
+        } else {
+            PeerPalette.strokeColor(peer.colorIndex)
+        }
         val circle = TextView(this).apply {
             layoutParams = FrameLayout.LayoutParams(size, size).apply {
                 gravity = Gravity.CENTER
             }
             gravity = Gravity.CENTER
             text = peer.nickname.trim().take(1).uppercase(Locale.getDefault())
-            setTextColor(0xFF1A1F2E.toInt())
+            setTextColor(if (peer.departed) 0xFFD1D5DB.toInt() else 0xFF1A1F2E.toInt())
             textSize = 14f
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(PeerPalette.strokeColor(peer.colorIndex))
+                setColor(fillColor)
                 setStroke(
                     (2 * dp).toInt(),
                     if (hasCheck) 0xFF2EE68A.toInt() else 0x00000000
@@ -1572,11 +1609,18 @@ class LockDrawActivity : ComponentActivity() {
             }
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
-            alpha = if (onCanvas) 1f else 0.65f
+            alpha = when {
+                peer.departed -> 0.45f
+                onCanvas -> 1f
+                else -> 0.65f
+            }
             contentDescription = peer.nickname
             elevation = 0f
         }
         wrap.addView(circle)
+        wrap.isClickable = true
+        wrap.isFocusable = true
+        wrap.setOnClickListener { showPeerProfileDialog(peer) }
         column.addView(wrap)
 
         // Name nur unter dem Avatar, der gerade Tipps zeigt
@@ -1596,6 +1640,161 @@ class LockDrawActivity : ComponentActivity() {
             )
         }
         return column
+    }
+
+    private fun showPeerProfileDialog(peer: PeerInfo) {
+        val myId = AccountSession.account.value?.id
+        val isMe = peer.peerKey == "me" ||
+            (!myId.isNullOrBlank() && peer.userId == myId)
+        val status = when {
+            peer.departed -> "Hat die Lobby verlassen"
+            peer.active -> "Gerade auf der Leinwand"
+            peer.online -> "In der Lobby"
+            else -> "Kurz offline"
+        }
+        val message = buildString {
+            append(peer.nickname.trim().ifBlank { "Jemand" })
+            append("\n")
+            append(status)
+        }
+        val builder = MaterialAlertDialogBuilder(this)
+            .setTitle("Profil")
+            .setMessage(message)
+            .setNegativeButton("Schließen", null)
+        if (!isMe) {
+            builder.setPositiveButton("Melden") { _, _ ->
+                showReportPeerDialog(peer)
+            }
+        }
+        builder.show()
+    }
+
+    private fun showReportPeerDialog(peer: PeerInfo) {
+        lifecycleScope.launch {
+            val snap = LuvApp.instance.prefs.snapshot()
+            val lobbyCode = snap.lobbies.firstOrNull { it.id == lobbyId }?.code
+            if (lobbyCode.isNullOrBlank()) {
+                Toast.makeText(this@LockDrawActivity, "Lobby unbekannt.", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            withContext(Dispatchers.Main) {
+                MaterialAlertDialogBuilder(this@LockDrawActivity)
+                    .setTitle("${peer.nickname} melden?")
+                    .setMessage("Optional kannst du einen Screenshot aus deiner Galerie anhängen.")
+                    .setNeutralButton("Ohne Bild melden") { _, _ ->
+                        submitPeerReport(lobbyCode, peer, imageBase64 = null)
+                    }
+                    .setPositiveButton("Screenshot wählen") { _, _ ->
+                        showGalleryPickForReport(lobbyCode, peer)
+                    }
+                    .setNegativeButton("Abbrechen", null)
+                    .show()
+            }
+        }
+    }
+
+    private fun showGalleryPickForReport(lobbyCode: String, peer: PeerInfo) {
+        lifecycleScope.launch {
+            val moments = runCatching { LocalMoments.list(this@LockDrawActivity) }
+                .getOrDefault(emptyList())
+            withContext(Dispatchers.Main) {
+                if (moments.isEmpty()) {
+                    MaterialAlertDialogBuilder(this@LockDrawActivity)
+                        .setTitle("Galerie leer")
+                        .setMessage("Keine gespeicherten Momente. Ohne Bild melden?")
+                        .setPositiveButton("Melden") { _, _ ->
+                            submitPeerReport(lobbyCode, peer, null)
+                        }
+                        .setNegativeButton("Abbrechen", null)
+                        .show()
+                    return@withContext
+                }
+                val dp = resources.displayMetrics.density
+                val row = LinearLayout(this@LockDrawActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), (8 * dp).toInt())
+                }
+                val scroll = HorizontalScrollView(this@LockDrawActivity).apply {
+                    addView(row)
+                    isHorizontalScrollBarEnabled = false
+                }
+                val dialog = MaterialAlertDialogBuilder(this@LockDrawActivity)
+                    .setTitle("Screenshot wählen")
+                    .setView(scroll)
+                    .setNegativeButton("Abbrechen", null)
+                    .create()
+                moments.take(24).forEach { moment ->
+                    val thumb = ImageView(this@LockDrawActivity).apply {
+                        layoutParams = LinearLayout.LayoutParams((72 * dp).toInt(), (72 * dp).toInt()).apply {
+                            marginEnd = (8 * dp).toInt()
+                        }
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        background = GradientDrawable().apply {
+                            cornerRadius = 12 * dp
+                            setColor(0x33FFFFFF)
+                        }
+                        clipToOutline = true
+                        outlineProvider = object : ViewOutlineProvider() {
+                            override fun getOutline(view: View, outline: android.graphics.Outline) {
+                                outline.setRoundRect(0, 0, view.width, view.height, 12 * dp)
+                            }
+                        }
+                        setOnClickListener {
+                            dialog.dismiss()
+                            lifecycleScope.launch {
+                                val full = LocalMoments.loadFull(moment)
+                                val b64 = full?.let { bitmapToJpegBase64(it) }
+                                submitPeerReport(lobbyCode, peer, b64)
+                            }
+                        }
+                    }
+                    row.addView(thumb)
+                    lifecycleScope.launch {
+                        val bmp = LocalMoments.loadThumbnail(this@LockDrawActivity, moment, 160)
+                        withContext(Dispatchers.Main) {
+                            if (bmp != null) thumb.setImageBitmap(bmp)
+                        }
+                    }
+                }
+                dialog.show()
+            }
+        }
+    }
+
+    private fun submitPeerReport(lobbyCode: String, peer: PeerInfo, imageBase64: String?) {
+        lifecycleScope.launch {
+            val ok = runCatching {
+                LuvApiClient.reportPeer(
+                    lobbyCode = lobbyCode,
+                    userId = peer.userId,
+                    nickname = peer.nickname,
+                    imageBase64 = imageBase64
+                )
+            }.getOrDefault(false)
+            withContext(Dispatchers.Main) {
+                Toast.makeText(
+                    this@LockDrawActivity,
+                    if (ok) "Danke — Meldung ist angekommen." else "Melden fehlgeschlagen.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    private fun bitmapToJpegBase64(bitmap: Bitmap): String {
+        val scaled = if (bitmap.width > 1280 || bitmap.height > 1280) {
+            val scale = 1280f / maxOf(bitmap.width, bitmap.height)
+            Bitmap.createScaledBitmap(
+                bitmap,
+                (bitmap.width * scale).toInt().coerceAtLeast(1),
+                (bitmap.height * scale).toInt().coerceAtLeast(1),
+                true
+            )
+        } else bitmap
+        val out = ByteArrayOutputStream()
+        scaled.compress(Bitmap.CompressFormat.JPEG, 82, out)
+        if (scaled !== bitmap) scaled.recycle()
+        return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
     }
 
     private fun buildGuessBubble(text: String, correct: Boolean, dp: Float): TextView {

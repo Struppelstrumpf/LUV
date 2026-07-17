@@ -376,6 +376,23 @@ object LuvApiClient {
         json.optBoolean("ok", true)
     }
 
+    suspend fun reportPeer(
+        lobbyCode: String,
+        userId: String?,
+        nickname: String,
+        imageBase64: String? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        val code = normalizeCode(lobbyCode) ?: throw LuvApiException("Ungültiger Lobby-Code.")
+        val body = JSONObject()
+            .put("userId", userId?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+            .put("nickname", nickname.trim().take(18))
+        if (!imageBase64.isNullOrBlank()) {
+            body.put("imageBase64", imageBase64)
+        }
+        val json = authedPost("/v1/rooms/$code/report-peer", body.toString())
+        json.optBoolean("ok", true)
+    }
+
     suspend fun listPublicReports(): List<PublicReportInfo> = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/admin/public-reports")
         val arr = json.optJSONArray("reports") ?: return@withContext emptyList()
@@ -652,7 +669,8 @@ object LuvApiClient {
                         userId = o.optString("userId").takeIf { it.isNotBlank() && it != "null" },
                         nickname = nick,
                         colorIndex = o.optInt("colorIndex", -1),
-                        active = o.optBoolean("active", false) || o.optBoolean("online", false)
+                        active = o.optBoolean("active", false),
+                        online = if (o.has("online")) o.optBoolean("online", true) else true
                     )
                 )
             }

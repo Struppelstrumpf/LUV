@@ -123,11 +123,29 @@ object PairSessionState {
                 peerKey = key,
                 nickname = nick,
                 colorIndex = color,
-                active = m.active || prev?.active == true,
-                userId = uid ?: prev?.userId
+                active = m.active,
+                userId = uid ?: prev?.userId,
+                online = m.online,
+                departed = false
             )
         }
         flow.value = next
+    }
+
+    fun removePeer(lobbyId: String, userId: String?, nickname: String?) {
+        val flow = peersByLobby[lobbyId] ?: return
+        val uid = userId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
+        val nick = nickname?.trim().orEmpty()
+        flow.update { current ->
+            current.filterValues { peer ->
+                when {
+                    uid != null && peer.userId == uid -> false
+                    nick.isNotBlank() && peer.nickname.equals(nick, ignoreCase = true) &&
+                        (uid == null || peer.userId.isNullOrBlank()) -> false
+                    else -> true
+                }
+            }
+        }
     }
 
     fun rememberPeer(lobbyId: String, nickname: String, peerKey: String? = null, userId: String? = null) {
@@ -182,8 +200,9 @@ object PairSessionState {
         myUserId: String?,
         hostNickname: String?
     ): List<String> {
+        // Nur aktuelle Mitglieder (online oder kurz offline) — nicht departed
         val others = peersByLobby[lobbyId]?.value?.values.orEmpty()
-            .filter { !isSelf(it, myNickname, myUserId) }
+            .filter { !it.departed && !isSelf(it, myNickname, myUserId) }
             .map { it.nickname.trim() }
             .filter { it.isNotBlank() && !it.equals("Du", ignoreCase = true) }
             .distinctBy { it.lowercase() }
@@ -289,7 +308,9 @@ object PairSessionState {
             nickname = nickname,
             colorIndex = colorIndex,
             active = active,
-            userId = userId ?: prev?.userId
+            userId = userId ?: prev?.userId,
+            online = prev?.online != false,
+            departed = false
         )
         return next
     }

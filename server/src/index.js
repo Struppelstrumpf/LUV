@@ -534,6 +534,20 @@ function rememberMember(room, userId) {
   return false;
 }
 
+/** Bewusstes Verlassen — nicht nur offline, sondern raus aus Kachel/Roster. */
+function forgetMember(room, userId) {
+  if (!room || !userId) return false;
+  let changed = false;
+  if (Array.isArray(room.memberUserIds)) {
+    const next = room.memberUserIds.filter((id) => id !== userId);
+    if (next.length !== room.memberUserIds.length) {
+      room.memberUserIds = next;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 /** Einmalige Beitritts-Meldung — nicht bei jedem Reconnect / App-Wiederöffnen */
 function claimJoinAnnouncement(room, userId) {
   if (!room || !userId) return false;
@@ -951,6 +965,37 @@ function publicReports() {
     db.publicReports = {};
   }
   return db.publicReports;
+}
+
+function peerReports() {
+  const db = getDb();
+  if (!db.peerReports || typeof db.peerReports !== "object") {
+    db.peerReports = {};
+  }
+  return db.peerReports;
+}
+
+const PEER_REPORT_DIR = path.join(DATA_DIR, "peer-reports");
+
+function ensurePeerReportDir() {
+  fs.mkdirSync(PEER_REPORT_DIR, { recursive: true });
+}
+
+function peerReportView(report) {
+  return {
+    id: report.id,
+    status: report.status || "open",
+    reportedAt: report.reportedAt,
+    reporterNickname: report.reporterNickname || "Jemand",
+    targetNickname: report.targetNickname || "Jemand",
+    targetUserId: report.targetUserId || null,
+    lobbyCode: report.lobbyCode || null,
+    lobbyName: report.lobbyName || "Lobby",
+    hasImage: Boolean(report.file),
+    imageUrl: report.file
+      ? `/v1/admin/peer-reports/${encodeURIComponent(report.id)}/image`
+      : null,
+  };
 }
 
 const PUBLIC_DELETE_BAN_THRESHOLD = 10;
@@ -2967,6 +3012,10 @@ app.post("/v1/rooms/:code/leave", (req, res) => {
     return res.json({ ok: true, alreadyGone: true });
   }
 
+  const leftNick =
+    String(ctx.user.nickname || "")
+      .trim()
+      .slice(0, 18) || "Jemand";
   for (const [peerId, sock] of [...room.sockets.entries()]) {
     if (sock.luvUserId && sock.luvUserId === ctx.user.id) {
       sock.luvLeft = true;
@@ -2978,6 +3027,19 @@ app.post("/v1/rooms/:code/leave", (req, res) => {
       room.sockets.delete(peerId);
     }
   }
+  forgetMember(room, ctx.user.id);
+  const roster = roomRosterAll(room);
+  const online = roster.filter((m) => m.online).length;
+  broadcastRoom(room, {
+    type: "peer_left",
+    userId: ctx.user.id,
+    nickname: leftNick,
+    peers: online,
+    count: online,
+    capacity: roomCapacity(room),
+    members: roster.map((m) => m.nickname),
+    memberList: roster,
+  });
   broadcastPeerCount(room);
   ensureHostOrDissolve(room, code, { immediateEmpty: true });
   if (rooms.has(code)) {
@@ -2986,6 +3048,123 @@ app.post("/v1/rooms/:code/leave", (req, res) => {
   }
 
   return res.json({ ok: true });
+});
+
+/** Person in einer Lobby melden (optional Screenshot aus Galerie). */
+app.post("/v1/rooms/:code/report-peer", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  const targetUserId = String(req.body?.userId || "").trim();
+  const targetNickname = String(req.body?.nickname || "")
+    .trim()
+    .slice(0, 18);
+  if (!targetUserId && !targetNickname) {
+    return res.status(400).json({ error: "bad_target", message: "Wen möchtest du melden?" });
+  }
+  if (targetUserId && targetUserId === ctx.user.id) {
+    return res.status(400).json({ error: "self", message: "Dich selbst kannst du nicht melden." });
+  }
+  let room = rooms.get(code);
+  if (!room) {
+    const saved = getDb().rooms?.[code];
+    if (saved) {
+      room = hydrateRoom(code, saved);
+      rooms.set(code, room);
+    }
+  }
+  const b64 = String(req.body?.imageBase64 || "").replace(/^data:image\/\w+;base64,/, "");
+  let fileName = null;
+  if (b64) {
+    try {
+      const buf = Buffer.from(b64, "base64");
+      if (buf.length > 0 && buf.length <= 8 * 1024 * 1024) {
+        ensurePeerReportDir();
+        fileName = `${newId("primg")}.png`;
+        fs.writeFileSync(path.join(PEER_REPORT_DIR, fileName), buf);
+      }
+    } catch {
+      /* optional attachment */
+    }
+  }
+  const report = {
+    id: newId("prep"),
+    status: "open",
+    reportedAt: Date.now(),
+    reporterUserId: ctx.user.id,
+    reporterNickname: ctx.user.nickname || "Jemand",
+    targetUserId: targetUserId || null,
+    targetNickname: targetNickname || "Jemand",
+    lobbyCode: code || null,
+    lobbyName: room?.name || "Lobby",
+    file: fileName,
+  };
+  peerReports()[report.id] = report;
+  scheduleSave();
+  console.log(
+    `peer report ${report.id} lobby=${code} target=${report.targetNickname} by=${report.reporterNickname}`
+  );
+  return res.status(201).json({ ok: true, report: peerReportView(report) });
+});
+
+app.get("/v1/admin/peer-reports", (req, res) => {
+  const ctx = requireAdmin(req, res);
+  if (!ctx) return;
+  const list = Object.values(peerReports())
+    .filter((r) => (r.status || "open") === "open")
+    .sort((a, b) => Number(b.reportedAt) - Number(a.reportedAt))
+    .slice(0, 80)
+    .map(peerReportView);
+  return res.json({ reports: list });
+});
+
+app.get("/v1/admin/peer-reports/:id/image", (req, res) => {
+  const ctx = requireAdmin(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  const report = peerReports()[id];
+  if (!report?.file) return res.status(404).end();
+  const filePath = path.join(PEER_REPORT_DIR, path.basename(report.file));
+  if (!fs.existsSync(filePath)) return res.status(404).end();
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "private, max-age=60");
+  return fs.createReadStream(filePath).pipe(res);
+});
+
+app.post("/v1/admin/peer-reports/:id/keep", (req, res) => {
+  const ctx = requireAdmin(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  const report = peerReports()[id];
+  if (!report) return res.status(404).json({ error: "not_found" });
+  report.status = "kept";
+  report.resolvedAt = Date.now();
+  report.resolvedBy = ctx.user.id;
+  scheduleSave();
+  return res.json({ ok: true, report: peerReportView(report) });
+});
+
+app.post("/v1/admin/peer-reports/:id/delete", (req, res) => {
+  const ctx = requireAdmin(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  const report = peerReports()[id];
+  if (!report) return res.status(404).json({ error: "not_found" });
+  if (report.file) {
+    const filePath = path.join(PEER_REPORT_DIR, path.basename(report.file));
+    try {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch {
+      /* ignore */
+    }
+  }
+  report.status = "deleted";
+  report.resolvedAt = Date.now();
+  report.resolvedBy = ctx.user.id;
+  scheduleSave();
+  return res.json({ ok: true, report: peerReportView(report) });
 });
 
 app.delete("/v1/rooms/:code", (req, res) => {
