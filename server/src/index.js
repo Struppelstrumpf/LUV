@@ -2541,7 +2541,9 @@ function pendingLootboxPublic(user) {
 
 function buildLootboxPoolForUser(user) {
   ensureInventory(user);
-  const pool = lootbox.buildPool({
+  // Volle Pool — Duplikate sind erlaubt (Emojis/Sticker stapeln;
+  // Themes/Begleiter bei Besitz → Coin-Ausgleich beim Öffnen).
+  return lootbox.buildPool({
     emojiPrices: EMOJI_SHOP_PRICES,
     themePrices: THEME_SHOP_PRICES,
     petPrices: PET_SHOP_PRICES,
@@ -2550,11 +2552,22 @@ function buildLootboxPoolForUser(user) {
     defaultPet: DEFAULT_PET,
     starterEmojis: STARTER_EMOJIS,
   });
-  const filtered = pool.filter((x) => {
-    if (x.kind === "emojis" || x.kind === "stickers") return true;
-    return !market.userOwnsItem(user, ensureInventory, x.kind, x.itemId);
-  });
-  return filtered.length ? filtered : pool;
+}
+
+/** Lootbox-Belohnung gutschreiben. Duplikat-Theme/Pet → Coins statt leerem Treffer. */
+function grantLootboxReward(user, entry) {
+  const kind = String(entry.kind || "");
+  const itemId = String(entry.itemId || "");
+  const shopPrice = Math.max(1, Number(entry.shopPrice) || LOOTBOX_PRICE);
+  const unique = kind === "themes" || kind === "pets";
+  if (unique && market.userOwnsItem(user, ensureInventory, kind, itemId)) {
+    const refund = Math.max(1, Math.min(shopPrice, Math.floor(shopPrice * 0.5)));
+    applyLedger(user.id, refund, "lootbox_duplicate", `${kind}:${itemId}`);
+    return { duplicate: true, coinsRefund: refund };
+  }
+  safeGiveItem(user, kind, itemId);
+  bumpShopPurchase(kind, itemId);
+  return { duplicate: false, coinsRefund: 0 };
 }
 
 function applyLedger(userId, delta, reason, refId) {
@@ -6972,8 +6985,7 @@ app.post("/v1/shop/lootbox/open", (req, res) => {
   if (idx < 0) idx = 0;
   const entry = pending[idx];
   pending.splice(idx, 1);
-  safeGiveItem(ctx.user, entry.kind, entry.itemId);
-  bumpShopPurchase(entry.kind, entry.itemId);
+  const grant = grantLootboxReward(ctx.user, entry);
   flushSave();
   return res.json({
     ok: true,
@@ -6984,6 +6996,8 @@ app.post("/v1/shop/lootbox/open", (req, res) => {
       label: entry.label,
       shopPrice: entry.shopPrice,
       chancePercent: entry.chancePercent,
+      duplicate: Boolean(grant.duplicate),
+      coinsRefund: Number(grant.coinsRefund) || 0,
     },
     pending: pendingLootboxPublic(ctx.user),
     user: publicUser(ctx.user),

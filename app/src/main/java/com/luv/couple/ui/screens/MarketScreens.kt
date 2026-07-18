@@ -1476,6 +1476,8 @@ private fun LootboxTab(
                 }
                 Text(
                     "Meist etwas um $price Coins Wert; teure und sehr günstige Items sind seltener. " +
+                        "Gleiche Items können mehrfach kommen (Emojis/Sticker stapeln; " +
+                        "bereits besessene Hintergründe/Begleiter werden in Coins umgewandelt). " +
                         "Gekaufte Lootboxen bleiben gespeichert, bis du sie öffnest. " +
                         "Nicht erstattungsfähig — Details in den AGB.",
                     color = TextMuted.copy(alpha = 0.85f),
@@ -1522,6 +1524,15 @@ private fun LootboxTab(
                         fontFamily = BodyFont,
                         fontSize = 14.sp
                     )
+                    if (reward.duplicate && reward.coinsRefund > 0) {
+                        Text(
+                            "Schon vorhanden · +${reward.coinsRefund} Coins",
+                            color = AccentRose,
+                            fontFamily = DisplayFont,
+                            fontSize = 14.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                     Text(
                         "Chance: ${"%.2f".format(reward.chancePercent)} %",
                         color = TextMuted,

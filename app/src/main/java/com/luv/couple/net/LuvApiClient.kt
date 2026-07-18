@@ -42,7 +42,9 @@ data class LootboxResult(
     val shopPrice: Int,
     val chancePercent: Double,
     val coins: Int,
-    val pendingId: String = ""
+    val pendingId: String = "",
+    val duplicate: Boolean = false,
+    val coinsRefund: Int = 0
 )
 
 data class LootboxPurchaseResult(
@@ -2486,7 +2488,9 @@ object LuvApiClient {
             shopPrice = item.optInt("shopPrice", 0),
             chancePercent = item.optDouble("chancePercent", 0.0),
             coins = coins,
-            pendingId = pendingId.ifBlank { item.optString("id") }
+            pendingId = pendingId.ifBlank { item.optString("id") },
+            duplicate = item.optBoolean("duplicate", false),
+            coinsRefund = item.optInt("coinsRefund", 0)
         )
 
     private fun parseLootboxList(arr: org.json.JSONArray?, coins: Int): List<LootboxResult> {
