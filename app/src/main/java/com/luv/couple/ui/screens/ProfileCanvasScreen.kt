@@ -9,12 +9,14 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -34,9 +36,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -46,6 +45,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -60,11 +60,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
@@ -77,15 +75,20 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -674,10 +677,10 @@ fun ProfileCanvasScreen(
                     } else {
                         null
                     },
-                    onOpenSpouse = if (!editable && !userId.isNullOrBlank()) {
-                        { showGuestbookFor = userId }
-                    } else {
-                        null
+                    onOpenSpouse = {
+                        val id = userId?.takeIf { it.isNotBlank() }
+                            ?: AccountSession.account.value?.id
+                        if (!id.isNullOrBlank()) showGuestbookFor = id
                     }
                 )
                 tipPopIds.forEach { popId ->
@@ -1966,11 +1969,16 @@ private fun ProfileElementView(
                         onPetKraul != null) ||
                     (el.type == ProfileElType.Spouse && onOpenSpouse != null)
             ) {
-                if (editable) onSelectLatest.value()
-                else when (el.type) {
-                    ProfileElType.Glass -> onTipGlass?.invoke()
-                    ProfileElType.Pet, ProfileElType.Avatar -> onPetKraul?.invoke()
-                    ProfileElType.Spouse -> onOpenSpouse?.invoke()
+                when {
+                    el.type == ProfileElType.Spouse && onOpenSpouse != null -> {
+                        // Eigenes Profil (Edit): 1. Tippen = auswählen, 2. Tippen = Gästebuch
+                        if (editable && !selected) onSelectLatest.value()
+                        else onOpenSpouse.invoke()
+                    }
+                    editable -> onSelectLatest.value()
+                    el.type == ProfileElType.Glass -> onTipGlass?.invoke()
+                    el.type == ProfileElType.Pet || el.type == ProfileElType.Avatar ->
+                        onPetKraul?.invoke()
                     else -> Unit
                 }
             }
@@ -2417,6 +2425,12 @@ private fun ProfileEditSheet(
     }
 }
 
+private val WeddingIvory = Color(0xFFFFF6F0)
+private val WeddingBlush = Color(0xFFFFE4EC)
+private val WeddingRose = Color(0xFFE85A7A)
+private val WeddingGold = Color(0xFFC9A24A)
+private val WeddingInk = Color(0xFF4A2C35)
+
 @Composable
 private fun WeddingGuestbookDialog(
     profileUserId: String,
@@ -2425,107 +2439,524 @@ private fun WeddingGuestbookDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var wedding by remember { mutableStateOf<LuvApiClient.WeddingInfo?>(null) }
+    var weddingBmp by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var showGuestbook by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(true) }
+
     LaunchedEffect(profileUserId) {
+        loading = true
         wedding = LuvApiClient.fetchWedding(profileUserId)
+        weddingBmp = null
+        if (wedding?.hasImage == true) {
+            weddingBmp = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bytes = LuvApiClient.downloadWeddingImage(profileUserId)
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                }.getOrNull()
+            }
+        }
+        loading = false
     }
-    val guestbookMaxH = (LocalConfiguration.current.screenHeightDp * 0.5f).dp
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = BgSoft,
-        title = { Text("Hochzeits-Gästebuch", fontFamily = DisplayFont, color = TextPrimary) },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = guestbookMaxH)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                if (wedding?.hasImage == true) {
+
+    Dialog(
+        onDismissRequest = {
+            if (showGuestbook) showGuestbook = false else onDismiss()
+        },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(0.55f))
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() }
+                ) {
+                    if (showGuestbook) showGuestbook = false else onDismiss()
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            WeddingPetalRain(modifier = Modifier.fillMaxSize())
+
+            if (!showGuestbook) {
+                WeddingOverviewCard(
+                    loading = loading,
+                    wedding = wedding,
+                    weddingBmp = weddingBmp,
+                    onOpenGuestbook = { showGuestbook = true },
+                    onClose = onDismiss,
+                    modifier = Modifier
+                        .fillMaxWidth(0.92f)
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) { }
+                )
+            } else {
+                WeddingGuestbookBookCard(
+                    wedding = wedding,
+                    draft = draft,
+                    onDraftChange = { draft = it.take(280) },
+                    busy = busy,
+                    onBack = { showGuestbook = false },
+                    onClose = onDismiss,
+                    onSubmit = {
+                        if (draft.isBlank() || busy) return@WeddingGuestbookBookCard
+                        busy = true
+                        scope.launch {
+                            runCatching { LuvApiClient.postGuestbook(profileUserId, draft) }
+                                .onSuccess {
+                                    draft = ""
+                                    wedding = LuvApiClient.fetchWedding(profileUserId)
+                                    Toast.makeText(context, "Eintrag gesendet 💕", Toast.LENGTH_SHORT).show()
+                                }
+                                .onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        it.message ?: "Senden fehlgeschlagen",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            busy = false
+                        }
+                    },
+                    onDelete = { entryId ->
+                        scope.launch {
+                            runCatching { LuvApiClient.deleteGuestbook(profileUserId, entryId) }
+                                .onSuccess { wedding = LuvApiClient.fetchWedding(profileUserId) }
+                        }
+                    },
+                    onReport = { entryId ->
+                        scope.launch {
+                            runCatching {
+                                LuvApiClient.reportGuestbook(
+                                    profileUserId,
+                                    entryId,
+                                    "Gästebuch-Meldung"
+                                )
+                            }.onSuccess {
+                                Toast.makeText(context, "Gemeldet", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth(0.94f)
+                        .fillMaxHeight(0.88f)
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) { }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WeddingOverviewCard(
+    loading: Boolean,
+    wedding: LuvApiClient.WeddingInfo?,
+    weddingBmp: android.graphics.Bitmap?,
+    onOpenGuestbook: () -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val a = wedding?.coupleA
+    val b = wedding?.coupleB
+    val partner = wedding?.marriage
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(28.dp))
+            .background(
+                Brush.verticalGradient(listOf(WeddingIvory, WeddingBlush, Color(0xFFFFF0F5)))
+            )
+            .border(1.5.dp, WeddingGold.copy(0.45f), RoundedCornerShape(28.dp))
+            .padding(18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("💒", fontSize = 28.sp)
+        Text(
+            "Hochzeit",
+            color = WeddingInk,
+            fontFamily = DisplayFont,
+            fontSize = 22.sp
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(a?.petEmoji ?: "💍", fontSize = 20.sp)
+            Text(
+                a?.nickname ?: partner?.partnerNickname ?: "…",
+                color = WeddingInk,
+                fontFamily = DisplayFont,
+                fontSize = 15.sp,
+                maxLines = 1,
+                softWrap = false
+            )
+            Text("💍", fontSize = 18.sp)
+            Text(
+                b?.nickname ?: "…",
+                color = WeddingInk,
+                fontFamily = DisplayFont,
+                fontSize = 15.sp,
+                maxLines = 1,
+                softWrap = false
+            )
+            Text(b?.petEmoji ?: "💕", fontSize = 20.sp)
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1.35f)
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color.White.copy(0.55f))
+                .border(1.dp, WeddingRose.copy(0.25f), RoundedCornerShape(18.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            when {
+                weddingBmp != null -> {
+                    Image(
+                        bitmap = weddingBmp.asImageBitmap(),
+                        contentDescription = "Hochzeitsleinwand",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+                loading -> Text("Lade…", color = WeddingInk.copy(0.5f), fontFamily = BodyFont)
+                else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("🖼️", fontSize = 36.sp)
                     Text(
-                        "Gemeinsames Hochzeitsbild verfügbar.",
-                        color = TextMuted,
+                        "Noch kein Hochzeitsbild",
+                        color = WeddingInk.copy(0.55f),
                         fontFamily = BodyFont,
                         fontSize = 13.sp
                     )
                 }
-                wedding?.guestbook.orEmpty().forEach { entry ->
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp)
+                .clip(RoundedCornerShape(25.dp))
+                .background(
+                    Brush.horizontalGradient(listOf(WeddingRose, Color(0xFFFF8FA3)))
+                )
+                .clickable(onClick = onOpenGuestbook),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "📖  Gästebuch",
+                color = Color.White,
+                fontFamily = DisplayFont,
+                fontSize = 17.sp
+            )
+        }
+        Text(
+            "Schließen",
+            color = WeddingInk.copy(0.55f),
+            fontFamily = BodyFont,
+            fontSize = 14.sp,
+            modifier = Modifier
+                .clickable(onClick = onClose)
+                .padding(6.dp)
+        )
+    }
+}
+
+@Composable
+private fun WeddingGuestbookBookCard(
+    wedding: LuvApiClient.WeddingInfo?,
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    busy: Boolean,
+    onBack: () -> Unit,
+    onClose: () -> Unit,
+    onSubmit: () -> Unit,
+    onDelete: (String) -> Unit,
+    onReport: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val a = wedding?.coupleA
+    val b = wedding?.coupleB
+    val entries = wedding?.guestbook.orEmpty()
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(28.dp))
+            .background(
+                Brush.verticalGradient(listOf(Color(0xFFFFFBF7), WeddingBlush, WeddingIvory))
+            )
+            .border(1.5.dp, WeddingGold.copy(0.5f), RoundedCornerShape(28.dp))
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "‹ Zurück",
+                color = WeddingRose,
+                fontFamily = DisplayFont,
+                fontSize = 14.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(onClick = onBack)
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            Text(
+                "✕",
+                color = WeddingInk.copy(0.45f),
+                fontSize = 16.sp,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable(onClick = onClose)
+                    .padding(8.dp)
+            )
+        }
+        Text(
+            "Gästebuch",
+            color = WeddingInk,
+            fontFamily = DisplayFont,
+            fontSize = 24.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color.White.copy(0.55f))
+                .border(1.dp, WeddingGold.copy(0.3f), RoundedCornerShape(16.dp))
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(a?.petEmoji ?: "💍", fontSize = 22.sp)
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                a?.nickname ?: "…",
+                color = WeddingInk,
+                fontFamily = DisplayFont,
+                fontSize = 15.sp,
+                maxLines = 1,
+                softWrap = false
+            )
+            Text("  💕  ", fontSize = 14.sp)
+            Text(
+                b?.nickname ?: "…",
+                color = WeddingInk,
+                fontFamily = DisplayFont,
+                fontSize = 15.sp,
+                maxLines = 1,
+                softWrap = false
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(b?.petEmoji ?: "💍", fontSize = 22.sp)
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color.White.copy(0.4f))
+                .padding(10.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (entries.isEmpty()) {
+                Text(
+                    "Noch keine Einträge — sei der Erste und hinterlasse einen Wunsch 🌹",
+                    color = WeddingInk.copy(0.55f),
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 24.dp)
+                )
+            } else {
+                entries.asReversed().forEach { entry ->
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(BgSoft)
-                            .padding(10.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color.White.copy(0.75f))
+                            .border(1.dp, WeddingRose.copy(0.18f), RoundedCornerShape(14.dp))
+                            .padding(12.dp)
                     ) {
-                        Text(entry.nickname, color = TextPrimary, fontFamily = DisplayFont, fontSize = 14.sp)
-                        Text(entry.text, color = TextMuted, fontFamily = BodyFont, fontSize = 13.sp)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("🌸", fontSize = 14.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                entry.nickname,
+                                color = WeddingInk,
+                                fontFamily = DisplayFont,
+                                fontSize = 14.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            entry.text,
+                            color = WeddingInk.copy(0.82f),
+                            fontFamily = BodyFont,
+                            fontSize = 13.sp
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             if (wedding?.canDeleteComments == true) {
-                                TextButton(onClick = {
-                                    scope.launch {
-                                        runCatching {
-                                            LuvApiClient.deleteGuestbook(profileUserId, entry.id)
-                                        }.onSuccess {
-                                            wedding = LuvApiClient.fetchWedding(profileUserId)
-                                        }
-                                    }
-                                }) { Text("Löschen", color = AccentRose, fontSize = 12.sp) }
+                                Text(
+                                    "Löschen",
+                                    color = WeddingRose,
+                                    fontFamily = BodyFont,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier
+                                        .clickable { onDelete(entry.id) }
+                                        .padding(top = 6.dp)
+                                )
                             } else {
-                                TextButton(onClick = {
-                                    scope.launch {
-                                        runCatching {
-                                            LuvApiClient.reportGuestbook(
-                                                profileUserId,
-                                                entry.id,
-                                                "Gästebuch-Meldung"
-                                            )
-                                        }.onSuccess {
-                                            Toast.makeText(context, "Gemeldet", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }) { Text("Melden", color = TextMuted, fontSize = 12.sp) }
+                                Text(
+                                    "Melden",
+                                    color = WeddingInk.copy(0.45f),
+                                    fontFamily = BodyFont,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier
+                                        .clickable { onReport(entry.id) }
+                                        .padding(top = 6.dp)
+                                )
                             }
                         }
                     }
                 }
-                BasicTextField(
-                    value = draft,
-                    onValueChange = { draft = it.take(280) },
-                    textStyle = TextStyle(color = TextPrimary, fontFamily = BodyFont),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(BgSoft, RoundedCornerShape(12.dp))
-                        .padding(12.dp)
-                )
             }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = !busy && draft.isNotBlank(),
-                onClick = {
-                    busy = true
-                    scope.launch {
-                        runCatching { LuvApiClient.postGuestbook(profileUserId, draft) }
-                            .onSuccess {
-                                draft = ""
-                                wedding = LuvApiClient.fetchWedding(profileUserId)
-                            }
-                            .onFailure {
-                                Toast.makeText(
-                                    context,
-                                    it.message ?: "Fehler",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        busy = false
-                    }
-                }
-            ) { Text("Eintrag schreiben", color = AccentRose) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Schließen", color = TextMuted) }
         }
-    )
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            "Dein Eintrag",
+            color = WeddingInk.copy(0.65f),
+            fontFamily = BodyFont,
+            fontSize = 12.sp
+        )
+        BasicTextField(
+            value = draft,
+            onValueChange = onDraftChange,
+            textStyle = TextStyle(
+                color = WeddingInk,
+                fontFamily = BodyFont,
+                fontSize = 15.sp
+            ),
+            cursorBrush = SolidColor(WeddingRose),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 72.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color.White.copy(0.8f))
+                .border(1.dp, WeddingGold.copy(0.35f), RoundedCornerShape(14.dp))
+                .padding(12.dp)
+        )
+        Text(
+            "${draft.length}/280",
+            color = WeddingInk.copy(0.4f),
+            fontFamily = BodyFont,
+            fontSize = 11.sp,
+            modifier = Modifier.align(Alignment.End)
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(
+                    if (!busy && draft.isNotBlank()) {
+                        Brush.horizontalGradient(listOf(WeddingRose, Color(0xFFFF8FA3)))
+                    } else {
+                        Brush.horizontalGradient(
+                            listOf(Color.Gray.copy(0.35f), Color.Gray.copy(0.25f))
+                        )
+                    }
+                )
+                .clickable(enabled = !busy && draft.isNotBlank(), onClick = onSubmit),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                if (busy) "…" else "Absenden 💌",
+                color = Color.White,
+                fontFamily = DisplayFont,
+                fontSize = 16.sp
+            )
+        }
+    }
 }
+
+@Composable
+private fun WeddingPetalRain(modifier: Modifier = Modifier) {
+    val infinite = rememberInfiniteTransition(label = "weddingRain")
+    val phase by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(16_000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "weddingRainPhase"
+    )
+    val petals = remember {
+        List(24) { i ->
+            WeddingPetal(
+                x = ((i * 37) % 100) / 100f,
+                speed = 0.55f + (i % 5) * 0.1f,
+                size = 14f + (i % 4) * 4f,
+                symbol = if (i % 3 == 0) "🌹" else "❤",
+                drift = if (i % 2 == 0) 0.05f else -0.04f,
+                delay = (i * 0.07f) % 1f
+            )
+        }
+    }
+    BoxWithConstraints(modifier = modifier) {
+        val w = maxWidth
+        val h = maxHeight
+        petals.forEach { petal ->
+            val t = (phase + petal.delay) % 1f
+            val yFrac = -0.1f + t * 1.25f
+            val xFrac = (petal.x +
+                kotlin.math.sin((phase + petal.delay) * Math.PI * 2).toFloat() * petal.drift)
+                .coerceIn(0.02f, 0.95f)
+            val alpha = when {
+                t < 0.06f -> t / 0.06f
+                t > 0.88f -> ((1f - t) / 0.12f).coerceIn(0f, 1f)
+                else -> 0.8f
+            }
+            Text(
+                petal.symbol,
+                fontSize = petal.size.sp,
+                modifier = Modifier
+                    .offset(x = w * xFrac, y = h * yFrac * petal.speed.coerceIn(0.7f, 1.2f))
+                    .graphicsLayer {
+                        this.alpha = alpha
+                        rotationZ = (phase + petal.delay) * 50f *
+                            if (petal.drift > 0) 1f else -1f
+                    }
+            )
+        }
+    }
+}
+
+private data class WeddingPetal(
+    val x: Float,
+    val speed: Float,
+    val size: Float,
+    val symbol: String,
+    val drift: Float,
+    val delay: Float
+)

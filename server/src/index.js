@@ -6088,9 +6088,24 @@ app.get("/v1/users/:userId/wedding", (req, res) => {
     m.a === ctx.user.id ||
     m.b === ctx.user.id ||
     hasStaffPerm(ctx.user, "reports.act");
+  const spouseCard = (id) => {
+    const u = db.users?.[id];
+    if (!u) {
+      return { userId: id, nickname: "Jemand", petEmoji: "🐣" };
+    }
+    return {
+      userId: u.id,
+      nickname: String(u.nickname || "Jemand").trim().slice(0, 18) || "Jemand",
+      petEmoji: userPetEmoji(u),
+    };
+  };
   return res.json({
     ok: true,
     marriage: marriage.publicMarriage(m, ctx.user.id, db.users),
+    couple: {
+      a: spouseCard(m.a),
+      b: spouseCard(m.b),
+    },
     hasImage: Boolean(m.weddingImageFile),
     guestbook: (m.guestbook || []).map((g) => ({
       id: g.id,

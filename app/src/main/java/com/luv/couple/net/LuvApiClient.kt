@@ -1498,11 +1498,19 @@ object LuvApiClient {
         val createdAt: Long
     )
 
+    data class WeddingCoupleSide(
+        val userId: String,
+        val nickname: String,
+        val petEmoji: String = "🐣"
+    )
+
     data class WeddingInfo(
         val marriage: MarriageInfo?,
         val hasImage: Boolean,
         val guestbook: List<GuestbookEntry>,
-        val canDeleteComments: Boolean
+        val canDeleteComments: Boolean,
+        val coupleA: WeddingCoupleSide? = null,
+        val coupleB: WeddingCoupleSide? = null
     )
 
     private fun parseMarriageInfo(o: JSONObject?): MarriageInfo? {
@@ -1680,13 +1688,40 @@ object LuvApiClient {
                     }
                 }
             }
+            val couple = json.optJSONObject("couple")
+            fun side(key: String): WeddingCoupleSide? {
+                val o = couple?.optJSONObject(key) ?: return null
+                val id = o.optString("userId").trim()
+                if (id.isBlank()) return null
+                return WeddingCoupleSide(
+                    userId = id,
+                    nickname = o.optString("nickname", "Jemand").trim().ifBlank { "Jemand" },
+                    petEmoji = o.optString("petEmoji", "🐣").ifBlank { "🐣" }
+                )
+            }
             WeddingInfo(
                 marriage = parseMarriageInfo(json.optJSONObject("marriage")),
                 hasImage = json.optBoolean("hasImage", false),
                 guestbook = entries,
-                canDeleteComments = json.optBoolean("canDeleteComments", false)
+                canDeleteComments = json.optBoolean("canDeleteComments", false),
+                coupleA = side("a"),
+                coupleB = side("b")
             )
         }.getOrNull()
+    }
+
+    suspend fun downloadWeddingImage(userId: String): ByteArray = withContext(Dispatchers.IO) {
+        val clean = userId.trim()
+        if (clean.isBlank()) throw LuvApiException("Kein Bild.")
+        val request = authedRequestBuilder("/v1/users/${clean.encodeURL()}/wedding/image")
+            .get()
+            .build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw LuvApiException("Hochzeitsbild nicht verfügbar (${response.code}).")
+            }
+            response.body?.bytes() ?: throw LuvApiException("Bild leer.")
+        }
     }
 
     suspend fun postGuestbook(userId: String, text: String): GuestbookEntry? =
