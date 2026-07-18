@@ -68,7 +68,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.LuvApp
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
+import com.luv.couple.net.PendingProfilePlace
+import com.luv.couple.net.ProfilePlaceAction
 import com.luv.couple.net.ShopPack
+import com.luv.couple.profile.ProfileCatalog
+import com.luv.couple.profile.ProfileElType
+import com.luv.couple.profile.ProfileState
 import com.luv.couple.shop.ShopCatalog
 import com.luv.couple.shop.ShopEmoji
 import com.luv.couple.ui.theme.AccentRose
@@ -90,7 +95,9 @@ fun MarketScreen(
     onBuyPack: (ShopPack) -> Unit,
     onRefreshInventory: suspend () -> Unit = {},
     startInCoinShop: Boolean = false,
-    onStartInCoinShopConsumed: () -> Unit = {}
+    onStartInCoinShopConsumed: () -> Unit = {},
+    startPanel: MarketPanel? = null,
+    onStartPanelConsumed: () -> Unit = {}
 ) {
     var panel by remember { mutableStateOf(MarketPanel.Hub) }
     LaunchedEffect(startInCoinShop) {
@@ -98,6 +105,11 @@ fun MarketScreen(
             panel = MarketPanel.CoinShop
             onStartInCoinShopConsumed()
         }
+    }
+    LaunchedEffect(startPanel) {
+        val target = startPanel ?: return@LaunchedEffect
+        panel = target
+        onStartPanelConsumed()
     }
     when (panel) {
         MarketPanel.Hub -> MarketHub(
@@ -565,108 +577,98 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
 }
 
 @Composable
-fun InventoryScreen(onOpenEmojiEditor: () -> Unit) {
+fun InventoryScreen(
+    nickname: String,
+    onOpenMarketplace: () -> Unit,
+    onOpenItemShop: () -> Unit,
+    onOpenProfileDesigner: () -> Unit
+) {
     val prefs = LuvApp.instance.prefs
-    var tab by remember { mutableIntStateOf(0) }
     val owned by prefs.ownedEmojisFlow.collectAsStateWithLifecycle(initialValue = emptyMap())
+    var profile by remember {
+        mutableStateOf(ProfileState(layout = ProfileCatalog.defaultLayout(nickname)))
+    }
+    var pendingAction by remember { mutableStateOf<ProfilePlaceAction?>(null) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(nickname) {
         runCatching {
             val remote = LuvApiClient.fetchInventory()
             if (remote.isNotEmpty()) prefs.setOwnedEmojis(remote)
         }
+        val json = runCatching { prefs.profileCanvasJson() }.getOrNull()
+        profile = ProfileCatalog.decode(json, nickname)
+    }
+
+    val stickers = remember(owned) {
+        (ProfileCatalog.FREE_STICKERS + owned.keys).distinct().sorted()
+    }
+
+    fun confirmPlace(action: ProfilePlaceAction) {
+        pendingAction = action
     }
 
     MenuBackdrop(includeNavigationBars = false) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp)
-                .padding(top = 16.dp, bottom = 8.dp)
+                .padding(horizontal = 16.dp)
+                .padding(top = 12.dp, bottom = 8.dp)
         ) {
-            Text("Inventar", fontFamily = DisplayFont, fontSize = 30.sp, color = TextPrimary)
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf("Ausstattung", "Begleiter", "Emojis").forEachIndexed { index, label ->
-                    val active = tab == index
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(if (active) AccentRose.copy(0.28f) else BgSoft)
-                            .clickable { tab = index }
-                            .padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            label,
-                            color = TextPrimary,
-                            fontFamily = if (active) DisplayFont else BodyFont,
-                            fontSize = 13.sp
-                        )
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            when (tab) {
-                0 -> EmptyMarketCard("Noch leer", "Ausstattung aus dem Itemshop landet hier.")
-                1 -> EmptyMarketCard("Noch leer", "Begleiter aus dem Itemshop landen hier.")
-                else -> {
-                    if (owned.isEmpty()) {
-                        EmptyMarketCard("Noch keine Emojis", "Im Itemshop findest du welche.")
-                    } else {
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = 72.dp),
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(bottom = 12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            item {
-                                Box(
-                                    modifier = Modifier
-                                        .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(16.dp))
-                                        .background(AccentRose.copy(0.22f))
-                                        .clickable(onClick = onOpenEmojiEditor)
-                                        .padding(8.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("✎", fontSize = 28.sp, color = TextPrimary)
-                                }
-                            }
-                            items(owned.entries.sortedBy { it.key }.toList(), key = { it.key }) { (emoji, count) ->
-                                Box(
-                                    modifier = Modifier
-                                        .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(16.dp))
-                                        .background(BgSoft)
-                                        .padding(8.dp)
-                                ) {
-                                    Text(
-                                        emoji,
-                                        fontSize = 30.sp,
-                                        modifier = Modifier.align(Alignment.Center)
-                                    )
-                                    if (count > 1) {
-                                        Text(
-                                            "×$count",
-                                            color = TextMuted,
-                                            fontFamily = BodyFont,
-                                            fontSize = 11.sp,
-                                            modifier = Modifier.align(Alignment.BottomEnd)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            ProfileInventoryPanel(
+                ownedStickers = stickers,
+                currentThemeId = profile.themeId,
+                currentCompanion = profile.companionEmoji,
+                hasGlass = profile.layout.any { it.type == ProfileElType.Glass },
+                hasBio = profile.layout.any { it.type == ProfileElType.Bio },
+                onTheme = { confirmPlace(ProfilePlaceAction.Theme(it.id)) },
+                onSticker = { confirmPlace(ProfilePlaceAction.Sticker(it)) },
+                onCompanion = { confirmPlace(ProfilePlaceAction.Buddy(it)) },
+                onGlass = { confirmPlace(ProfilePlaceAction.Glass) },
+                onBio = { confirmPlace(ProfilePlaceAction.Bio) },
+                onOpenMarketplace = onOpenMarketplace,
+                onOpenItemShop = onOpenItemShop,
+                modifier = Modifier.fillMaxSize(),
+                showCardChrome = true
+            )
         }
+    }
+
+    val action = pendingAction
+    if (action != null) {
+        val label = when (action) {
+            is ProfilePlaceAction.Theme -> "diesen Hintergrund"
+            is ProfilePlaceAction.Sticker -> "diesen Sticker"
+            is ProfilePlaceAction.Buddy -> "diesen Begleiter"
+            ProfilePlaceAction.Glass -> "das Münzglas"
+            ProfilePlaceAction.Bio -> "die Bio"
+        }
+        AlertDialog(
+            onDismissRequest = { pendingAction = null },
+            title = { Text("Profil gestalten?", fontFamily = DisplayFont, color = TextPrimary) },
+            text = {
+                Text(
+                    "Du wirst zum Profil gestalten geleitet und $label dort platziert.",
+                    fontFamily = BodyFont,
+                    color = TextMuted
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        PendingProfilePlace.offer(action)
+                        pendingAction = null
+                        onOpenProfileDesigner()
+                    }
+                ) {
+                    Text("Ja, platzieren", color = AccentRose, fontFamily = DisplayFont)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingAction = null }) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
     }
 }
 

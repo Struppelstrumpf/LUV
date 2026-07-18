@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.26",
+            listOf(
+                "Inventar wie Profil-Truhe — Marktplatz, Itemshop, Platzieren mit Bestätigung",
+            )
+        ),
+        Entry(
             "1.9.25",
             listOf(
                 "Pinsel-Menü ohne Abdunklung dahinter",

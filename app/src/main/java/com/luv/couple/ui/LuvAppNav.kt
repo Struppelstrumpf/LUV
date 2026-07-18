@@ -62,6 +62,7 @@ import com.luv.couple.ui.screens.JoinScreen
 import com.luv.couple.ui.screens.EmojiBarEditorDialog
 import com.luv.couple.ui.screens.InventoryScreen
 import com.luv.couple.ui.screens.LobbiesScreen
+import com.luv.couple.ui.screens.MarketPanel
 import com.luv.couple.ui.screens.MarketScreen
 import com.luv.couple.ui.screens.NicknameScreen
 import com.luv.couple.ui.screens.ProfileCanvasScreen
@@ -124,6 +125,7 @@ fun LuvAppNav() {
     var colorIndex by remember { mutableIntStateOf(0) }
     var tab by remember { mutableIntStateOf(0) }
     var openMarketCoinShop by remember { mutableStateOf(false) }
+    var openMarketPanel by remember { mutableStateOf<MarketPanel?>(null) }
     var showEmojiBarEditor by remember { mutableStateOf(false) }
     var shopEnabled by remember { mutableStateOf(false) }
     var packs by remember { mutableStateOf<List<ShopPack>>(emptyList()) }
@@ -763,12 +765,25 @@ fun LuvAppNav() {
                             onUpdateApp = { startAppUpdate() }
                         )
                         1 -> GalleryScreen()
-                        2 -> InventoryScreen(onOpenEmojiEditor = { showEmojiBarEditor = true })
+                        2 -> InventoryScreen(
+                            nickname = nickname ?: "Du",
+                            onOpenMarketplace = {
+                                tab = 3
+                                openMarketPanel = MarketPanel.Marketplace
+                            },
+                            onOpenItemShop = {
+                                tab = 3
+                                openMarketPanel = MarketPanel.ItemShop
+                            },
+                            onOpenProfileDesigner = { navController.navigate(Routes.PROFILE) }
+                        )
                         3 -> MarketScreen(
                             shopEnabled = shopEnabled,
                             packs = packs,
                             startInCoinShop = openMarketCoinShop,
                             onStartInCoinShopConsumed = { openMarketCoinShop = false },
+                            startPanel = openMarketPanel,
+                            onStartPanelConsumed = { openMarketPanel = null },
                             onRefreshInventory = { syncInventory() },
                             onBuyPack = { pack ->
                                 scope.launch {
@@ -865,9 +880,19 @@ fun LuvAppNav() {
                 editable = true,
                 onClose = { navController.popBackStack() },
                 onEditNickname = { navController.navigate(Routes.NICKNAME) },
-                onOpenShop = {
+                onOpenMarketplace = {
                     navController.popBackStack()
                     tab = 3
+                    openMarketPanel = MarketPanel.Marketplace
+                    scope.launch {
+                        refreshAccount()
+                        syncInventory()
+                    }
+                },
+                onOpenItemShop = {
+                    navController.popBackStack()
+                    tab = 3
+                    openMarketPanel = MarketPanel.ItemShop
                     scope.launch {
                         refreshAccount()
                         syncInventory()

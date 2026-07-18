@@ -81,7 +81,9 @@ import com.luv.couple.LuvApp
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
+import com.luv.couple.net.PendingProfilePlace
 import com.luv.couple.net.PendingShop
+import com.luv.couple.net.ProfilePlaceAction
 import com.luv.couple.profile.ProfileCatalog
 import com.luv.couple.profile.ProfileElType
 import com.luv.couple.profile.ProfileFont
@@ -114,7 +116,8 @@ fun ProfileCanvasScreen(
     onClose: () -> Unit,
     onEditNickname: (() -> Unit)? = null,
     onReport: (() -> Unit)? = null,
-    onOpenShop: (() -> Unit)? = null
+    onOpenMarketplace: (() -> Unit)? = null,
+    onOpenItemShop: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -247,6 +250,23 @@ fun ProfileCanvasScreen(
         patchLayout(state.layout + el)
         selectedId = el.id
         showChest = false
+    }
+
+    fun applyPendingPlace(action: ProfilePlaceAction) {
+        when (action) {
+            is ProfilePlaceAction.Theme -> setTheme(ProfileCatalog.theme(action.themeId))
+            is ProfilePlaceAction.Sticker -> placeSticker(action.emoji)
+            is ProfilePlaceAction.Buddy -> placeCompanion(action.emoji)
+            ProfilePlaceAction.Glass -> placeGlass()
+            ProfilePlaceAction.Bio -> placeBio()
+        }
+    }
+
+    // Nach dem Laden: Item aus Menü-Inventar platzieren
+    LaunchedEffect(editable, savedSnapshot) {
+        if (!editable || savedSnapshot.isEmpty()) return@LaunchedEffect
+        val action = PendingProfilePlace.consume() ?: return@LaunchedEffect
+        applyPendingPlace(action)
     }
 
     fun tryClose() {
@@ -459,12 +479,21 @@ fun ProfileCanvasScreen(
                 onCompanion = { placeCompanion(it) },
                 onGlass = { placeGlass() },
                 onBio = { placeBio() },
-                onOpenShop = {
+                onOpenMarketplace = {
                     showChest = false
-                    if (onOpenShop != null) onOpenShop()
+                    if (onOpenMarketplace != null) onOpenMarketplace()
                     else {
                         PendingShop.offer()
-                        Toast.makeText(context, "Öffne das Lädchen im Menü", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Öffne den Marktplatz im Menü", Toast.LENGTH_SHORT).show()
+                        onClose()
+                    }
+                },
+                onOpenItemShop = {
+                    showChest = false
+                    if (onOpenItemShop != null) onOpenItemShop()
+                    else {
+                        PendingShop.offer()
+                        Toast.makeText(context, "Öffne den Itemshop im Menü", Toast.LENGTH_SHORT).show()
                         onClose()
                     }
                 },
@@ -1007,219 +1036,6 @@ private fun ElementContent(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
-    }
-}
-
-@Composable
-private fun ProfileChestDialog(
-    ownedStickers: List<String>,
-    currentThemeId: String,
-    currentCompanion: String,
-    hasGlass: Boolean,
-    hasBio: Boolean,
-    onTheme: (ProfileTheme) -> Unit,
-    onSticker: (String) -> Unit,
-    onCompanion: (String) -> Unit,
-    onGlass: () -> Unit,
-    onBio: () -> Unit,
-    onOpenShop: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    var tab by remember { mutableStateOf(0) }
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp)
-                .clip(RoundedCornerShape(28.dp))
-                .background(
-                    Brush.verticalGradient(listOf(Color(0xFF1C2433), BgDeep))
-                )
-                .border(1.dp, Color.White.copy(0.10f), RoundedCornerShape(28.dp))
-                .padding(16.dp)
-                .navigationBarsPadding()
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("🧰", fontSize = 22.sp)
-                Spacer(modifier = Modifier.width(8.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("TRUHE", color = TextMuted, fontFamily = BodyFont, fontSize = 11.sp)
-                    Text("Dein Inventar", color = TextPrimary, fontFamily = DisplayFont, fontSize = 22.sp)
-                }
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(0.12f))
-                        .clickable(onClick = onDismiss),
-                    contentAlignment = Alignment.Center
-                ) { Text("✕", color = TextMuted, fontSize = 14.sp) }
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ShopLinkChip("🛒 Lädchen", onOpenShop, Modifier.weight(1f))
-                ShopLinkChip("✨ Mehr Sticker", onOpenShop, Modifier.weight(1f))
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                listOf("Hintergrund", "Sticker", "Begleiter", "Extras").forEachIndexed { i, label ->
-                    val on = tab == i
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (on) AccentRose.copy(0.28f) else Color.White.copy(0.06f))
-                            .clickable { tab = i }
-                            .padding(horizontal = 12.dp, vertical = 9.dp)
-                    ) {
-                        Text(
-                            label,
-                            color = TextPrimary,
-                            fontFamily = if (on) DisplayFont else BodyFont,
-                            fontSize = 13.sp
-                        )
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            when (tab) {
-                0 -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(88.dp),
-                    modifier = Modifier.fillMaxWidth().height(300.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(ProfileCatalog.THEMES, key = { it.id }) { theme ->
-                        val on = theme.id == currentThemeId
-                        Column(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(if (on) AccentRose.copy(0.2f) else BgSoft)
-                                .border(
-                                    1.dp,
-                                    if (on) AccentRose.copy(0.65f) else Color.White.copy(0.08f),
-                                    RoundedCornerShape(14.dp)
-                                )
-                                .clickable { onTheme(theme) }
-                                .padding(10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(theme.emoji, fontSize = 28.sp)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(theme.label, color = TextPrimary, fontFamily = BodyFont, fontSize = 12.sp, maxLines = 1)
-                        }
-                    }
-                }
-                1 -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(64.dp),
-                    modifier = Modifier.fillMaxWidth().height(300.dp),
-                    contentPadding = PaddingValues(4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(ownedStickers, key = { it }) { emoji ->
-                        Box(
-                            modifier = Modifier
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(BgSoft)
-                                .clickable { onSticker(emoji) },
-                            contentAlignment = Alignment.Center
-                        ) { Text(emoji, fontSize = 28.sp) }
-                    }
-                }
-                2 -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(72.dp),
-                    modifier = Modifier.fillMaxWidth().height(300.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(ProfileCatalog.COMPANIONS, key = { it }) { emoji ->
-                        val on = emoji == currentCompanion
-                        Box(
-                            modifier = Modifier
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(if (on) AccentRose.copy(0.22f) else BgSoft)
-                                .border(
-                                    1.dp,
-                                    if (on) AccentRose.copy(0.65f) else Color.White.copy(0.08f),
-                                    RoundedCornerShape(14.dp)
-                                )
-                                .clickable { onCompanion(emoji) },
-                            contentAlignment = Alignment.Center
-                        ) { Text(emoji, fontSize = 30.sp) }
-                    }
-                }
-                else -> Column(
-                    modifier = Modifier.fillMaxWidth().height(220.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (hasGlass) AccentRose.copy(0.18f) else BgSoft)
-                            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(16.dp))
-                            .clickable(onClick = onGlass),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("🏺", fontSize = 36.sp)
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                if (hasGlass) "Münzglas auf der Leinwand" else "Münzglas platzieren",
-                                color = TextPrimary,
-                                fontFamily = DisplayFont,
-                                fontSize = 15.sp
-                            )
-                        }
-                    }
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (hasBio) AccentRose.copy(0.18f) else BgSoft)
-                            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(16.dp))
-                            .clickable(onClick = onBio),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("📝", fontSize = 36.sp)
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                if (hasBio) "Bio auf der Leinwand" else "Bio platzieren",
-                                color = TextPrimary,
-                                fontFamily = DisplayFont,
-                                fontSize = 15.sp
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ShopLinkChip(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(AccentRose.copy(0.16f))
-            .border(1.dp, AccentRose.copy(0.35f), RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 12.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(label, color = TextPrimary, fontFamily = BodyFont, fontSize = 13.sp)
     }
 }
 
