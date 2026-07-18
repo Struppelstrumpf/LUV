@@ -21,6 +21,8 @@ const DEFAULT = {
   liveNotice: null,
   marketListings: {},
   marketMeta: { priceHistory: {} },
+  marriages: {},
+  guestbookReports: [],
 };
 
 function ensureDir() {
@@ -35,7 +37,10 @@ function load() {
   }
   try {
     const raw = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+    // Bekannte Felder normalisieren — unbekannte Top-Level-Keys behalten
+    // (sonst gehen z. B. marriages bei jedem Restart verloren).
     return {
+      ...raw,
       users: raw.users || {},
       sessions: raw.sessions || {},
       vouchers: raw.vouchers || {},
@@ -71,6 +76,11 @@ function load() {
         raw.marketMeta && typeof raw.marketMeta === "object"
           ? raw.marketMeta
           : { priceHistory: {} },
+      marriages:
+        raw.marriages && typeof raw.marriages === "object" ? raw.marriages : {},
+      guestbookReports: Array.isArray(raw.guestbookReports)
+        ? raw.guestbookReports
+        : [],
     };
   } catch {
     return structuredClone(DEFAULT);

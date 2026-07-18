@@ -3,6 +3,8 @@
  * Level steigt max. 1×/Tag pro Freund durch Begleiter-Kraulen (0–100).
  */
 
+const fs = require("fs");
+
 const ENGAGE_WAIT_MS = 7 * 24 * 60 * 60 * 1000;
 const WEDDING_LOBBY_MS = 7 * 24 * 60 * 60 * 1000;
 const DIVORCE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
@@ -32,17 +34,25 @@ function proposeUnlockCost(level) {
 
 function cooldownRemainingMs(user) {
   if (!user) return 0;
+  // Nur nach aktiver Scheidung — verwaiste Cooldowns (Merge/Bug) ignorieren
+  if (!user.marriageDivorcedAt) {
+    if (Number(user.marriageCooldownUntil) || 0) user.marriageCooldownUntil = 0;
+    return 0;
+  }
   return Math.max(0, (Number(user.marriageCooldownUntil) || 0) - Date.now());
 }
 
 function setDivorceCooldown(user) {
   if (!user) return;
-  user.marriageCooldownUntil = Date.now() + DIVORCE_COOLDOWN_MS;
+  const now = Date.now();
+  user.marriageDivorcedAt = now;
+  user.marriageCooldownUntil = now + DIVORCE_COOLDOWN_MS;
 }
 
 function clearDivorceCooldown(user) {
   if (!user) return;
   user.marriageCooldownUntil = 0;
+  user.marriageDivorcedAt = 0;
 }
 
 function formatRemaining(ms) {
@@ -135,6 +145,26 @@ function rekeyMarriage(db, oldKey, m) {
   return m;
 }
 
+function parsePairFromWeddingFileName(name) {
+  const base = String(name || "")
+    .replace(/\.png$/i, "")
+    .trim();
+  const parts = base.split("|");
+  if (parts.length !== 2) return null;
+  const a = parts[0].trim();
+  const b = parts[1].trim();
+  if (!a || !b || a === b) return null;
+  return a < b ? [a, b] : [b, a];
+}
+
+function inferPartnerFromWeddingFile(m, selfId) {
+  const pair = parsePairFromWeddingFileName(m?.weddingImageFile || m?.id);
+  if (!pair) return null;
+  if (pair[0] === selfId) return pair[1];
+  if (pair[1] === selfId) return pair[0];
+  return null;
+}
+
 /**
  * User-ID in allen Ehe-/Verlobungs-Records umhängen (Google-Merge).
  * @returns {number} Anzahl geänderter Records
@@ -160,9 +190,29 @@ function remapUserIdInMarriages(db, fromId, toId) {
       changed = true;
     }
     if (!changed) continue;
-    // Doppel-ID vermeiden
+    // Doppel-ID: nie busy Ehe / Bild / Gästebuch löschen
     if (m.a === m.b) {
-      delete all[key];
+      const partner =
+        inferPartnerFromWeddingFile(m, toId) ||
+        inferPartnerFromWeddingFile({ weddingImageFile: key }, toId);
+      if (partner && partner !== toId && db.users?.[partner]) {
+        m.a = toId < partner ? toId : partner;
+        m.b = toId < partner ? partner : toId;
+        rekeyMarriage(db, key, m);
+      } else if (
+        !isBusyStatus(m.status) &&
+        !m.weddingImageFile &&
+        !(Array.isArray(m.guestbook) && m.guestbook.length)
+      ) {
+        delete all[key];
+      } else {
+        console.error(
+          "[marriage] remap collapsed a===b — keeping record",
+          key,
+          m.status,
+          m.weddingImageFile
+        );
+      }
       n++;
       continue;
     }
@@ -173,16 +223,119 @@ function remapUserIdInMarriages(db, fromId, toId) {
 }
 
 /**
+ * Verwaiste Hochzeitsbilder → Ehe-Record wiederherstellen.
+ * Dateiname: `{userA}|{userB}.png`
+ */
+function recoverMarriageFromWeddingDir(db, user, weddingDir) {
+  if (!user?.id || !weddingDir) return null;
+  let files = [];
+  try {
+    if (!fs.existsSync(weddingDir)) return null;
+    files = fs.readdirSync(weddingDir);
+  } catch {
+    return null;
+  }
+  const all = ensureMarriages(db);
+  for (const name of files) {
+    if (!/\.png$/i.test(name)) continue;
+    const pair = parsePairFromWeddingFileName(name);
+    if (!pair) continue;
+    if (pair[0] !== user.id && pair[1] !== user.id) continue;
+    const otherId = pair[0] === user.id ? pair[1] : pair[0];
+    if (!db.users?.[otherId]) continue;
+    const key = pairKey(user.id, otherId);
+    let rec = all[key] || findMarriageBetween(db, user.id, otherId);
+    if (rec && isBusyStatus(rec.status)) {
+      if (!rec.weddingImageFile) rec.weddingImageFile = name;
+      if (!Array.isArray(rec.guestbook)) rec.guestbook = [];
+      clearDivorceCooldown(user);
+      clearDivorceCooldown(db.users[otherId]);
+      grantMarriageItem(user);
+      grantMarriageItem(db.users[otherId]);
+      return rec;
+    }
+    rec = {
+      id: key,
+      a: pair[0],
+      b: pair[1],
+      status: "married",
+      marriedAt: Date.now(),
+      weddingImageFile: name,
+      guestbook: Array.isArray(rec?.guestbook) ? rec.guestbook : [],
+      weddingLobbyCode: null,
+    };
+    all[key] = rec;
+    grantMarriageItem(user);
+    grantMarriageItem(db.users[otherId]);
+    clearDivorceCooldown(user);
+    clearDivorceCooldown(db.users[otherId]);
+    console.log(`[marriage] recovered from wedding image ${name}`);
+    return rec;
+  }
+  return null;
+}
+
+/** Alle verwaiste Hochzeitsbilder → Ehen (Boot / Deploy). */
+function recoverAllOrphanedWeddings(db, weddingDir) {
+  if (!weddingDir) return 0;
+  let files = [];
+  try {
+    if (!fs.existsSync(weddingDir)) return 0;
+    files = fs.readdirSync(weddingDir);
+  } catch {
+    return 0;
+  }
+  let n = 0;
+  const all = ensureMarriages(db);
+  for (const name of files) {
+    if (!/\.png$/i.test(name)) continue;
+    const pair = parsePairFromWeddingFileName(name);
+    if (!pair) continue;
+    const [aId, bId] = pair;
+    if (!db.users?.[aId] || !db.users?.[bId]) continue;
+    const key = pairKey(aId, bId);
+    const existing = all[key] || findMarriageBetween(db, aId, bId);
+    if (existing && isBusyStatus(existing.status)) {
+      if (!existing.weddingImageFile) {
+        existing.weddingImageFile = name;
+        n++;
+      }
+      continue;
+    }
+    all[key] = {
+      id: key,
+      a: aId,
+      b: bId,
+      status: "married",
+      marriedAt: Date.now(),
+      weddingImageFile: name,
+      guestbook: Array.isArray(existing?.guestbook) ? existing.guestbook : [],
+      weddingLobbyCode: null,
+    };
+    grantMarriageItem(db.users[aId]);
+    grantMarriageItem(db.users[bId]);
+    clearDivorceCooldown(db.users[aId]);
+    clearDivorceCooldown(db.users[bId]);
+    n++;
+    console.log(`[marriage] boot-recovered ${name}`);
+  }
+  return n;
+}
+
+/**
  * Verwaiste Wedding-Lobbys ↔ Marriage wieder verknüpfen
  * (z. B. nach altem Merge ohne Remap).
  */
-function repairMarriageLinks(db, user) {
+function repairMarriageLinks(db, user, weddingDir) {
   if (!user?.id) return null;
   let m = findMarriageForUser(db, user.id);
   if (m) {
     if (isBusyStatus(m.status)) clearDivorceCooldown(user);
     return m;
   }
+  const fromFile = recoverMarriageFromWeddingDir(db, user, weddingDir);
+  if (fromFile) return fromFile;
+
   const weddingCodes = new Set();
   for (const [code, meta] of Object.entries(user.hostedRooms || {})) {
     if (meta?.isWedding) weddingCodes.add(code);
@@ -368,4 +521,7 @@ module.exports = {
   remapUserIdInMarriages,
   repairMarriageLinks,
   rekeyMarriage,
+  recoverMarriageFromWeddingDir,
+  recoverAllOrphanedWeddings,
+  parsePairFromWeddingFileName,
 };

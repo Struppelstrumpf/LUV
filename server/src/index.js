@@ -1193,6 +1193,16 @@ function endMarriageRecord(m, reason) {
   if (m.status === "wedding" && m.weddingLobbyCode) {
     dissolveWeddingLobby(m.weddingLobbyCode);
   }
+  // Bild entfernen, sonst würde Boot-Recovery die Ehe nach Scheidung neu anlegen
+  if (m.weddingImageFile) {
+    try {
+      const fp = path.join(WEDDING_DIR, path.basename(String(m.weddingImageFile)));
+      if (fs.existsSync(fp)) fs.unlinkSync(fp);
+    } catch (e) {
+      console.error("wedding image delete failed", e);
+    }
+    m.weddingImageFile = null;
+  }
   if (a) {
     marriage.clearMarriageItem(a);
     marriage.stripSpouseFromProfile(a);
@@ -3304,19 +3314,29 @@ function absorbUserInto(target, source) {
     target.pendingMarketSales = target.pendingMarketSales.slice(-80);
   }
 
-  // Scheidungs-Cooldown: bei aktiver Ehe/Verlobung löschen, sonst längeren behalten
+  // Scheidungs-Cooldown: nur echte Scheidung übernehmen, nie bei aktiver Ehe
   const busyAfter = marriage.findMarriageForUser(db, target.id);
   if (busyAfter && marriage.isBusyStatus(busyAfter.status)) {
     marriage.clearDivorceCooldown(target);
   } else {
-    const aUntil = Number(target.marriageCooldownUntil) || 0;
-    const bUntil = Number(source.marriageCooldownUntil) || 0;
-    target.marriageCooldownUntil = Math.max(aUntil, bUntil);
+    const targetDivorced = Boolean(target.marriageDivorcedAt);
+    const sourceDivorced = Boolean(source.marriageDivorcedAt);
+    if (targetDivorced || sourceDivorced) {
+      const aUntil = targetDivorced ? Number(target.marriageCooldownUntil) || 0 : 0;
+      const bUntil = sourceDivorced ? Number(source.marriageCooldownUntil) || 0 : 0;
+      target.marriageCooldownUntil = Math.max(aUntil, bUntil);
+      target.marriageDivorcedAt = Math.max(
+        Number(target.marriageDivorcedAt) || 0,
+        Number(source.marriageDivorcedAt) || 0
+      );
+    } else {
+      marriage.clearDivorceCooldown(target);
+    }
   }
-  source.marriageCooldownUntil = 0;
+  marriage.clearDivorceCooldown(source);
 
-  // Verwaiste Wedding-Lobbys nochmal reparieren
-  marriage.repairMarriageLinks(db, target);
+  // Verwaiste Wedding-Lobbys / Hochzeitsbilder nochmal reparieren
+  marriage.repairMarriageLinks(db, target, WEDDING_DIR);
 
   destroyAllSessionsForUser(source.id);
   if (Array.isArray(db.ledger)) {
@@ -3378,9 +3398,10 @@ function deleteUserAccount(user) {
       f.list.length + f.incoming.length + f.outgoing.length + (f.petKraulTargets?.length || 0);
     if (after !== before) scheduleSave();
   }
-  // Ehe-Records beenden / Partner freigeben
+  // Nur offene Anträge verwerfen — Ehe/Verlobung/Hochzeit + Bild/Gästebuch bleiben
+  // für den Partner erhalten (Konto-Löschung ≠ Scheidung).
   const m = marriage.findMarriageForUser(db, userId);
-  if (m) {
+  if (m && m.status === "proposed") {
     endMarriageRecord(m, "cancel");
   }
   // Offene Markt-Angebote zurückziehen (Items würden sonst hängen)
@@ -5450,8 +5471,8 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   const isSelf = uid === ctx.user.id;
   const areFriends = !isSelf && friendRelation(ctx.user, uid) === "friends";
   const tipRecv = glassTipRecvState(user);
-  marriage.repairMarriageLinks(db, ctx.user);
-  marriage.repairMarriageLinks(db, user);
+  marriage.repairMarriageLinks(db, ctx.user, WEDDING_DIR);
+  marriage.repairMarriageLinks(db, user, WEDDING_DIR);
   const bond = marriage.findMarriageBetween(db, ctx.user.id, uid);
   const theirMarriage = marriage.findMarriageForUser(db, uid);
   const myMarriageBusy = marriage.findMarriageForUser(db, ctx.user.id);
@@ -5559,7 +5580,7 @@ app.get("/v1/me/friends", (req, res) => {
   f.outgoing = f.outgoing.filter((id) => db.users?.[id]);
   // Verwaiste Hochzeits-/Ehe-Links nach Google-Merge reparieren
   const myMarriage =
-    marriage.repairMarriageLinks(db, ctx.user) ||
+    marriage.repairMarriageLinks(db, ctx.user, WEDDING_DIR) ||
     marriage.findMarriageForUser(db, ctx.user.id);
   const pendingProposals = [];
   const allM = marriage.ensureMarriages(db);
@@ -10737,4 +10758,14 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(
     `luv-api :${PORT} rooms=${rooms.size} maxPeers=${MAX_PEERS} maxLobbies=${MAX_LOBBIES} clearCost=${CLEAR_COST} lobbyCreate=${LOBBY_CREATE_COST} shop=${Boolean(MOLLIE_API_KEY)}`
   );
+  try {
+    ensureWeddingDir();
+    const n = marriage.recoverAllOrphanedWeddings(getDb(), WEDDING_DIR);
+    if (n > 0) {
+      scheduleSave();
+      console.log(`[marriage] recovered ${n} orphaned wedding(s) on boot`);
+    }
+  } catch (e) {
+    console.error("[marriage] boot recover failed", e);
+  }
 });
