@@ -240,21 +240,6 @@ fun LuvAppNav() {
         PairConnectionService.startAll(context)
     }
 
-    suspend fun ensureAuth(nick: String): Boolean {
-        return try {
-            val (id, secret) = prefs.ensureInstallCredentials()
-            val result = LuvApiClient.authDevice(id, secret, nick)
-            prefs.saveSession(result.sessionToken, result.user)
-            AccountSession.setAccount(result.user)
-            colorIndex = prefs.snapshot().colorIndex
-            CanvasStore.updateProfile(result.user.nickname, colorIndex)
-            true
-        } catch (e: Exception) {
-            joinError = e.message ?: "Server nicht erreichbar"
-            false
-        }
-    }
-
     suspend fun refreshAccount() {
         runCatching {
             val user = LuvApiClient.me()
@@ -275,6 +260,53 @@ fun LuvAppNav() {
             shopEnabled = enabled
             packs = list
         }
+    }
+
+    /**
+     * Session sicherstellen — legt kein neues Geräte-Konto an, wenn schon eine Session
+     * existiert oder Google-Login Pflicht ist (sonst würden Coins/Freunde „verschwinden“).
+     */
+    suspend fun ensureAuth(nick: String): Boolean {
+        val snap = prefs.snapshot()
+        if (!snap.sessionToken.isNullOrBlank()) {
+            LuvApiClient.sessionToken = snap.sessionToken
+            return try {
+                val user = LuvApiClient.me()
+                prefs.updateAccount(user)
+                AccountSession.setAccount(user)
+                colorIndex = prefs.snapshot().colorIndex
+                CanvasStore.updateProfile(user.nickname, colorIndex)
+                true
+            } catch (e: Exception) {
+                joinError = e.message ?: "Bitte mit Google anmelden."
+                false
+            }
+        }
+        if (googleEnabled) {
+            joinError = "Bitte zuerst mit Google anmelden."
+            return false
+        }
+        return try {
+            val (id, secret) = prefs.ensureInstallCredentials()
+            val result = LuvApiClient.authDevice(id, secret, nick)
+            prefs.saveSession(result.sessionToken, result.user)
+            AccountSession.setAccount(result.user)
+            colorIndex = prefs.snapshot().colorIndex
+            CanvasStore.updateProfile(result.user.nickname, colorIndex)
+            true
+        } catch (e: Exception) {
+            joinError = e.message ?: "Server nicht erreichbar"
+            false
+        }
+    }
+
+    fun requireGoogleOrToast(): Boolean {
+        if (!AccountSession.needsGoogleLogin(googleEnabled)) return true
+        val msg = "Bitte zuerst mit Google anmelden."
+        joinError = msg
+        accountMessage = msg
+        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+        return false
     }
 
     fun isChosenNickname(nick: String?): Boolean {
@@ -423,7 +455,7 @@ fun LuvAppNav() {
                 } else {
                     applyAuthResult(result, fromGoogle = true)
                     accountMessage = if (result.linked) {
-                        "Mit Google gesichert — Coins bleiben erhalten."
+                        "Mit Google angemeldet — Konto wiederhergestellt."
                     } else {
                         "Angemeldet. Willkommen zurück."
                     }
@@ -433,7 +465,7 @@ fun LuvAppNav() {
                             popUpTo(Routes.TUTORIAL) { inclusive = true }
                         }
                     } else {
-                        tab = 1
+                        tab = 0
                     }
                 }
             } catch (e: Exception) {
@@ -928,32 +960,42 @@ fun LuvAppNav() {
                             lobbyStates = lobbyStates,
                             reconnectUi = reconnectUi,
                             error = joinError,
+                            requireGoogleLogin = AccountSession.needsGoogleLogin(googleEnabled),
+                            googleBusy = googleBusy,
+                            onGoogleSignIn = { connectGoogle() },
                             onOpenLobby = { lobby ->
-                                CanvasStore.setActiveLobby(lobby.id)
-                                CanvasStore.updateKnownLobbies(lobbies.map { it.id })
-                                context.startActivity(
-                                    Intent(context, LockDrawActivity::class.java).apply {
-                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                        putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
+                                if (requireGoogleOrToast()) {
+                                    CanvasStore.setActiveLobby(lobby.id)
+                                    CanvasStore.updateKnownLobbies(lobbies.map { it.id })
+                                    context.startActivity(
+                                        Intent(context, LockDrawActivity::class.java).apply {
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                            putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
+                                        }
+                                    )
+                                    scope.launch {
+                                        prefs.setActiveLobby(lobby.id)
+                                        prefs.markLobbyCanvasSeen(lobby.code)
+                                        refreshAccount()
                                     }
-                                )
-                                scope.launch {
-                                    prefs.setActiveLobby(lobby.id)
-                                    prefs.markLobbyCanvasSeen(lobby.code)
-                                    refreshAccount()
                                 }
                             },
                             onCreateLobby = {
-                                joinError = null
-                                navController.navigate(Routes.CREATE)
+                                if (requireGoogleOrToast()) {
+                                    joinError = null
+                                    navController.navigate(Routes.CREATE)
+                                }
                             },
                             onJoinLobby = {
-                                joinError = null
-                                navController.navigate(Routes.JOIN)
+                                if (requireGoogleOrToast()) {
+                                    joinError = null
+                                    navController.navigate(Routes.JOIN)
+                                }
                             },
                             onRandomLobby = {
                                 joinError = null
                                 scope.launch {
+                                    if (!requireGoogleOrToast()) return@launch
                                     if (lobbies.any { it.isRandom }) {
                                         joinError =
                                             "Du bist schon in einer Random-Lobby. Bitte zuerst verlassen."
@@ -962,7 +1004,10 @@ fun LuvAppNav() {
                                     busy = true
                                     try {
                                         val nick = prefs.snapshot().nickname.orEmpty()
-                                        if (!ensureAuth(nick)) return@launch
+                                        if (LuvApiClient.sessionToken.isNullOrBlank()) {
+                                            joinError = "Bitte zuerst mit Google anmelden."
+                                            return@launch
+                                        }
                                         val room = LuvApiClient.randomMatch()
                                         room.suggestedColorIndex?.let { suggested ->
                                             prefs.setColorIndex(suggested)
@@ -1069,6 +1114,11 @@ fun LuvAppNav() {
                             startPanel = openMarketPanel,
                             onStartPanelConsumed = { openMarketPanel = null },
                             startShopTab = openMarketShopTab,
+                            economyUnlocked = !AccountSession.needsGoogleLogin(googleEnabled),
+                            onRequireGoogle = {
+                                requireGoogleOrToast()
+                                tab = 4
+                            },
                             onLeaveDeepLink = {
                                 when (val ret = marketReturnTo) {
                                     is MarketReturnTo.Inventory -> {
@@ -1088,17 +1138,19 @@ fun LuvAppNav() {
                             },
                             onRefreshInventory = { syncInventory() },
                             onBuyPack = { pack, quantity ->
-                                scope.launch {
-                                    runCatching {
-                                        val url = LuvApiClient.checkout(pack.id, quantity)
-                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                    }.onFailure {
-                                        accountMessage = it.message
-                                        Toast.makeText(
-                                            context,
-                                            it.message ?: "Shop nicht erreichbar",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
+                                if (requireGoogleOrToast()) {
+                                    scope.launch {
+                                        runCatching {
+                                            val url = LuvApiClient.checkout(pack.id, quantity)
+                                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                        }.onFailure {
+                                            accountMessage = it.message
+                                            Toast.makeText(
+                                                context,
+                                                it.message ?: "Shop nicht erreichbar",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
                                     }
                                 }
                             }
@@ -1252,12 +1304,19 @@ fun LuvAppNav() {
         }
 
         composable(Routes.CREATE) {
+            LaunchedEffect(googleEnabled, account?.googleLinked) {
+                if (AccountSession.needsGoogleLogin(googleEnabled)) {
+                    joinError = "Bitte zuerst mit Google anmelden."
+                    navController.popBackStack()
+                }
+            }
             CreateLobbyScreen(
                 error = joinError,
                 canCreateFree = account?.canCreateFreeLobby != false,
                 lobbyCreateCost = account?.lobbyCreateCost ?: PeerPalette.LOBBY_CREATE_COST,
                 onCreate = { name, hostColorSide ->
                     if (busy) return@CreateLobbyScreen
+                    if (!requireGoogleOrToast()) return@CreateLobbyScreen
                     scope.launch {
                         busy = true
                         joinError = null
@@ -1352,10 +1411,17 @@ fun LuvAppNav() {
         }
 
         composable(Routes.JOIN) {
+            LaunchedEffect(googleEnabled, account?.googleLinked) {
+                if (AccountSession.needsGoogleLogin(googleEnabled)) {
+                    joinError = "Bitte zuerst mit Google anmelden."
+                    navController.popBackStack()
+                }
+            }
             JoinScreen(
                 error = joinError,
                 initialCode = PendingJoin.peek().orEmpty(),
                 onPreview = { raw ->
+                    if (!requireGoogleOrToast()) return@JoinScreen
                     val code = LuvApiClient.normalizeCode(raw)
                     if (code == null) {
                         joinError = "Ungültiger Link oder Code."

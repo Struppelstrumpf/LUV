@@ -35,6 +35,12 @@ object AccountSession {
         _account.value = info
     }
 
+    /** Google ist serverseitig an und dieses Konto ist noch nicht verknüpft. */
+    fun needsGoogleLogin(googleEnabled: Boolean): Boolean =
+        googleEnabled && _account.value?.googleLinked != true
+
+    fun isGoogleLinked(): Boolean = _account.value?.googleLinked == true
+
     fun emitEconomyBlock(message: String) {
         _economyBlocks.tryEmit(message)
     }

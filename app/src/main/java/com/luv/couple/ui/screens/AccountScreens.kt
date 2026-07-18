@@ -150,13 +150,13 @@ fun AccountHomeScreen(
 
             if (googleEnabled && account?.googleLinked != true) {
                 MenuButton(
-                    if (googleBusy) "Google…" else "Mit Google speichern",
+                    if (googleBusy) "Google…" else "Mit Google anmelden",
                     AccentRose,
                     onGoogleConnect,
                     enabled = !googleBusy
                 )
                 Text(
-                    "Coins und Lobbys bleiben erhalten, auch auf einem neuen Handy.",
+                    "Melde dich an, um Coins, Freunde und Lobbys zu sichern — auch auf einem neuen Handy.",
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 12.sp
@@ -173,7 +173,9 @@ fun AccountHomeScreen(
                     onOpenAdmin
                 )
             }
-            MenuButton("Abmelden", BgSoft, { confirmLogout = true }, bordered = true)
+            if (account?.googleLinked == true) {
+                MenuButton("Abmelden", BgSoft, { confirmLogout = true }, bordered = true)
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
             Row(

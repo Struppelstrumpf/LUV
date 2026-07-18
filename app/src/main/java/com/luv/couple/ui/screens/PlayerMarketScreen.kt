@@ -87,7 +87,9 @@ private data class InventoryPick(
 @Composable
 fun PlayerMarketScreen(
     @Suppress("UNUSED_PARAMETER") onClose: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    economyUnlocked: Boolean = true,
+    onRequireGoogle: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -417,9 +419,13 @@ fun PlayerMarketScreen(
                     ui = ui,
                     modifier = Modifier.weight(1f),
                     onClick = {
-                        scope.launch {
-                            syncInventory()
-                            showCreate = true
+                        if (!economyUnlocked) {
+                            onRequireGoogle()
+                        } else {
+                            scope.launch {
+                                syncInventory()
+                                showCreate = true
+                            }
                         }
                     }
                 )
@@ -688,25 +694,29 @@ fun PlayerMarketScreen(
             busy = busyId == listing.id,
             onDismiss = { previewListing = null },
             onBuy = {
-                busyId = listing.id
-                scope.launch {
-                    runCatching {
-                        LuvApiClient.buyMarketListing(listing.id)
-                    }.onSuccess {
-                        syncInventory()
-                        Toast.makeText(context, "${listing.label} gekauft", Toast.LENGTH_SHORT).show()
-                        previewListing = null
-                        refreshOffersIfOpen()
-                        reloadMarket()
-                        reloadMine()
-                    }.onFailure {
-                        Toast.makeText(
-                            context,
-                            it.message ?: "Kauf fehlgeschlagen",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                if (!economyUnlocked) {
+                    onRequireGoogle()
+                } else {
+                    busyId = listing.id
+                    scope.launch {
+                        runCatching {
+                            LuvApiClient.buyMarketListing(listing.id)
+                        }.onSuccess {
+                            syncInventory()
+                            Toast.makeText(context, "${listing.label} gekauft", Toast.LENGTH_SHORT).show()
+                            previewListing = null
+                            refreshOffersIfOpen()
+                            reloadMarket()
+                            reloadMine()
+                        }.onFailure {
+                            Toast.makeText(
+                                context,
+                                it.message ?: "Kauf fehlgeschlagen",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        busyId = null
                     }
-                    busyId = null
                 }
             }
         )

@@ -267,7 +267,10 @@ fun LobbiesScreen(
     onReconnect: (Lobby) -> Unit,
     onOpenProfile: () -> Unit,
     updateState: UpdateUiState = UpdateUiState.Idle,
-    onUpdateApp: () -> Unit = {}
+    onUpdateApp: () -> Unit = {},
+    requireGoogleLogin: Boolean = false,
+    googleBusy: Boolean = false,
+    onGoogleSignIn: () -> Unit = {}
 ) {
     val accent = PeerPalette.menuAccent()
     val context = LocalContext.current
@@ -478,23 +481,62 @@ fun LobbiesScreen(
                         fontSize = 13.sp
                     )
                 }
-                Box(
+                if (!requireGoogleLogin) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .aspectRatio(1f)
+                            .clip(CircleShape)
+                            .background(accent)
+                            .clickable { showLobbyPlusDialog = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "+",
+                            color = Color.White,
+                            fontFamily = DisplayFont,
+                            fontSize = 36.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            if (requireGoogleLogin) {
+                Column(
                     modifier = Modifier
-                        .fillMaxHeight()
-                        .aspectRatio(1f)
-                        .clip(CircleShape)
-                        .background(accent)
-                        .clickable { showLobbyPlusDialog = true },
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .padding(top = 36.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Text(
-                        "+",
-                        color = Color.White,
+                        "Mit Google anmelden",
+                        color = TextPrimary,
                         fontFamily = DisplayFont,
-                        fontSize = 36.sp,
-                        fontWeight = FontWeight.Bold
+                        fontSize = 24.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        "Ohne Google-Anmeldung siehst du keine Lobbys und kannst nichts kaufen. " +
+                            "So bleiben deine Coins und Freunde sicher.",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    if (!error.isNullOrBlank()) {
+                        Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
+                    }
+                    PrimaryButton(
+                        if (googleBusy) "Google…" else "Mit Google anmelden",
+                        AccentRose,
+                        onGoogleSignIn,
+                        enabled = !googleBusy
                     )
                 }
+                return@Column
             }
 
             if (showLobbyPlusDialog) {

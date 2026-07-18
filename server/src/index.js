@@ -4328,6 +4328,13 @@ app.post("/v1/auth/device", (req, res) => {
   let user = Object.values(db.users).find((u) => u.secretHash === secretHash);
   let created = false;
   if (!user) {
+    // Mit Google-Login: keine stillen Gast-Konten (sonst überschreibt die App echte Konten).
+    if (GOOGLE_CLIENT_ID) {
+      return res.status(403).json({
+        error: "google_required",
+        message: "Bitte mit Google anmelden.",
+      });
+    }
     if (!rateLimit(`auth_signup:${ip}`, 3, 24 * 60 * 60 * 1000)) {
       return res.status(429).json({
         error: "rate_limited",

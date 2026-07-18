@@ -110,7 +110,10 @@ fun MarketScreen(
     startPanel: MarketPanel? = null,
     onStartPanelConsumed: () -> Unit = {},
     startShopTab: Int = 0,
-    onLeaveDeepLink: (() -> Unit)? = null
+    onLeaveDeepLink: (() -> Unit)? = null,
+    /** false = Käufe/Lootbox gesperrt (Google-Anmeldung fehlt) */
+    economyUnlocked: Boolean = true,
+    onRequireGoogle: () -> Unit = {}
 ) {
     var panel by remember { mutableStateOf(MarketPanel.Hub) }
     var deepLinked by remember { mutableStateOf(false) }
@@ -160,7 +163,11 @@ fun MarketScreen(
             title = "Marktplatz",
             onBack = { backFromPanel() }
         ) {
-            PlayerMarketScreen(onClose = { backFromPanel() })
+            PlayerMarketScreen(
+                onClose = { backFromPanel() },
+                economyUnlocked = economyUnlocked,
+                onRequireGoogle = onRequireGoogle
+            )
         }
         MarketPanel.ItemShop -> MarketExpandShell(
             title = "Itemshop",
@@ -169,7 +176,9 @@ fun MarketScreen(
             key(shopTabSeed) {
                 ItemShopContent(
                     onRefreshInventory = onRefreshInventory,
-                    initialTab = shopTabSeed
+                    initialTab = shopTabSeed,
+                    economyUnlocked = economyUnlocked,
+                    onRequireGoogle = onRequireGoogle
                 )
             }
         }
@@ -180,7 +189,9 @@ fun MarketScreen(
             CoinShopContent(
                 shopEnabled = shopEnabled,
                 packs = packs,
-                onBuyPack = onBuyPack
+                onBuyPack = onBuyPack,
+                economyUnlocked = economyUnlocked,
+                onRequireGoogle = onRequireGoogle
             )
         }
     }
@@ -486,13 +497,24 @@ private fun EmptyMarketCard(title: String, body: String) {
 private fun CoinShopContent(
     shopEnabled: Boolean,
     packs: List<ShopPack>,
-    onBuyPack: (ShopPack, Int) -> Unit
+    onBuyPack: (ShopPack, Int) -> Unit,
+    economyUnlocked: Boolean = true,
+    onRequireGoogle: () -> Unit = {}
 ) {
     val account by AccountSession.account.collectAsStateWithLifecycle()
     var pendingPack by remember { mutableStateOf<ShopPack?>(null) }
     var quantity by remember { mutableIntStateOf(1) }
     val offers = remember(packs) { packs.filter { it.isOffer || it.onceOnly } }
     val normals = remember(packs) { packs.filterNot { it.isOffer || it.onceOnly } }
+
+    fun requestBuy(pack: ShopPack) {
+        if (!economyUnlocked) {
+            onRequireGoogle()
+            return
+        }
+        quantity = 1
+        pendingPack = pack
+    }
 
     pendingPack?.let { pack ->
         val unit = pack.amountEur.replace(',', '.').toDoubleOrNull() ?: 0.0
@@ -604,10 +626,7 @@ private fun CoinShopContent(
                 offers.forEach { pack ->
                     CoinPackCard(
                         pack = pack,
-                        onBuy = {
-                            quantity = 1
-                            pendingPack = pack
-                        }
+                        onBuy = { requestBuy(pack) }
                     )
                 }
                 Spacer(modifier = Modifier.height(10.dp))
@@ -621,10 +640,7 @@ private fun CoinShopContent(
             normals.forEach { pack ->
                 CoinPackCard(
                     pack = pack,
-                    onBuy = {
-                        quantity = 1
-                        pendingPack = pack
-                    }
+                    onBuy = { requestBuy(pack) }
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -744,7 +760,9 @@ private sealed class ShopPendingBuy {
 @Composable
 private fun ItemShopContent(
     onRefreshInventory: suspend () -> Unit,
-    initialTab: Int = 0
+    initialTab: Int = 0,
+    economyUnlocked: Boolean = true,
+    onRequireGoogle: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -763,6 +781,14 @@ private fun ItemShopContent(
     )
     var busyKey by remember { mutableStateOf<String?>(null) }
     var pendingBuy by remember { mutableStateOf<ShopPendingBuy?>(null) }
+
+    fun openBuy(pending: ShopPendingBuy) {
+        if (!economyUnlocked) {
+            onRequireGoogle()
+            return
+        }
+        pendingBuy = pending
+    }
 
     suspend fun reloadBag() {
         runCatching {
@@ -999,7 +1025,7 @@ private fun ItemShopContent(
                         ownedLabel = if (count > 0) "×$count" else null,
                         themeId = null,
                         enabled = busyKey == null,
-                        onClick = { pendingBuy = ShopPendingBuy.Sticker(item) }
+                        onClick = { openBuy(ShopPendingBuy.Sticker(item)) }
                     )
                 }
             }
@@ -1018,7 +1044,7 @@ private fun ItemShopContent(
                         ownedLabel = if (have) "✓" else null,
                         themeId = item.id,
                         enabled = busyKey == null,
-                        onClick = { pendingBuy = ShopPendingBuy.Theme(item) }
+                        onClick = { openBuy(ShopPendingBuy.Theme(item)) }
                     )
                 }
             }
@@ -1037,7 +1063,7 @@ private fun ItemShopContent(
                         ownedLabel = if (have) "✓" else null,
                         themeId = null,
                         enabled = busyKey == null,
-                        onClick = { pendingBuy = ShopPendingBuy.Pet(item) }
+                        onClick = { openBuy(ShopPendingBuy.Pet(item)) }
                     )
                 }
             }
@@ -1056,7 +1082,7 @@ private fun ItemShopContent(
                         ownedLabel = if (count > 0) "×$count" else null,
                         themeId = null,
                         enabled = busyKey == null,
-                        onClick = { pendingBuy = ShopPendingBuy.Emoji(item) }
+                        onClick = { openBuy(ShopPendingBuy.Emoji(item)) }
                     )
                 }
             }
@@ -1064,7 +1090,9 @@ private fun ItemShopContent(
                 coins = account?.coins ?: 0,
                 busy = busyKey != null,
                 onBusy = { busyKey = it },
-                onRefresh = { reloadBag() }
+                onRefresh = { reloadBag() },
+                economyUnlocked = economyUnlocked,
+                onRequireGoogle = onRequireGoogle
             )
         }
     }
@@ -1075,7 +1103,9 @@ private fun LootboxTab(
     coins: Int,
     busy: Boolean,
     onBusy: (String?) -> Unit,
-    onRefresh: suspend () -> Unit
+    onRefresh: suspend () -> Unit,
+    economyUnlocked: Boolean = true,
+    onRequireGoogle: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1108,6 +1138,10 @@ private fun LootboxTab(
     }
 
     fun startLootboxPurchase() {
+        if (!economyUnlocked) {
+            onRequireGoogle()
+            return
+        }
         if (coins < ShopCatalog.LOOTBOX_PRICE_COINS) {
             Toast.makeText(context, "Nicht genug Coins", Toast.LENGTH_SHORT).show()
             return
@@ -1214,7 +1248,9 @@ private fun LootboxTab(
                         .clickable(enabled = !busy && phase != "reveal") {
                             when (phase) {
                                 "idle" -> {
-                                    if (confirmBuy) {
+                                    if (!economyUnlocked) {
+                                        onRequireGoogle()
+                                    } else if (confirmBuy) {
                                         if (coins < ShopCatalog.LOOTBOX_PRICE_COINS) {
                                             Toast.makeText(
                                                 context,
