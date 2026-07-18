@@ -320,7 +320,11 @@ private fun FriendsPanel(
             }
         }
 
-        if (!divorceCooldownLabel.isNullOrBlank() && myMarriage == null) {
+        // Nie bei Verlobung/Hochzeit/Ehe — auch nicht bei verwaistem Cooldown
+        val activeBond = myMarriage
+        val hasActiveBond = activeBond != null &&
+            activeBond.status in setOf("proposed", "engaged", "wedding", "married")
+        if (!divorceCooldownLabel.isNullOrBlank() && !hasActiveBond) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()

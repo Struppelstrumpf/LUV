@@ -1115,6 +1115,11 @@ function startEngagement(m) {
   m.status = "engaged";
   m.engagedAt = now;
   m.engageReadyAt = now + marriage.ENGAGE_WAIT_MS;
+  const db = getDb();
+  const a = db.users?.[m.a];
+  const b = db.users?.[m.b];
+  if (a) marriage.clearDivorceCooldown(a);
+  if (b) marriage.clearDivorceCooldown(b);
 }
 
 /** Sofort Verlobung → Hochzeitslobby oder Hochzeit → Ehe. */
@@ -3275,6 +3280,44 @@ function absorbUserInto(target, source) {
   for (const room of rooms.values()) remapRoomUser(room);
   for (const room of Object.values(db.rooms || {})) remapRoomUser(room);
 
+  // Ehe / Verlobung / Hochzeit an Ziel-Konto hängen
+  marriage.remapUserIdInMarriages(db, source.id, target.id);
+
+  // Marktplatz-Angebote + Verkäufe
+  market.ensureMarket(db);
+  for (const entry of Object.values(db.marketListings || {})) {
+    if (!entry) continue;
+    if (entry.sellerId === source.id) entry.sellerId = target.id;
+    if (entry.buyerId === source.id) entry.buyerId = target.id;
+    if (entry.targetUserId === source.id) entry.targetUserId = target.id;
+  }
+  if (!Array.isArray(target.pendingMarketSales)) target.pendingMarketSales = [];
+  if (Array.isArray(source.pendingMarketSales)) {
+    for (const sale of source.pendingMarketSales) {
+      if (sale?.id && !target.pendingMarketSales.some((x) => x.id === sale.id)) {
+        target.pendingMarketSales.push(sale);
+      }
+    }
+  }
+  source.pendingMarketSales = [];
+  if (target.pendingMarketSales.length > 80) {
+    target.pendingMarketSales = target.pendingMarketSales.slice(-80);
+  }
+
+  // Scheidungs-Cooldown: bei aktiver Ehe/Verlobung löschen, sonst längeren behalten
+  const busyAfter = marriage.findMarriageForUser(db, target.id);
+  if (busyAfter && marriage.isBusyStatus(busyAfter.status)) {
+    marriage.clearDivorceCooldown(target);
+  } else {
+    const aUntil = Number(target.marriageCooldownUntil) || 0;
+    const bUntil = Number(source.marriageCooldownUntil) || 0;
+    target.marriageCooldownUntil = Math.max(aUntil, bUntil);
+  }
+  source.marriageCooldownUntil = 0;
+
+  // Verwaiste Wedding-Lobbys nochmal reparieren
+  marriage.repairMarriageLinks(db, target);
+
   destroyAllSessionsForUser(source.id);
   if (Array.isArray(db.ledger)) {
     for (const e of db.ledger) {
@@ -3335,6 +3378,18 @@ function deleteUserAccount(user) {
       f.list.length + f.incoming.length + f.outgoing.length + (f.petKraulTargets?.length || 0);
     if (after !== before) scheduleSave();
   }
+  // Ehe-Records beenden / Partner freigeben
+  const m = marriage.findMarriageForUser(db, userId);
+  if (m) {
+    endMarriageRecord(m, "cancel");
+  }
+  // Offene Markt-Angebote zurückziehen (Items würden sonst hängen)
+  market.ensureMarket(db);
+  for (const entry of Object.values(db.marketListings || {})) {
+    if (!entry || entry.sellerId !== userId || entry.status !== "open") continue;
+    entry.status = "cancelled";
+  }
+
   destroyAllSessionsForUser(userId);
   if (Array.isArray(db.ledger)) {
     db.ledger = db.ledger.filter((e) => e?.userId !== userId);
@@ -5395,10 +5450,18 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   const isSelf = uid === ctx.user.id;
   const areFriends = !isSelf && friendRelation(ctx.user, uid) === "friends";
   const tipRecv = glassTipRecvState(user);
+  marriage.repairMarriageLinks(db, ctx.user);
+  marriage.repairMarriageLinks(db, user);
   const bond = marriage.findMarriageBetween(db, ctx.user.id, uid);
   const theirMarriage = marriage.findMarriageForUser(db, uid);
   const myMarriageBusy = marriage.findMarriageForUser(db, ctx.user.id);
   const friendshipLevel = areFriends || isSelf ? marriage.getLevel(ctx.user, uid) : 0;
+  if (myMarriageBusy && marriage.isBusyStatus(myMarriageBusy.status)) {
+    marriage.clearDivorceCooldown(ctx.user);
+  }
+  if (theirMarriage && marriage.isBusyStatus(theirMarriage.status)) {
+    marriage.clearDivorceCooldown(user);
+  }
   const myCooldownMs = marriage.cooldownRemainingMs(ctx.user);
   const theirCooldownMs = marriage.cooldownRemainingMs(user);
   const proposeUnlockCost = marriage.proposeUnlockCost(friendshipLevel);
@@ -5408,7 +5471,7 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   );
   const slotsFree = !myMarriageBusy && !theirMarriage;
   const canProposeMarriage =
-    areFriends && slotsFree && theirCooldownMs <= 0;
+    areFriends && slotsFree && theirCooldownMs <= 0 && !bond;
   // Partner-Wartezeit nur zeigen, wenn sie die Heirat mit DIESEM Profil blockiert
   const showPartnerCooldown =
     areFriends && slotsFree && theirCooldownMs > 0 && !myMarriageBusy;
@@ -5494,7 +5557,10 @@ app.get("/v1/me/friends", (req, res) => {
   });
   f.incoming = f.incoming.filter((id) => db.users?.[id]);
   f.outgoing = f.outgoing.filter((id) => db.users?.[id]);
-  const myMarriage = marriage.findMarriageForUser(db, ctx.user.id);
+  // Verwaiste Hochzeits-/Ehe-Links nach Google-Merge reparieren
+  const myMarriage =
+    marriage.repairMarriageLinks(db, ctx.user) ||
+    marriage.findMarriageForUser(db, ctx.user.id);
   const pendingProposals = [];
   const allM = marriage.ensureMarriages(db);
   for (const m of Object.values(allM)) {
@@ -5514,7 +5580,10 @@ app.get("/v1/me/friends", (req, res) => {
   const friendCards = sortFriendsSpouseFirst(
     f.list.map((id) => friendPublicCard(db.users[id], ctx.user)).filter(Boolean)
   );
-  const myCd = marriage.cooldownRemainingMs(ctx.user);
+  // Cooldown nur ohne aktive Beziehung anzeigen
+  const busy = myMarriage && marriage.isBusyStatus(myMarriage.status);
+  if (busy) marriage.clearDivorceCooldown(ctx.user);
+  const myCd = busy ? 0 : marriage.cooldownRemainingMs(ctx.user);
   const pendingFriendshipCoins = pendingFriendshipLevelCoins(ctx.user);
   return res.json({
     ok: true,

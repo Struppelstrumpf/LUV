@@ -959,7 +959,10 @@ fun ProfileCanvasScreen(
                             textAlign = TextAlign.Center
                         )
                     }
-                    if (canProposeMarriage) {
+                    // Kein Heiraten, wenn schon Verlobt/Ehe mit jemandem (auch bei API-Drift)
+                    val alreadyBonded = !spouseExtraName.isNullOrBlank() ||
+                        !engagedExtraName.isNullOrBlank()
+                    if (canProposeMarriage && !alreadyBonded) {
                         Spacer(modifier = Modifier.height(10.dp))
                         val totalHint = proposeUnlockCost + marriageCooldownSkipCost
                         Box(
@@ -979,7 +982,11 @@ fun ProfileCanvasScreen(
                                 fontFamily = DisplayFont
                             )
                         }
-                    } else if (friendStatus == "friends" && !partnerCooldownLabel.isNullOrBlank()) {
+                    } else if (
+                        friendStatus == "friends" &&
+                        !alreadyBonded &&
+                        !partnerCooldownLabel.isNullOrBlank()
+                    ) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             "Partner hat noch Scheidungs-Wartezeit (${partnerCooldownLabel})",

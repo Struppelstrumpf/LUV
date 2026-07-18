@@ -121,6 +121,116 @@ function findMarriageForUser(db, userId) {
   return null;
 }
 
+/** Marriage-Record unter neuem pairKey speichern, alten Key entfernen. */
+function rekeyMarriage(db, oldKey, m) {
+  const all = ensureMarriages(db);
+  const newKey = pairKey(m.a, m.b);
+  m.id = newKey;
+  if (oldKey !== newKey) delete all[oldKey];
+  const existing = all[newKey];
+  if (existing && existing !== m && isBusyStatus(existing.status) && !isBusyStatus(m.status)) {
+    return existing;
+  }
+  all[newKey] = m;
+  return m;
+}
+
+/**
+ * User-ID in allen Ehe-/Verlobungs-Records umhängen (Google-Merge).
+ * @returns {number} Anzahl geänderter Records
+ */
+function remapUserIdInMarriages(db, fromId, toId) {
+  if (!fromId || !toId || fromId === toId) return 0;
+  const all = ensureMarriages(db);
+  let n = 0;
+  for (const key of Object.keys(all)) {
+    const m = all[key];
+    if (!m) continue;
+    let changed = false;
+    if (m.a === fromId) {
+      m.a = toId;
+      changed = true;
+    }
+    if (m.b === fromId) {
+      m.b = toId;
+      changed = true;
+    }
+    if (m.proposedBy === fromId) {
+      m.proposedBy = toId;
+      changed = true;
+    }
+    if (!changed) continue;
+    // Doppel-ID vermeiden
+    if (m.a === m.b) {
+      delete all[key];
+      n++;
+      continue;
+    }
+    rekeyMarriage(db, key, m);
+    n++;
+  }
+  return n;
+}
+
+/**
+ * Verwaiste Wedding-Lobbys ↔ Marriage wieder verknüpfen
+ * (z. B. nach altem Merge ohne Remap).
+ */
+function repairMarriageLinks(db, user) {
+  if (!user?.id) return null;
+  let m = findMarriageForUser(db, user.id);
+  if (m) {
+    if (isBusyStatus(m.status)) clearDivorceCooldown(user);
+    return m;
+  }
+  const weddingCodes = new Set();
+  for (const [code, meta] of Object.entries(user.hostedRooms || {})) {
+    if (meta?.isWedding) weddingCodes.add(code);
+  }
+  for (const [code, meta] of Object.entries(user.joinedRooms || {})) {
+    if (meta?.isWedding) weddingCodes.add(code);
+  }
+  if (!weddingCodes.size) return null;
+
+  const all = ensureMarriages(db);
+  for (const key of Object.keys(all)) {
+    const rec = all[key];
+    if (!rec || !rec.weddingLobbyCode || !weddingCodes.has(rec.weddingLobbyCode)) continue;
+    if (rec.a === user.id || rec.b === user.id) {
+      if (isBusyStatus(rec.status)) clearDivorceCooldown(user);
+      return rec;
+    }
+    const aOk = Boolean(db.users?.[rec.a]);
+    const bOk = Boolean(db.users?.[rec.b]);
+    if (!aOk && bOk) {
+      rec.a = user.id;
+      rekeyMarriage(db, key, rec);
+      clearDivorceCooldown(user);
+      return rec;
+    }
+    if (!bOk && aOk) {
+      rec.b = user.id;
+      rekeyMarriage(db, key, rec);
+      clearDivorceCooldown(user);
+      return rec;
+    }
+    // Beide IDs tot → aus Lobby-Mitgliedern rekonstruieren
+    const room = db.rooms?.[rec.weddingLobbyCode];
+    const members = (room?.memberUserIds || []).filter((id) => id && db.users?.[id]);
+    if (members.includes(user.id) && members.length >= 2) {
+      const other = members.find((id) => id !== user.id);
+      if (other) {
+        rec.a = user.id < other ? user.id : other;
+        rec.b = user.id < other ? other : user.id;
+        rekeyMarriage(db, key, rec);
+        clearDivorceCooldown(user);
+        return rec;
+      }
+    }
+  }
+  return null;
+}
+
 function findMarriageBetween(db, aId, bId) {
   const all = ensureMarriages(db);
   const key = pairKey(aId, bId);
@@ -255,4 +365,7 @@ module.exports = {
   stripSpouseFromProfile,
   clearMarriageItem,
   grantMarriageItem,
+  remapUserIdInMarriages,
+  repairMarriageLinks,
+  rekeyMarriage,
 };

@@ -1094,35 +1094,77 @@ private fun MarketItemRow(
                 color = MarketBrownMuted,
                 fontFamily = BodyFont,
                 fontSize = ui.ts(11.sp),
-                softWrap = true
+                softWrap = false,
+                maxLines = 1
             )
-            Text(
-                buildString {
-                    if (item.priceCoins > 0) append("ab ${item.priceCoins} 🪙")
-                    else append("Angebote")
-                    append("  ·  ")
-                    append(item.offerCount)
-                    append(if (item.offerCount == 1) " Angebot" else " Angebote")
-                    append("  ·  ")
-                    append(trendArrow(item.trend))
-                },
-                color = MarketGold,
-                fontFamily = DisplayFont,
-                fontSize = ui.ts(12.sp),
-                softWrap = true
-            )
-            priceInsightSummary(item.priceInsight)?.let { summary ->
+            // Meta-Zeile: feste kleine Schrift, kein Umbruch bei 2-stelligen Preisen
+            val metaSp = ui.ts(10.sp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ui.s(4.dp))
+            ) {
                 Text(
-                    summary,
-                    color = MarketBrownMuted,
-                    fontFamily = BodyFont,
-                    fontSize = ui.ts(11.sp),
-                    softWrap = true
+                    if (item.priceCoins > 0) "ab ${item.priceCoins} 🪙" else "Angebote",
+                    color = MarketGold,
+                    fontFamily = DisplayFont,
+                    fontSize = metaSp,
+                    softWrap = false,
+                    maxLines = 1
+                )
+                Text("·", color = MarketBrownMuted, fontSize = metaSp, softWrap = false)
+                Text(
+                    "${item.offerCount}${if (item.offerCount == 1) " Ang." else " Ang."}",
+                    color = MarketGold,
+                    fontFamily = DisplayFont,
+                    fontSize = metaSp,
+                    softWrap = false,
+                    maxLines = 1
+                )
+                Text("·", color = MarketBrownMuted, fontSize = metaSp, softWrap = false)
+                Text(
+                    trendArrow(item.trend),
+                    color = trendColor(item.trend),
+                    fontFamily = DisplayFont,
+                    fontSize = metaSp,
+                    softWrap = false,
+                    maxLines = 1
                 )
             }
+            MarketPriceMetaRow(insight = item.priceInsight, fontSp = metaSp)
         }
         Text("›", color = MarketBrownMuted, fontFamily = DisplayFont, fontSize = ui.ts(22.sp))
     }
+}
+
+@Composable
+private fun MarketPriceMetaRow(
+    insight: LuvApiClient.MarketPriceInsight?,
+    fontSp: androidx.compose.ui.unit.TextUnit
+) {
+    if (insight == null || !insight.hasAny) return
+    val parts = buildList {
+        insight.shopPrice?.let { add("Shop $it 🪙") }
+        when {
+            insight.sales != null -> {
+                val s = insight.sales
+                add("${trendArrow(s.trend)} ${formatCoinRange(s.min, s.max)}")
+            }
+            insight.listings != null -> {
+                add(formatCoinRange(insight.listings.min, insight.listings.max))
+            }
+        }
+    }
+    if (parts.isEmpty()) return
+    Text(
+        parts.joinToString("  ·  "),
+        color = MarketBrownMuted,
+        fontFamily = BodyFont,
+        fontSize = fontSp,
+        softWrap = false,
+        maxLines = 1,
+        modifier = Modifier.fillMaxWidth()
+    )
 }
 
 @Composable
