@@ -1056,6 +1056,8 @@ object LuvApiClient {
                     when (err) {
                         "already_krault" -> "Heute schon gekrault (Reset 0 Uhr MEZ)"
                         "self_kraul" -> "Eigener Begleiter"
+                        "friends_only" -> "Kraulen geht nur bei Freunden."
+                        "recv_cap" -> "Heute schon genug Kraule bekommen."
                         else -> json?.optString("message")?.takeIf { it.isNotBlank() }
                             ?: "Kraulen fehlgeschlagen"
                     },

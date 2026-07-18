@@ -50,6 +50,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,6 +58,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,8 +69,10 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -271,31 +275,9 @@ fun ProfileCanvasScreen(
     }
 
     fun startPetKraul() {
-        val uid = userId ?: return
+        if (userId == null) return
         if (editable || !canPetKraul || petKraulBusy) return
         showPetKraul = true
-    }
-
-    fun finishPetKraulAfterAnim() {
-        val uid = userId ?: return
-        if (petKraulBusy) return
-        petKraulBusy = true
-        scope.launch {
-            try {
-                val result = LuvApiClient.petKraul(uid)
-                displayCoins = result.toCoins
-                peerPetEmoji = result.petEmoji
-                canPetKraul = false
-            } catch (e: Exception) {
-                Toast.makeText(
-                    context,
-                    e.message ?: "Kraulen fehlgeschlagen",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-            showPetKraul = false
-            petKraulBusy = false
-        }
     }
 
     /** Layout-Patch ohne Normalize — verhindert Zurücksetzen anderer Elemente. */
@@ -766,10 +748,27 @@ fun ProfileCanvasScreen(
         }
 
         if (showPetKraul) {
-            PetKraulOverlay(
-                petEmoji = peerPetEmoji.ifBlank { state.companionEmoji.ifBlank { "🐣" } },
-                onFinished = { finishPetKraulAfterAnim() }
-            )
+            val kraulUid = userId
+            if (kraulUid != null) {
+                PetKraulOverlay(
+                    petEmoji = peerPetEmoji.ifBlank { state.companionEmoji.ifBlank { "🐣" } },
+                    onCredit = {
+                        petKraulBusy = true
+                        val result = LuvApiClient.petKraul(kraulUid)
+                        displayCoins = result.toCoins
+                        peerPetEmoji = result.petEmoji
+                        canPetKraul = false
+                        result.amount
+                    },
+                    onFinished = { ok, message ->
+                        showPetKraul = false
+                        petKraulBusy = false
+                        if (!ok && !message.isNullOrBlank()) {
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
         }
 
         if (showChest && editable) {
@@ -886,24 +885,36 @@ private fun TipCoinPop(modifier: Modifier = Modifier) {
     )
 }
 
+private enum class PetKraulPhase { Stroke, Fade, Credit, Coin, Done }
+
 @Composable
 private fun PetKraulOverlay(
     petEmoji: String,
-    onFinished: () -> Unit
+    onCredit: suspend () -> Int,
+    onFinished: (ok: Boolean, message: String?) -> Unit
 ) {
+    var phase by remember { mutableStateOf(PetKraulPhase.Stroke) }
+    var isStroking by remember { mutableStateOf(false) }
+    var progress by remember { mutableFloatStateOf(0f) }
+    var handOffset by remember { mutableStateOf(Offset(28f, 8f)) }
+    var showHand by remember { mutableStateOf(false) }
+    var creditError by remember { mutableStateOf<String?>(null) }
+    var creditedAmount by remember { mutableIntStateOf(1) }
+    var finishedOnce by remember { mutableStateOf(false) }
+
     val infinite = rememberInfiniteTransition(label = "kraul")
-    val handBob by infinite.animateFloat(
-        initialValue = -10f,
-        targetValue = 14f,
+    val hintWave by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(480, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
+            animation = tween(1400, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
         ),
-        label = "handBob"
+        label = "hintWave"
     )
     val petBounce by infinite.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.08f,
+        initialValue = 0.94f,
+        targetValue = 1.06f,
         animationSpec = infiniteRepeatable(
             animation = tween(520, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
@@ -919,29 +930,80 @@ private fun PetKraulOverlay(
         ),
         label = "heartPulse"
     )
-    var showCoin by remember { mutableStateOf(false) }
+
+    val petVisible = phase == PetKraulPhase.Stroke || phase == PetKraulPhase.Fade
+    val petAlpha by animateFloatAsState(
+        targetValue = when (phase) {
+            PetKraulPhase.Stroke -> 1f
+            PetKraulPhase.Fade -> 0f
+            else -> 0f
+        },
+        animationSpec = tween(480),
+        label = "petAlpha"
+    )
+    val showCoin = phase == PetKraulPhase.Coin
     val coinAlpha by animateFloatAsState(
         targetValue = if (showCoin) 1f else 0f,
-        animationSpec = tween(400),
+        animationSpec = tween(380),
         label = "coinAlpha"
     )
     val coinRise by animateFloatAsState(
-        targetValue = if (showCoin) -28f else 8f,
-        animationSpec = tween(500),
+        targetValue = if (showCoin) -36f else 12f,
+        animationSpec = tween(520),
         label = "coinRise"
     )
 
-    LaunchedEffect(Unit) {
-        delay(2400)
-        showCoin = true
-        delay(800)
-        onFinished()
+    // 2 Sekunden streichen (nur während Finger bewegt)
+    LaunchedEffect(isStroking, phase) {
+        if (phase != PetKraulPhase.Stroke) return@LaunchedEffect
+        while (isStroking && progress < 1f) {
+            delay(16)
+            progress = (progress + 16f / 2000f).coerceAtMost(1f)
+        }
+        if (progress >= 1f && phase == PetKraulPhase.Stroke) {
+            isStroking = false
+            showHand = false
+            phase = PetKraulPhase.Fade
+        }
+    }
+
+    LaunchedEffect(phase) {
+        when (phase) {
+            PetKraulPhase.Fade -> {
+                delay(520)
+                phase = PetKraulPhase.Credit
+            }
+            PetKraulPhase.Credit -> {
+                try {
+                    creditedAmount = onCredit().coerceAtLeast(1)
+                    phase = PetKraulPhase.Coin
+                } catch (e: Exception) {
+                    creditError = e.message ?: "Kraulen fehlgeschlagen"
+                    phase = PetKraulPhase.Done
+                }
+            }
+            PetKraulPhase.Coin -> {
+                delay(1400)
+                phase = PetKraulPhase.Done
+            }
+            PetKraulPhase.Done -> {
+                if (!finishedOnce) {
+                    finishedOnce = true
+                    onFinished(creditError == null, creditError)
+                }
+            }
+            else -> Unit
+        }
     }
 
     Dialog(
-        onDismissRequest = {},
+        onDismissRequest = {
+            if (phase == PetKraulPhase.Stroke) {
+                onFinished(false, null)
+            }
+        },
         properties = DialogProperties(
-            dismissOnBackPress = false,
+            dismissOnBackPress = phase == PetKraulPhase.Stroke,
             dismissOnClickOutside = false,
             usePlatformDefaultWidth = false
         )
@@ -949,22 +1011,62 @@ private fun PetKraulOverlay(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xCC1A1420)),
-            contentAlignment = Alignment.Center
+                .background(Color(0xCC1A1420))
         ) {
-            // Weiche Glow-Fläche
             Box(
                 modifier = Modifier
-                    .size(260.dp)
+                    .align(Alignment.Center)
+                    .size(280.dp)
                     .clip(CircleShape)
                     .background(
                         Brush.radialGradient(
                             listOf(Color(0x66FF8FAB), Color.Transparent)
                         )
                     )
+                    .alpha(petAlpha * 0.9f)
             )
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(contentAlignment = Alignment.Center) {
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .alpha(if (petVisible) petAlpha else 0f),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(200.dp)
+                        .pointerInput(phase) {
+                            if (phase != PetKraulPhase.Stroke) return@pointerInput
+                            detectDragGestures(
+                                onDragStart = { offset ->
+                                    isStroking = true
+                                    showHand = true
+                                    handOffset = Offset(
+                                        offset.x - size.width / 2f,
+                                        offset.y - size.height / 2f
+                                    )
+                                },
+                                onDragEnd = {
+                                    isStroking = false
+                                    showHand = false
+                                },
+                                onDragCancel = {
+                                    isStroking = false
+                                    showHand = false
+                                },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    isStroking = true
+                                    showHand = true
+                                    handOffset = Offset(
+                                        change.position.x - size.width / 2f,
+                                        change.position.y - size.height / 2f
+                                    )
+                                }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
                     Text(
                         "💕",
                         fontSize = 28.sp,
@@ -988,13 +1090,6 @@ private fun PetKraulOverlay(
                             }
                     )
                     Text(
-                        "✨",
-                        fontSize = 20.sp,
-                        modifier = Modifier
-                            .offset(x = 48.dp, y = 36.dp)
-                            .graphicsLayer { alpha = 0.8f }
-                    )
-                    Text(
                         petEmoji,
                         fontSize = 72.sp,
                         modifier = Modifier.graphicsLayer {
@@ -1002,33 +1097,116 @@ private fun PetKraulOverlay(
                             scaleY = petBounce
                         }
                     )
-                    Text(
-                        "🤚",
-                        fontSize = 40.sp,
+                    if (showHand || isStroking) {
+                        val density = LocalDensity.current
+                        Text(
+                            "🤚",
+                            fontSize = 42.sp,
+                            modifier = Modifier
+                                .offset(
+                                    x = with(density) { handOffset.x.toDp() },
+                                    y = with(density) { handOffset.y.toDp() }
+                                )
+                                .graphicsLayer {
+                                    rotationZ = -16f
+                                }
+                        )
+                    }
+                }
+
+                if (phase == PetKraulPhase.Stroke) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    LinearProgressIndicator(
+                        progress = { progress },
                         modifier = Modifier
-                            .offset(x = 36.dp, y = handBob.dp)
-                            .graphicsLayer {
-                                rotationZ = -18f + handBob * 0.6f
-                            }
+                            .width(160.dp)
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(999.dp)),
+                        color = AccentRose,
+                        trackColor = Color.White.copy(0.2f)
                     )
                 }
-                Spacer(modifier = Modifier.height(18.dp))
+            }
+
+            // +1 Coin erst wenn Begleiter weg ist und Gutschrift ok
+            if (phase == PetKraulPhase.Coin || coinAlpha > 0.01f) {
                 Text(
-                    "Kraul… kraul…",
-                    color = Color.White.copy(0.9f),
-                    fontFamily = DisplayFont,
-                    fontSize = 20.sp
-                )
-                Text(
-                    "+1 Coin",
+                    "+$creditedAmount Coin",
                     color = AccentRose,
                     fontFamily = DisplayFont,
-                    fontSize = 26.sp,
+                    fontSize = 32.sp,
                     modifier = Modifier
-                        .padding(top = 10.dp)
+                        .align(Alignment.Center)
                         .offset(y = coinRise.dp)
                         .alpha(coinAlpha)
                 )
+            }
+
+            // Unten: Hinweis mit Strich-Linien
+            if (phase == PetKraulPhase.Stroke) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(bottom = 28.dp, start = 28.dp, end = 28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxWidth(0.55f)
+                            .height(28.dp)
+                    ) {
+                        val w = size.width
+                        val h = size.height
+                        val path = Path()
+                        val amp = h * 0.28f
+                        val mid = h * 0.55f
+                        path.moveTo(0f, mid)
+                        var x = 0f
+                        while (x <= w) {
+                            val t = x / w + hintWave
+                            val y = mid + sin(t * Math.PI * 4).toFloat() * amp
+                            path.lineTo(x, y)
+                            x += 4f
+                        }
+                        drawPath(
+                            path,
+                            color = Color.White.copy(0.55f),
+                            style = Stroke(width = 3.2f, cap = StrokeCap.Round)
+                        )
+                        // Zweite, leichtere Strichspur
+                        val path2 = Path()
+                        path2.moveTo(0f, mid + 6f)
+                        x = 0f
+                        while (x <= w) {
+                            val t = x / w + hintWave + 0.15f
+                            val y = mid + 6f + sin(t * Math.PI * 4).toFloat() * (amp * 0.7f)
+                            path2.lineTo(x, y)
+                            x += 4f
+                        }
+                        drawPath(
+                            path2,
+                            color = Color.White.copy(0.28f),
+                            style = Stroke(width = 2.2f, cap = StrokeCap.Round)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "Streiche über den Begleiter",
+                        color = Color.White.copy(0.88f),
+                        fontFamily = DisplayFont,
+                        fontSize = 15.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        "2 Sekunden kraulen",
+                        color = Color.White.copy(0.55f),
+                        fontFamily = BodyFont,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
         }
     }
