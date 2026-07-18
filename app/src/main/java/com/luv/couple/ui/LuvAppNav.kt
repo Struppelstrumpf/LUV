@@ -2,7 +2,9 @@ package com.luv.couple.ui
 
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import android.widget.Toast
+import com.luv.couple.data.Stroke
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -185,6 +187,45 @@ fun LuvAppNav() {
                 joinPreviewLoading = false
             }
         }
+    }
+
+    /** Erstes Tutorial: Skizze als normale Host-Lobby anlegen (nicht bei Replay). */
+    suspend fun createTutorialLobby(nick: String, strokes: List<Stroke>) {
+        val snap = prefs.snapshot()
+        if (snap.lobbies.size >= PeerPalette.MAX_LOBBIES) return
+        val hostColorSide = if (colorIndex % 2 == 0) "blue" else "purple"
+        val room = LuvApiClient.createRoom(
+            name = "Meine Leinwand",
+            hostColorSide = hostColorSide
+        )
+        AccountSession.account.value?.let { prefs.updateAccount(it) }
+        val myColor = PeerPalette.hostSideColor(hostColorSide)
+        prefs.setColorIndex(myColor)
+        colorIndex = myColor
+        CanvasStore.updateProfile(nick.ifBlank { snap.nickname.orEmpty() }, myColor)
+        val lobby = Lobby(
+            id = UUID.randomUUID().toString(),
+            name = room.name.ifBlank { "Meine Leinwand" },
+            role = Role.HOST,
+            code = room.code,
+            token = room.token,
+            invite = room.invite,
+            capacity = room.capacity,
+            isFree = room.isFree,
+            hostNickname = room.hostNickname.ifBlank { nick },
+            hostColorSide = hostColorSide
+        )
+        prefs.upsertLobby(lobby)
+        PairSessionState.setCapacity(lobby.id, room.capacity)
+        CanvasStore.setActiveLobby(lobby.id)
+        if (strokes.isNotEmpty()) {
+            CanvasStore.seedLocalStrokes(
+                lobby.id,
+                strokes.map { it.copy(nickname = nick, colorIndex = myColor, colorLocked = true) }
+            )
+        }
+        CanvasStore.updateKnownLobbies(prefs.snapshot().lobbies.map { it.id })
+        PairConnectionService.startAll(context)
     }
 
     suspend fun ensureAuth(nick: String): Boolean {
@@ -763,9 +804,10 @@ fun LuvAppNav() {
                 } else {
                     null
                 },
-                onFinished = { nick ->
+                onFinished = { nick, tutorialStrokes ->
                     scope.launch {
                         if (replaying) {
+                            // Replay: Zeichnung verwerfen, keine Lobby speichern
                             prefs.setTutorialDone(true)
                             tutorialReplay = false
                             joinError = null
@@ -797,6 +839,12 @@ fun LuvAppNav() {
                                 prefs.setTutorialDone(true)
                                 runCatching { LuvApiClient.claimDaily() }
                                 refreshAccount()
+                                // Erstlauf: Skizze als normale Host-Lobby im Hauptmenü
+                                runCatching {
+                                    createTutorialLobby(nick, tutorialStrokes)
+                                }.onFailure { e ->
+                                    Log.w("LuvAppNav", "Tutorial-Lobby fehlgeschlagen", e)
+                                }
                                 navController.navigate(Routes.MAIN) {
                                     popUpTo(Routes.TUTORIAL) { inclusive = true }
                                 }

@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.56",
+            listOf(
+                "Tutorial neu: schönes Onboarding mit Zeichnen — wird zur ersten Lobby",
+                "Tutorial erneut ansehen speichert keine neue Lobby",
+            )
+        ),
+        Entry(
             "1.9.55",
             listOf(
                 "Live-Hinweise: Absender mit Spitznamen, sichtbar auch beim späteren App-Öffnen",

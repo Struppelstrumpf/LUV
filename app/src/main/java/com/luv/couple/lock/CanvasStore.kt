@@ -205,6 +205,31 @@ object CanvasStore {
     }
 
     /**
+     * Tutorial-Skizze vor dem WS-Connect ablegen.
+     * Leere Server-History stellt die Striche wieder her und lädt sie hoch.
+     */
+    fun seedLocalStrokes(lobbyId: String, strokes: List<Stroke>) {
+        if (lobbyId.isBlank() || strokes.isEmpty()) return
+        val c = canvas(lobbyId)
+        c.strokes.clear()
+        c.localStrokeIds.clear()
+        for (raw in strokes) {
+            if (raw.points.isEmpty()) continue
+            val stroke = raw.copy(
+                isLocal = true,
+                nickname = raw.nickname ?: cachedNickname,
+                colorIndex = raw.colorIndex,
+                authorId = AccountSession.account.value?.id?.takeIf { it.isNotBlank() },
+                colorLocked = true
+            )
+            c.strokes.add(stroke)
+            c.localStrokeIds.add(stroke.id)
+            touchStroke(lobbyId, stroke.nickname)
+        }
+        bump(lobbyId)
+    }
+
+    /**
      * Server-History nach Connect. Bei leerem Server und lokaler Sicherung
      * werden eigene Striche wiederhergestellt und hochgeladen.
      */
