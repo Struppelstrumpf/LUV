@@ -1698,9 +1698,10 @@ fun InventoryScreen(
         }
         val json = runCatching { prefs.profileCanvasJson() }.getOrNull()
         profile = ProfileCatalog.decode(json, nickname)
-        val pet = runCatching { prefs.equippedPet() }.getOrDefault(ShopCatalog.DEFAULT_PET)
-        if (profile.companionEmoji != pet) {
-            profile = profile.copy(companionEmoji = pet)
+        // Begleiter vom Profil → Prefs, nicht umgekehrt (sonst Flackern zum Default)
+        val companion = profile.companionEmoji.trim()
+        if (companion.isNotBlank()) {
+            runCatching { prefs.setEquippedPet(companion) }
         }
     }
 

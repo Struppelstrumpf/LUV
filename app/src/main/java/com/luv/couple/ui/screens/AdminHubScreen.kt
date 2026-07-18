@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.data.AccountInfo
+import com.luv.couple.data.PeerPalette
 import com.luv.couple.net.HelpMessageInfo
 import com.luv.couple.net.LiveNoticeBus
 import com.luv.couple.net.LuvApiClient
@@ -106,7 +107,7 @@ fun AdminHubScreen(
     val tabs = remember(account?.role, account?.permissions) {
         buildList {
             add(AdminTab.Overview)
-            if (isAdmin) add(AdminTab.Mods)
+            if (isAdmin || can("mods.manage")) add(AdminTab.Mods)
             if (can("reports.view")) add(AdminTab.Reports)
             if (can("codes.view")) add(AdminTab.Codes)
             if (can("gm.search")) add(AdminTab.Users)
@@ -136,11 +137,9 @@ fun AdminHubScreen(
     var helpMessages by remember { mutableStateOf<List<HelpMessageInfo>>(emptyList()) }
 
     var vouchers by remember { mutableStateOf<List<VoucherInfo>>(emptyList()) }
-    var code by remember { mutableStateOf("") }
-    var coins by remember { mutableStateOf("50") }
-    var forever by remember { mutableStateOf(false) }
-    var validDays by remember { mutableStateOf("30") }
-    var maxPeople by remember { mutableStateOf("100") }
+    var showVoucherWizard by remember { mutableStateOf(false) }
+    var liveRooms by remember { mutableStateOf<List<StaffLobbyCard>>(emptyList()) }
+    var showLiveRooms by remember { mutableStateOf(false) }
 
     var userQuery by remember { mutableStateOf("") }
     var userHits by remember { mutableStateOf<List<StaffUserCard>>(emptyList()) }
@@ -161,6 +160,36 @@ fun AdminHubScreen(
     fun loadUserLobbies(userId: String) {
         scope.launch {
             userLobbies = runCatching { LuvApiClient.listUserLobbies(userId) }
+                .onFailure { toast(it.message ?: "Lobbys laden fehlgeschlagen") }
+                .getOrDefault(emptyList())
+        }
+    }
+
+    fun openUserById(userId: String, nickname: String = "") {
+        if (!can("gm.search") || userId.isBlank()) return
+        tab = AdminTab.Users
+        showLiveRooms = false
+        selectedLobby = null
+        scope.launch {
+            busy = true
+            val hits = runCatching { LuvApiClient.searchStaffUsers(nickname.ifBlank { userId }) }
+                .getOrDefault(emptyList())
+            val hit = hits.firstOrNull { it.userId == userId } ?: hits.firstOrNull()
+            if (hit != null) {
+                userHits = hits
+                selectedUser = hit
+                nickEdit = hit.nickname
+                loadUserLobbies(hit.userId)
+            } else {
+                toast("Nutzer nicht gefunden")
+            }
+            busy = false
+        }
+    }
+
+    fun loadLiveRooms() {
+        scope.launch {
+            liveRooms = runCatching { LuvApiClient.listStaffLiveRooms() }
                 .onFailure { toast(it.message ?: "Lobbys laden fehlgeschlagen") }
                 .getOrDefault(emptyList())
         }
@@ -187,7 +216,7 @@ fun AdminHubScreen(
 
     LaunchedEffect(tab) {
         when (tab) {
-            AdminTab.Mods -> if (isAdmin) {
+            AdminTab.Mods -> if (isAdmin || can("mods.manage")) {
                 runCatching { LuvApiClient.listModerators() }
                     .onSuccess {
                         moderators = it.first
@@ -204,6 +233,34 @@ fun AdminHubScreen(
             }
             else -> Unit
         }
+    }
+
+    if (showVoucherWizard && can("codes.edit")) {
+        VoucherWizardDialog(
+            busy = busy,
+            onDismiss = { showVoucherWizard = false },
+            onCreate = { c, items, maxR, days, forever, codeStr ->
+                busy = true
+                scope.launch {
+                    runCatching {
+                        LuvApiClient.createVoucher(
+                            coins = c,
+                            maxRedeems = maxR,
+                            validDays = days,
+                            forever = forever,
+                            code = codeStr.ifBlank { null },
+                            items = items
+                        )
+                    }.onSuccess {
+                        vouchers = listOf(it) + vouchers
+                        toast("Code ${it.code} erstellt")
+                        showVoucherWizard = false
+                        reloadOverview()
+                    }.onFailure { toast(it.message ?: "Fehler") }
+                    busy = false
+                }
+            }
+        )
     }
 
     MenuBackdrop {
@@ -284,32 +341,95 @@ fun AdminHubScreen(
             ) {
                 when (tab) {
                     AdminTab.Overview -> {
-                        AdminStatGrid(
-                            "Nutzer" to "$overviewUsers",
-                            "Lobbys live" to "$overviewRooms",
-                            "Bild-Meldungen" to "$overviewPublic",
-                            "Lobby-Meldungen" to "$overviewPeer",
-                            "Hilfe" to "$overviewHelp",
-                            "Moderatoren" to "$overviewMods",
-                            "Codes" to "$overviewVouchers"
-                        )
-                        AdminCard {
-                            Text(
-                                "Willkommen, ${account?.nickname ?: "Team"}.",
-                                color = TextPrimary,
-                                fontFamily = DisplayFont,
-                                fontSize = 18.sp
+                        if (showLiveRooms && can("gm.search")) {
+                            AdminCard {
+                                Text(
+                                    "← Übersicht",
+                                    color = TextMuted,
+                                    fontFamily = BodyFont,
+                                    modifier = Modifier
+                                        .clickable { showLiveRooms = false }
+                                        .padding(vertical = 4.dp)
+                                )
+                                Text("Lobbys live", fontFamily = DisplayFont, color = TextPrimary, fontSize = 20.sp)
+                                AdminGhostBtn("Aktualisieren") { loadLiveRooms() }
+                            }
+                            if (liveRooms.isEmpty()) {
+                                AdminEmpty("Gerade keine Live-Lobbys.")
+                            }
+                            liveRooms.forEach { lobby ->
+                                AdminCard {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                selectedLobby = lobby
+                                                selectedUser = null
+                                                tab = AdminTab.Users
+                                                showLiveRooms = false
+                                            },
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(lobby.name, color = TextPrimary, fontFamily = DisplayFont)
+                                            Text(
+                                                "${lobby.code} · ${lobby.online} online · ${lobby.memberCount}/${lobby.capacity}",
+                                                color = TextMuted,
+                                                fontFamily = BodyFont,
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                        Text("›", color = TextMuted, fontSize = 22.sp)
+                                    }
+                                }
+                            }
+                        } else {
+                            AdminStatGrid(
+                                items = listOf(
+                                    Triple("Nutzer", "$overviewUsers", {
+                                        if (can("gm.search")) {
+                                            tab = AdminTab.Users
+                                            selectedUser = null
+                                            selectedLobby = null
+                                        }
+                                    }),
+                                    Triple("Lobbys live", "$overviewRooms", {
+                                        if (can("gm.search")) {
+                                            showLiveRooms = true
+                                            loadLiveRooms()
+                                        }
+                                    }),
+                                    Triple("Bild-Meldungen", "$overviewPublic", {
+                                        if (can("reports.view")) tab = AdminTab.Reports
+                                    }),
+                                    Triple("Lobby-Meldungen", "$overviewPeer", {
+                                        if (can("reports.view")) tab = AdminTab.Reports
+                                    }),
+                                    Triple("Hilfe", "$overviewHelp", {
+                                        if (can("reports.view")) tab = AdminTab.Reports
+                                    }),
+                                    Triple("Moderatoren", "$overviewMods", {
+                                        if (isAdmin || can("mods.manage")) tab = AdminTab.Mods
+                                    }),
+                                    Triple("Codes", "$overviewVouchers", {
+                                        if (can("codes.view")) tab = AdminTab.Codes
+                                    })
+                                )
                             )
-                            Text(
-                                if (isAdmin) {
-                                    "Du bist Admin (Google). Moderatoren einladen, Rechte vergeben und Live-Hinweise senden."
-                                } else {
-                                    "Du bist Moderator mit freigeschalteten Bereichen."
-                                },
-                                color = TextMuted,
-                                fontFamily = BodyFont,
-                                fontSize = 13.sp
-                            )
+                            AdminCard {
+                                Text(
+                                    "Willkommen, ${account?.nickname ?: "Team"}.",
+                                    color = TextPrimary,
+                                    fontFamily = DisplayFont,
+                                    fontSize = 18.sp
+                                )
+                                Text(
+                                    "Tippe auf eine Kachel — alles ist verlinkt. Mods mit vollen Rechten sehen dieselben Bereiche wie Admins.",
+                                    color = TextMuted,
+                                    fontFamily = BodyFont,
+                                    fontSize = 13.sp
+                                )
+                            }
                         }
                     }
 
@@ -468,42 +588,14 @@ fun AdminHubScreen(
                         if (can("codes.edit")) {
                             AdminCard {
                                 Text("Code erzeugen", fontFamily = DisplayFont, color = TextPrimary, fontSize = 18.sp)
-                                AdminField(code, {
-                                    code = it.uppercase().filter { c -> c.isLetterOrDigit() }.take(24)
-                                }, "CODE22")
-                                AdminField(coins, { coins = it.filter(Char::isDigit).take(5) }, "Coins")
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    AdminChip("30 Tage", !forever && validDays == "30") {
-                                        forever = false; validDays = "30"
-                                    }
-                                    AdminChip("90 Tage", !forever && validDays == "90") {
-                                        forever = false; validDays = "90"
-                                    }
-                                    AdminChip("Für immer", forever) { forever = true }
-                                }
-                                AdminField(maxPeople, { maxPeople = it.filter(Char::isDigit).take(5) }, "Max. Personen")
-                                AdminPrimaryBtn("Erzeugen", enabled = !busy) {
-                                    val cleaned = code.trim()
-                                    if (cleaned.length < 4) {
-                                        toast("Code mind. 4 Zeichen"); return@AdminPrimaryBtn
-                                    }
-                                    busy = true
-                                    scope.launch {
-                                        runCatching {
-                                            LuvApiClient.createVoucher(
-                                                coins = coins.toIntOrNull()?.coerceAtLeast(1) ?: 50,
-                                                maxRedeems = maxPeople.toIntOrNull()?.coerceAtLeast(1) ?: 100,
-                                                validDays = validDays.toIntOrNull()?.coerceIn(1, 365) ?: 30,
-                                                forever = forever,
-                                                code = cleaned
-                                            )
-                                        }.onSuccess {
-                                            vouchers = listOf(it) + vouchers
-                                            toast("Code ${it.code} erstellt")
-                                            code = ""
-                                        }.onFailure { toast(it.message ?: "Fehler") }
-                                        busy = false
-                                    }
+                                Text(
+                                    "Schritt für Schritt: Coins, Items oder beides — dann Gültigkeit und Code.",
+                                    color = TextMuted,
+                                    fontFamily = BodyFont,
+                                    fontSize = 13.sp
+                                )
+                                AdminPrimaryBtn("🎟️ Neuen Code anlegen", enabled = !busy) {
+                                    showVoucherWizard = true
                                 }
                             }
                         }
@@ -511,7 +603,14 @@ fun AdminHubScreen(
                             AdminCard {
                                 Text(v.code, color = TextPrimary, fontFamily = DisplayFont, fontSize = 18.sp)
                                 Text(
-                                    "${v.coins} Coins · ${v.redeemCount}/${v.maxRedeems}",
+                                    buildString {
+                                        if (v.coins > 0) append("${v.coins} Coins")
+                                        else append("0 Coins")
+                                        if (v.items.isNotEmpty()) {
+                                            append(" · ${v.items.size} Item-Art(en)")
+                                        }
+                                        append(" · ${v.redeemCount}/${v.maxRedeems}")
+                                    },
                                     color = TextMuted,
                                     fontFamily = BodyFont,
                                     fontSize = 12.sp
@@ -591,18 +690,30 @@ fun AdminHubScreen(
                                     )
                                 } else {
                                     lobbyView.members.forEach { m ->
+                                        val swatch = if (m.colorIndex >= 0) {
+                                            Color(PeerPalette.strokeColor(m.colorIndex))
+                                        } else {
+                                            TextMuted.copy(0.35f)
+                                        }
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(vertical = 4.dp),
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .clickable {
+                                                    openUserById(m.userId, m.nickname)
+                                                }
+                                                .padding(vertical = 6.dp, horizontal = 4.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Text(
-                                                if (m.online) "●" else "○",
-                                                color = if (m.online) AccentRose else TextMuted,
-                                                fontSize = 12.sp
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(14.dp)
+                                                    .clip(CircleShape)
+                                                    .background(swatch)
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
+                                            Text(m.petEmoji, fontSize = 18.sp)
+                                            Spacer(modifier = Modifier.width(6.dp))
                                             Text(
                                                 m.nickname,
                                                 color = TextPrimary,
@@ -1117,16 +1228,17 @@ fun LiveNoticePopup() {
 }
 
 @Composable
-private fun AdminStatGrid(vararg items: Pair<String, String>) {
+private fun AdminStatGrid(items: List<Triple<String, String, () -> Unit>>) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        items.toList().chunked(2).forEach { row ->
+        items.chunked(2).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                row.forEach { (label, value) ->
+                row.forEach { (label, value, onClick) ->
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(16.dp))
                             .background(BgSoft)
+                            .clickable(onClick = onClick)
                             .padding(14.dp)
                     ) {
                         Text(value, color = TextPrimary, fontFamily = DisplayFont, fontSize = 22.sp)
@@ -1140,7 +1252,7 @@ private fun AdminStatGrid(vararg items: Pair<String, String>) {
 }
 
 @Composable
-private fun AdminCard(content: @Composable () -> Unit) {
+internal fun AdminCard(content: @Composable () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1177,7 +1289,7 @@ private fun AdminAvatar(name: String) {
 }
 
 @Composable
-private fun AdminField(value: String, onChange: (String) -> Unit, hint: String) {
+internal fun AdminField(value: String, onChange: (String) -> Unit, hint: String) {
     BasicTextField(
         value = value,
         onValueChange = onChange,
@@ -1199,14 +1311,20 @@ private fun AdminField(value: String, onChange: (String) -> Unit, hint: String) 
 }
 
 @Composable
-private fun AdminPrimaryBtn(label: String, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun AdminPrimaryBtn(
+    label: String,
+    enabled: Boolean = true,
+    fillMaxWidth: Boolean = true,
+    onClick: () -> Unit
+) {
     Box(
         modifier = Modifier
-            .fillMaxWidth()
+            .then(if (fillMaxWidth) Modifier.fillMaxWidth() else Modifier)
             .height(46.dp)
             .clip(RoundedCornerShape(23.dp))
             .background(if (enabled) AccentRose.copy(0.85f) else Color.White.copy(0.08f))
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = if (fillMaxWidth) 0.dp else 18.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(label, color = Color.White, fontFamily = DisplayFont, fontSize = 15.sp)
@@ -1227,7 +1345,7 @@ private fun AdminGhostBtn(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun AdminChip(label: String, selected: Boolean, onClick: () -> Unit) {
+internal fun AdminChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))

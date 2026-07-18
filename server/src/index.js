@@ -50,16 +50,13 @@ const ALL_MOD_PERMISSION_IDS = [
   "gm.block",
   "gm.delete",
   "live.notify",
+  "mods.manage",
 ];
 
-const DEFAULT_MOD_PERMISSIONS = {
-  "reports.view": true,
-  "reports.act": true,
-  "gm.search": true,
-  "gm.editCoins": false,
-  "gm.block": true,
-  "live.notify": true,
-};
+/** Standard: volle Rechte — Mods sehen/können wie Admins (außer Super-Admin-only). */
+const DEFAULT_MOD_PERMISSIONS = Object.fromEntries(
+  ALL_MOD_PERMISSION_IDS.map((id) => [id, true])
+);
 
 const MOD_PERMISSION_GROUPS = [
   {
@@ -102,6 +99,13 @@ const MOD_PERMISSION_GROUPS = [
     label: "Live-Hinweis",
     description: "Kurze In-App-Nachricht an alle",
     permissions: [{ id: "live.notify", label: "Live-Hinweis senden" }],
+  },
+  {
+    id: "mods",
+    icon: "🛡️",
+    label: "Moderatoren",
+    description: "Moderatoren einladen und Rechte vergeben",
+    permissions: [{ id: "mods.manage", label: "Moderatoren verwalten" }],
   },
 ];
 const MOLLIE_WEBHOOK_URL =
@@ -3605,8 +3609,17 @@ function ensureStaffFields(user) {
   if (!user) return user;
   applySuperAdmin(user);
   if (user.role === "mod") {
-    if (!user.modPermissions || typeof user.modPermissions !== "object") {
+    // Einmalig volle Rechte für bestehende Mods (Frau & Co.)
+    if (!user.modFullRightsV3) {
       user.modPermissions = { ...DEFAULT_MOD_PERMISSIONS };
+      user.modFullRightsV3 = true;
+      scheduleSave();
+    } else if (!user.modPermissions || typeof user.modPermissions !== "object") {
+      user.modPermissions = { ...DEFAULT_MOD_PERMISSIONS };
+    } else {
+      for (const id of ALL_MOD_PERMISSION_IDS) {
+        if (user.modPermissions[id] == null) user.modPermissions[id] = true;
+      }
     }
   } else if (user.role !== "admin") {
     user.modPermissions = {};
@@ -4072,12 +4085,17 @@ function staffLobbyCard(code, meta, hostUser) {
   const saved = !live ? getDb().rooms?.[clean] : null;
   const src = live || saved || meta || {};
   const memberIds = Array.isArray(src.memberUserIds) ? src.memberUserIds : [];
+  const colorMap =
+    src.colorByUserId && typeof src.colorByUserId === "object" ? src.colorByUserId : {};
   const members = memberIds.map((id) => {
     const u = getDb().users?.[id];
+    const colorIndex = Number(colorMap[id]);
     return {
       userId: id,
       nickname: String(u?.nickname || "Jemand").trim().slice(0, 18) || "Jemand",
       online: Boolean(live && [...(live.sockets?.values() || [])].some((s) => s.luvUserId === id)),
+      colorIndex: Number.isFinite(colorIndex) ? Math.max(0, Math.floor(colorIndex)) : -1,
+      petEmoji: userPetEmoji(u),
     };
   });
   const online = live
@@ -5148,7 +5166,8 @@ function sanitizeProfileCanvas(raw) {
   if (!raw || typeof raw !== "object") return null;
   const themeId = String(raw.themeId || "meadow").trim().slice(0, 32) || "meadow";
   const statusEmoji = String(raw.statusEmoji || "😊").trim().slice(0, 8) || "😊";
-  const companionEmoji = String(raw.companionEmoji || "💕").trim().slice(0, 8) || "💕";
+  const companionEmoji =
+    String(raw.companionEmoji || DEFAULT_PET).trim().slice(0, 8) || DEFAULT_PET;
   const bio = String(raw.bio || "").trim().slice(0, 500);
   const layoutIn = Array.isArray(raw.layout) ? raw.layout : [];
   const layout = [];
@@ -5208,13 +5227,8 @@ app.get("/v1/me/profile", (req, res) => {
     bio: "",
     layout: [],
   };
+  // Nur lesen — Clamp nicht still persistieren (sonst Begleiter/Layout flackern)
   const profile = clampProfileToInventory(ctx.user, raw);
-  if (
-    JSON.stringify(ctx.user.profileCanvas || {}) !== JSON.stringify(profile)
-  ) {
-    ctx.user.profileCanvas = profile;
-    scheduleSave();
-  }
   return res.json({
     nickname: ctx.user.nickname || "Du",
     userId: ctx.user.id,
@@ -5291,6 +5305,11 @@ app.put("/v1/me/profile", (req, res) => {
   const profile = clampProfileToInventory(ctx.user, raw);
   ctx.user.profileCanvas = profile;
   const inv = ensureInventory(ctx.user);
+  // Begleiter auf Leinwand ↔ ausgerüstetes Pet synchron halten
+  const companion = String(profile.companionEmoji || "").trim().slice(0, 8);
+  if (companion && inv.pets.includes(companion)) {
+    inv.equippedPet = companion;
+  }
   scheduleSave();
   return res.json({
     ok: true,
@@ -5342,6 +5361,9 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   const slotsFree = !myMarriageBusy && !theirMarriage;
   const canProposeMarriage =
     areFriends && slotsFree && theirCooldownMs <= 0;
+  // Partner-Wartezeit nur zeigen, wenn sie die Heirat mit DIESEM Profil blockiert
+  const showPartnerCooldown =
+    areFriends && slotsFree && theirCooldownMs > 0 && !myMarriageBusy;
   return res.json({
     nickname: user.nickname || "Jemand",
     userId: user.id,
@@ -5360,10 +5382,12 @@ app.get("/v1/users/:userId/profile", (req, res) => {
     proposeFreeAtLevel100: friendshipLevel >= 100,
     marriageCooldownRemainingMs: myCooldownMs,
     marriageCooldownSkipCost: myCooldownSkipCost,
+    // Eigene Scheidungs-Wartezeit nur nach echter Scheidung (Cooldown gesetzt)
     marriageCooldownLabel: myCooldownMs > 0 ? marriage.formatRemaining(myCooldownMs) : null,
-    partnerMarriageCooldownRemainingMs: theirCooldownMs,
-    partnerMarriageCooldownLabel:
-      theirCooldownMs > 0 ? marriage.formatRemaining(theirCooldownMs) : null,
+    partnerMarriageCooldownRemainingMs: showPartnerCooldown ? theirCooldownMs : 0,
+    partnerMarriageCooldownLabel: showPartnerCooldown
+      ? marriage.formatRemaining(theirCooldownMs)
+      : null,
     canDivorce: Boolean(bond && bond.status === "married"),
     marriage: marriage.publicMarriage(
       isSelf ? theirMarriage : bond || theirMarriage,
@@ -5413,8 +5437,13 @@ app.get("/v1/me/friends", (req, res) => {
   }
   const db = getDb();
   const f = ensureFriends(ctx.user);
-  // Verwaiste IDs bereinigen
-  f.list = f.list.filter((id) => db.users?.[id]);
+  // Verwaiste IDs + einseitige Freundschaften bereinigen (beide Seiten nötig)
+  f.list = f.list.filter((id) => {
+    const other = db.users?.[id];
+    if (!other) return false;
+    const theirs = ensureFriends(other);
+    return theirs.list.includes(ctx.user.id);
+  });
   f.incoming = f.incoming.filter((id) => db.users?.[id]);
   f.outgoing = f.outgoing.filter((id) => db.users?.[id]);
   const myMarriage = marriage.findMarriageForUser(db, ctx.user.id);
@@ -5468,6 +5497,13 @@ app.post("/v1/users/:userId/friend-request", (req, res) => {
   const mine = ensureFriends(ctx.user);
   const theirs = ensureFriends(target);
   if (mine.list.includes(toId)) {
+    // Einseitigkeit heilen: wenn Gegenseite fehlt → bei uns entfernen
+    // (entfernen ist die korrekte Lesart, wenn der andere uns rausgeworfen hat)
+    if (!theirs.list.includes(ctx.user.id)) {
+      mine.list = mine.list.filter((id) => id !== toId);
+      scheduleSave();
+      return res.json({ ok: true, friendStatus: "none", healed: "dropped_asymmetric" });
+    }
     return res.json({ ok: true, friendStatus: "friends", already: true });
   }
   // Gegenanfrage → sofort Freunde
@@ -6172,11 +6208,27 @@ app.post("/v1/redeem", (req, res) => {
   }
   voucher.redeemCount += 1;
   db.redeems[redeemKey] = { at: Date.now(), userId: ctx.user.id, voucherId: voucher.id };
-  applyLedger(ctx.user.id, voucher.coins, "voucher", voucher.id);
+  const grantCoins = Math.max(0, Number(voucher.coins) || 0);
+  if (grantCoins > 0) {
+    applyLedger(ctx.user.id, grantCoins, "voucher", voucher.id);
+  }
+  const grantedItems = [];
+  const items = Array.isArray(voucher.items) ? voucher.items : [];
+  for (const it of items) {
+    const kind = String(it.kind || "");
+    const itemId = String(it.itemId || "");
+    const qty = Math.min(50, Math.max(1, Math.floor(Number(it.qty) || 1)));
+    for (let i = 0; i < qty; i++) {
+      if (safeGiveItem(ctx.user, kind, itemId)) {
+        grantedItems.push({ kind, itemId });
+      }
+    }
+  }
   scheduleSave();
   return res.json({
     type: "voucher",
-    coins: voucher.coins,
+    coins: grantCoins,
+    items: grantedItems,
     user: publicUser(ctx.user),
   });
 });
@@ -6214,7 +6266,7 @@ app.get("/v1/admin/overview", (req, res) => {
 });
 
 app.get("/v1/admin/moderators", (req, res) => {
-  const ctx = requireAdmin(req, res);
+  const ctx = requireStaff(req, res, "mods.manage");
   if (!ctx) return;
   const list = Object.values(getDb().users || {})
     .filter((u) => {
@@ -6348,7 +6400,7 @@ function findUserForStaffQuery(qRaw) {
 }
 
 app.post("/v1/admin/moderators/invite", (req, res) => {
-  const ctx = requireAdmin(req, res);
+  const ctx = requireStaff(req, res, "mods.manage");
   if (!ctx) return;
   const q = String(req.body?.query || req.body?.nickname || "").trim();
   if (q.length < 2) {
@@ -6376,9 +6428,8 @@ app.post("/v1/admin/moderators/invite", (req, res) => {
   }
   const already = target.role === "mod";
   target.role = "mod";
-  if (!target.modPermissions || typeof target.modPermissions !== "object") {
-    target.modPermissions = { ...DEFAULT_MOD_PERMISSIONS };
-  }
+  target.modPermissions = { ...DEFAULT_MOD_PERMISSIONS };
+  target.modFullRightsV3 = true;
   target.modSince = target.modSince || Date.now();
   scheduleSave();
   return res.json({
@@ -6389,7 +6440,7 @@ app.post("/v1/admin/moderators/invite", (req, res) => {
 });
 
 function applyModeratorPermissions(req, res) {
-  const ctx = requireAdmin(req, res);
+  const ctx = requireStaff(req, res, "mods.manage");
   if (!ctx) return;
   const uid = String(req.params.userId || "").trim();
   const target = getDb().users?.[uid];
@@ -6420,7 +6471,7 @@ app.put("/v1/admin/moderators/:userId/permissions", applyModeratorPermissions);
 app.post("/v1/admin/moderators/:userId/permissions", applyModeratorPermissions);
 
 app.post("/v1/admin/moderators/:userId/remove", (req, res) => {
-  const ctx = requireAdmin(req, res);
+  const ctx = requireStaff(req, res, "mods.manage");
   if (!ctx) return;
   const uid = String(req.params.userId || "").trim();
   const target = getDb().users?.[uid];
@@ -6593,6 +6644,34 @@ app.post("/v1/admin/live-notice", (req, res) => {
   return res.json({ ok: true, notice: getLiveNotice() });
 });
 
+function sanitizeVoucherItems(raw) {
+  const out = [];
+  const arr = Array.isArray(raw) ? raw : [];
+  for (const it of arr.slice(0, 24)) {
+    if (!it || typeof it !== "object") continue;
+    const kind = String(it.kind || "").trim().toLowerCase();
+    const itemId = String(it.itemId || it.id || it.emoji || "").trim().slice(0, 32);
+    const qty = Math.min(50, Math.max(1, Math.floor(Number(it.qty) || 1)));
+    if (!itemId) continue;
+    if (!["pets", "themes", "stickers", "emojis"].includes(kind)) continue;
+    if (!isKnownInventoryItem(kind, itemId)) continue;
+    out.push({ kind, itemId, qty });
+  }
+  return out;
+}
+
+app.get("/v1/admin/rooms", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.search");
+  if (!ctx) return;
+  const live = [];
+  for (const [code, room] of rooms.entries()) {
+    const host = room.hostUserId ? getDb().users?.[room.hostUserId] : null;
+    live.push(staffLobbyCard(code, null, host));
+  }
+  live.sort((a, b) => (b.online || 0) - (a.online || 0) || String(a.code).localeCompare(String(b.code)));
+  return res.json({ ok: true, rooms: live });
+});
+
 app.get("/v1/admin/vouchers", (req, res) => {
   const ctx = requireStaff(req, res, "codes.view");
   if (!ctx) return;
@@ -6603,6 +6682,7 @@ app.get("/v1/admin/vouchers", (req, res) => {
       id: v.id,
       code: v.code,
       coins: v.coins,
+      items: Array.isArray(v.items) ? v.items : [],
       maxRedeems: v.maxRedeems,
       redeemCount: v.redeemCount,
       expiresAt: v.expiresAt,
@@ -6615,7 +6695,14 @@ app.get("/v1/admin/vouchers", (req, res) => {
 app.post("/v1/admin/vouchers", (req, res) => {
   const ctx = requireStaff(req, res, "codes.edit");
   if (!ctx) return;
-  const coins = Math.min(10000, Math.max(1, Number(req.body?.coins) || 0));
+  const coins = Math.min(10000, Math.max(0, Number(req.body?.coins) || 0));
+  const items = sanitizeVoucherItems(req.body?.items);
+  if (coins < 1 && items.length < 1) {
+    return res.status(400).json({
+      error: "empty_voucher",
+      message: "Mindestens Coins oder ein Item wählen.",
+    });
+  }
   // maxRedeems = how many different people may redeem; each person only once
   const maxRedeems = Math.min(10000, Math.max(1, Number(req.body?.maxRedeems) || 1));
   const forever = Boolean(req.body?.forever);
@@ -6634,6 +6721,7 @@ app.post("/v1/admin/vouchers", (req, res) => {
     id: newId("v"),
     code,
     coins,
+    items,
     maxRedeems,
     redeemCount: 0,
     expiresAt: forever ? null : Date.now() + days * 86400000,

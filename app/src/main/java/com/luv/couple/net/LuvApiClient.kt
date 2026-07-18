@@ -212,7 +212,15 @@ data class StaffOverview(
 data class StaffLobbyMember(
     val userId: String,
     val nickname: String,
-    val online: Boolean
+    val online: Boolean,
+    val colorIndex: Int = -1,
+    val petEmoji: String = "🐣"
+)
+
+data class VoucherItemGrant(
+    val kind: String,
+    val itemId: String,
+    val qty: Int = 1
 )
 
 data class StaffLobbyCard(
@@ -237,7 +245,8 @@ data class VoucherInfo(
     val coins: Int,
     val maxRedeems: Int,
     val redeemCount: Int,
-    val expiresAt: Long?
+    val expiresAt: Long?,
+    val items: List<VoucherItemGrant> = emptyList()
 )
 
 data class ShopPack(
@@ -627,24 +636,43 @@ object LuvApiClient {
         }
     }
 
+    private fun parseVoucherItems(arr: org.json.JSONArray?): List<VoucherItemGrant> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val kind = o.optString("kind").trim()
+                val itemId = o.optString("itemId").ifBlank { o.optString("emoji") }.trim()
+                if (kind.isBlank() || itemId.isBlank()) continue
+                add(VoucherItemGrant(kind, itemId, o.optInt("qty", 1).coerceIn(1, 50)))
+            }
+        }
+    }
+
+    private fun parseVoucherInfo(o: JSONObject): VoucherInfo =
+        VoucherInfo(
+            code = o.getString("code"),
+            coins = o.optInt("coins"),
+            maxRedeems = o.optInt("maxRedeems"),
+            redeemCount = o.optInt("redeemCount"),
+            expiresAt = if (o.isNull("expiresAt")) null
+            else o.optLong("expiresAt").takeIf { it > 0 },
+            items = parseVoucherItems(o.optJSONArray("items"))
+        )
+
     suspend fun listVouchers(): List<VoucherInfo> = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/admin/vouchers")
         val arr = json.getJSONArray("vouchers")
         buildList {
             for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                add(
-                    VoucherInfo(
-                        code = o.getString("code"),
-                        coins = o.optInt("coins"),
-                        maxRedeems = o.optInt("maxRedeems"),
-                        redeemCount = o.optInt("redeemCount"),
-                        expiresAt = if (o.isNull("expiresAt")) null
-                        else o.optLong("expiresAt").takeIf { it > 0 }
-                    )
-                )
+                add(parseVoucherInfo(arr.getJSONObject(i)))
             }
         }
+    }
+
+    suspend fun listStaffLiveRooms(): List<StaffLobbyCard> = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/admin/rooms")
+        parseStaffLobbyList(json.optJSONArray("rooms"))
     }
 
     suspend fun createVoucher(
@@ -652,7 +680,8 @@ object LuvApiClient {
         maxRedeems: Int = 1,
         validDays: Int = 30,
         forever: Boolean = false,
-        code: String? = null
+        code: String? = null,
+        items: List<VoucherItemGrant> = emptyList()
     ): VoucherInfo = withContext(Dispatchers.IO) {
         val payload = JSONObject()
             .put("coins", coins)
@@ -660,15 +689,20 @@ object LuvApiClient {
             .put("validDays", validDays)
             .put("forever", forever)
         if (!code.isNullOrBlank()) payload.put("code", code)
+        if (items.isNotEmpty()) {
+            val arr = org.json.JSONArray()
+            items.forEach { it ->
+                arr.put(
+                    JSONObject()
+                        .put("kind", it.kind)
+                        .put("itemId", it.itemId)
+                        .put("qty", it.qty)
+                )
+            }
+            payload.put("items", arr)
+        }
         val json = authedPost("/v1/admin/vouchers", payload.toString())
-        val o = json.getJSONObject("voucher")
-        VoucherInfo(
-            code = o.getString("code"),
-            coins = o.optInt("coins"),
-            maxRedeems = o.optInt("maxRedeems"),
-            redeemCount = o.optInt("redeemCount"),
-            expiresAt = if (o.isNull("expiresAt")) null else o.optLong("expiresAt").takeIf { it > 0 }
-        )
+        parseVoucherInfo(json.getJSONObject("voucher"))
     }
 
     suspend fun reportPublicCanvas(publicId: String): Boolean = withContext(Dispatchers.IO) {
@@ -1043,7 +1077,9 @@ object LuvApiClient {
                     StaffLobbyMember(
                         userId = id,
                         nickname = m.optString("nickname", "Jemand"),
-                        online = m.optBoolean("online", false)
+                        online = m.optBoolean("online", false),
+                        colorIndex = m.optInt("colorIndex", -1),
+                        petEmoji = m.optString("petEmoji", "🐣").ifBlank { "🐣" }
                     )
                 )
             }

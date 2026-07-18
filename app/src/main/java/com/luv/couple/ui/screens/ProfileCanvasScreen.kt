@@ -234,9 +234,12 @@ fun ProfileCanvasScreen(
             ownedStickers = withContext(Dispatchers.IO) { prefs.ownedStickers() }
             ownedThemes = withContext(Dispatchers.IO) { prefs.ownedThemes() }
             ownedPets = withContext(Dispatchers.IO) { prefs.ownedPets() }
-            val equipped = withContext(Dispatchers.IO) { prefs.equippedPet() }
-            if (state.companionEmoji != equipped) {
-                state = state.copy(companionEmoji = equipped)
+            // Server-Profil ist Quelle der Wahrheit — lokales Equipped nicht darüber stülpen
+            val companion = state.companionEmoji.trim()
+            if (companion.isNotBlank()) {
+                withContext(Dispatchers.IO) {
+                    runCatching { prefs.setEquippedPet(companion) }
+                }
             }
             displayCoins = AccountSession.account.value?.coins ?: myCoins
             val myId = AccountSession.account.value?.id
@@ -1944,7 +1947,8 @@ private fun ProfileElementView(
             .graphicsLayer {
                 val s = dragEl.scale
                 rotationZ = dragEl.rotation
-                scaleX = s * (if (dragEl.flipX) -1f else 1f)
+                // flipX nur am Inhalt — Handles/Icons bleiben lesbar
+                scaleX = s
                 scaleY = s
                 transformOrigin = TransformOrigin(0.5f, 0.5f)
             }
@@ -1983,21 +1987,30 @@ private fun ProfileElementView(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            ElementContent(
-                el = dragEl,
-                nickname = nickname,
-                colorIndex = colorIndex,
-                coins = coins,
-                companionEmoji = companionEmoji,
-                boardFactor = factor
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = if (dragEl.flipX) -1f else 1f
+                        transformOrigin = TransformOrigin(0.5f, 0.5f)
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                ElementContent(
+                    el = dragEl,
+                    nickname = nickname,
+                    colorIndex = colorIndex,
+                    coins = coins,
+                    companionEmoji = companionEmoji,
+                    boardFactor = factor
+                )
+            }
         }
 
         if (selected && editable) {
-            // Handles visuell gegen Parent-Scale gegenrechnen — Position in lokaler
-            // Box-Space (vor Scale), damit die Mitte immer auf der Ecke der Strichelung bleibt
+            // Handles gegen Parent-Scale gegenrechnen — ohne Flip
             val handleMod = Modifier.graphicsLayer {
-                scaleX = invScale * (if (dragEl.flipX) -1f else 1f)
+                scaleX = invScale
                 scaleY = invScale
                 transformOrigin = TransformOrigin(0.5f, 0.5f)
             }
