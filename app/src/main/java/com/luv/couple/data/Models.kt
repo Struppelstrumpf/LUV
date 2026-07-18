@@ -183,8 +183,12 @@ data class Stroke(
     val colorIndex: Int = 0,
     val authorId: String? = null,
     /** Legacy — ältere Clients */
-    val gender: String? = null
-)
+    val gender: String? = null,
+    /** Wenn gesetzt: Emoji-Zeichnung auf der Leinwand (Punkt = Position). */
+    val emoji: String? = null
+) {
+    val isEmoji: Boolean get() = !emoji.isNullOrBlank()
+}
 
 /** @deprecated Legacy LAN-Invite */
 data class InvitePayload(

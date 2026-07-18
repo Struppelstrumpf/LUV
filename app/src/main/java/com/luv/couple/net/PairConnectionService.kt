@@ -21,6 +21,8 @@ import com.luv.couple.data.Lobby
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Role
 import com.luv.couple.data.RosterMember
+import com.luv.couple.data.Stroke
+import com.luv.couple.data.StrokePoint
 import com.luv.couple.lock.CanvasStore
 import com.luv.couple.lock.LockDrawActivity
 import com.luv.couple.lock.LockScreenWidgetProvider
@@ -613,35 +615,43 @@ class PairConnectionService : Service() {
                             add(msg.stroke)
                         }
                     }
+                    // Legacy stickers[] → Emoji-Striche (gleiche History wie Linien)
+                    val stickersArr = json.optJSONArray("stickers")
+                    val legacyEmoji = if (stickersArr != null) {
+                        buildList {
+                            for (i in 0 until stickersArr.length()) {
+                                val o = stickersArr.optJSONObject(i) ?: continue
+                                val sid = o.optString("id").trim()
+                                val emoji = o.optString("emoji").trim().take(8)
+                                if (sid.isBlank() || emoji.isBlank()) continue
+                                add(
+                                    Stroke(
+                                        id = sid,
+                                        points = listOf(
+                                            StrokePoint(
+                                                x = o.optDouble("x", 0.5).toFloat().coerceIn(0f, 1f),
+                                                y = o.optDouble("y", 0.5).toFloat().coerceIn(0f, 1f)
+                                            )
+                                        ),
+                                        width = 0f,
+                                        isLocal = false,
+                                        nickname = o.optString("nickname")
+                                            .takeIf { it.isNotBlank() && it != "null" },
+                                        emoji = emoji
+                                    )
+                                )
+                            }
+                        }
+                    } else {
+                        emptyList()
+                    }
                     CanvasStore.applyServerHistory(
                         lobbyId = lobby.id,
-                        incoming = strokes,
+                        incoming = strokes + legacyEmoji,
                         replace = replace,
                         done = done
                     )
                     if (done) {
-                        // Stickers immer im Store sichern (auch wenn Leinwand noch zu ist)
-                        val stickersArr = json.optJSONArray("stickers")
-                        if (stickersArr != null) {
-                            val stickers = buildList {
-                                for (i in 0 until stickersArr.length()) {
-                                    val o = stickersArr.optJSONObject(i) ?: continue
-                                    val sid = o.optString("id").trim()
-                                    val emoji = o.optString("emoji").trim().take(8)
-                                    if (sid.isBlank() || emoji.isBlank()) continue
-                                    add(
-                                        com.luv.couple.lock.CanvasSticker(
-                                            id = sid,
-                                            emoji = emoji,
-                                            x = o.optDouble("x", 0.5).toFloat().coerceIn(0f, 1f),
-                                            y = o.optDouble("y", 0.5).toFloat().coerceIn(0f, 1f),
-                                            isLocal = false
-                                        )
-                                    )
-                                }
-                            }
-                            CanvasStore.replaceStickers(lobby.id, stickers)
-                        }
                         scope.launch {
                             _events.emit(PairEvent.HistoryApplied(lobby.id))
                         }
@@ -994,15 +1004,13 @@ class PairConnectionService : Service() {
                 }
             }
             is PairMessage.StickerPlace -> {
-                CanvasStore.upsertRemoteSticker(
-                    com.luv.couple.lock.CanvasSticker(
-                        id = message.id,
-                        emoji = message.emoji,
-                        x = message.x,
-                        y = message.y,
-                        isLocal = false
-                    ),
-                    lobby.id
+                CanvasStore.upsertRemoteEmojiStroke(
+                    id = message.id,
+                    emoji = message.emoji,
+                    x = message.x,
+                    y = message.y,
+                    nickname = message.nickname,
+                    lobbyId = lobby.id
                 )
                 scope.launch {
                     _events.emit(
@@ -1018,7 +1026,7 @@ class PairConnectionService : Service() {
                 }
             }
             is PairMessage.StickerRemove -> {
-                CanvasStore.removeStickerById(message.id, lobby.id, broadcast = false)
+                CanvasStore.removeStrokeById(message.id, lobby.id)
                 scope.launch {
                     _events.emit(PairEvent.StickerRemoved(lobby.id, message.id))
                 }

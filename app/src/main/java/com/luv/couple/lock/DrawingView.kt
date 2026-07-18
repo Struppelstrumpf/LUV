@@ -27,7 +27,6 @@ class DrawingView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     private val strokes = mutableListOf<Stroke>()
-    private val stickers = mutableListOf<CanvasSticker>()
     private val alphas = mutableMapOf<String, Float>()
     private val animators = mutableMapOf<String, ValueAnimator>()
     private val currentPoints = mutableListOf<StrokePoint>()
@@ -139,18 +138,11 @@ class DrawingView @JvmOverloads constructor(
         invalidate()
     }
 
-    fun setStickers(list: List<CanvasSticker>) {
-        stickers.clear()
-        stickers.addAll(list)
-        invalidate()
-    }
-
     fun clearCanvas() {
         animators.values.forEach { it.cancel() }
         animators.clear()
         alphas.clear()
         strokes.clear()
-        stickers.clear()
         currentPoints.clear()
         currentPath.reset()
         invalidate()
@@ -176,22 +168,25 @@ class DrawingView @JvmOverloads constructor(
         canvas.drawColor(canvasBackground)
         if (showDotGrid) drawDotGrid(canvas)
         if (showTicTacToe) drawTicTacToeBoard(canvas)
-        // Emojis unter den Strichen → darüber malen möglich
-        if (stickers.isNotEmpty() && width > 0 && height > 0) {
+        // Reihenfolge = Leinwand-Z-Order (Emojis sind normale Striche)
+        if (width > 0 && height > 0) {
             emojiPaint.textSize = min(width, height) * 0.075f
-            val fm = emojiPaint.fontMetrics
-            val baselinePad = (fm.bottom + fm.top) / 2f
-            stickers.forEach { s ->
-                canvas.drawText(
-                    s.emoji,
-                    s.x * width,
-                    s.y * height - baselinePad,
-                    emojiPaint
-                )
-            }
         }
+        val fm = emojiPaint.fontMetrics
+        val baselinePad = (fm.bottom + fm.top) / 2f
         strokes.forEach { stroke ->
             val alpha = ((alphas[stroke.id] ?: 1f) * 255).toInt().coerceIn(0, 255)
+            if (stroke.isEmoji) {
+                val p = stroke.points.firstOrNull() ?: return@forEach
+                emojiPaint.alpha = alpha
+                canvas.drawText(
+                    stroke.emoji.orEmpty(),
+                    p.x * width,
+                    p.y * height - baselinePad,
+                    emojiPaint
+                )
+                return@forEach
+            }
             val color = CanvasStore.strokeColor(stroke)
             paint.color = Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
             paint.strokeWidth = stroke.width

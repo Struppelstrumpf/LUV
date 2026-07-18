@@ -289,7 +289,6 @@ class LockDrawActivity : ComponentActivity() {
             // Eigene Historie an aktuelle Farbe anpassen (sonst gemischte Farben bis zum Picker)
             CanvasStore.recolorOwnStrokes(snap.colorIndex, lobbyId, broadcast = false)
             drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
-            syncStickersFromStore()
             refreshLegend()
             showLastStrokeMemory(lobbyId)
             lobby?.let { CanvasMemoryKeeper.touch(it) }
@@ -308,7 +307,6 @@ class LockDrawActivity : ComponentActivity() {
         drawingView.onDoubleTapUndo = {
             if (CanvasStore.undoLastLocalStroke(lobbyId)) {
                 drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
-                syncStickersFromStore()
                 flashStatus("Rückgängig")
             }
         }
@@ -317,14 +315,9 @@ class LockDrawActivity : ComponentActivity() {
             drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
         }
         drawingView.onErasePath = { brush ->
-            val strokesChanged = CanvasStore.eraseLocalAlong(brush, lobbyId = lobbyId)
-            val erasedStickers = CanvasStore.eraseStickersAlong(brush, lobbyId = lobbyId)
-            if (strokesChanged) {
+            if (CanvasStore.eraseLocalAlong(brush, lobbyId = lobbyId)) {
                 drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
                 refreshLegend()
-            }
-            if (erasedStickers.isNotEmpty()) {
-                syncStickersFromStore()
             }
         }
 
@@ -360,7 +353,6 @@ class LockDrawActivity : ComponentActivity() {
                             broadcast = false
                         )
                         drawingView.setStrokes(CanvasStore.snapshot(id), animateNew = false)
-                        syncStickersFromStore()
                         refreshLegend()
                     }
                     is PairEvent.ColorAssigned -> if (event.lobbyId == id) {
@@ -368,8 +360,6 @@ class LockDrawActivity : ComponentActivity() {
                     }
                     is PairEvent.Cleared -> if (event.lobbyId == id) {
                         drawingView.clearCanvas()
-                        CanvasStore.replaceStickers(id, emptyList())
-                        syncStickersFromStore()
                         stopAllGamesLocal()
                     }
                     is PairEvent.RecolorReceived -> if (event.lobbyId == id) {
@@ -380,13 +370,13 @@ class LockDrawActivity : ComponentActivity() {
                         showReaction(event.emoji)
                     }
                     is PairEvent.StickerPlaced -> if (event.lobbyId == id) {
-                        syncStickersFromStore()
+                        drawingView.setStrokes(CanvasStore.snapshot(id), animateNew = true)
                     }
                     is PairEvent.StickerRemoved -> if (event.lobbyId == id) {
-                        syncStickersFromStore()
+                        drawingView.setStrokes(CanvasStore.snapshot(id), animateNew = false)
                     }
                     is PairEvent.StickersHistory -> if (event.lobbyId == id) {
-                        syncStickersFromStore()
+                        drawingView.setStrokes(CanvasStore.snapshot(id), animateNew = false)
                     }
                     is PairEvent.GameBoardReceived -> if (event.lobbyId == id) {
                         applyOverlayBoard(event.game, event.visible)
@@ -680,7 +670,7 @@ class LockDrawActivity : ComponentActivity() {
 
     private fun placeEmojiNormalized(emoji: String, nx: Float, ny: Float) {
         CanvasStore.addLocalSticker(emoji, nx, ny, lobbyId) ?: return
-        syncStickersFromStore()
+        drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
     }
 
     private fun openEmojiBarEditor() {
@@ -719,11 +709,6 @@ class LockDrawActivity : ComponentActivity() {
 
     private fun stickerSizePx(): Int =
         (56f * resources.displayMetrics.density).toInt()
-
-    private fun syncStickersFromStore() {
-        if (!::drawingView.isInitialized) return
-        drawingView.setStickers(CanvasStore.snapshotStickers(lobbyId))
-    }
 
     private fun sendReaction(emoji: String) {
         showReaction(emoji)

@@ -31,23 +31,13 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.min
 
-data class CanvasSticker(
-    val id: String,
-    val emoji: String,
-    val x: Float,
-    val y: Float,
-    val isLocal: Boolean = false
-)
-
 object CanvasStore {
     private sealed class LocalUndo {
         data class Stroke(val id: String) : LocalUndo()
-        data class Sticker(val id: String) : LocalUndo()
     }
 
     private data class LobbyCanvas(
         val strokes: CopyOnWriteArrayList<Stroke> = CopyOnWriteArrayList(),
-        val stickers: CopyOnWriteArrayList<CanvasSticker> = CopyOnWriteArrayList(),
         val localStrokeIds: CopyOnWriteArrayList<String> = CopyOnWriteArrayList(),
         val localUndo: CopyOnWriteArrayList<LocalUndo> = CopyOnWriteArrayList(),
         val revision: MutableStateFlow<Long> = MutableStateFlow(0L)
@@ -260,98 +250,73 @@ object CanvasStore {
         }
     }
 
-    fun snapshotStickers(lobbyId: String? = null): List<CanvasSticker> {
-        val id = resolveLobbyId(lobbyId) ?: return emptyList()
-        return canvas(id).stickers.toList()
-    }
-
+    /** Emoji als echter Leinwand-Strich (1 Punkt + emoji-Feld). */
     fun addLocalSticker(
         emoji: String,
         x: Float,
         y: Float,
         lobbyId: String? = null,
         id: String = UUID.randomUUID().toString()
-    ): CanvasSticker? {
+    ): Stroke? {
         val lobby = resolveLobbyId(lobbyId) ?: return null
-        val sticker = CanvasSticker(
+        val emojiText = emoji.trim().take(8)
+        if (emojiText.isEmpty()) return null
+        val stroke = Stroke(
             id = id,
-            emoji = emoji.take(8),
-            x = x.coerceIn(0.05f, 0.95f),
-            y = y.coerceIn(0.05f, 0.95f),
-            isLocal = true
+            points = listOf(
+                StrokePoint(
+                    x = x.coerceIn(0.05f, 0.95f),
+                    y = y.coerceIn(0.05f, 0.95f)
+                )
+            ),
+            width = 0f,
+            isLocal = true,
+            nickname = cachedNickname,
+            colorIndex = cachedColorIndex,
+            authorId = AccountSession.account.value?.id?.takeIf { it.isNotBlank() },
+            emoji = emojiText
         )
         val c = canvas(lobby)
-        c.stickers.removeAll { it.id == sticker.id }
-        c.stickers.add(sticker)
-        pushUndo(c, LocalUndo.Sticker(sticker.id))
+        if (c.strokes.any { it.id == stroke.id }) return null
+        c.strokes.add(stroke)
+        c.localStrokeIds.add(stroke.id)
+        pushUndo(c, LocalUndo.Stroke(stroke.id))
+        touchStroke(lobby, cachedNickname)
         bump(lobby)
         if (::appContext.isInitialized) {
-            PairConnectionService.sendStickerPlace(
+            PairConnectionService.sendStroke(
                 appContext,
-                sticker.id,
-                sticker.emoji,
-                sticker.x,
-                sticker.y,
+                PairProtocol.encode(PairMessage.StrokeMsg(stroke)),
                 lobby
             )
         }
-        return sticker
+        return stroke
     }
 
-    fun upsertRemoteSticker(sticker: CanvasSticker, lobbyId: String) {
-        val c = canvas(lobbyId)
-        c.stickers.removeAll { it.id == sticker.id }
-        c.stickers.add(sticker.copy(isLocal = false))
-        bump(lobbyId)
-    }
-
-    fun replaceStickers(lobbyId: String, stickers: List<CanvasSticker>) {
-        val c = canvas(lobbyId)
-        c.stickers.clear()
-        c.stickers.addAll(stickers)
-        c.localUndo.removeAll { it is LocalUndo.Sticker }
-        bump(lobbyId)
-    }
-
-    fun removeStickerById(stickerId: String, lobbyId: String, broadcast: Boolean = false) {
-        val c = canvas(lobbyId)
-        val removed = c.stickers.removeAll { it.id == stickerId }
-        c.localUndo.removeAll { it is LocalUndo.Sticker && it.id == stickerId }
-        if (!removed) return
-        bump(lobbyId)
-        if (broadcast && ::appContext.isInitialized) {
-            PairConnectionService.sendStickerRemove(appContext, stickerId, lobbyId)
-        }
-    }
-
-    /** Schwamm: Emojis im Pinselradius entfernen. */
-    fun eraseStickersAlong(
-        brush: List<StrokePoint>,
-        radius: Float = 0.05f,
-        lobbyId: String? = null
-    ): List<String> {
-        if (brush.isEmpty()) return emptyList()
-        val id = resolveLobbyId(lobbyId) ?: return emptyList()
-        val c = canvas(id)
-        val r2 = radius * radius
-        val hit = c.stickers.filter { s ->
-            brush.any { b ->
-                val dx = s.x - b.x
-                val dy = s.y - b.y
-                dx * dx + dy * dy <= r2
-            }
-        }
-        if (hit.isEmpty()) return emptyList()
-        val ids = hit.map { it.id }
-        c.stickers.removeAll { it.id in ids }
-        c.localUndo.removeAll { it is LocalUndo.Sticker && it.id in ids }
-        bump(id)
-        if (::appContext.isInitialized) {
-            ids.forEach { sid ->
-                PairConnectionService.sendStickerRemove(appContext, sid, id)
-            }
-        }
-        return ids
+    /** Legacy sticker_place → als Emoji-Strich einfügen. */
+    fun upsertRemoteEmojiStroke(
+        id: String,
+        emoji: String,
+        x: Float,
+        y: Float,
+        nickname: String?,
+        lobbyId: String
+    ) {
+        val emojiText = emoji.trim().take(8)
+        if (emojiText.isEmpty()) return
+        addRemoteStroke(
+            Stroke(
+                id = id,
+                points = listOf(
+                    StrokePoint(x.coerceIn(0f, 1f), y.coerceIn(0f, 1f))
+                ),
+                width = 0f,
+                isLocal = false,
+                nickname = nickname,
+                emoji = emojiText
+            ),
+            lobbyId
+        )
     }
 
     private fun pushUndo(c: LobbyCanvas, action: LocalUndo) {
@@ -404,15 +369,6 @@ object CanvasStore {
                 }
                 true
             }
-            is LocalUndo.Sticker -> {
-                val removed = c.stickers.removeAll { it.id == action.id }
-                if (!removed) return false
-                bump(id)
-                if (::appContext.isInitialized) {
-                    PairConnectionService.sendStickerRemove(appContext, action.id, id)
-                }
-                true
-            }
         }
     }
 
@@ -436,7 +392,25 @@ object CanvasStore {
         }
         if (mine.isEmpty()) return false
         var changed = false
+        val emojiR2 = 0.05f * 0.05f
         for (stroke in mine) {
+            if (stroke.isEmoji) {
+                val p = stroke.points.firstOrNull() ?: continue
+                val hit = brush.any { b ->
+                    val dx = p.x - b.x
+                    val dy = p.y - b.y
+                    dx * dx + dy * dy <= emojiR2
+                }
+                if (!hit) continue
+                c.strokes.removeAll { it.id == stroke.id }
+                c.localStrokeIds.remove(stroke.id)
+                c.localUndo.removeAll { it is LocalUndo.Stroke && it.id == stroke.id }
+                if (::appContext.isInitialized) {
+                    PairConnectionService.sendUndo(appContext, stroke.id, id)
+                }
+                changed = true
+                continue
+            }
             val strokeRadius = radius + (stroke.width / 1100f).coerceIn(0.008f, 0.03f)
             val fragments = splitStrokeAwayFromBrush(stroke.points, brush, strokeRadius)
             val unchanged = fragments.size == 1 && fragments[0].size == stroke.points.size &&
@@ -459,7 +433,8 @@ object CanvasStore {
                     colorIndex = stroke.colorIndex,
                     authorId = stroke.authorId
                         ?: AccountSession.account.value?.id?.takeIf { it.isNotBlank() },
-                    gender = stroke.gender
+                    gender = stroke.gender,
+                    emoji = stroke.emoji
                 )
                 c.strokes.add(neu)
                 c.localStrokeIds.add(neu.id)
@@ -568,7 +543,6 @@ object CanvasStore {
         val id = resolveLobbyId(lobbyId) ?: return
         val c = canvas(id)
         c.strokes.clear()
-        c.stickers.clear()
         c.localStrokeIds.clear()
         c.localUndo.clear()
         historyBackup.remove(id)
@@ -606,7 +580,6 @@ object CanvasStore {
         val id = resolveLobbyId(lobbyId)
         val room = id?.let { canvas(it) }
         val strokes = room?.strokes?.toList().orEmpty()
-        val stickers = room?.stickers?.toList().orEmpty()
         val bitmap = Bitmap.createBitmap(width.coerceAtLeast(1), height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(background)
@@ -615,25 +588,24 @@ object CanvasStore {
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
         }
-        // Emojis zuerst — Striche liegen darüber (wie auf der Live-Leinwand)
-        if (stickers.isNotEmpty()) {
-            val emojiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                textAlign = Paint.Align.CENTER
-                textSize = min(width, height) * 0.075f
-                typeface = Typeface.DEFAULT
-            }
-            val fm = emojiPaint.fontMetrics
-            val baselinePad = (fm.bottom + fm.top) / 2f
-            stickers.forEach { s ->
+        val emojiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.CENTER
+            textSize = min(width, height) * 0.075f
+            typeface = Typeface.DEFAULT
+        }
+        val fm = emojiPaint.fontMetrics
+        val baselinePad = (fm.bottom + fm.top) / 2f
+        strokes.forEach { stroke ->
+            if (stroke.isEmoji) {
+                val p = stroke.points.firstOrNull() ?: return@forEach
                 canvas.drawText(
-                    s.emoji,
-                    s.x * width,
-                    s.y * height - baselinePad,
+                    stroke.emoji.orEmpty(),
+                    p.x * width,
+                    p.y * height - baselinePad,
                     emojiPaint
                 )
+                return@forEach
             }
-        }
-        strokes.forEach { stroke ->
             if (stroke.points.isEmpty()) return@forEach
             paint.color = strokeColor(stroke)
             paint.strokeWidth = stroke.width
@@ -702,6 +674,7 @@ object CanvasStore {
                         .put("colorIndex", stroke.colorIndex)
                         .put("authorId", stroke.authorId)
                         .put("isLocal", stroke.isLocal)
+                        .put("emoji", stroke.emoji)
                         .put("points", points)
                 )
             }
@@ -739,7 +712,9 @@ object CanvasStore {
                         )
                     }
                 }
-                if (points.size < 2) continue
+                val emoji = o.optString("emoji").takeIf { it.isNotBlank() && it != "null" }?.take(8)
+                if (emoji == null && points.size < 2) continue
+                if (emoji != null && points.isEmpty()) continue
                 val nickname = o.optString("nickname").takeIf { it.isNotBlank() && it != "null" }
                 val mine = o.optBoolean("isLocal", false) ||
                     (!nick.isNullOrBlank() && nickname.equals(nick, ignoreCase = true))
@@ -750,7 +725,8 @@ object CanvasStore {
                     isLocal = mine,
                     nickname = nickname,
                     colorIndex = o.optInt("colorIndex", 0),
-                    authorId = o.optString("authorId").takeIf { it.isNotBlank() && it != "null" }
+                    authorId = o.optString("authorId").takeIf { it.isNotBlank() && it != "null" },
+                    emoji = emoji
                 )
                 if (target.strokes.any { it.id == stroke.id }) continue
                 target.strokes.add(stroke)

@@ -373,6 +373,7 @@ function sanitizeStoredStroke(raw) {
   if (!raw || typeof raw !== "object") return null;
   const id = String(raw.id || "").trim();
   if (!id || id.length > 80) return null;
+  const emoji = String(raw.emoji || "").trim().slice(0, 8) || null;
   const pointsIn = Array.isArray(raw.points) ? raw.points : [];
   const points = [];
   for (const p of pointsIn) {
@@ -386,15 +387,62 @@ function sanitizeStoredStroke(raw) {
     });
     if (points.length >= MAX_POINTS_PER_STROKE) break;
   }
-  if (points.length < 2) return null;
-  return {
+  // Emoji-Zeichnung: 1 Punkt reicht; Linien brauchen ≥2
+  if (emoji) {
+    if (!points.length) return null;
+  } else if (points.length < 2) {
+    return null;
+  }
+  const out = {
     id,
     points,
-    width: Math.min(48, Math.max(4, Number(raw.width) || 18)),
+    width: emoji
+      ? Math.min(48, Math.max(0, Number(raw.width) || 0))
+      : Math.min(48, Math.max(4, Number(raw.width) || 18)),
     nickname: String(raw.nickname || "").trim().slice(0, 18) || null,
     colorIndex: Math.max(0, Math.min(31, Number(raw.colorIndex) || 0)),
     authorId: String(raw.authorId || "").trim().slice(0, 64) || null,
   };
+  if (emoji) out.emoji = emoji;
+  return out;
+}
+
+function migrateLegacyStickersIntoStrokes(room, code) {
+  if (!room || room._stickersMigrated) return;
+  room._stickersMigrated = true;
+  const legacy = loadRoomStickers(code);
+  const memory = Array.isArray(room.stickers) ? room.stickers : [];
+  if (!legacy.length && !memory.length) return;
+  if (!Array.isArray(room.strokes)) {
+    room.strokes = loadRoomStrokes(code);
+  }
+  const list = room.strokes;
+  const ids = new Set(list.map((s) => s.id));
+  let added = 0;
+  for (const s of [...memory, ...legacy]) {
+    const sticker = sanitizeStoredSticker(s);
+    if (!sticker || ids.has(sticker.id)) continue;
+    const stroke = sanitizeStoredStroke({
+      id: sticker.id,
+      points: [{ x: sticker.x, y: sticker.y }],
+      width: 0,
+      emoji: sticker.emoji,
+      nickname: sticker.nickname,
+      colorIndex: 0,
+    });
+    if (!stroke) continue;
+    list.push(stroke);
+    ids.add(stroke.id);
+    added += 1;
+  }
+  if (added > 0) {
+    while (list.length > MAX_STROKES_PER_ROOM) list.shift();
+    room.strokes = list;
+    scheduleStrokeSave(code, room);
+  }
+  // Legacy-Datei leeren — Emojis leben in strokes.json
+  room.stickers = [];
+  scheduleStickerSave(code, room);
 }
 
 function ensureRoomStrokes(room, code) {
@@ -402,6 +450,7 @@ function ensureRoomStrokes(room, code) {
   if (!Array.isArray(room.strokes)) {
     room.strokes = loadRoomStrokes(code);
   }
+  migrateLegacyStickersIntoStrokes(room, code);
   return room.strokes;
 }
 
@@ -448,14 +497,31 @@ function strokeFromSocketMessage(json, socket) {
     colorIndex:
       json?.colorIndex != null ? json.colorIndex : socket?.luvColorIndex || 0,
     authorId,
+    emoji: json?.emoji,
   });
   return base;
+}
+
+function stickersFromEmojiStrokes(strokes) {
+  // Für ältere Clients: Emoji-Striche auch als stickers[] spiegeln
+  const out = [];
+  for (const s of strokes || []) {
+    if (!s || !s.emoji || !Array.isArray(s.points) || !s.points.length) continue;
+    out.push({
+      id: s.id,
+      emoji: s.emoji,
+      x: s.points[0].x,
+      y: s.points[0].y,
+      nickname: s.nickname || null,
+    });
+  }
+  return out;
 }
 
 function sendCanvasHistory(socket, room, code) {
   if (!socket || socket.readyState !== 1) return;
   const strokes = ensureRoomStrokes(room, code);
-  const stickers = ensureRoomStickers(room, code);
+  const stickers = stickersFromEmojiStrokes(strokes);
   if (!strokes.length) {
     socket.send(
       JSON.stringify({
@@ -5029,7 +5095,7 @@ wss.on("connection", (socket, req) => {
       appendRoomStroke(room, code, stored);
       touchCanvasActivity(room, room.sockets.size);
       // Relayed payload aus normalisiertem Stroke (stabile History)
-      const relay = JSON.stringify({
+      const relayPayload = {
         type: "stroke",
         id: stored.id,
         width: stored.width,
@@ -5037,10 +5103,27 @@ wss.on("connection", (socket, req) => {
         colorIndex: stored.colorIndex,
         authorId: stored.authorId,
         points: stored.points,
-      });
+      };
+      if (stored.emoji) relayPayload.emoji = stored.emoji;
+      const relay = JSON.stringify(relayPayload);
       for (const [id, peer] of room.sockets.entries()) {
         if (id === peerId) continue;
         if (peer.readyState === 1) peer.send(relay);
+      }
+      // Legacy: Emoji-Strich zusätzlich als sticker_place für alte Clients
+      if (stored.emoji && stored.points?.[0]) {
+        const legacy = JSON.stringify({
+          type: "sticker_place",
+          id: stored.id,
+          emoji: stored.emoji,
+          x: stored.points[0].x,
+          y: stored.points[0].y,
+          nickname: stored.nickname,
+        });
+        for (const [id, peer] of room.sockets.entries()) {
+          if (id === peerId) continue;
+          if (peer.readyState === 1) peer.send(legacy);
+        }
       }
       return;
     }
@@ -5050,6 +5133,7 @@ wss.on("connection", (socket, req) => {
     }
 
     if (type === "sticker_place") {
+      // Legacy → als Emoji-Strich in die gleiche History wie Linien
       const sticker = sanitizeStoredSticker({
         id: json.id,
         emoji: json.emoji,
@@ -5058,9 +5142,29 @@ wss.on("connection", (socket, req) => {
         nickname: json.nickname || socket.luvNickname || null,
       });
       if (!sticker) return;
-      appendRoomSticker(room, code, sticker);
+      const stored = sanitizeStoredStroke({
+        id: sticker.id,
+        points: [{ x: sticker.x, y: sticker.y }],
+        width: 0,
+        emoji: sticker.emoji,
+        nickname: sticker.nickname,
+        colorIndex: socket.luvColorIndex || 0,
+        authorId: socket.luvUserId || socket.luvPeerId || null,
+      });
+      if (!stored) return;
+      appendRoomStroke(room, code, stored);
       touchCanvasActivity(room, room.sockets.size);
-      const relay = JSON.stringify({
+      const strokeRelay = JSON.stringify({
+        type: "stroke",
+        id: stored.id,
+        width: stored.width,
+        nickname: stored.nickname,
+        colorIndex: stored.colorIndex,
+        authorId: stored.authorId,
+        points: stored.points,
+        emoji: stored.emoji,
+      });
+      const stickerRelay = JSON.stringify({
         type: "sticker_place",
         id: sticker.id,
         emoji: sticker.emoji,
@@ -5070,7 +5174,9 @@ wss.on("connection", (socket, req) => {
       });
       for (const [id, peer] of room.sockets.entries()) {
         if (id === peerId) continue;
-        if (peer.readyState === 1) peer.send(relay);
+        if (peer.readyState !== 1) continue;
+        peer.send(strokeRelay);
+        peer.send(stickerRelay);
       }
       return;
     }
@@ -5078,12 +5184,15 @@ wss.on("connection", (socket, req) => {
     if (type === "sticker_remove") {
       const sid = String(json.id || "").trim();
       if (!sid) return;
-      removeRoomSticker(room, code, sid);
+      removeRoomStroke(room, code, sid);
       touchCanvasActivity(room, room.sockets.size);
+      const undoRelay = JSON.stringify({ type: "undo", id: sid });
       const relay = JSON.stringify({ type: "sticker_remove", id: sid });
       for (const [id, peer] of room.sockets.entries()) {
         if (id === peerId) continue;
-        if (peer.readyState === 1) peer.send(relay);
+        if (peer.readyState !== 1) continue;
+        peer.send(undoRelay);
+        peer.send(relay);
       }
       return;
     }
