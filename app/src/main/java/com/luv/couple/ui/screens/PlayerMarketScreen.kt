@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -54,6 +55,7 @@ import com.luv.couple.LuvApp
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.profile.ProfileCatalog
+import com.luv.couple.profile.ProfileThemeBackdrop
 import com.luv.couple.shop.ShopCatalog
 import com.luv.couple.ui.UiScale
 import com.luv.couple.ui.rememberUiScale
@@ -638,24 +640,26 @@ private fun MarketItemPreviewDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (item.category == "themes" || item.kind == "themes") {
-                    val theme = ProfileCatalog.theme(item.itemId)
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(150.dp)
+                            .aspectRatio(1.12f)
                             .clip(RoundedCornerShape(16.dp))
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color(theme.skyTop),
-                                        Color(theme.skyBottom),
-                                        Color(theme.groundBottom)
-                                    )
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
                     ) {
-                        Text(item.emoji, fontSize = 48.sp)
+                        ProfileThemeBackdrop(
+                            themeId = item.itemId,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        Text(
+                            item.emoji,
+                            fontSize = 28.sp,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 10.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color.Black.copy(0.35f))
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
                     }
                 } else {
                     Box(
@@ -742,20 +746,19 @@ private fun MarketItemRow(
                     .size(ui.s(44.dp))
                     .clip(RoundedCornerShape(ui.s(10.dp)))
                     .then(
-                        if (item.category == "themes" || item.kind == "themes") {
-                            val theme = ProfileCatalog.theme(item.itemId)
-                            Modifier.background(
-                                Brush.verticalGradient(
-                                    listOf(Color(theme.skyTop), Color(theme.groundBottom))
-                                )
-                            )
-                        } else {
+                        if (item.category != "themes" && item.kind != "themes") {
                             Modifier.background(MarketCreamDeep)
-                        }
+                        } else Modifier
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Text(item.emoji, fontSize = ui.ts(24.sp))
+                if (item.category == "themes" || item.kind == "themes") {
+                    ProfileThemeBackdrop(
+                        themeId = item.itemId,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                Text(item.emoji, fontSize = ui.ts(20.sp))
             }
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

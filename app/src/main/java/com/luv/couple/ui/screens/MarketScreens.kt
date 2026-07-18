@@ -760,38 +760,33 @@ private fun ItemShopContent(
 
 @Composable
 private fun ThemePreviewCard(themeId: String, emoji: String, label: String) {
-    val theme = ProfileCatalog.theme(themeId)
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(160.dp)
+            .aspectRatio(1.12f)
             .clip(RoundedCornerShape(18.dp))
             .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(18.dp))
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            Color(theme.skyTop),
-                            Color(theme.skyBottom),
-                            Color(theme.groundTop),
-                            Color(theme.groundBottom)
-                        )
-                    )
-                )
+        // Wie auf der Profil-Leinwand (Himmel, Boden, Effekt)
+        com.luv.couple.profile.ProfileThemeBackdrop(
+            themeId = themeId,
+            modifier = Modifier.fillMaxSize()
         )
         Column(
-            modifier = Modifier.align(Alignment.Center),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 12.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.Black.copy(0.35f))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(emoji, fontSize = 48.sp)
+            Text(emoji, fontSize = 22.sp)
             Text(
                 label,
                 color = Color.White,
                 fontFamily = DisplayFont,
-                fontSize = 16.sp
+                fontSize = 14.sp
             )
         }
     }
@@ -811,31 +806,30 @@ private fun ShopGridCell(
             .aspectRatio(1f)
             .clip(RoundedCornerShape(16.dp))
             .then(
-                if (themeId != null) {
-                    val theme = ProfileCatalog.theme(themeId)
-                    Modifier.background(
-                        Brush.verticalGradient(
-                            listOf(
-                                Color(theme.skyTop),
-                                Color(theme.groundBottom)
-                            )
-                        )
-                    )
-                } else {
-                    Modifier.background(BgSoft)
-                }
+                if (themeId == null) Modifier.background(BgSoft) else Modifier
             )
             .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(16.dp))
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(8.dp)
     ) {
-        Text(emoji, fontSize = 32.sp, modifier = Modifier.align(Alignment.Center))
+        if (themeId != null) {
+            com.luv.couple.profile.ProfileThemeBackdrop(
+                themeId = themeId,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        Text(
+            emoji,
+            fontSize = 32.sp,
+            modifier = Modifier.align(Alignment.Center)
+        )
         Text(
             if (price <= 0) "frei" else "$price",
             color = if (themeId != null) Color.White else AccentRose,
             fontFamily = DisplayFont,
             fontSize = 12.sp,
-            modifier = Modifier.align(Alignment.BottomStart)
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(8.dp)
         )
         if (ownedLabel != null) {
             Text(
@@ -843,7 +837,9 @@ private fun ShopGridCell(
                 color = if (themeId != null) Color.White.copy(0.9f) else TextMuted,
                 fontFamily = BodyFont,
                 fontSize = 11.sp,
-                modifier = Modifier.align(Alignment.BottomEnd)
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
             )
         }
     }

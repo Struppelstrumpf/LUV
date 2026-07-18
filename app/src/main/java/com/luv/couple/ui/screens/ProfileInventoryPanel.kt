@@ -46,6 +46,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.luv.couple.profile.ProfileCatalog
 import com.luv.couple.profile.ProfileTheme
+import com.luv.couple.profile.ProfileThemeBackdrop
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -281,28 +282,38 @@ fun ProfileInventoryPanel(
                     ) {
                         items(themeItems, key = { it.id }) { theme ->
                             val on = theme.id == currentThemeId
-                            Column(
+                            Box(
                                 modifier = Modifier
+                                    .aspectRatio(1.12f)
                                     .clip(RoundedCornerShape(s(14.dp)))
-                                    .background(if (on) AccentRose.copy(0.2f) else BgSoft)
                                     .border(
                                         1.dp,
-                                        if (on) AccentRose.copy(0.65f) else Color.White.copy(0.08f),
+                                        if (on) AccentRose.copy(0.85f) else Color.White.copy(0.08f),
                                         RoundedCornerShape(s(14.dp))
                                     )
                                     .clickable { onTheme(theme) }
-                                    .padding(s(10.dp)),
-                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Text(theme.emoji, fontSize = ts(26.sp))
-                                Spacer(modifier = Modifier.height(s(4.dp)))
-                                Text(
-                                    theme.label,
-                                    color = TextPrimary,
-                                    fontFamily = BodyFont,
-                                    fontSize = ts(11.sp),
-                                    maxLines = 1
+                                ProfileThemeBackdrop(
+                                    theme = theme,
+                                    modifier = Modifier.fillMaxSize()
                                 )
+                                Column(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .fillMaxWidth()
+                                        .background(Color.Black.copy(0.32f))
+                                        .padding(vertical = s(4.dp), horizontal = s(4.dp)),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(theme.emoji, fontSize = ts(16.sp))
+                                    Text(
+                                        theme.label,
+                                        color = Color.White,
+                                        fontFamily = BodyFont,
+                                        fontSize = ts(10.sp),
+                                        maxLines = 1
+                                    )
+                                }
                             }
                         }
                     }

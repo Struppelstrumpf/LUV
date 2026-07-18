@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.71",
+            listOf(
+                "Hintergründe: Vorschau wie auf der Profil-Leinwand",
+            )
+        ),
+        Entry(
             "1.9.70",
             listOf(
                 "Marktplatz: gleiche Tab-Namen wie Itemshop & Inventar",
