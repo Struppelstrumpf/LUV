@@ -10,8 +10,11 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,6 +23,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,7 +36,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -274,6 +277,7 @@ fun LobbiesScreen(
         .collectAsStateWithLifecycle(initialValue = null)
     var showReportDialog by remember { mutableStateOf(false) }
     var reportBusy by remember { mutableStateOf(false) }
+    var showLobbyPlusDialog by remember { mutableStateOf(false) }
     var orderedLobbies by remember { mutableStateOf(lobbies) }
     var dragLobbyId by remember { mutableStateOf<String?>(null) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
@@ -434,6 +438,9 @@ fun LobbiesScreen(
             val equippedPet by LuvApp.instance.prefs.equippedPetFlow
                 .collectAsStateWithLifecycle(initialValue = com.luv.couple.shop.ShopCatalog.DEFAULT_PET)
             Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Min),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -470,6 +477,70 @@ fun LobbiesScreen(
                         fontSize = 13.sp
                     )
                 }
+                if (orderedLobbies.size < PeerPalette.MAX_LOBBIES) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .aspectRatio(1f)
+                            .clip(CircleShape)
+                            .background(accent)
+                            .clickable { showLobbyPlusDialog = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "+",
+                            color = Color.White,
+                            fontFamily = DisplayFont,
+                            fontSize = 36.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            if (showLobbyPlusDialog) {
+                AlertDialog(
+                    onDismissRequest = { showLobbyPlusDialog = false },
+                    title = {
+                        Text(
+                            "Lobby",
+                            fontFamily = DisplayFont,
+                            color = TextPrimary,
+                            fontSize = 22.sp
+                        )
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            PrimaryButton(
+                                label = if (canCreateFreeLobby) {
+                                    "Neue Lobby"
+                                } else {
+                                    "Neue Lobby · ${PeerPalette.LOBBY_CREATE_COST} Coins"
+                                },
+                                color = accent,
+                                onClick = {
+                                    showLobbyPlusDialog = false
+                                    onCreateLobby()
+                                }
+                            )
+                            PrimaryButton(
+                                "Beitreten",
+                                BgSoft,
+                                {
+                                    showLobbyPlusDialog = false
+                                    onJoinLobby()
+                                },
+                                bordered = true
+                            )
+                        }
+                    },
+                    confirmButton = {},
+                    dismissButton = {
+                        TextButton(onClick = { showLobbyPlusDialog = false }) {
+                            Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
+                        }
+                    }
+                )
             }
 
             if (!error.isNullOrBlank()) {
@@ -535,19 +606,6 @@ fun LobbiesScreen(
                         onReconnect = { onReconnect(lobby) }
                     )
                 }
-            }
-
-            if (orderedLobbies.size < PeerPalette.MAX_LOBBIES) {
-                PrimaryButton(
-                    label = if (canCreateFreeLobby) {
-                        "Neue Lobby"
-                    } else {
-                        "Neue Lobby · ${PeerPalette.LOBBY_CREATE_COST} Coins"
-                    },
-                    color = accent,
-                    onClick = onCreateLobby
-                )
-                PrimaryButton("Beitreten", BgSoft, onJoinLobby, bordered = true)
             }
 
             Spacer(modifier = Modifier.height(12.dp))

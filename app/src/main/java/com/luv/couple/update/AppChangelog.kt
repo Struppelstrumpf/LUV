@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.78",
+            listOf(
+                "Hauptmenü: Plus-Kreis für Neue Lobby / Beitreten",
+                "Vorlagen: Platzierung sitzt genau dort, wo du sie hinziehst",
+            )
+        ),
+        Entry(
             "1.9.77",
             listOf(
                 "Markt-Kacheln mit Badges & Coinshop-Bildern",

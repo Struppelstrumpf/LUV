@@ -944,20 +944,22 @@ class LockDrawActivity : ComponentActivity() {
     }
 
     private fun beginTemplatePlacement(parts: List<TemplateStrokePart>) {
-        val root = rootView ?: return
+        if (!::stickerOverlay.isInitialized || !::drawingView.isInitialized) return
         dismissTemplatePlacement()
         if (parts.isEmpty()) return
+        // Overlay genau über der Leinwand (nicht Fullscreen) — sonst Y-Versatz beim Platzieren
         val view = TemplatePlacementView(this).apply {
             this.parts = parts
             centerXNorm = 0.5f
-            centerYNorm = 0.45f
+            centerYNorm = 0.5f
             scaleFactor = 1f
             rotationDeg = 0f
             onConfirm = { cx, cy, scale, rot ->
+                val mapped = mapTemplateNormToDrawingView(cx, cy)
                 CanvasStore.addLocalTemplate(
                     parts = parts,
-                    x = cx,
-                    y = cy,
+                    x = mapped.first,
+                    y = mapped.second,
                     scale = scale,
                     rotation = rot,
                     lobbyId = lobbyId
@@ -967,7 +969,9 @@ class LockDrawActivity : ComponentActivity() {
             }
             onCancel = { dismissTemplatePlacement() }
         }
-        root.addView(
+        stickerOverlay.isClickable = true
+        stickerOverlay.isFocusable = true
+        stickerOverlay.addView(
             view,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -977,9 +981,36 @@ class LockDrawActivity : ComponentActivity() {
         templatePlacementView = view
     }
 
+    /** Normierte Overlay-Koordinaten → DrawingView (gleiche Fläche, Fallback 1:1). */
+    private fun mapTemplateNormToDrawingView(nx: Float, ny: Float): Pair<Float, Float> {
+        if (!::drawingView.isInitialized || !::stickerOverlay.isInitialized) {
+            return nx.coerceIn(0.05f, 0.95f) to ny.coerceIn(0.05f, 0.95f)
+        }
+        val overlayLoc = IntArray(2)
+        val drawLoc = IntArray(2)
+        stickerOverlay.getLocationOnScreen(overlayLoc)
+        drawingView.getLocationOnScreen(drawLoc)
+        val ow = stickerOverlay.width.coerceAtLeast(1).toFloat()
+        val oh = stickerOverlay.height.coerceAtLeast(1).toFloat()
+        val dw = drawingView.width.coerceAtLeast(1).toFloat()
+        val dh = drawingView.height.coerceAtLeast(1).toFloat()
+        val screenX = overlayLoc[0] + nx * ow
+        val screenY = overlayLoc[1] + ny * oh
+        val localX = ((screenX - drawLoc[0]) / dw).coerceIn(0.05f, 0.95f)
+        val localY = ((screenY - drawLoc[1]) / dh).coerceIn(0.05f, 0.95f)
+        return localX to localY
+    }
+
     private fun dismissTemplatePlacement() {
-        val root = rootView ?: return
-        templatePlacementView?.let { root.removeView(it) }
+        templatePlacementView?.let { v ->
+            if (::stickerOverlay.isInitialized) {
+                stickerOverlay.removeView(v)
+                stickerOverlay.isClickable = false
+                stickerOverlay.isFocusable = false
+            } else {
+                rootView?.removeView(v)
+            }
+        }
         templatePlacementView = null
     }
 
