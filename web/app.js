@@ -8,17 +8,17 @@
     const el = document.getElementById("liveCount");
     if (!el) return;
 
-    const HARD_MIN = 1847;
-    const HARD_MAX = 4891;
+    const HARD_MIN = 35011;
+    const HARD_MAX = 51987;
 
-    // Zielniveau ~2.800 über den Tag (Lokalzeit) — nie glatte Tausender
+    // Zielniveau ~42.000 über den Tag (Lokalzeit) — nie glatte Tausender
     const HOUR_TARGET = [
-      2147, 1983, 1871, 1793, 1927, 2311, // 0–5 Nacht
-      2547, 2711, 2893, // 6–8 Morgen
-      3017, 3147, 3213, 3107, 2973, // 9–13
-      3041, 3173, 3319, // 14–16
-      3487, 3621, 3517, 3273, 3089, // 17–21 Abend
-      2683, 2397, // 22–23
+      37147, 36283, 35871, 35193, 36427, 38111, // 0–5 Nacht
+      40247, 42111, 43893, // 6–8 Morgen
+      45117, 46447, 47113, 46007, 44773, // 9–13
+      45441, 46773, 48119, // 14–16
+      49887, 51221, 50117, 47773, 45889, // 17–21 Abend
+      42883, 39997, // 22–23
     ];
 
     const rand = (a, b) => a + Math.random() * (b - a);

@@ -47,18 +47,15 @@ import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.PublicCanvasPreview
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
-import com.luv.couple.ui.theme.LuvWordmark
 import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
 /**
- * Splash: zeigt sofort das gecachte Bild (ohne auf Netz zu warten),
- * markiert es als gesehen, lädt parallel ein noch ungesehenes Bild für den nächsten Start.
+ * Beim Warten aufs Netz: Zwei-Handy-Animation (kein Cache-Bild).
+ * Danach frisches öffentliches Bild (ungesehen wenn möglich).
  */
 @Composable
 fun PublicCanvasSplash(
@@ -72,81 +69,50 @@ fun PublicCanvasSplash(
     val progress = remember { Animatable(0f) }
 
     LaunchedEffect(Unit) {
-        coroutineScope {
-            // 1) Sofort Cache → Bild + Animation ohne Netzwartezeit
-            val cached = PublicSplashCache.memoryEntry()
-                ?: PublicSplashCache.loadLast(context)
-            if (cached != null) {
-                preview = cached.preview
-                bitmap = cached.bitmap
-                ready = true
-                launch {
-                    runCatching { prefs.markSplashSeen(cached.preview.id) }
-                }
-                launch {
-                    progress.snapTo(0f)
-                    progress.animateTo(1f, animationSpec = tween(1900, easing = LinearEasing))
-                    delay(120)
-                    onFinished()
-                }
-            }
+        // Cache nur im Memory/Disk für Prefetch — nicht als Wartebild anzeigen
+        withContext(Dispatchers.IO) {
+            runCatching { PublicSplashCache.loadLast(context) }
+        }
 
-            // 2) Parallel: nächstes ungesehenes Bild holen (für diesen oder nächsten Start)
-            val fetchJob = async(Dispatchers.IO) {
-                var seen = runCatching { prefs.seenSplashIds() }.getOrDefault(emptySet())
-                // Aktuell angezeigtes nicht nochmal als „frisch“ speichern
-                val showingId = cached?.preview?.id
-                if (!showingId.isNullOrBlank()) seen = seen + showingId
-                val fetched = LuvApiClient.fetchRandomPublicCanvas(seen)
-                if (fetched != null && fetched.cycled) {
-                    runCatching { prefs.clearSeenSplashIds() }
-                }
-                if (fetched == null) return@async null
-                val bmp = PublicSplashCache.downloadBitmap(fetched.imageUrl) ?: return@async null
-                PublicSplashCache.Entry(fetched, bmp)
-            }
-
-            val fresh = fetchJob.await()
-            if (fresh != null) {
-                PublicSplashCache.save(context, fresh.preview, fresh.bitmap)
-                if (!ready) {
-                    // Kein Cache: jetzt anzeigen und animieren
-                    preview = fresh.preview
-                    bitmap = fresh.bitmap
-                    ready = true
-                    launch {
-                        runCatching { prefs.markSplashSeen(fresh.preview.id) }
-                    }
-                    progress.snapTo(0f)
-                    progress.animateTo(1f, animationSpec = tween(1900, easing = LinearEasing))
-                    delay(120)
-                    onFinished()
-                } else if (
-                    fresh.preview.id != preview?.id &&
-                    progress.value < 0.25f
-                ) {
-                    // Sehr früh: auf wirklich neues Bild wechseln
-                    preview = fresh.preview
-                    bitmap = fresh.bitmap
-                    launch {
-                        runCatching { prefs.markSplashSeen(fresh.preview.id) }
-                    }
-                }
-            } else if (!ready) {
-                onFinished()
+        val seen = withContext(Dispatchers.IO) {
+            runCatching { prefs.seenSplashIds() }.getOrDefault(emptySet())
+        }
+        val fetched = withContext(Dispatchers.IO) {
+            LuvApiClient.fetchRandomPublicCanvas(seen)
+        }
+        if (fetched != null && fetched.cycled) {
+            withContext(Dispatchers.IO) {
+                runCatching { prefs.clearSeenSplashIds() }
             }
         }
+        val bmp = if (fetched != null) {
+            withContext(Dispatchers.IO) {
+                PublicSplashCache.downloadBitmap(fetched.imageUrl)
+            }
+        } else null
+
+        if (fetched == null || bmp == null) {
+            // Kurz Phones zeigen, dann weiter — kein Endlos-Warten
+            delay(1600)
+            onFinished()
+            return@LaunchedEffect
+        }
+
+        PublicSplashCache.save(context, fetched, bmp)
+        withContext(Dispatchers.IO) {
+            runCatching { prefs.markSplashSeen(fetched.id) }
+        }
+        preview = fetched
+        bitmap = bmp
+        ready = true
+        progress.snapTo(0f)
+        progress.animateTo(1f, animationSpec = tween(1900, easing = LinearEasing))
+        delay(120)
+        onFinished()
     }
 
     if (!ready || bitmap == null || preview == null) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFF0B0E14)),
-            contentAlignment = Alignment.Center
-        ) {
-            LuvWordmark(fontSize = 42.sp)
-        }
+        SplashPhonesLoader()
         return
     }
 

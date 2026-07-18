@@ -12,10 +12,17 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.90",
+            listOf(
+                "App-Start: Zwei-Handy-Animation beim Laden",
+                "Ladebilder abwechslungsreicher",
+            )
+        ),
+        Entry(
             "1.9.89",
             listOf(
-                "Markt: ausgerüstete Items nicht anbieten, Coins/Items zuverlässiger",
-                "Ladebild: jedes veröffentlichte Bild erst einmal, dann neue",
+                "Marktplatz und Inventar laufen ruhiger",
+                "App-Start: abwechslungsreichere Ladebilder",
             )
         ),
         Entry(
@@ -147,13 +154,13 @@ object AppChangelog {
         Entry(
             "1.9.69",
             listOf(
-                "Sicherheit: Kein Schummeln von Items ins Inventar",
+                "Inventar und Käufe stabiler",
             )
         ),
         Entry(
             "1.9.68",
             listOf(
-                "Sicherheit: Käufe, Tausch & Inventar serverseitig abgesichert",
+                "Marktplatz und Shop zuverlässiger",
             )
         ),
         Entry(
@@ -191,7 +198,7 @@ object AppChangelog {
             "1.9.61",
             listOf(
                 "Einstellungen: Hilfe-Nachricht an das Team senden",
-                "Admin/Mod: Hilfe-Anfragen unter Meldungen anzeigen und löschen",
+                "Hilfe-Anfragen kommen zuverlässiger beim Team an",
             )
         ),
         Entry(
@@ -249,20 +256,20 @@ object AppChangelog {
         Entry(
             "1.9.52",
             listOf(
-                "Admin: Nutzer-Lobbys ansehen, Detail mit Zurück, Lobby für alle auflösen",
+                "Kleinere Bugfixes und Stabilität",
             )
         ),
         Entry(
             "1.9.51",
             listOf(
-                "Admin: Moderator einladen/Rechte — verständliche Fehler statt API 400",
+                "Kleinere Bugfixes",
             )
         ),
         Entry(
             "1.9.50",
             listOf(
                 "Spitzname nur einmal wählbar — mit Bestätigung im Tutorial",
-                "Konto löschen: API-Fehler 400 behoben",
+                "Konto löschen funktioniert wieder zuverlässig",
             )
         ),
         Entry(
@@ -318,7 +325,7 @@ object AppChangelog {
             "1.9.41",
             listOf(
                 "Update-Check bei Tab- und Menüwechseln — Käufe bleiben gespeichert",
-                "Sicherheit: Shop, Inventar & Coins nur noch vom Server",
+                "Shop und Inventar speichern zuverlässiger",
             )
         ),
         Entry(
@@ -344,8 +351,8 @@ object AppChangelog {
         Entry(
             "1.9.37",
             listOf(
-                "Admin-Hub wie Nasebär: Mods, Rechte, Meldungen, Nutzer, Codes",
-                "Live-Hinweis-Popup (5 Sekunden) für Admin & Moderatoren",
+                "Kleinere Bugfixes und Verbesserungen",
+                "Hinweise erscheinen klarer und kürzer",
             )
         ),
         Entry(
@@ -409,7 +416,7 @@ object AppChangelog {
         Entry(
             "1.9.27",
             listOf(
-                "Fremde Profile zeigen wieder das gespeicherte Layout (Server-Fix)",
+                "Fremde Profile zeigen wieder das gespeicherte Layout",
             )
         ),
         Entry(
@@ -580,7 +587,7 @@ object AppChangelog {
         Entry(
             "1.8.85",
             listOf(
-                "Gemeinsames Malen wieder stabil — Server stürzt nicht mehr ab",
+                "Gemeinsames Malen wieder stabil",
                 "Alle in derselben Lobby sehen sich und die Striche wieder",
             )
         ),
@@ -681,7 +688,7 @@ object AppChangelog {
         Entry(
             "1.8.68",
             listOf(
-                "Galerie ohne Rechte-Abfrage, Mehrfachauswahl und Löschen",
+                "Galerie ohne Berechtigungsabfrage, Mehrfachauswahl und Löschen",
             )
         ),
         Entry(
@@ -753,7 +760,7 @@ object AppChangelog {
         Entry(
             "1.8.56",
             listOf(
-                "Öffentliche Bilder melden — Prüfung im Admin-Bereich",
+                "Öffentliche Bilder können gemeldet werden",
             )
         ),
         Entry(
