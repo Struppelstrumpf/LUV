@@ -374,12 +374,13 @@ class LockDrawActivity : ComponentActivity() {
                         drawingView.setStrokes(CanvasStore.snapshot(id), animateNew = false)
                     }
                     is PairEvent.HistoryApplied -> if (event.lobbyId == id) {
+                        // Nur umfärben falls nötig — kein zweites Full-Redraw
+                        // (revision-Collector hat die History schon gezeichnet, wenn sie sich änderte)
                         CanvasStore.recolorOwnStrokes(
                             CanvasStore.cachedColorIndex,
                             id,
                             broadcast = false
                         )
-                        drawingView.setStrokes(CanvasStore.snapshot(id), animateNew = false)
                         refreshLegend()
                     }
                     is PairEvent.ColorAssigned -> if (event.lobbyId == id) {

@@ -123,6 +123,18 @@ class DrawingView @JvmOverloads constructor(
     }
 
     fun setStrokes(list: List<Stroke>, animateNew: Boolean = false) {
+        if (
+            !animateNew &&
+            list.size == strokes.size &&
+            list.zip(strokes).all { (a, b) ->
+                a.id == b.id &&
+                    a.colorIndex == b.colorIndex &&
+                    a.emoji == b.emoji &&
+                    a.points.size == b.points.size
+            }
+        ) {
+            return
+        }
         val previous = strokes.map { it.id }.toSet()
         strokes.clear()
         strokes.addAll(list)

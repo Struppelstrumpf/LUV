@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.62",
+            listOf(
+                "Leinwand: kein kurzes Aufblinken mehr durch Sync/Reconnect",
+            )
+        ),
+        Entry(
             "1.9.61",
             listOf(
                 "Einstellungen: Hilfe-Nachricht an das Team senden",

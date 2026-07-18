@@ -923,6 +923,7 @@ function sendCanvasHistory(socket, room, code) {
       done: true,
       replace: true,
     });
+    socket.luvHistoryAt = Date.now();
     return;
   }
   for (let i = 0; i < strokes.length; i += STROKE_HISTORY_CHUNK) {
@@ -937,6 +938,7 @@ function sendCanvasHistory(socket, room, code) {
       replace: i === 0,
     });
   }
+  socket.luvHistoryAt = Date.now();
 }
 
 function ensureSnapshotDir() {
@@ -7024,6 +7026,17 @@ wss.on("connection", (socket, req) => {
     }
     const type = json?.type;
 
+    // Keepalive — Client-JSON-Ping (kein WS-Protokoll-Ping hinter Caddy)
+    if (type === "ping") {
+      try {
+        if (socket.readyState === 1) socket.send(JSON.stringify({ type: "pong" }));
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    if (type === "pong") return;
+
     if (type === "presence" || type === "recolor") {
       rememberSocketColor(room, socket, user, json.colorIndex);
     }
@@ -7034,9 +7047,13 @@ wss.on("connection", (socket, req) => {
       if (socket.luvCanvasActive && user?.id) {
         kickOtherCanvasSockets(room, user.id, socket);
       }
-      // Leinwand frisch geöffnet → History (holt nach, was vor dem Öffnen gemalt wurde)
+      // Leinwand frisch geöffnet → History — aber nicht direkt nach Welcome-History
+      // (sonst Clear/Replace-Blinken beim Reconnect mit offener Leinwand)
       if (socket.luvCanvasActive && !wasActive) {
-        sendCanvasHistory(socket, room, code);
+        const sinceHistory = Date.now() - (Number(socket.luvHistoryAt) || 0);
+        if (sinceHistory > 8_000) {
+          sendCanvasHistory(socket, room, code);
+        }
       }
       if (socket.luvNickname && !json.nickname) {
         json.nickname = socket.luvNickname;

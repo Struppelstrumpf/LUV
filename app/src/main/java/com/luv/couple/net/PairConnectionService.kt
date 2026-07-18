@@ -439,7 +439,15 @@ class PairConnectionService : Service() {
         val socket = wsClient.newWebSocket(request, listener)
         session.webSocket.set(socket)
 
+        var lastPingAt = 0L
         while (session.running.get() && !closed.get() && !session.forceReconnect.get()) {
+            val now = System.currentTimeMillis()
+            if (opened.get() && now - lastPingAt >= WS_PING_INTERVAL_MS) {
+                lastPingAt = now
+                runCatching {
+                    socket.send(PairProtocol.encode(PairMessage.Ping))
+                }
+            }
             delay(300)
         }
         // Nur canceln wenn wir selbst reconnecten — nicht doppelt closen nach Server-Close
@@ -490,6 +498,13 @@ class PairConnectionService : Service() {
         runCatching {
             val json = JSONObject(text)
             when (json.optString("type")) {
+                "ping" -> {
+                    sessions[lobby.id]?.webSocket?.get()?.let { ws ->
+                        runCatching { ws.send(PairProtocol.encode(PairMessage.Pong)) }
+                    }
+                    return
+                }
+                "pong" -> return
                 "canvas_taken" -> {
                     // Nur wenn diese Leinwand wirklich im Vordergrund offen ist
                     if (!LockDrawActivity.isCanvasForeground(lobby.id)) return
@@ -582,14 +597,17 @@ class PairConnectionService : Service() {
                             val appliesHere = activeId == null || activeId == lobby.id
                             if (appliesHere && suggested in 0 until PeerPalette.COLOR_COUNT) {
                                 scope.launch {
-                                    LuvApp.instance.prefs.setColorIndex(suggested)
-                                    CanvasStore.updateProfile(CanvasStore.cachedNickname, suggested)
-                                    CanvasStore.recolorOwnStrokes(
-                                        suggested,
-                                        lobby.id,
-                                        broadcast = LockDrawActivity.isCanvasForeground(lobby.id)
-                                    )
-                                    _events.emit(PairEvent.ColorAssigned(lobby.id, suggested))
+                                    val colorChanged = CanvasStore.cachedColorIndex != suggested
+                                    if (colorChanged) {
+                                        LuvApp.instance.prefs.setColorIndex(suggested)
+                                        CanvasStore.updateProfile(CanvasStore.cachedNickname, suggested)
+                                        CanvasStore.recolorOwnStrokes(
+                                            suggested,
+                                            lobby.id,
+                                            broadcast = LockDrawActivity.isCanvasForeground(lobby.id)
+                                        )
+                                        _events.emit(PairEvent.ColorAssigned(lobby.id, suggested))
+                                    }
                                     // Nur echte Leinwand-Präsenz — nicht schon bei Lobby-Verbindung
                                     sendPresence(
                                         applicationContext,
@@ -1385,6 +1403,8 @@ class PairConnectionService : Service() {
         private const val MIN_BACKOFF_MS = 2_000L
         private const val RECONNECT_DELAY_MS = 2_000L
         private const val STABLE_CONNECTION_MS = 8_000L
+        /** JSON-Ping (kein OkHttp-Ping) — hält NAT/Proxy wach, verhindert Idle-Reconnect. */
+        private const val WS_PING_INTERVAL_MS = 15_000L
         private const val MAX_OUTBOX = 80
 
         @Volatile

@@ -55,6 +55,8 @@ object CanvasStore {
     private val lastStrokeAt = ConcurrentHashMap<String, MutableStateFlow<Long>>()
     private val lastStrokeBy = ConcurrentHashMap<String, MutableStateFlow<String?>>()
     private val historyBackup = ConcurrentHashMap<String, List<Stroke>>()
+    /** Chunks bis done zusammenfügen — kein Zwischen-Clear/Flash. */
+    private val pendingHistory = ConcurrentHashMap<String, MutableList<Stroke>>()
     private val persistJobs = ConcurrentHashMap<String, Job>()
     private val persistScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _activeLobbyId = MutableStateFlow<String?>(null)
@@ -230,8 +232,9 @@ object CanvasStore {
     }
 
     /**
-     * Server-History nach Connect. Bei leerem Server und lokaler Sicherung
-     * werden eigene Striche wiederhergestellt und hochgeladen.
+     * Server-History nach Connect. Chunks werden bis [done] gepuffert —
+     * kein Clear/Redraw dazwischen. Unveränderte History → kein bump (kein Blinken).
+     * Bei leerem Server und lokaler Sicherung: eigene Striche wiederherstellen.
      */
     fun applyServerHistory(
         lobbyId: String,
@@ -242,44 +245,80 @@ object CanvasStore {
         val c = canvas(lobbyId)
         val nick = cachedNickname
         if (replace) {
-            if (incoming.isEmpty()) {
+            if (incoming.isEmpty() && done) {
                 historyBackup[lobbyId] = c.strokes.toList()
-            } else {
+            } else if (incoming.isNotEmpty()) {
                 historyBackup.remove(lobbyId)
             }
-            c.strokes.clear()
-            c.localStrokeIds.clear()
+            pendingHistory[lobbyId] = mutableListOf()
         }
+        val buf = pendingHistory.getOrPut(lobbyId) { mutableListOf() }
         for (raw in incoming) {
-            if (c.strokes.any { it.id == raw.id }) continue
-            val mine = !nick.isNullOrBlank() && raw.nickname.equals(nick, ignoreCase = true)
-            val stroke = raw.copy(isLocal = mine)
-            c.strokes.add(stroke)
-            if (mine) c.localStrokeIds.add(stroke.id)
-            touchStroke(lobbyId, stroke.nickname)
+            if (buf.any { it.id == raw.id }) continue
+            buf.add(raw)
         }
-        if (done) {
-            val backup = historyBackup.remove(lobbyId)
-            if (c.strokes.isEmpty() && !backup.isNullOrEmpty()) {
-                for (s in backup) {
-                    if (c.strokes.any { it.id == s.id }) continue
-                    val mine = s.isLocal ||
-                        (!nick.isNullOrBlank() && s.nickname.equals(nick, ignoreCase = true))
-                    val stroke = s.copy(isLocal = mine)
-                    c.strokes.add(stroke)
-                    if (mine) c.localStrokeIds.add(stroke.id)
-                    if (::appContext.isInitialized) {
-                        PairConnectionService.sendStroke(
-                            appContext,
-                            PairProtocol.encode(PairMessage.StrokeMsg(stroke)),
-                            lobbyId
-                        )
-                    }
+        // Zwischen-Chunks: noch nichts anzeigen — verhindert Flash (Clear → 35 Striche → Rest)
+        if (!done) return
+
+        pendingHistory.remove(lobbyId)
+        val assembled = buf.map { raw ->
+            val mine = !nick.isNullOrBlank() && raw.nickname.equals(nick, ignoreCase = true)
+            raw.copy(isLocal = mine)
+        }.toMutableList()
+
+        val backup = historyBackup.remove(lobbyId)
+        if (assembled.isEmpty() && !backup.isNullOrEmpty()) {
+            for (s in backup) {
+                if (assembled.any { it.id == s.id }) continue
+                val mine = s.isLocal ||
+                    (!nick.isNullOrBlank() && s.nickname.equals(nick, ignoreCase = true))
+                assembled.add(s.copy(isLocal = mine))
+                if (::appContext.isInitialized) {
+                    PairConnectionService.sendStroke(
+                        appContext,
+                        PairProtocol.encode(PairMessage.StrokeMsg(s.copy(isLocal = mine))),
+                        lobbyId
+                    )
                 }
             }
         }
+
+        if (strokeFingerprint(c.strokes) == strokeFingerprint(assembled)) {
+            return
+        }
+
+        c.strokes.clear()
+        c.localStrokeIds.clear()
+        for (stroke in assembled) {
+            c.strokes.add(stroke)
+            if (stroke.isLocal) c.localStrokeIds.add(stroke.id)
+            touchStroke(lobbyId, stroke.nickname)
+        }
         bump(lobbyId)
     }
+
+    private fun strokeFingerprint(strokes: List<Stroke>): String =
+        strokes.joinToString("|") { s ->
+            val first = s.points.firstOrNull()
+            val last = s.points.lastOrNull()
+            buildString {
+                append(s.id)
+                append(':')
+                append(s.colorIndex)
+                append(':')
+                append(s.emoji.orEmpty())
+                append(':')
+                append(s.points.size)
+                append(':')
+                append(first?.x)
+                append(',')
+                append(first?.y)
+                append('-')
+                append(last?.x)
+                append(',')
+                append(last?.y)
+            }
+        }
 
     fun lastStrokeAt(lobbyId: String): StateFlow<Long> =
         lastStrokeAt.getOrPut(lobbyId) { MutableStateFlow(0L) }.asStateFlow()
