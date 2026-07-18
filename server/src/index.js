@@ -2008,6 +2008,42 @@ function isChosenNickname(nick) {
   return n.length >= 2 && n.toLowerCase() !== "luv";
 }
 
+function nicknameKey(nick) {
+  return String(nick || "").trim().toLowerCase();
+}
+
+/** Exakter Treffer (case-insensitive). Placeholder „Luv“ zählt nicht als einzigartig. */
+function findUserByNickname(nick, exceptUserId = null) {
+  const key = nicknameKey(nick);
+  if (key.length < 2 || key === "luv") return null;
+  return (
+    Object.values(getDb().users || {}).find(
+      (u) =>
+        u &&
+        u.id !== exceptUserId &&
+        nicknameKey(u.nickname) === key
+    ) || null
+  );
+}
+
+function assertNicknameAvailable(nick, exceptUserId, res) {
+  if (!isChosenNickname(nick)) {
+    res.status(400).json({
+      error: "bad_nick",
+      message: "Spitzname zu kurz oder ungültig.",
+    });
+    return false;
+  }
+  if (findUserByNickname(nick, exceptUserId)) {
+    res.status(409).json({
+      error: "nickname_taken",
+      message: "Dieser Spitzname ist schon vergeben.",
+    });
+    return false;
+  }
+  return true;
+}
+
 /**
  * Quelle in Ziel zusammenführen (Coins, Lobbys, Google, Admin).
  * Danach wird die Quelle gelöscht — ohne deren Lobbys zu zerstören.
@@ -3261,6 +3297,16 @@ app.post("/v1/auth/device", (req, res) => {
     scheduleSave();
     created = true;
   } else if (nickname && nickname.length >= 2) {
+    if (
+      isChosenNickname(nickname) &&
+      nicknameKey(nickname) !== nicknameKey(user.nickname) &&
+      findUserByNickname(nickname, user.id)
+    ) {
+      return res.status(409).json({
+        error: "nickname_taken",
+        message: "Dieser Spitzname ist schon vergeben.",
+      });
+    }
     user.nickname = nickname;
     scheduleSave();
   }
@@ -3438,10 +3484,38 @@ app.patch("/v1/me", (req, res) => {
   if (!ctx) return;
   const nickname = String(req.body?.nickname || "").trim().slice(0, 18);
   if (nickname.length >= 2) {
+    if (nicknameKey(nickname) !== nicknameKey(ctx.user.nickname)) {
+      if (!assertNicknameAvailable(nickname, ctx.user.id, res)) return;
+    }
     ctx.user.nickname = nickname;
     scheduleSave();
   }
   return res.json({ user: publicUser(ctx.user) });
+});
+
+/** Nutzer per Spitzname finden (für Freundesuche). */
+app.get("/v1/users/lookup", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const q = String(req.query?.nickname || req.query?.q || "").trim().slice(0, 18);
+  if (!isChosenNickname(q)) {
+    return res.status(400).json({
+      error: "bad_nick",
+      message: "Bitte einen Spitznamen eingeben.",
+    });
+  }
+  const user = findUserByNickname(q, ctx.user.id);
+  if (!user) {
+    return res.status(404).json({
+      error: "not_found",
+      message: "Niemand mit diesem Spitznamen gefunden.",
+    });
+  }
+  return res.json({
+    ok: true,
+    user: friendPublicCard(user),
+    friendStatus: friendRelation(ctx.user, user.id),
+  });
 });
 
 function sanitizeProfileCanvas(raw) {
@@ -4042,7 +4116,7 @@ app.post("/v1/admin/users/:userId/nickname", (req, res) => {
   const nick = String(req.body?.nickname || "")
     .trim()
     .slice(0, 18);
-  if (nick.length < 2) return res.status(400).json({ error: "bad_nick" });
+  if (!assertNicknameAvailable(nick, uid, res)) return;
   target.nickname = nick;
   scheduleSave();
   return res.json({ ok: true, user: staffUserCard(target) });

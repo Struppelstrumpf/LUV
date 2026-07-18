@@ -9,17 +9,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -42,6 +44,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -54,7 +58,6 @@ import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 
 @Composable
 fun SocialScreen(
@@ -74,6 +77,7 @@ fun SocialScreen(
     var dragHoverIndex by remember { mutableIntStateOf(-1) }
     val rowHeights = remember { mutableMapOf<String, Int>() }
     val gapPx = with(density) { 10.dp.toPx() }
+    var showAddFriend by remember { mutableStateOf(false) }
 
     fun reload() {
         scope.launch {
@@ -110,7 +114,6 @@ fun SocialScreen(
         if (friends.isEmpty()) return 0
         var acc = 0f
         val center = offsetY
-        // Approximate with average row height
         val avg = rowHeights.values.average().toFloat().takeIf { it > 0f }
             ?: with(density) { 64.dp.toPx() }
         val target = from * (avg + gapPx) + center + avg / 2f
@@ -137,15 +140,20 @@ fun SocialScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text("Sozial", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
-            Text(
-                "Freunde, Anfragen und gemütliche Begleiter-Kraulis.",
-                color = TextMuted,
-                fontFamily = BodyFont,
-                fontSize = 14.sp
-            )
+
+            // Runde Plus-Kachel: Spitzname suchen
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(AccentRose)
+                    .clickable { showAddFriend = true },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("+", color = Color.White, fontFamily = DisplayFont, fontSize = 28.sp)
+            }
 
             if (incoming.isNotEmpty()) {
-                Text("Anfragen", fontFamily = DisplayFont, fontSize = 20.sp, color = TextPrimary)
                 incoming.forEach { card ->
                     FriendRequestRow(
                         card = card,
@@ -185,42 +193,12 @@ fun SocialScreen(
                 }
             }
 
-            Text("Freunde", fontFamily = DisplayFont, fontSize = 20.sp, color = TextPrimary)
             when {
                 loading && friends.isEmpty() && incoming.isEmpty() -> {
                     Text("Lade…", color = TextMuted, fontFamily = BodyFont)
                 }
-                friends.isEmpty() -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(BgSoft)
-                            .padding(18.dp)
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                "Noch keine Freunde",
-                                color = TextPrimary,
-                                fontFamily = DisplayFont,
-                                fontSize = 18.sp
-                            )
-                            Text(
-                                "Auf der Leinwand unter einem Profil eine Anfrage senden.",
-                                color = TextMuted,
-                                fontFamily = BodyFont,
-                                fontSize = 13.sp
-                            )
-                        }
-                    }
-                }
+                friends.isEmpty() && incoming.isEmpty() -> Unit
                 else -> {
-                    Text(
-                        "Lange drücken zum Umsortieren",
-                        color = TextMuted,
-                        fontFamily = BodyFont,
-                        fontSize = 12.sp
-                    )
                     friends.forEachIndexed { index, card ->
                         val dragging = dragId == card.userId
                         val lift = if (dragging) dragOffsetY else 0f
@@ -281,13 +259,6 @@ fun SocialScreen(
             }
 
             if (outgoing.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    "Gesendet",
-                    fontFamily = DisplayFont,
-                    fontSize = 18.sp,
-                    color = TextPrimary
-                )
                 outgoing.forEach { card ->
                     FriendRow(
                         card = card,
@@ -300,6 +271,192 @@ fun SocialScreen(
             }
         }
     }
+
+    if (showAddFriend) {
+        AddFriendByNicknameDialog(
+            onDismiss = { showAddFriend = false },
+            onSent = {
+                showAddFriend = false
+                reload()
+            },
+            onOpenProfile = { id, nick ->
+                showAddFriend = false
+                onOpenFriendProfile(id, nick)
+            }
+        )
+    }
+}
+
+@Composable
+private fun AddFriendByNicknameDialog(
+    onDismiss: () -> Unit,
+    onSent: () -> Unit,
+    onOpenProfile: (userId: String, nickname: String) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var query by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var found by remember { mutableStateOf<LuvApiClient.UserLookup?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun search() {
+        val q = query.trim()
+        if (q.length < 2) {
+            error = "Mindestens 2 Zeichen"
+            found = null
+            return
+        }
+        scope.launch {
+            busy = true
+            error = null
+            found = null
+            runCatching { LuvApiClient.lookupUserByNickname(q) }
+                .onSuccess { found = it }
+                .onFailure {
+                    error = it.message ?: "Nicht gefunden"
+                }
+            busy = false
+        }
+    }
+
+    fun sendRequest(userId: String) {
+        scope.launch {
+            busy = true
+            runCatching { LuvApiClient.sendFriendRequest(userId) }
+                .onSuccess {
+                    Toast.makeText(context, "Anfrage gesendet", Toast.LENGTH_SHORT).show()
+                    onSent()
+                }
+                .onFailure {
+                    Toast.makeText(
+                        context,
+                        it.message ?: "Anfrage fehlgeschlagen",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            busy = false
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = BgSoft,
+        title = {
+            Text(
+                "Freund finden",
+                fontFamily = DisplayFont,
+                fontSize = 22.sp,
+                color = TextPrimary
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                BasicTextField(
+                    value = query,
+                    onValueChange = {
+                        query = it.take(18)
+                        error = null
+                        found = null
+                    },
+                    singleLine = true,
+                    textStyle = TextStyle(
+                        color = TextPrimary,
+                        fontFamily = BodyFont,
+                        fontSize = 16.sp
+                    ),
+                    cursorBrush = SolidColor(AccentRose),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { search() }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color.White.copy(0.06f))
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    decorationBox = { inner ->
+                        Box {
+                            if (query.isBlank()) {
+                                Text(
+                                    "Spitzname",
+                                    color = TextMuted,
+                                    fontFamily = BodyFont,
+                                    fontSize = 16.sp
+                                )
+                            }
+                            inner()
+                        }
+                    }
+                )
+                if (error != null) {
+                    Text(error!!, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
+                }
+                found?.let { hit ->
+                    FriendRow(
+                        card = hit.card,
+                        subtitle = when (hit.friendStatus) {
+                            "friends" -> "Schon befreundet"
+                            "outgoing" -> "Anfrage schon gesendet"
+                            "incoming" -> "Hat dich angefragt"
+                            else -> null
+                        },
+                        modifier = Modifier.clickable {
+                            onOpenProfile(hit.card.userId, hit.card.nickname)
+                        }
+                    )
+                    when (hit.friendStatus) {
+                        "none" -> TextButton(
+                            onClick = { sendRequest(hit.card.userId) },
+                            enabled = !busy
+                        ) {
+                            Text("Anfrage senden", color = AccentRose, fontFamily = DisplayFont)
+                        }
+                        "incoming" -> TextButton(
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    runCatching { LuvApiClient.acceptFriend(hit.card.userId) }
+                                        .onSuccess {
+                                            Toast.makeText(
+                                                context,
+                                                "Freundschaft angenommen",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                            onSent()
+                                        }
+                                        .onFailure {
+                                            Toast.makeText(
+                                                context,
+                                                it.message ?: "Annehmen fehlgeschlagen",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    busy = false
+                                }
+                            },
+                            enabled = !busy
+                        ) {
+                            Text("Annehmen", color = AccentRose, fontFamily = DisplayFont)
+                        }
+                        else -> Unit
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { search() }, enabled = !busy) {
+                Text(
+                    if (busy) "…" else "Suchen",
+                    color = AccentRose,
+                    fontFamily = DisplayFont
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Schließen", color = TextMuted, fontFamily = BodyFont)
+            }
+        }
+    )
 }
 
 @Composable

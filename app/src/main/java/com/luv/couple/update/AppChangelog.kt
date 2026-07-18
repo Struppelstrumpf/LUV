@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.45",
+            listOf(
+                "Sozial: Plus-Kachel zum Freunde-Suchen per Spitzname",
+                "Spitznamen sind einzigartig — keine Doppelvergabe mehr",
+            )
+        ),
+        Entry(
             "1.9.44",
             listOf(
                 "Profil: „Avatar gestalten“ entfernt — Avatar zeigt nur den Begleiter",

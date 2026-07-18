@@ -425,9 +425,60 @@ object LuvApiClient {
 
     suspend fun updateNickname(nickname: String): AccountInfo = withContext(Dispatchers.IO) {
         val body = JSONObject().put("nickname", nickname.trim().take(18)).toString()
-        val json = authedPatch("/v1/me", body)
-        AccountInfo.fromApi(json.getJSONObject("user"))
+        val request = authedRequestBuilder("/v1/me")
+            .patch(body.toRequestBody(jsonMedia))
+            .build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            val json = runCatching { JSONObject(raw) }.getOrNull()
+            if (!response.isSuccessful) {
+                throw LuvApiException(
+                    message = when (json?.optString("error")) {
+                        "nickname_taken" -> "Dieser Spitzname ist schon vergeben."
+                        "bad_nick" -> "Spitzname ungültig."
+                        else -> json?.optString("message")?.takeIf { it.isNotBlank() }
+                            ?: "Name speichern fehlgeschlagen."
+                    },
+                    error = json?.optString("error")
+                )
+            }
+            AccountInfo.fromApi((json ?: throw LuvApiException("Ungültige Server-Antwort"))
+                .getJSONObject("user"))
+        }
     }
+
+    data class UserLookup(
+        val card: FriendCard,
+        val friendStatus: String
+    )
+
+    suspend fun lookupUserByNickname(nickname: String): UserLookup =
+        withContext(Dispatchers.IO) {
+            val q = nickname.trim().take(18).encodeURL()
+            val request = authedRequestBuilder("/v1/users/lookup?nickname=$q").get().build()
+            http.newCall(request).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                if (!response.isSuccessful) {
+                    throw LuvApiException(
+                        message = when (json?.optString("error")) {
+                            "not_found" -> "Niemand mit diesem Spitznamen gefunden."
+                            "bad_nick" -> "Bitte einen Spitznamen eingeben."
+                            else -> json?.optString("message")?.takeIf { it.isNotBlank() }
+                                ?: "Suche fehlgeschlagen."
+                        },
+                        error = json?.optString("error")
+                    )
+                }
+                val bodyJson = json ?: throw LuvApiException("Ungültige Server-Antwort")
+                val card = parseFriendCard(bodyJson.optJSONObject("user"))
+                    ?: throw LuvApiException("Ungültige Server-Antwort")
+                UserLookup(
+                    card = card,
+                    friendStatus = bodyJson.optString("friendStatus", "none")
+                )
+            }
+        }
 
     suspend fun claimDaily(): Pair<AccountInfo, Boolean> = withContext(Dispatchers.IO) {
         val json = authedPost("/v1/me/daily-claim", "{}")
