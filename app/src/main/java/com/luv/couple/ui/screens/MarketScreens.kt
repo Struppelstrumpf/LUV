@@ -35,13 +35,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -107,10 +107,12 @@ fun MarketScreen(
     onStartInCoinShopConsumed: () -> Unit = {},
     startPanel: MarketPanel? = null,
     onStartPanelConsumed: () -> Unit = {},
+    startShopTab: Int = 0,
     onLeaveDeepLink: (() -> Unit)? = null
 ) {
     var panel by remember { mutableStateOf(MarketPanel.Hub) }
     var deepLinked by remember { mutableStateOf(false) }
+    var shopTabSeed by remember { mutableIntStateOf(0) }
     fun backFromPanel() {
         if (deepLinked && onLeaveDeepLink != null) {
             deepLinked = false
@@ -128,6 +130,9 @@ fun MarketScreen(
     }
     LaunchedEffect(startPanel) {
         val target = startPanel ?: return@LaunchedEffect
+        if (target == MarketPanel.ItemShop) {
+            shopTabSeed = startShopTab.coerceIn(0, ShopCatalog.SHOP_TAB_LABELS.lastIndex)
+        }
         panel = target
         deepLinked = onLeaveDeepLink != null
         onStartPanelConsumed()
@@ -140,6 +145,7 @@ fun MarketScreen(
             },
             onOpenItemShop = {
                 deepLinked = false
+                shopTabSeed = 0
                 panel = MarketPanel.ItemShop
             },
             onOpenCoinShop = {
@@ -157,7 +163,12 @@ fun MarketScreen(
             title = "Itemshop",
             onBack = { backFromPanel() }
         ) {
-            ItemShopContent(onRefreshInventory = onRefreshInventory)
+            key(shopTabSeed) {
+                ItemShopContent(
+                    onRefreshInventory = onRefreshInventory,
+                    initialTab = shopTabSeed
+                )
+            }
         }
         MarketPanel.CoinShop -> MarketExpandShell(
             title = "Coinshop",
@@ -427,12 +438,17 @@ private sealed class ShopPendingBuy {
 }
 
 @Composable
-private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
+private fun ItemShopContent(
+    onRefreshInventory: suspend () -> Unit,
+    initialTab: Int = 0
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prefs = LuvApp.instance.prefs
     val account by AccountSession.account.collectAsStateWithLifecycle()
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by remember {
+        mutableIntStateOf(initialTab.coerceIn(0, ShopCatalog.SHOP_TAB_LABELS.lastIndex))
+    }
     val ownedEmojis by prefs.ownedEmojisFlow.collectAsStateWithLifecycle(initialValue = emptyMap())
     val ownedThemes by prefs.ownedThemesFlow.collectAsStateWithLifecycle(
         initialValue = listOf(ProfileCatalog.DEFAULT_THEME_ID)
@@ -578,9 +594,9 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
         Spacer(modifier = Modifier.height(10.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-                    listOf("Ausstattung", "Begleiter", "Emojis").forEachIndexed { index, label ->
+            ShopCatalog.SHOP_TAB_LABELS.forEachIndexed { index, label ->
                 val active = tab == index
                 Box(
                     modifier = Modifier
@@ -588,14 +604,14 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
                         .clip(RoundedCornerShape(14.dp))
                         .background(if (active) AccentRose.copy(0.28f) else BgSoft)
                         .clickable { tab = index }
-                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                        .padding(horizontal = 6.dp, vertical = 10.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         label,
                         color = TextPrimary,
                         fontFamily = if (active) DisplayFont else BodyFont,
-                        fontSize = 13.sp,
+                        fontSize = 11.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center
@@ -612,16 +628,6 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(ShopCatalog.THEMES, key = { "t-${it.id}" }) { item ->
-                    val have = item.id in ownedThemes
-                    ShopGridCell(
-                        emoji = item.emoji,
-                        price = item.priceCoins,
-                        ownedLabel = if (have) "✓" else null,
-                        enabled = busyKey == null && !have,
-                        onClick = { pendingBuy = ShopPendingBuy.Theme(item) }
-                    )
-                }
                 items(ShopCatalog.STICKERS, key = { "s-${it.emoji}" }) { item ->
                     val count = ownedStickers[item.emoji] ?: 0
                     ShopGridCell(
@@ -634,6 +640,24 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
                 }
             }
             1 -> LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 88.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(ShopCatalog.THEMES, key = { "t-${it.id}" }) { item ->
+                    val have = item.id in ownedThemes
+                    ShopGridCell(
+                        emoji = item.emoji,
+                        price = item.priceCoins,
+                        ownedLabel = if (have) "✓" else null,
+                        enabled = busyKey == null && !have,
+                        onClick = { pendingBuy = ShopPendingBuy.Theme(item) }
+                    )
+                }
+            }
+            2 -> LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 88.dp),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 12.dp),

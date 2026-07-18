@@ -135,6 +135,7 @@ fun LuvAppNav() {
     var tab by remember { mutableIntStateOf(0) }
     var openMarketCoinShop by remember { mutableStateOf(false) }
     var openMarketPanel by remember { mutableStateOf<MarketPanel?>(null) }
+    var openMarketShopTab by remember { mutableIntStateOf(0) }
     var marketReturnTo by remember { mutableStateOf<MarketReturnTo>(MarketReturnTo.None) }
     var inventorySubTab by remember { mutableIntStateOf(0) }
     var reopenProfileChest by remember { mutableStateOf(false) }
@@ -947,6 +948,7 @@ fun LuvAppNav() {
                             },
                             onOpenItemShop = {
                                 marketReturnTo = MarketReturnTo.Inventory(inventorySubTab)
+                                openMarketShopTab = inventorySubTab.coerceIn(0, 3)
                                 tab = 3
                                 openMarketPanel = MarketPanel.ItemShop
                             },
@@ -959,6 +961,7 @@ fun LuvAppNav() {
                             onStartInCoinShopConsumed = { openMarketCoinShop = false },
                             startPanel = openMarketPanel,
                             onStartPanelConsumed = { openMarketPanel = null },
+                            startShopTab = openMarketShopTab,
                             onLeaveDeepLink = {
                                 when (val ret = marketReturnTo) {
                                     is MarketReturnTo.Inventory -> {
@@ -1086,6 +1089,8 @@ fun LuvAppNav() {
                 onOpenItemShop = { chestTab ->
                     profileChestTab = chestTab
                     marketReturnTo = MarketReturnTo.Profile(chestTab)
+                    // Tabs 0–2 = Sticker/Hintergründe/Begleiter; Extras → Sticker-Shop
+                    openMarketShopTab = chestTab.coerceIn(0, 2)
                     navController.popBackStack()
                     tab = 3
                     openMarketPanel = MarketPanel.ItemShop

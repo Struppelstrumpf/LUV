@@ -61,25 +61,29 @@ private val RefInventoryWidth = 390.dp
 enum class InventoryPanelMode { Menu, ProfileChest }
 
 private enum class InvTab(val label: String) {
-    Emojis("Emojis"),
-    Themes("Hintergrund"),
     Stickers("Sticker"),
+    Themes("Hintergründe"),
     Companions("Begleiter"),
+    Emojis("Emojis"),
     Extras("Extras")
 }
 
+/**
+ * Gleiche Reihenfolge wie Itemshop: Sticker → Hintergründe → Begleiter → Emojis.
+ * Profil-Truhe: Extras statt Emojis (Münzglas/Bio).
+ */
 private fun tabsFor(mode: InventoryPanelMode): List<InvTab> = when (mode) {
     InventoryPanelMode.Menu -> listOf(
-        InvTab.Emojis, InvTab.Themes, InvTab.Stickers, InvTab.Companions
+        InvTab.Stickers, InvTab.Themes, InvTab.Companions, InvTab.Emojis
     )
     InventoryPanelMode.ProfileChest -> listOf(
-        InvTab.Themes, InvTab.Stickers, InvTab.Companions, InvTab.Extras
+        InvTab.Stickers, InvTab.Themes, InvTab.Companions, InvTab.Extras
     )
 }
 
 /**
  * Gemeinsames Inventar (Profil-Truhe + Hauptmenü).
- * Menü: Emojis zuerst, ohne Extras. Profil: Extras, ohne Emojis.
+ * Tabs 0–2 identisch mit Itemshop; Menü-Tab 3 = Emojis, Profil-Tab 3 = Extras.
  */
 @Composable
 fun ProfileInventoryPanel(
@@ -169,7 +173,7 @@ fun ProfileInventoryPanel(
             Spacer(modifier = Modifier.height(s(12.dp)))
             Row(horizontalArrangement = Arrangement.spacedBy(s(8.dp))) {
                 ShopLinkChip("🛒 Marktplatz", onOpenMarketplace, Modifier.weight(1f), scale)
-                ShopLinkChip("✨ Mehr Sticker", onOpenItemShop, Modifier.weight(1f), scale)
+                ShopLinkChip("✨ Itemshop", onOpenItemShop, Modifier.weight(1f), scale)
                 if (onOpenGallery != null) {
                     ShopLinkChip("🖼️ Galerie", onOpenGallery, Modifier.weight(1f), scale)
                 }
@@ -218,7 +222,7 @@ fun ProfileInventoryPanel(
                     if (entries.isEmpty()) {
                         Box(modifier = gridMod, contentAlignment = Alignment.Center) {
                             Text(
-                                "Noch keine Emojis — im Itemshop gibt’s welche.",
+                                "Noch keine Emojis — im Itemshop unter Emojis kaufen.",
                                 color = TextMuted,
                                 fontFamily = BodyFont,
                                 fontSize = ts(13.sp),
@@ -264,7 +268,7 @@ fun ProfileInventoryPanel(
                 InvTab.Themes -> if (themeItems.isEmpty()) {
                     InvEmptyHint(
                         title = "Noch keine Hintergründe.",
-                        body = "Im Itemshop unter Ausstattung kaufen.",
+                        body = "Im Itemshop unter Hintergründe kaufen.",
                         onOpenItemShop = onOpenItemShop,
                         scale = scale,
                         modifier = gridMod
@@ -308,7 +312,7 @@ fun ProfileInventoryPanel(
                 InvTab.Stickers -> if (ownedStickers.isEmpty()) {
                     InvEmptyHint(
                         title = "Noch keine Sticker.",
-                        body = "Im Itemshop unter Ausstattung kaufen.",
+                        body = "Im Itemshop unter Sticker kaufen — z. B. Schmetterling.",
                         onOpenItemShop = onOpenItemShop,
                         scale = scale,
                         modifier = gridMod

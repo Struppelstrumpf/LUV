@@ -62,16 +62,29 @@ object ShopCatalog {
         ShopTheme("hearth", "Kamin", "🔥", 24)
     )
 
-    /** Profil-Sticker zum Kaufen. */
+    /**
+     * Profil-Sticker zum Kaufen (auf die Leinwand kleben).
+     * Getrennt von Begleitern und Reaktions-Emojis.
+     */
     val STICKERS: List<ShopEmoji> = listOf(
-        ShopEmoji("☀️", 6), ShopEmoji("😎", 8), ShopEmoji("💌", 10), ShopEmoji("🏠", 8),
-        ShopEmoji("🐦", 8), ShopEmoji("🌳", 6), ShopEmoji("🌻", 8), ShopEmoji("🦔", 12),
-        ShopEmoji("🐶", 10), ShopEmoji("🐱", 10), ShopEmoji("⭐", 6), ShopEmoji("✨", 6),
-        ShopEmoji("❤️", 8), ShopEmoji("🌹", 10), ShopEmoji("🌈", 10), ShopEmoji("🍀", 6),
-        ShopEmoji("🎈", 8), ShopEmoji("🎁", 12), ShopEmoji("☕", 6), ShopEmoji("🎵", 6),
-        ShopEmoji("🦋", 8), ShopEmoji("🐝", 6), ShopEmoji("🌙", 6), ShopEmoji("🔥", 8),
-        ShopEmoji("💕", 10), ShopEmoji("🫶", 12), ShopEmoji("✏️", 5), ShopEmoji("🎨", 10)
+        ShopEmoji("🦋", 8), ShopEmoji("🐝", 6), ShopEmoji("🐞", 7), ShopEmoji("🌸", 7),
+        ShopEmoji("🌺", 8), ShopEmoji("🌷", 7), ShopEmoji("🌻", 8), ShopEmoji("🌹", 10),
+        ShopEmoji("🍀", 6), ShopEmoji("🌿", 5), ShopEmoji("🍃", 5), ShopEmoji("🍄", 8),
+        ShopEmoji("🌳", 6), ShopEmoji("🌈", 10), ShopEmoji("☀️", 6), ShopEmoji("🌙", 6),
+        ShopEmoji("⭐", 6), ShopEmoji("✨", 6), ShopEmoji("💫", 8), ShopEmoji("🌟", 8),
+        ShopEmoji("☁️", 5), ShopEmoji("❄️", 7), ShopEmoji("🌊", 8), ShopEmoji("🐚", 7),
+        ShopEmoji("❤️", 8), ShopEmoji("💕", 10), ShopEmoji("💝", 12), ShopEmoji("🫶", 12),
+        ShopEmoji("💌", 10), ShopEmoji("🎀", 8), ShopEmoji("🎈", 8), ShopEmoji("🎁", 12),
+        ShopEmoji("🏠", 8), ShopEmoji("☕", 6), ShopEmoji("🎵", 6), ShopEmoji("🎨", 10),
+        ShopEmoji("✏️", 5), ShopEmoji("🔥", 8), ShopEmoji("😎", 8), ShopEmoji("🦔", 12),
+        ShopEmoji("🐶", 10), ShopEmoji("🐱", 10), ShopEmoji("🐦", 8), ShopEmoji("🧸", 12),
+        ShopEmoji("🪄", 10), ShopEmoji("🪶", 7), ShopEmoji("🪴", 8), ShopEmoji("🪸", 9)
     ).distinctBy { it.emoji }
+
+    /** Tab-Labels — Inventar (Menü) und Itemshop müssen übereinstimmen. */
+    val SHOP_TAB_LABELS: List<String> = listOf(
+        "Sticker", "Hintergründe", "Begleiter", "Emojis"
+    )
 
     /** Nur Tiere — Herzen entfernt. Küken ist Starter. */
     val PETS: List<ShopPet> = listOf(
