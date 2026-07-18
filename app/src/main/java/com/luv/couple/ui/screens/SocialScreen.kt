@@ -76,8 +76,11 @@ fun SocialScreen(
 
     LaunchedEffect(Unit) {
         runCatching { LuvApiClient.pingAchievement("social_opens") }
+        com.luv.couple.net.NotificationBadges.markSozialSeen()
         AchievementsBadge.refresh()
         com.luv.couple.net.NotificationBadges.refreshFriends()
+        // Nach Refresh erneut als gesehen — Punkt bleibt weg bis neue Aktivität
+        com.luv.couple.net.NotificationBadges.markSozialSeen()
     }
 
     MenuBackdrop(includeNavigationBars = false) {

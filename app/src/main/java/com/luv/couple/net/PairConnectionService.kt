@@ -1585,7 +1585,8 @@ class PairConnectionService : Service() {
                 return buildList {
                     for (i in 0 until rich.length()) {
                         val o = rich.optJSONObject(i) ?: continue
-                        val nick = o.optString("nickname").trim().ifBlank { "Jemand" }
+                        val nick = o.optString("nickname").trim()
+                        if (!PairSessionState.isKnownDisplayNickname(nick)) continue
                         add(
                             RosterMember(
                                 userId = o.optString("userId").takeIf { it.isNotBlank() && it != "null" },
@@ -1603,7 +1604,7 @@ class PairConnectionService : Service() {
             return buildList {
                 for (i in 0 until arr.length()) {
                     val nick = arr.optString(i).trim()
-                    if (nick.isNotBlank()) {
+                    if (PairSessionState.isKnownDisplayNickname(nick)) {
                         add(RosterMember(userId = null, nickname = nick))
                     }
                 }

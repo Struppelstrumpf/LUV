@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * App-weite Hinweis-Punkte: Freundesanfragen, abholbare Erfolge, Marktplatz-Verkäufe.
+ * Sozial-Punkt: beim Öffnen von Sozial/Erfolge ausblenden — Coins bleiben trotzdem abholbar.
  */
 object NotificationBadges {
     private val _friendIncoming = MutableStateFlow(0)
@@ -16,6 +17,8 @@ object NotificationBadges {
     private val _sozialDot = MutableStateFlow(false)
     private val _marketDot = MutableStateFlow(false)
     private val _totalCount = MutableStateFlow(0)
+    /** false = neue Aktivität seit letztem Besuch von Sozial */
+    private var sozialSeen = true
 
     val friendIncoming: StateFlow<Int> = _friendIncoming.asStateFlow()
     val achievementsClaimable: StateFlow<Boolean> = _achievementsClaimable.asStateFlow()
@@ -25,23 +28,38 @@ object NotificationBadges {
     val totalCount: StateFlow<Int> = _totalCount.asStateFlow()
 
     private fun recompute() {
-        _sozialDot.value = _friendIncoming.value > 0 || _achievementsClaimable.value
+        val hasSozialNews = _friendIncoming.value > 0 || _achievementsClaimable.value
+        _sozialDot.value = hasSozialNews && !sozialSeen
         _marketDot.value = _pendingSales.value > 0
-        val ach = if (_achievementsClaimable.value) 1 else 0
-        _totalCount.value = _friendIncoming.value + ach + _pendingSales.value
+        val sozialCount = if (!sozialSeen) {
+            _friendIncoming.value + if (_achievementsClaimable.value) 1 else 0
+        } else {
+            0
+        }
+        _totalCount.value = sozialCount + _pendingSales.value
+    }
+
+    /** Sozial-Tab geöffnet — Punkt weg, Abholen bleibt möglich. */
+    fun markSozialSeen() {
+        sozialSeen = true
+        recompute()
     }
 
     fun setFriendIncoming(count: Int) {
-        _friendIncoming.value = count.coerceAtLeast(0)
+        val next = count.coerceAtLeast(0)
+        if (next > _friendIncoming.value) sozialSeen = false
+        _friendIncoming.value = next
         recompute()
     }
 
     fun onAchievementsClaimable(claimable: Boolean) {
+        if (claimable && !_achievementsClaimable.value) sozialSeen = false
         _achievementsClaimable.value = claimable
         recompute()
     }
 
     fun setAchievementsClaimable(claimable: Boolean) {
+        if (claimable && !_achievementsClaimable.value) sozialSeen = false
         _achievementsClaimable.value = claimable
         AchievementsBadge.update(claimable)
         recompute()

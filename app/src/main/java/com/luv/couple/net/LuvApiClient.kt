@@ -2559,7 +2559,8 @@ object LuvApiClient {
         return buildList {
             for (i in 0 until rich.length()) {
                 val o = rich.optJSONObject(i) ?: continue
-                val nick = o.optString("nickname").trim().ifBlank { "Jemand" }
+                val nick = o.optString("nickname").trim()
+                if (nick.length < 2 || nick.equals("Jemand", ignoreCase = true)) continue
                 add(
                     RosterMember(
                         userId = o.optString("userId").takeIf { it.isNotBlank() && it != "null" },

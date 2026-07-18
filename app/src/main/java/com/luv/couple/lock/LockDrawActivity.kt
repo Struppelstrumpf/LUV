@@ -1984,7 +1984,12 @@ class LockDrawActivity : ComponentActivity() {
         val myKey = nickname?.trim()?.lowercase(Locale.getDefault()).orEmpty()
         // Jeder Zeichner mit Strichen bleibt sichtbar — ausgegraut wenn nicht mehr live
         val ghosts = drawColorByNick
-            .filterKeys { it !in liveKeys && it != myKey && it.isNotBlank() }
+            .filterKeys { key ->
+                key !in liveKeys &&
+                    key != myKey &&
+                    key.isNotBlank() &&
+                    PairSessionState.isKnownDisplayNickname(drawDisplayNick[key] ?: key)
+            }
             .map { (key, color) ->
                 PeerInfo(
                     peerKey = "gone:$key",

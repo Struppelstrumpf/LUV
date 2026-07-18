@@ -119,7 +119,6 @@ fun LuvAppNav() {
     val lobbyStates by PairConnectionService.lobbyStates.collectAsStateWithLifecycle()
     val reconnectUi by PairConnectionService.reconnectUi.collectAsStateWithLifecycle()
     val account by AccountSession.account.collectAsStateWithLifecycle()
-    val sozialClaimable by AchievementsBadge.hasClaimable.collectAsStateWithLifecycle()
     val sozialDot by com.luv.couple.net.NotificationBadges.hasSozialDot.collectAsStateWithLifecycle()
     val marketDot by com.luv.couple.net.NotificationBadges.hasMarketDot.collectAsStateWithLifecycle()
     val pendingJoin by PendingJoin.code.collectAsStateWithLifecycle()
@@ -1185,7 +1184,7 @@ fun LuvAppNav() {
                 }
                 SimpleBottomBar(
                     selected = tab,
-                    sozialBadge = sozialDot || sozialClaimable,
+                    sozialBadge = sozialDot,
                     marketBadge = marketDot,
                     onSelect = { next ->
                         if (next == 4) accountMessage = null
@@ -1195,8 +1194,13 @@ fun LuvAppNav() {
                             runCatching { AppUpdater.checkOnNavigate(context) }
                             when (next) {
                                 1 -> {
+                                    // Punkt sofort weg — Coins bleiben in Erfolge abholbar
+                                    com.luv.couple.net.NotificationBadges.markSozialSeen()
+                                    com.luv.couple.net.NotificationBadges.syncAppBadge(context)
                                     AchievementsBadge.refresh()
                                     com.luv.couple.net.NotificationBadges.refreshFriends(context)
+                                    com.luv.couple.net.NotificationBadges.markSozialSeen()
+                                    com.luv.couple.net.NotificationBadges.syncAppBadge(context)
                                 }
                                 2 -> syncInventory()
                                 3 -> {

@@ -50,7 +50,8 @@ object PairSessionState {
         userId: String? = null
     ) {
         val flow = peersByLobby.getOrPut(lobbyId) { MutableStateFlow(emptyMap()) }
-        val nick = nickname.trim().ifBlank { "Jemand" }
+        val nick = nickname.trim()
+        if (!isKnownDisplayNickname(nick)) return
         val uid = userId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
         val wasAnyone = flow.value.values.any { it.active }
         flow.update { current ->
@@ -106,7 +107,8 @@ object PairSessionState {
         val previous = flow.value
         val next = linkedMapOf<String, PeerInfo>()
         members.forEach { m ->
-            val nick = m.nickname.trim().ifBlank { "Jemand" }
+            val nick = m.nickname.trim()
+            if (!isKnownDisplayNickname(nick)) return@forEach
             val uid = m.userId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
             val key = uid ?: nick.lowercase()
             val prev = previous[key]
@@ -194,7 +196,7 @@ object PairSessionState {
         )
         // Beitrittsreihenfolge vom Server (Map-Insertion = memberUserIds-Reihenfolge)
         val ordered = remote.filter { peer ->
-            !peer.departed
+            !peer.departed && isKnownDisplayNickname(peer.nickname)
         }.distinctBy {
             it.userId?.takeIf { id -> id.isNotBlank() }
                 ?: it.nickname.trim().lowercase()
@@ -225,18 +227,28 @@ object PairSessionState {
         val others = peersByLobby[lobbyId]?.value?.values.orEmpty()
             .filter { !it.departed && !isSelf(it, myNickname, myUserId) }
             .map { it.nickname.trim() }
-            .filter { it.isNotBlank() && !it.equals("Du", ignoreCase = true) }
+            .filter { isKnownDisplayNickname(it) && !it.equals("Du", ignoreCase = true) }
             .distinctBy { it.lowercase() }
         return buildList {
             add("Du")
             val host = hostNickname?.trim().orEmpty()
-            if (host.isNotBlank() && others.any { it.equals(host, ignoreCase = true) }) {
+            if (
+                isKnownDisplayNickname(host) &&
+                others.any { it.equals(host, ignoreCase = true) }
+            ) {
                 add(host)
                 others.filter { !it.equals(host, ignoreCase = true) }.forEach { add(it) }
             } else {
                 addAll(others)
             }
         }
+    }
+
+    fun isKnownDisplayNickname(nick: String?): Boolean {
+        val n = nick?.trim().orEmpty()
+        if (n.length < 2) return false
+        if (n.equals("Jemand", ignoreCase = true)) return false
+        return true
     }
 
     fun emitNote(text: String) {

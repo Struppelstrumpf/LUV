@@ -1944,19 +1944,73 @@ function roomCapacity(room) {
  * Früher: colorByUserId → memberUserIds — das hat Leave sofort rückgängig gemacht
  * (Slot blieb belegt, Leinwand zeigte „kurz offline“ statt ausgegraut).
  */
+/** Anzeigename gültig? Unbekannt/„Jemand“/leer → nicht in Kachel/Leinwand. */
+function isKnownDisplayNickname(nick) {
+  const n = String(nick || "").trim();
+  if (n.length < 2) return false;
+  if (/^jemand$/i.test(n)) return false;
+  return true;
+}
+
+/**
+ * Gelöschte/zusammengeführte Konten aus memberUserIds entfernen
+ * (sonst erscheinen überall „Jemand“-Geister).
+ */
+function pruneUnknownMembers(room) {
+  if (!room) return false;
+  const db = getDb();
+  let changed = false;
+  if (Array.isArray(room.memberUserIds)) {
+    const next = [];
+    const seen = new Set();
+    for (const id of room.memberUserIds) {
+      if (!id || typeof id !== "string" || seen.has(id)) continue;
+      const u = db.users?.[id];
+      if (!u) {
+        if (room.colorByUserId?.[id] != null) delete room.colorByUserId[id];
+        changed = true;
+        continue;
+      }
+      if (!isKnownDisplayNickname(u.nickname)) {
+        changed = true;
+        continue;
+      }
+      seen.add(id);
+      next.push(id);
+    }
+    if (next.length !== room.memberUserIds.length) {
+      room.memberUserIds = next;
+      changed = true;
+    }
+  }
+  if (room.colorByUserId && typeof room.colorByUserId === "object") {
+    for (const id of Object.keys(room.colorByUserId)) {
+      if (!db.users?.[id]) {
+        delete room.colorByUserId[id];
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 function healRoomMembership(room) {
   if (!room) return false;
-  return healRoomCapacity(room);
+  const pruned = pruneUnknownMembers(room);
+  const cap = healRoomCapacity(room);
+  return pruned || cap;
 }
 
 /**
  * Verbundene + sonst bekannte Mitglieder — fuer Kachel/Avatare.
  * Reihenfolge = Beitrittsreihenfolge (memberUserIds).
+ * Unbekannte Profile (gelöschte User / „Jemand“) werden nicht angezeigt.
  */
 function roomRosterAll(room) {
+  pruneUnknownMembers(room);
   const connectedById = new Map();
   for (const m of roomConnectedMembers(room)) {
-    if (m?.userId) {
+    if (m?.userId && isKnownDisplayNickname(m.nickname)) {
       connectedById.set(m.userId, {
         ...m,
         online: true,
@@ -1976,10 +2030,9 @@ function roomRosterAll(room) {
       continue;
     }
     const u = getDb().users?.[uid];
-    const nick =
-      String(u?.nickname || "")
-        .trim()
-        .slice(0, 18) || "Jemand";
+    if (!u) continue;
+    const nick = String(u.nickname || "").trim().slice(0, 18);
+    if (!isKnownDisplayNickname(nick)) continue;
     const rawColor = Number(room.colorByUserId?.[uid]);
     const colorIndex = Number.isFinite(rawColor)
       ? Math.max(0, Math.floor(rawColor))
@@ -1990,7 +2043,7 @@ function roomRosterAll(room) {
       colorIndex,
       active: false,
       online: false,
-      petEmoji: u ? userPetEmoji(u) : DEFAULT_PET,
+      petEmoji: userPetEmoji(u),
     });
   }
   for (const [uid, m] of connectedById) {
@@ -2813,6 +2866,40 @@ function absorbUserInto(target, source) {
   }
   source.joinedRooms = {};
 
+  // Mitgliedschaften in allen Lobbys umhängen — sonst bleiben Geister-IDs → „Jemand“
+  const remapRoomUser = (room) => {
+    if (!room || typeof room !== "object") return;
+    if (Array.isArray(room.memberUserIds)) {
+      const next = [];
+      const seen = new Set();
+      for (const id of room.memberUserIds) {
+        const mapped = id === source.id ? target.id : id;
+        if (!mapped || seen.has(mapped)) continue;
+        seen.add(mapped);
+        next.push(mapped);
+      }
+      room.memberUserIds = next;
+    }
+    if (Array.isArray(room.joinAnnouncedUserIds)) {
+      room.joinAnnouncedUserIds = [
+        ...new Set(
+          room.joinAnnouncedUserIds.map((id) => (id === source.id ? target.id : id))
+        ),
+      ];
+    }
+    if (room.colorByUserId && typeof room.colorByUserId === "object") {
+      if (room.colorByUserId[source.id] != null) {
+        if (room.colorByUserId[target.id] == null) {
+          room.colorByUserId[target.id] = room.colorByUserId[source.id];
+        }
+        delete room.colorByUserId[source.id];
+      }
+    }
+    if (room.hostUserId === source.id) room.hostUserId = target.id;
+  };
+  for (const room of rooms.values()) remapRoomUser(room);
+  for (const room of Object.values(db.rooms || {})) remapRoomUser(room);
+
   destroyAllSessionsForUser(source.id);
   if (Array.isArray(db.ledger)) {
     for (const e of db.ledger) {
@@ -3445,7 +3532,8 @@ function roomConnectedMembers(room) {
       nick = String(u?.nickname || "").trim().slice(0, 18);
       if (nick) sock.luvNickname = nick;
     }
-    if (!nick) nick = "Jemand";
+    // Unbekannte / namenlose Verbindungen nicht als „Jemand“ anzeigen
+    if (!isKnownDisplayNickname(nick)) continue;
     const colorIndex = Number.isFinite(Number(sock.luvColorIndex))
       ? Math.max(0, Math.floor(Number(sock.luvColorIndex)))
       : 0;
