@@ -66,14 +66,19 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun SocialScreen(
+    initialTab: Int = 0,
     onOpenFriendProfile: (userId: String, nickname: String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 1)) }
     val friendsTabDot by com.luv.couple.net.NotificationBadges.hasFriendsTabDot
         .collectAsStateWithLifecycle()
     val achievementsTabDot by com.luv.couple.net.NotificationBadges.hasAchievementsTabDot
         .collectAsStateWithLifecycle()
+
+    LaunchedEffect(initialTab) {
+        tab = initialTab.coerceIn(0, 1)
+    }
 
     LaunchedEffect(Unit) {
         runCatching { LuvApiClient.pingAchievement("social_opens") }
@@ -81,8 +86,6 @@ fun SocialScreen(
         AchievementsBadge.refresh()
         com.luv.couple.net.NotificationBadges.refreshFriends()
         com.luv.couple.net.NotificationBadges.markSozialSeen()
-        // Start auf Freunde-Tab → dortigen Punkt sofort clearen
-        com.luv.couple.net.NotificationBadges.markFriendsTabSeen()
     }
 
     LaunchedEffect(tab) {

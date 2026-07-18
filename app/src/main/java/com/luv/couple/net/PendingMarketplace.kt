@@ -1,13 +1,21 @@
 package com.luv.couple.net
 
-import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
+/** Öffnet den Marktplatz-Tab (z. B. aus Verkaufs-Benachrichtigung). */
 object PendingMarketplace {
-    private val pending = AtomicBoolean(false)
+    private val _open = MutableStateFlow(false)
+    val open: StateFlow<Boolean> = _open.asStateFlow()
 
     fun offer() {
-        pending.set(true)
+        _open.value = true
     }
 
-    fun consume(): Boolean = pending.getAndSet(false)
+    fun consume(): Boolean {
+        if (!_open.value) return false
+        _open.value = false
+        return true
+    }
 }

@@ -50,6 +50,9 @@ object LuvAlertNotifier {
     private const val NOTIFY_MEMORY_BASE = 1100
     private const val NOTIFY_MARKET_SALE = 996
     private const val NOTIFY_APP_BADGE = 997
+    private const val NOTIFY_FRIEND = 998
+    private const val NOTIFY_ACHIEVEMENT = 999
+    private const val NOTIFY_INVENTORY = 1001
     const val MOOD_CHANNEL_ID = "luv_mood"
 
     private data class PaintBurst(
@@ -407,6 +410,8 @@ object LuvAlertNotifier {
                 context,
                 NOTIFY_MARKET_SALE,
                 Intent(context, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
                     putExtra(MainActivity.EXTRA_FROM_NOTIFICATION, true)
                     putExtra(MainActivity.EXTRA_OPEN_MARKETPLACE, true)
                 },
@@ -432,20 +437,114 @@ object LuvAlertNotifier {
         }
     }
 
+    fun onFriendRequest(context: Context, count: Int) {
+        scope.launch {
+            if (count <= 0) return@launch
+            if (QuietHoursGate.isQuietNow()) return@launch
+            if (!prefsEnabled()) return@launch
+            ensureChannel(context)
+            val text = if (count == 1) {
+                "Neue Freundschaftsanfrage"
+            } else {
+                "$count neue Freundschaftsanfragen"
+            }
+            notifyOpenMain(
+                context = context.applicationContext,
+                notificationId = NOTIFY_FRIEND,
+                title = "Sozial · Freunde",
+                text = text,
+                extras = {
+                    putExtra(MainActivity.EXTRA_OPEN_SOZIAL, true)
+                    putExtra(MainActivity.EXTRA_SOZIAL_TAB, 0)
+                }
+            )
+        }
+    }
+
+    fun onAchievementsReady(context: Context) {
+        scope.launch {
+            if (QuietHoursGate.isQuietNow()) return@launch
+            if (!prefsEnabled()) return@launch
+            ensureChannel(context)
+            notifyOpenMain(
+                context = context.applicationContext,
+                notificationId = NOTIFY_ACHIEVEMENT,
+                title = "Sozial · Erfolge",
+                text = "Du kannst Belohnungen abholen",
+                extras = {
+                    putExtra(MainActivity.EXTRA_OPEN_SOZIAL, true)
+                    putExtra(MainActivity.EXTRA_SOZIAL_TAB, 1)
+                }
+            )
+        }
+    }
+
+    fun onInventoryNew(context: Context, count: Int) {
+        scope.launch {
+            if (count <= 0) return@launch
+            if (QuietHoursGate.isQuietNow()) return@launch
+            if (!prefsEnabled()) return@launch
+            ensureChannel(context)
+            notifyOpenMain(
+                context = context.applicationContext,
+                notificationId = NOTIFY_INVENTORY,
+                title = "Inventar",
+                text = if (count == 1) "Neues Item im Inventar" else "$count neue Items im Inventar",
+                extras = {
+                    putExtra(MainActivity.EXTRA_OPEN_INVENTAR, true)
+                }
+            )
+        }
+    }
+
     /** Einmal pro Kalendertag, wenn der Tagesbonus frisch gutgeschrieben wurde. */
     fun onDailyCoins(context: Context, amount: Int, dayKey: String) {
         scope.launch {
             if (amount <= 0) return@launch
             if (QuietHoursGate.isQuietNow()) return@launch
             if (!dailyNotifiedDays.add(dayKey)) return@launch
-            show(
+            ensureChannel(context)
+            notifyOpenMain(
                 context = context.applicationContext,
+                notificationId = NOTIFY_DAILY,
                 title = context.getString(R.string.app_name),
                 text = context.getString(R.string.daily_coins_text_fmt, amount),
-                notificationId = NOTIFY_DAILY,
-                lobbyId = null
+                extras = {
+                    putExtra(MainActivity.EXTRA_OPEN_HOME, true)
+                }
             )
         }
+    }
+
+    private fun notifyOpenMain(
+        context: Context,
+        notificationId: Int,
+        title: String,
+        text: String,
+        extras: Intent.() -> Unit = {}
+    ) {
+        val open = PendingIntent.getActivity(
+            context,
+            notificationId,
+            Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(MainActivity.EXTRA_FROM_NOTIFICATION, true)
+                extras()
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        context.getSystemService(NotificationManager::class.java)
+            .notify(notificationId, notification)
     }
 
     private suspend fun prefsEnabled(): Boolean =

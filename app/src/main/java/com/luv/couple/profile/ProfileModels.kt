@@ -152,7 +152,26 @@ object ProfileCatalog {
     const val MAX_DECOR = 36
     const val MAX_BIO = 500
     const val DECOR_Y_MIN = 52f
-    const val MAX_DECOR_Z = 85
+    /** Obere Grenze für z — nach Bring-to-Front ggf. neu nummerieren. */
+    const val MAX_DECOR_Z = 500
+    /** Element-Skalierung relativ zur Board-Kurzseite (gerätunabhängig). */
+    const val ELEMENT_SCALE_MIN = 0.35f
+    const val ELEMENT_SCALE_MAX = 4.0f
+
+    /** Tippen: Element nach ganz vorne; bei hohem z neu staffeln. */
+    fun bringToFront(layout: List<ProfileLayoutEl>, id: String): List<ProfileLayoutEl> {
+        if (layout.none { it.id == id }) return layout
+        val maxZ = layout.maxOfOrNull { it.z } ?: 0
+        val next = layout.map {
+            if (it.id == id) it.copy(z = maxZ + 1) else it
+        }
+        val peak = next.maxOfOrNull { it.z } ?: 0
+        if (peak <= MAX_DECOR_Z) return next
+        // Neu nummerieren nach aktueller Zeichenreihenfolge
+        val ordered = next.sortedBy { it.z }
+        val reindex = ordered.mapIndexed { i, el -> el.copy(z = i + 1) }.associateBy { it.id }
+        return next.map { reindex[it.id] ?: it }
+    }
 
     val EDITABLE_TYPES = setOf(
         // Avatar zeigt nur den Begleiter — kein „Avatar gestalten“ mehr
@@ -407,7 +426,7 @@ object ProfileCatalog {
     ): Pair<Float, Float> {
         val w = boardW.coerceAtLeast(1f)
         val h = boardH.coerceAtLeast(1f)
-        val s = el.scale.coerceIn(0.35f, 2.5f)
+        val s = el.scale.coerceIn(ELEMENT_SCALE_MIN, ELEMENT_SCALE_MAX)
         val visual = (baseSizePx * s).coerceAtLeast(8f)
         var halfX = (visual / 2f) / w * 100f
         var halfY = (visual / 2f) / h * 100f
@@ -484,11 +503,12 @@ object ProfileCatalog {
                             type = ProfileElType.fromWire(e.optString("type")),
                             x = e.optDouble("x", 50.0).toFloat().coerceIn(0f, 100f),
                             y = e.optDouble("y", 50.0).toFloat().coerceIn(0f, 100f),
-                            scale = e.optDouble("scale", 1.0).toFloat().coerceIn(0.35f, 2.5f),
+                            scale = e.optDouble("scale", 1.0).toFloat()
+                                .coerceIn(ELEMENT_SCALE_MIN, ELEMENT_SCALE_MAX),
                             rotation = repairRotation(e.optDouble("rotation", 0.0).toFloat()),
                             flipX = e.optBoolean("flipX", false),
                             visible = e.optBoolean("visible", true),
-                            z = e.optInt("z", 10),
+                            z = e.optInt("z", 10).coerceIn(0, MAX_DECOR_Z),
                             emoji = e.optString("emoji").takeIf { it.isNotBlank() && it != "null" },
                             text = e.optString("text").takeIf { it.isNotBlank() && it != "null" },
                             color = e.optString("color").takeIf { it.isNotBlank() && it != "null" },

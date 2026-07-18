@@ -69,6 +69,19 @@ class MainActivity : ComponentActivity() {
         if (intent?.getBooleanExtra(EXTRA_OPEN_MARKETPLACE, false) == true) {
             com.luv.couple.net.PendingMarketplace.offer()
         }
+        if (intent?.getBooleanExtra(EXTRA_OPEN_SOZIAL, false) == true) {
+            val sub = intent.getIntExtra(EXTRA_SOZIAL_TAB, 0)
+            com.luv.couple.net.PendingDeepLink.offer(
+                if (sub == 1) com.luv.couple.net.DeepLinkTarget.SozialAchievements
+                else com.luv.couple.net.DeepLinkTarget.SozialFriends
+            )
+        }
+        if (intent?.getBooleanExtra(EXTRA_OPEN_INVENTAR, false) == true) {
+            com.luv.couple.net.PendingDeepLink.offer(com.luv.couple.net.DeepLinkTarget.Inventar)
+        }
+        if (intent?.getBooleanExtra(EXTRA_OPEN_HOME, false) == true) {
+            com.luv.couple.net.PendingDeepLink.offer(com.luv.couple.net.DeepLinkTarget.Home)
+        }
     }
 
     private fun captureJoinIntent(intent: Intent?) {
@@ -98,6 +111,11 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_OPEN_SHOP = "open_shop"
         const val EXTRA_OPEN_MARKETPLACE = "open_marketplace"
+        const val EXTRA_OPEN_SOZIAL = "open_sozial"
+        /** 0 = Freunde, 1 = Erfolge */
+        const val EXTRA_SOZIAL_TAB = "sozial_tab"
+        const val EXTRA_OPEN_INVENTAR = "open_inventar"
+        const val EXTRA_OPEN_HOME = "open_home"
         const val EXTRA_FROM_NOTIFICATION = "from_notification"
     }
 }

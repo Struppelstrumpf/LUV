@@ -132,6 +132,8 @@ fun LuvAppNav() {
     val pendingJoin by PendingJoin.code.collectAsStateWithLifecycle()
     val pendingShopReturn by PendingShopReturn.pending.collectAsStateWithLifecycle()
     val pendingShop by PendingShop.open.collectAsStateWithLifecycle()
+    val pendingMarketplace by com.luv.couple.net.PendingMarketplace.open.collectAsStateWithLifecycle()
+    val pendingDeep by com.luv.couple.net.PendingDeepLink.target.collectAsStateWithLifecycle()
     val updateState by AppUpdater.state.collectAsStateWithLifecycle()
     val focusUpdate by AppUpdater.focusRequest.collectAsStateWithLifecycle()
     var googleEnabled by remember { mutableStateOf(false) }
@@ -151,6 +153,7 @@ fun LuvAppNav() {
     var openMarketShopTab by remember { mutableIntStateOf(0) }
     var marketReturnTo by remember { mutableStateOf<MarketReturnTo>(MarketReturnTo.None) }
     var inventorySubTab by remember { mutableIntStateOf(0) }
+    var sozialSubTab by remember { mutableIntStateOf(0) }
     var reopenProfileChest by remember { mutableStateOf(false) }
     var profileChestTab by remember { mutableIntStateOf(0) }
     var showEmojiBarEditor by remember { mutableStateOf(false) }
@@ -791,11 +794,34 @@ fun LuvAppNav() {
         openShopTab()
     }
 
-    LaunchedEffect(startDestination) {
+    LaunchedEffect(pendingMarketplace, startDestination) {
         if (startDestination != Routes.MAIN) return@LaunchedEffect
         if (!com.luv.couple.net.PendingMarketplace.consume()) return@LaunchedEffect
         tab = 3
         openMarketPanel = MarketPanel.Marketplace
+    }
+
+    LaunchedEffect(pendingDeep, startDestination) {
+        if (startDestination != Routes.MAIN) return@LaunchedEffect
+        val target = com.luv.couple.net.PendingDeepLink.consume() ?: return@LaunchedEffect
+        showPublicSplash = false
+        when (target) {
+            com.luv.couple.net.DeepLinkTarget.Home -> tab = 0
+            com.luv.couple.net.DeepLinkTarget.SozialFriends -> {
+                sozialSubTab = 0
+                tab = 1
+            }
+            com.luv.couple.net.DeepLinkTarget.SozialAchievements -> {
+                sozialSubTab = 1
+                tab = 1
+            }
+            com.luv.couple.net.DeepLinkTarget.Inventar -> tab = 2
+            com.luv.couple.net.DeepLinkTarget.Marketplace -> {
+                tab = 3
+                openMarketPanel = MarketPanel.Marketplace
+            }
+            com.luv.couple.net.DeepLinkTarget.Shop -> openShopTab()
+        }
     }
 
     LaunchedEffect(startDestination) {
@@ -1095,6 +1121,7 @@ fun LuvAppNav() {
                             onUpdateApp = { startAppUpdate() }
                         )
                         1 -> SocialScreen(
+                            initialTab = sozialSubTab,
                             onOpenFriendProfile = { userId, nick ->
                                 navController.currentBackStackEntry
                                     ?.savedStateHandle

@@ -533,7 +533,7 @@ fun ProfileCanvasScreen(
         }
     }
 
-    fun save() {
+    fun persistProfile(closeAfter: Boolean, silent: Boolean = false) {
         if (!editable || saving) return
         saving = true
         scope.launch {
@@ -567,13 +567,26 @@ fun ProfileCanvasScreen(
             }
             saving = false
             savedSnapshot = clean.snapshotKey()
-            Toast.makeText(
-                context,
-                if (ok) "Profil gespeichert" else "Lokal gespeichert",
-                Toast.LENGTH_SHORT
-            ).show()
-            onClose()
+            if (!silent) {
+                Toast.makeText(
+                    context,
+                    if (ok) "Profil gespeichert" else "Lokal gespeichert",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            if (closeAfter) onClose()
         }
+    }
+
+    fun save() = persistProfile(closeAfter = true, silent = false)
+
+    // Z-Reihenfolge / Größe still mit Google-Konto synchronisieren
+    LaunchedEffect(editable, state.snapshotKey()) {
+        if (!editable || savedSnapshot.isEmpty()) return@LaunchedEffect
+        if (state.snapshotKey() == savedSnapshot) return@LaunchedEffect
+        delay(1600)
+        if (state.snapshotKey() == savedSnapshot || saving) return@LaunchedEffect
+        persistProfile(closeAfter = false, silent = true)
     }
 
     val editEl = state.layout.firstOrNull { it.id == editElId }
@@ -1787,19 +1800,10 @@ private fun ProfileCanvasBoard(
                     onSelect = {
                         if (!editable) return@ProfileElementView
                         onSelectLatest.value(el.id)
-                        if (el.type == ProfileElType.Sticker) {
-                            val cur = layoutLatest.value
-                            val maxZ = cur.maxOfOrNull { it.z } ?: 20
-                            onLayoutChangeLatest.value(
-                                cur.map {
-                                    if (it.id == el.id) {
-                                        it.copy(
-                                            z = (maxZ + 1).coerceAtMost(ProfileCatalog.MAX_DECOR_Z)
-                                        )
-                                    } else it
-                                }
-                            )
-                        }
+                        // Jedes Element nach vorne — Reihenfolge bleibt über Speichern/Google
+                        onLayoutChangeLatest.value(
+                            ProfileCatalog.bringToFront(layoutLatest.value, el.id)
+                        )
                     },
                     onChange = { updated ->
                         val cur = layoutLatest.value
@@ -1906,7 +1910,10 @@ private fun ProfileElementView(
     val strokeW = ProfileCatalog.padPx(boardW, boardH, 2f).coerceAtLeast(1f)
     val canEdit = el.type in ProfileCatalog.EDITABLE_TYPES
     val canRemove = el.type != ProfileElType.Avatar && el.type != ProfileElType.Name
-    val invScale = 1f / dragEl.scale.coerceIn(0.35f, 2.5f)
+    val invScale = 1f / dragEl.scale.coerceIn(
+        ProfileCatalog.ELEMENT_SCALE_MIN,
+        ProfileCatalog.ELEMENT_SCALE_MAX
+    )
 
     Box(
         modifier = Modifier
@@ -2114,8 +2121,11 @@ private fun ProfileElementView(
                         detectDragGestures { change, drag ->
                             change.consume()
                             val next = dragEl.copy(
-                                scale = (dragEl.scale + drag.x * 0.008f * invScale)
-                                    .coerceIn(0.35f, 2.5f)
+                                scale = (dragEl.scale + drag.x * 0.01f * invScale)
+                                    .coerceIn(
+                                        ProfileCatalog.ELEMENT_SCALE_MIN,
+                                        ProfileCatalog.ELEMENT_SCALE_MAX
+                                    )
                             )
                             dragEl = next
                             onChangeLatest.value(next)

@@ -26,6 +26,10 @@ object NotificationBadges {
     /** Tab-Punkte innerhalb von Sozial (Session) */
     private var friendsTabSeen = true
     private var achievementsTabSeen = true
+    /** Erster Sync setzt nur Baseline — keine Push beim App-Start. */
+    private var friendsBaselineReady = false
+    private var achievementsBaselineReady = false
+    private var inventoryBaselineReady = false
 
     val friendIncoming: StateFlow<Int> = _friendIncoming.asStateFlow()
     val achievementsClaimable: StateFlow<Boolean> = _achievementsClaimable.asStateFlow()
@@ -77,29 +81,54 @@ object NotificationBadges {
 
     fun setFriendIncoming(count: Int) {
         val next = count.coerceAtLeast(0)
-        if (next > _friendIncoming.value) {
+        val grew = friendsBaselineReady && next > _friendIncoming.value
+        if (grew) {
+            sozialSeen = false
+            friendsTabSeen = false
+            runCatching {
+                com.luv.couple.notify.LuvAlertNotifier.onFriendRequest(
+                    LuvApp.instance,
+                    next
+                )
+            }
+        } else if (next > _friendIncoming.value) {
             sozialSeen = false
             friendsTabSeen = false
         }
         _friendIncoming.value = next
+        friendsBaselineReady = true
         recompute()
     }
 
     fun onAchievementsClaimable(claimable: Boolean) {
+        val newly = achievementsBaselineReady && claimable && !_achievementsClaimable.value
         if (claimable && !_achievementsClaimable.value) {
             sozialSeen = false
             achievementsTabSeen = false
+            if (newly) {
+                runCatching {
+                    com.luv.couple.notify.LuvAlertNotifier.onAchievementsReady(LuvApp.instance)
+                }
+            }
         }
         _achievementsClaimable.value = claimable
+        achievementsBaselineReady = true
         recompute()
     }
 
     fun setAchievementsClaimable(claimable: Boolean) {
+        val newly = achievementsBaselineReady && claimable && !_achievementsClaimable.value
         if (claimable && !_achievementsClaimable.value) {
             sozialSeen = false
             achievementsTabSeen = false
+            if (newly) {
+                runCatching {
+                    com.luv.couple.notify.LuvAlertNotifier.onAchievementsReady(LuvApp.instance)
+                }
+            }
         }
         _achievementsClaimable.value = claimable
+        achievementsBaselineReady = true
         AchievementsBadge.update(claimable)
         recompute()
     }
@@ -110,7 +139,14 @@ object NotificationBadges {
     }
 
     fun setInventoryUnseen(count: Int) {
-        _inventoryUnseen.value = count.coerceAtLeast(0)
+        val next = count.coerceAtLeast(0)
+        if (inventoryBaselineReady && next > _inventoryUnseen.value) {
+            runCatching {
+                com.luv.couple.notify.LuvAlertNotifier.onInventoryNew(LuvApp.instance, next)
+            }
+        }
+        _inventoryUnseen.value = next
+        inventoryBaselineReady = true
         recompute()
     }
 
