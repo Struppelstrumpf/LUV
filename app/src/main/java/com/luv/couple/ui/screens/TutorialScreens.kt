@@ -24,7 +24,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -89,6 +91,7 @@ fun TutorialFlow(
     var nickname by remember {
         mutableStateOf(if (replay) existingNickname.trim() else "")
     }
+    var showNickConfirm by remember { mutableStateOf(false) }
     val color = PeerPalette.composeColor(
         PeerPalette.indexFor(nickname.trim().lowercase().ifBlank { "a" })
     )
@@ -151,7 +154,7 @@ fun TutorialFlow(
                     TutPage.Nickname -> TutorialPane(
                         emojiDot = color,
                         title = "Und wie heißt du hier?",
-                        body = "Dein Spitzname färbt deine Linien in eurer Farbe. Ganz leise sagt er: Das bin ich."
+                        body = "Dein Spitzname färbt deine Linien. Er kann später nicht mehr geändert werden."
                     ) {
                         Spacer(modifier = Modifier.height(20.dp))
                         Row(
@@ -186,7 +189,9 @@ fun TutorialFlow(
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                                     keyboardActions = KeyboardActions(
                                         onDone = {
-                                            if (nickname.trim().length >= 2) index += 1
+                                            if (nickname.trim().length >= 2) {
+                                                showNickConfirm = true
+                                            }
                                         }
                                     ),
                                     textStyle = TextStyle(
@@ -275,6 +280,7 @@ fun TutorialFlow(
                             .background(if (canAdvance) AccentRose else AccentRose.copy(alpha = 0.35f))
                             .clickable(enabled = !busy && canAdvance) {
                                 when {
+                                    page == TutPage.Nickname -> showNickConfirm = true
                                     index < lastIndex -> index += 1
                                     else -> onFinished(
                                         nickname.trim().ifBlank { existingNickname.trim() }
@@ -322,6 +328,47 @@ fun TutorialFlow(
                 }
             }
         }
+    }
+
+    if (showNickConfirm) {
+        val chosen = nickname.trim()
+        AlertDialog(
+            onDismissRequest = { showNickConfirm = false },
+            containerColor = BgSoft,
+            title = {
+                Text(
+                    "Spitzname festlegen?",
+                    fontFamily = DisplayFont,
+                    fontSize = 22.sp,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Text(
+                    "„$chosen“ wird dein Name in LUV. Das lässt sich später nicht mehr ändern — bist du sicher?",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showNickConfirm = false
+                        if (index < lastIndex) index += 1
+                        else onFinished(chosen)
+                    }
+                ) {
+                    Text("Ja, so heißt ich", color = AccentRose, fontFamily = DisplayFont)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNickConfirm = false }) {
+                    Text("Nochmal ändern", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
     }
 }
 

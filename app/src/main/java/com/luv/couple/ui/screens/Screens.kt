@@ -172,7 +172,7 @@ fun NicknameScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "So sehen dich die anderen — und so lautet deine Farbe.",
+                    text = "So sehen dich die anderen — und so lautet deine Farbe. Später nicht mehr änderbar.",
                     color = TextMuted,
                     fontFamily = BodyFont
                 )

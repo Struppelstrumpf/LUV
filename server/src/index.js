@@ -2189,6 +2189,7 @@ function deleteUserAccount(user) {
   const db = getDb();
   const userId = user.id;
   ensureHostedRooms(user);
+  ensureJoinedRooms(user);
   const hostedCodes = Object.keys(user.hostedRooms || {});
   for (const code of hostedCodes) {
     const room = rooms.get(code);
@@ -2206,6 +2207,28 @@ function deleteUserAccount(user) {
       delete db.rooms[code];
     }
     delete user.hostedRooms[code];
+  }
+  for (const code of Object.keys(user.joinedRooms || {})) {
+    const room = rooms.get(code) || null;
+    if (room) forgetMember(room, userId);
+    delete user.joinedRooms[code];
+  }
+  // Aus Freundeslisten anderer Nutzer streichen
+  for (const other of Object.values(db.users || {})) {
+    if (!other?.id || other.id === userId) continue;
+    ensureFriends(other);
+    const f = other.friends;
+    const before =
+      f.list.length + f.incoming.length + f.outgoing.length + (f.petKraulTargets?.length || 0);
+    f.list = f.list.filter((id) => id !== userId);
+    f.incoming = f.incoming.filter((id) => id !== userId);
+    f.outgoing = f.outgoing.filter((id) => id !== userId);
+    if (Array.isArray(f.petKraulTargets)) {
+      f.petKraulTargets = f.petKraulTargets.filter((id) => id !== userId);
+    }
+    const after =
+      f.list.length + f.incoming.length + f.outgoing.length + (f.petKraulTargets?.length || 0);
+    if (after !== before) scheduleSave();
   }
   destroyAllSessionsForUser(userId);
   if (Array.isArray(db.ledger)) {
@@ -3412,18 +3435,20 @@ app.post("/v1/auth/device", (req, res) => {
     scheduleSave();
     created = true;
   } else if (nickname && nickname.length >= 2) {
+    // Spitzname nur einmal wählbar — danach gesperrt (Doppel-Namen werden manuell bereinigt)
     if (
-      isChosenNickname(nickname) &&
-      nicknameKey(nickname) !== nicknameKey(user.nickname) &&
-      findUserByNickname(nickname, user.id)
+      isChosenNickname(user.nickname) &&
+      nicknameKey(nickname) !== nicknameKey(user.nickname)
     ) {
-      return res.status(409).json({
-        error: "nickname_taken",
-        message: "Dieser Spitzname ist schon vergeben.",
+      return res.status(403).json({
+        error: "nickname_locked",
+        message: "Dein Spitzname kann nicht mehr geändert werden.",
       });
     }
-    user.nickname = nickname;
-    scheduleSave();
+    if (!isChosenNickname(user.nickname)) {
+      user.nickname = nickname;
+      scheduleSave();
+    }
   }
   if (user.banned) {
     return res.status(403).json({
@@ -3557,8 +3582,32 @@ app.post("/v1/auth/logout", (req, res) => {
 app.delete("/v1/me", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
-  deleteUserAccount(ctx.user);
-  return res.json({ ok: true, deleted: true });
+  try {
+    deleteUserAccount(ctx.user);
+    return res.json({ ok: true, deleted: true });
+  } catch (err) {
+    console.error("delete /v1/me failed", err);
+    return res.status(500).json({
+      error: "delete_failed",
+      message: "Konto konnte nicht gelöscht werden.",
+    });
+  }
+});
+
+/** Fallback ohne DELETE-Body (manche Clients/Proxies mögen DELETE+JSON nicht). */
+app.post("/v1/me/delete", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  try {
+    deleteUserAccount(ctx.user);
+    return res.json({ ok: true, deleted: true });
+  } catch (err) {
+    console.error("post /v1/me/delete failed", err);
+    return res.status(500).json({
+      error: "delete_failed",
+      message: "Konto konnte nicht gelöscht werden.",
+    });
+  }
 });
 
 app.get("/v1/me/lobbies", (req, res) => {
@@ -3599,11 +3648,20 @@ app.patch("/v1/me", (req, res) => {
   if (!ctx) return;
   const nickname = String(req.body?.nickname || "").trim().slice(0, 18);
   if (nickname.length >= 2) {
-    if (nicknameKey(nickname) !== nicknameKey(ctx.user.nickname)) {
-      if (!assertNicknameAvailable(nickname, ctx.user.id, res)) return;
+    if (
+      isChosenNickname(ctx.user.nickname) &&
+      nicknameKey(nickname) !== nicknameKey(ctx.user.nickname)
+    ) {
+      return res.status(403).json({
+        error: "nickname_locked",
+        message: "Dein Spitzname kann nicht mehr geändert werden.",
+      });
     }
-    ctx.user.nickname = nickname;
-    scheduleSave();
+    // Erste Vergabe (Placeholder „Luv“) — Doppel-Namen werden manuell bereinigt
+    if (!isChosenNickname(ctx.user.nickname)) {
+      ctx.user.nickname = nickname;
+      scheduleSave();
+    }
   }
   return res.json({ user: publicUser(ctx.user) });
 });

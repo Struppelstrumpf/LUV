@@ -1016,7 +1016,7 @@ fun LuvAppNav() {
                 initialChestTab = profileChestTab,
                 onInitialChestConsumed = { reopenProfileChest = false },
                 onClose = { navController.popBackStack() },
-                onEditNickname = { navController.navigate(Routes.NICKNAME) },
+                onEditNickname = null,
                 onOpenMarketplace = { chestTab ->
                     profileChestTab = chestTab
                     marketReturnTo = MarketReturnTo.Profile(chestTab)

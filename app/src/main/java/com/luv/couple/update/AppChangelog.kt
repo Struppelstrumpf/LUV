@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.50",
+            listOf(
+                "Spitzname nur einmal wählbar — mit Bestätigung im Tutorial",
+                "Konto löschen: API-Fehler 400 behoben",
+            )
+        ),
+        Entry(
             "1.9.49",
             listOf(
                 "Update-Hinweis: Text gut lesbar auf dunkler Karte",

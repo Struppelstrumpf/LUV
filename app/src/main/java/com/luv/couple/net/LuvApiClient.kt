@@ -305,16 +305,31 @@ object LuvApiClient {
 
     /** Löscht Konto inkl. Google-Verknüpfung auf dem Server. */
     suspend fun deleteAccount(): Unit = withContext(Dispatchers.IO) {
-        val request = authedRequestBuilder("/v1/me").delete(emptyBody).build()
-        http.newCall(request).execute().use { response ->
+        fun parseFail(raw: String, code: Int): Nothing {
+            val json = runCatching { JSONObject(raw) }.getOrNull()
+            throw LuvApiException(
+                message = json?.optString("message")?.takeIf { it.isNotBlank() }
+                    ?: "Konto konnte nicht gelöscht werden. ($code)",
+                error = json?.optString("error")
+            )
+        }
+        // Ohne Body — DELETE + JSON-Body liefert bei manchen Setups 400
+        val del = authedRequestBuilder("/v1/me").delete().build()
+        http.newCall(del).execute().use { response ->
             val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                val json = runCatching { JSONObject(raw) }.getOrNull()
-                throw LuvApiException(
-                    json?.optString("message")?.takeIf { it.isNotBlank() }
-                        ?: "Konto konnte nicht gelöscht werden."
-                )
+            if (response.isSuccessful) {
+                sessionToken = null
+                return@withContext
             }
+            if (response.code != 400 && response.code != 405) {
+                parseFail(raw, response.code)
+            }
+        }
+        // Fallback
+        val post = authedRequestBuilder("/v1/me/delete").post(emptyBody).build()
+        http.newCall(post).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            if (!response.isSuccessful) parseFail(raw, response.code)
         }
         sessionToken = null
     }
@@ -445,6 +460,7 @@ object LuvApiClient {
                 throw LuvApiException(
                     message = when (json?.optString("error")) {
                         "nickname_taken" -> "Dieser Spitzname ist schon vergeben."
+                        "nickname_locked" -> "Dein Spitzname kann nicht mehr geändert werden."
                         "bad_nick" -> "Spitzname ungültig."
                         else -> json?.optString("message")?.takeIf { it.isNotBlank() }
                             ?: "Name speichern fehlgeschlagen."
