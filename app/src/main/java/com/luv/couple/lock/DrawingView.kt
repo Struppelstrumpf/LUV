@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -26,6 +27,7 @@ class DrawingView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     private val strokes = mutableListOf<Stroke>()
+    private val stickers = mutableListOf<CanvasSticker>()
     private val alphas = mutableMapOf<String, Float>()
     private val animators = mutableMapOf<String, ValueAnimator>()
     private val currentPoints = mutableListOf<StrokePoint>()
@@ -33,6 +35,10 @@ class DrawingView @JvmOverloads constructor(
     private val eraserPath = Path()
     private val handler = Handler(Looper.getMainLooper())
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+    private val emojiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.DEFAULT
+    }
 
     private var downX = 0f
     private var downY = 0f
@@ -133,11 +139,18 @@ class DrawingView @JvmOverloads constructor(
         invalidate()
     }
 
+    fun setStickers(list: List<CanvasSticker>) {
+        stickers.clear()
+        stickers.addAll(list)
+        invalidate()
+    }
+
     fun clearCanvas() {
         animators.values.forEach { it.cancel() }
         animators.clear()
         alphas.clear()
         strokes.clear()
+        stickers.clear()
         currentPoints.clear()
         currentPath.reset()
         invalidate()
@@ -163,6 +176,20 @@ class DrawingView @JvmOverloads constructor(
         canvas.drawColor(canvasBackground)
         if (showDotGrid) drawDotGrid(canvas)
         if (showTicTacToe) drawTicTacToeBoard(canvas)
+        // Emojis unter den Strichen → darüber malen möglich
+        if (stickers.isNotEmpty() && width > 0 && height > 0) {
+            emojiPaint.textSize = min(width, height) * 0.075f
+            val fm = emojiPaint.fontMetrics
+            val baselinePad = (fm.bottom + fm.top) / 2f
+            stickers.forEach { s ->
+                canvas.drawText(
+                    s.emoji,
+                    s.x * width,
+                    s.y * height - baselinePad,
+                    emojiPaint
+                )
+            }
+        }
         strokes.forEach { stroke ->
             val alpha = ((alphas[stroke.id] ?: 1f) * 255).toInt().coerceIn(0, 255)
             val color = CanvasStore.strokeColor(stroke)

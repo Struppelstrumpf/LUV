@@ -620,30 +620,29 @@ class PairConnectionService : Service() {
                         done = done
                     )
                     if (done) {
+                        // Stickers immer im Store sichern (auch wenn Leinwand noch zu ist)
                         val stickersArr = json.optJSONArray("stickers")
-                        scope.launch {
-                            if (stickersArr != null) {
-                                val stickers = buildList {
-                                    for (i in 0 until stickersArr.length()) {
-                                        val o = stickersArr.optJSONObject(i) ?: continue
-                                        val id = o.optString("id").trim()
-                                        val emoji = o.optString("emoji").trim().take(8)
-                                        if (id.isBlank() || emoji.isBlank()) continue
-                                        add(
-                                            PairEvent.StickerPlaced(
-                                                lobbyId = lobby.id,
-                                                id = id,
-                                                emoji = emoji,
-                                                x = o.optDouble("x", 0.5).toFloat().coerceIn(0f, 1f),
-                                                y = o.optDouble("y", 0.5).toFloat().coerceIn(0f, 1f),
-                                                nickname = o.optString("nickname")
-                                                    .takeIf { it.isNotBlank() && it != "null" }
-                                            )
+                        if (stickersArr != null) {
+                            val stickers = buildList {
+                                for (i in 0 until stickersArr.length()) {
+                                    val o = stickersArr.optJSONObject(i) ?: continue
+                                    val sid = o.optString("id").trim()
+                                    val emoji = o.optString("emoji").trim().take(8)
+                                    if (sid.isBlank() || emoji.isBlank()) continue
+                                    add(
+                                        com.luv.couple.lock.CanvasSticker(
+                                            id = sid,
+                                            emoji = emoji,
+                                            x = o.optDouble("x", 0.5).toFloat().coerceIn(0f, 1f),
+                                            y = o.optDouble("y", 0.5).toFloat().coerceIn(0f, 1f),
+                                            isLocal = false
                                         )
-                                    }
+                                    )
                                 }
-                                _events.emit(PairEvent.StickersHistory(lobby.id, stickers))
                             }
+                            CanvasStore.replaceStickers(lobby.id, stickers)
+                        }
+                        scope.launch {
                             _events.emit(PairEvent.HistoryApplied(lobby.id))
                         }
                     }
@@ -995,6 +994,16 @@ class PairConnectionService : Service() {
                 }
             }
             is PairMessage.StickerPlace -> {
+                CanvasStore.upsertRemoteSticker(
+                    com.luv.couple.lock.CanvasSticker(
+                        id = message.id,
+                        emoji = message.emoji,
+                        x = message.x,
+                        y = message.y,
+                        isLocal = false
+                    ),
+                    lobby.id
+                )
                 scope.launch {
                     _events.emit(
                         PairEvent.StickerPlaced(
@@ -1009,6 +1018,7 @@ class PairConnectionService : Service() {
                 }
             }
             is PairMessage.StickerRemove -> {
+                CanvasStore.removeStickerById(message.id, lobby.id, broadcast = false)
                 scope.launch {
                     _events.emit(PairEvent.StickerRemoved(lobby.id, message.id))
                 }

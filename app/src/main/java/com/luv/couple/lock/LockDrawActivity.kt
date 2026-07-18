@@ -84,7 +84,6 @@ class LockDrawActivity : ComponentActivity() {
     private var reactionExpanded = false
     private var eraserOn = false
     private var emojiEditorHost: FrameLayout? = null
-    private val placedStickers = linkedMapOf<String, TextView>()
     private lateinit var gameHud: LinearLayout
     private lateinit var gameHudTitle: TextView
     private lateinit var gameHudSubtitle: TextView
@@ -170,6 +169,8 @@ class LockDrawActivity : ComponentActivity() {
         reactionEmojiList = findViewById(R.id.reactionEmojiList)
         btnEmojiEdit = findViewById(R.id.btnEmojiEdit)
         stickerOverlay = findViewById(R.id.stickerOverlay)
+        stickerOverlay.isClickable = false
+        stickerOverlay.isFocusable = false
         gamePlayOverlay = findViewById(R.id.gamePlayOverlay)
         gamePlayOverlay.onAction = { action, payload ->
             PairConnectionService.sendGameAction(this, action, payload, lobbyId)
@@ -225,9 +226,6 @@ class LockDrawActivity : ComponentActivity() {
         }
         btnEmojiEdit.setOnClickListener { openEmojiBarEditor() }
         bindReactionBar()
-        stickerOverlay.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            relayoutCommittedStickers()
-        }
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -291,6 +289,7 @@ class LockDrawActivity : ComponentActivity() {
             // Eigene Historie an aktuelle Farbe anpassen (sonst gemischte Farben bis zum Picker)
             CanvasStore.recolorOwnStrokes(snap.colorIndex, lobbyId, broadcast = false)
             drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
+            syncStickersFromStore()
             refreshLegend()
             showLastStrokeMemory(lobbyId)
             lobby?.let { CanvasMemoryKeeper.touch(it) }
@@ -325,7 +324,7 @@ class LockDrawActivity : ComponentActivity() {
                 refreshLegend()
             }
             if (erasedStickers.isNotEmpty()) {
-                erasedStickers.forEach { removeStickerView(it) }
+                syncStickersFromStore()
             }
         }
 
@@ -361,6 +360,7 @@ class LockDrawActivity : ComponentActivity() {
                             broadcast = false
                         )
                         drawingView.setStrokes(CanvasStore.snapshot(id), animateNew = false)
+                        syncStickersFromStore()
                         refreshLegend()
                     }
                     is PairEvent.ColorAssigned -> if (event.lobbyId == id) {
@@ -369,7 +369,7 @@ class LockDrawActivity : ComponentActivity() {
                     is PairEvent.Cleared -> if (event.lobbyId == id) {
                         drawingView.clearCanvas()
                         CanvasStore.replaceStickers(id, emptyList())
-                        clearAllStickers()
+                        syncStickersFromStore()
                         stopAllGamesLocal()
                     }
                     is PairEvent.RecolorReceived -> if (event.lobbyId == id) {
@@ -380,24 +380,13 @@ class LockDrawActivity : ComponentActivity() {
                         showReaction(event.emoji)
                     }
                     is PairEvent.StickerPlaced -> if (event.lobbyId == id) {
-                        CanvasStore.upsertRemoteSticker(
-                            CanvasSticker(event.id, event.emoji, event.x, event.y, isLocal = false),
-                            id
-                        )
-                        upsertCommittedSticker(event.id, event.emoji, event.x, event.y)
+                        syncStickersFromStore()
                     }
                     is PairEvent.StickerRemoved -> if (event.lobbyId == id) {
-                        CanvasStore.removeStickerById(event.id, id, broadcast = false)
-                        removeStickerView(event.id)
+                        syncStickersFromStore()
                     }
                     is PairEvent.StickersHistory -> if (event.lobbyId == id) {
-                        CanvasStore.replaceStickers(
-                            id,
-                            event.stickers.map {
-                                CanvasSticker(it.id, it.emoji, it.x, it.y, isLocal = false)
-                            }
-                        )
-                        replaceStickersFromHistory(event.stickers)
+                        syncStickersFromStore()
                     }
                     is PairEvent.GameBoardReceived -> if (event.lobbyId == id) {
                         applyOverlayBoard(event.game, event.visible)
@@ -690,8 +679,8 @@ class LockDrawActivity : ComponentActivity() {
     }
 
     private fun placeEmojiNormalized(emoji: String, nx: Float, ny: Float) {
-        val sticker = CanvasStore.addLocalSticker(emoji, nx, ny, lobbyId) ?: return
-        upsertCommittedSticker(sticker.id, sticker.emoji, sticker.x, sticker.y)
+        CanvasStore.addLocalSticker(emoji, nx, ny, lobbyId) ?: return
+        syncStickersFromStore()
     }
 
     private fun openEmojiBarEditor() {
@@ -731,79 +720,10 @@ class LockDrawActivity : ComponentActivity() {
     private fun stickerSizePx(): Int =
         (56f * resources.displayMetrics.density).toInt()
 
-    private fun upsertCommittedSticker(id: String, emoji: String, x: Float, y: Float) {
-        val existing = placedStickers[id]
-        val tv = existing ?: TextView(this).apply {
-            gravity = Gravity.CENTER
-            textSize = 36f
-            elevation = 12f
-            isClickable = false
-            isFocusable = false
-            setShadowLayer(10f, 0f, 3f, 0x66000000)
-            layoutParams = FrameLayout.LayoutParams(stickerSizePx(), stickerSizePx())
-            stickerOverlay.addView(this)
-            placedStickers[id] = this
-        }
-        tv.text = emoji
-        tv.alpha = 1f
-        tv.isClickable = false
-        tv.isFocusable = false
-        tv.tag = StickerTag(id, emoji, x, y, drafting = false)
-        tv.setOnTouchListener(null)
-        positionStickerView(tv, x, y)
-    }
-
-    private fun positionStickerView(view: TextView, x: Float, y: Float) {
-        val w = stickerOverlay.width
-        val h = stickerOverlay.height
-        if (w <= 0 || h <= 0) {
-            view.post { positionStickerView(view, x, y) }
-            return
-        }
-        view.x = x * w - view.width / 2f
-        view.y = y * h - view.height / 2f
-    }
-
-    private fun relayoutCommittedStickers() {
-        placedStickers.values.forEach { tv ->
-            val tag = tv.tag as? StickerTag ?: return@forEach
-            positionStickerView(tv, tag.x, tag.y)
-        }
-    }
-
-    private fun clearAllStickers() {
-        stickerOverlay.removeAllViews()
-        placedStickers.clear()
-    }
-
-    private fun removeStickerView(id: String) {
-        placedStickers.remove(id)?.let { (it.parent as? ViewGroup)?.removeView(it) }
-    }
-
     private fun syncStickersFromStore() {
-        val stickers = CanvasStore.snapshotStickers(lobbyId)
-        val keep = stickers.map { it.id }.toSet()
-        placedStickers.keys.filter { it !in keep }.toList().forEach { removeStickerView(it) }
-        stickers.forEach { s ->
-            upsertCommittedSticker(s.id, s.emoji, s.x, s.y)
-        }
+        if (!::drawingView.isInitialized) return
+        drawingView.setStickers(CanvasStore.snapshotStickers(lobbyId))
     }
-
-    private fun replaceStickersFromHistory(stickers: List<PairEvent.StickerPlaced>) {
-        stickerOverlay.removeAllViews()
-        placedStickers.clear()
-        stickers.forEach { s ->
-            upsertCommittedSticker(s.id, s.emoji, s.x, s.y)
-        }
-    }
-
-    private data class StickerTag(
-        val id: String,
-        val emoji: String,
-        val x: Float,
-        val y: Float,
-        val drafting: Boolean = false
-    )
 
     private fun sendReaction(emoji: String) {
         showReaction(emoji)

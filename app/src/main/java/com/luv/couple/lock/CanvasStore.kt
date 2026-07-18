@@ -615,18 +615,7 @@ object CanvasStore {
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
         }
-        strokes.forEach { stroke ->
-            if (stroke.points.isEmpty()) return@forEach
-            paint.color = strokeColor(stroke)
-            paint.strokeWidth = stroke.width
-            val path = Path()
-            val first = stroke.points.first()
-            path.moveTo(first.x * width, first.y * height)
-            stroke.points.drop(1).forEach { point ->
-                path.lineTo(point.x * width, point.y * height)
-            }
-            canvas.drawPath(path, paint)
-        }
+        // Emojis zuerst — Striche liegen darüber (wie auf der Live-Leinwand)
         if (stickers.isNotEmpty()) {
             val emojiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 textAlign = Paint.Align.CENTER
@@ -643,6 +632,18 @@ object CanvasStore {
                     emojiPaint
                 )
             }
+        }
+        strokes.forEach { stroke ->
+            if (stroke.points.isEmpty()) return@forEach
+            paint.color = strokeColor(stroke)
+            paint.strokeWidth = stroke.width
+            val path = Path()
+            val first = stroke.points.first()
+            path.moveTo(first.x * width, first.y * height)
+            stroke.points.drop(1).forEach { point ->
+                path.lineTo(point.x * width, point.y * height)
+            }
+            canvas.drawPath(path, paint)
         }
         return bitmap
     }

@@ -475,7 +475,8 @@ function sendCanvasHistory(socket, room, code) {
       JSON.stringify({
         type: "canvas_history",
         strokes: chunk,
-        stickers: done ? stickers : undefined,
+        // Stickers immer im letzten Chunk — leeres Array löscht Client-State korrekt
+        ...(done ? { stickers } : {}),
         done,
         replace: i === 0,
       })
