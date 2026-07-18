@@ -2581,11 +2581,21 @@ function roomConnectedMembers(room) {
       ? Math.max(0, Math.floor(Number(sock.luvColorIndex)))
       : 0;
     const u = userId ? getDb().users?.[userId] : null;
+    // Mehrere Geräte desselben Kontos: aktiv, wenn irgendein Socket auf der Leinwand ist
+    let active = Boolean(sock.luvCanvasActive);
+    if (userId) {
+      for (const other of room.sockets.values()) {
+        if (other.luvUserId === userId && other.luvCanvasActive) {
+          active = true;
+          break;
+        }
+      }
+    }
     out.push({
       userId: userId || peerId,
       nickname: nick,
       colorIndex,
-      active: Boolean(sock.luvCanvasActive),
+      active,
       petEmoji: u ? userPetEmoji(u) : DEFAULT_PET,
     });
   }
@@ -2601,20 +2611,50 @@ function uniqueConnectedCount(room) {
   return roomConnectedMembers(room).length;
 }
 
-/** Alte WS desselben Users schließen — verhindert Doppel-Sockets / room_full beim Reconnect. */
-function evictSocketsForUser(room, userId) {
-  if (!userId) return 0;
+/**
+ * Ein Konto, eine Leinwand: andere Geräte desselben Users nur aus der Leinwand holen
+ * (Lobby-WS bleibt offen — kein 4002-Kick mehr).
+ */
+function kickOtherCanvasSockets(room, userId, exceptSocket) {
+  if (!userId || !room) return 0;
   let n = 0;
-  for (const [peerId, sock] of [...room.sockets.entries()]) {
+  const payload = JSON.stringify({
+    type: "canvas_taken",
+    message: "Ein anderes Gerät hat die Leinwand betreten.",
+  });
+  for (const sock of room.sockets.values()) {
+    if (sock === exceptSocket) continue;
     if (sock.luvUserId !== userId) continue;
-    sock.luvReplaced = true;
-    try {
-      sock.close(4002, "replaced");
-    } catch {
-      /* ignore */
+    const wasActive = Boolean(sock.luvCanvasActive);
+    sock.luvCanvasActive = false;
+    if (sock.readyState === 1) {
+      try {
+        sock.send(payload);
+      } catch {
+        /* ignore */
+      }
     }
-    room.sockets.delete(peerId);
     n += 1;
+    if (wasActive) {
+      const presenceOff = JSON.stringify({
+        type: "presence",
+        active: false,
+        userId,
+        peerKey: userId,
+        nickname: sock.luvNickname || "Jemand",
+        colorIndex: Number.isFinite(Number(sock.luvColorIndex)) ? sock.luvColorIndex : 0,
+      });
+      for (const peer of room.sockets.values()) {
+        if (peer === sock || peer === exceptSocket) continue;
+        if (peer.readyState === 1) {
+          try {
+            peer.send(presenceOff);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    }
   }
   return n;
 }
@@ -5460,6 +5500,32 @@ app.get("/v1/public-canvases/random", (_req, res) => {
   });
 });
 
+/** Eigene veröffentlichte Galerie-Bilder (für Geräte-Sync) */
+app.get("/v1/public-canvases/mine", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  cleanupPublicCanvases();
+  const uid = ctx.user.id;
+  const items = listPublicCanvasEntries()
+    .filter(
+      (e) =>
+        e.hostUserId === uid ||
+        (Array.isArray(e.memberUserIds) && e.memberUserIds.includes(uid))
+    )
+    .map((e) => ({
+      id: e.id,
+      lobbyName: e.lobbyName || "Galerie",
+      hostNickname: e.hostNickname || "Jemand",
+      memberNicknames: Array.isArray(e.memberNicknames) ? e.memberNicknames : [],
+      nameLine: e.nameLine || splashNameLine(e),
+      imageUrl: `/v1/public-canvases/${e.id}/image`,
+      createdAt: e.createdAt,
+      expiresAt: e.expiresAt || Number(e.createdAt) + PUBLIC_TTL_MS,
+      source: e.source || null,
+    }));
+  return res.json({ items, count: items.length });
+});
+
 /** Galerie → öffentlich veröffentlichen (ohne Lobby-Abstimmung) */
 app.post("/v1/public-canvases/publish", (req, res) => {
   const ctx = requireAuth(req, res);
@@ -6276,10 +6342,8 @@ wss.on("connection", (socket, req) => {
     }
     return;
   }
-  // Reconnect: alten Socket desselben Users ersetzen (kein Doppelplatz)
-  if (user?.id) {
-    evictSocketsForUser(room, user.id);
-  }
+  // Mehrere Geräte desselben Kontos dürfen in der Lobby verbunden bleiben.
+  // Exklusivität gilt nur für die Leinwand (siehe presence → kickOtherCanvasSockets).
   healRoomMembership(room);
   let capacity = roomCapacity(room);
   if ((Number(room.capacity) || 0) < capacity) {
@@ -6410,6 +6474,9 @@ wss.on("connection", (socket, req) => {
     if (type === "presence") {
       const wasActive = Boolean(socket.luvCanvasActive);
       socket.luvCanvasActive = json.active === true;
+      if (socket.luvCanvasActive && user?.id) {
+        kickOtherCanvasSockets(room, user.id, socket);
+      }
       if (socket.luvNickname && !json.nickname) {
         json.nickname = socket.luvNickname;
       } else if (json.nickname) {

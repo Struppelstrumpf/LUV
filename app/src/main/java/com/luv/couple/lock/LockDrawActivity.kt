@@ -467,6 +467,10 @@ class LockDrawActivity : ComponentActivity() {
                         flashStatus("Verbindung wird wiederhergestellt…")
                         PairConnectionService.reconnectNow(this@LockDrawActivity, id)
                     }
+                    is PairEvent.CanvasTaken -> if (event.lobbyId == id) {
+                        // Nur Leinwand verlassen — Lobby-WS bleibt verbunden
+                        finish()
+                    }
                 }
             }
         }

@@ -89,6 +89,46 @@ object LocalMoments {
     suspend fun publicIdOf(context: Context, momentId: String): String? =
         withContext(Dispatchers.IO) { loadPublicMap(context)[momentId] }
 
+    /** Moment-Dateiname für ein vom Server synchronisiertes veröffentlichtes Bild */
+    fun syncedFileName(publicId: String): String =
+        "LUV_pub_${publicId.replace(Regex("[^a-zA-Z0-9_-]"), "")}.png"
+
+    /**
+     * Veröffentlichte Bilder vom Konto holen und lokal ablegen.
+     * Unveröffentlichte Screenshots bleiben geräteweise und werden nicht angefasst.
+     */
+    suspend fun syncPublishedFromAccount(context: Context): Int = withContext(Dispatchers.IO) {
+        val remote = runCatching {
+            com.luv.couple.net.LuvApiClient.listMyPublicCanvases()
+        }.getOrDefault(emptyList())
+        if (remote.isEmpty()) return@withContext 0
+        val pubMap = loadPublicMap(context).toMutableMap()
+        val knownPublicIds = pubMap.values.toSet()
+        var added = 0
+        for (item in remote) {
+            if (item.id in knownPublicIds) continue
+            val name = syncedFileName(item.id)
+            val file = File(momentsDir(context), name)
+            if (file.exists() && file.length() > 64) {
+                pubMap[name] = item.id
+                continue
+            }
+            val bytes = runCatching {
+                com.luv.couple.net.LuvApiClient.downloadPublicCanvasBytes(item.id)
+            }.getOrNull() ?: continue
+            if (bytes.size < 64) continue
+            runCatching {
+                file.outputStream().use { it.write(bytes) }
+                if (item.createdAt > 0L) file.setLastModified(item.createdAt)
+                clearTombstone(context, name)
+                pubMap[name] = item.id
+                added += 1
+            }
+        }
+        savePublicMap(context, pubMap)
+        added
+    }
+
     private fun publicMapFile(context: Context): File =
         File(momentsDir(context), PUBLIC_MAP_FILE)
 

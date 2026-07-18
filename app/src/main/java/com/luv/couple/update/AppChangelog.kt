@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.53",
+            listOf(
+                "Galerie: veröffentlichte Bilder erscheinen auf allen Geräten mit demselben Konto",
+                "Leinwand: nur ein Gerät gleichzeitig — anderes Gerät bleibt in der Lobby",
+            )
+        ),
+        Entry(
             "1.9.52",
             listOf(
                 "Admin: Nutzer-Lobbys ansehen, Detail mit Zurück, Lobby für alle auflösen",

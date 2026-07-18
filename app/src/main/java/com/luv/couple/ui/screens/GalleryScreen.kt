@@ -96,6 +96,8 @@ fun GalleryScreen(
     fun reload() {
         scope.launch {
             loading = true
+            // Veröffentlichte Bilder vom Konto auf dieses Gerät holen (Screenshots bleiben lokal)
+            runCatching { LocalMoments.syncPublishedFromAccount(context) }
             moments = runCatching { LocalMoments.list(context) }.getOrDefault(emptyList())
             selectedIds = selectedIds.intersect(moments.map { it.id }.toSet())
             if (selectedIds.isEmpty()) selecting = false

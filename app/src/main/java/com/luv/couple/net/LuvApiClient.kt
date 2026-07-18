@@ -79,7 +79,9 @@ data class PublicCanvasPreview(
     val hostNickname: String,
     val memberNicknames: List<String>,
     val nameLine: String,
-    val imageUrl: String
+    val imageUrl: String,
+    val createdAt: Long = 0L,
+    val expiresAt: Long = 0L
 )
 
 data class RemoteLobby(
@@ -609,6 +611,53 @@ object LuvApiClient {
         if (clean.isBlank()) throw LuvApiException("Kein Bild zum Melden.")
         val json = authedPost("/v1/public-canvases/${clean.encodeURL()}/report", "{}")
         json.optBoolean("ok", true)
+    }
+
+    /** Eigene Veröffentlichungen für Galerie-Sync zwischen Geräten */
+    suspend fun listMyPublicCanvases(): List<PublicCanvasPreview> = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/public-canvases/mine")
+        val arr = json.optJSONArray("items") ?: return@withContext emptyList()
+        buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val id = o.optString("id").trim()
+                if (id.isBlank()) continue
+                add(
+                    PublicCanvasPreview(
+                        id = id,
+                        lobbyName = o.optString("lobbyName", "Galerie"),
+                        hostNickname = o.optString("hostNickname", ""),
+                        memberNicknames = buildList {
+                            val nicks = o.optJSONArray("memberNicknames")
+                            if (nicks != null) {
+                                for (j in 0 until nicks.length()) {
+                                    val n = nicks.optString(j).trim()
+                                    if (n.isNotBlank()) add(n)
+                                }
+                            }
+                        },
+                        nameLine = o.optString("nameLine"),
+                        imageUrl = o.optString("imageUrl"),
+                        createdAt = o.optLong("createdAt", 0L),
+                        expiresAt = o.optLong("expiresAt", 0L)
+                    )
+                )
+            }
+        }
+    }
+
+    suspend fun downloadPublicCanvasBytes(publicId: String): ByteArray = withContext(Dispatchers.IO) {
+        val clean = publicId.trim()
+        if (clean.isBlank()) throw LuvApiException("Kein Bild.")
+        val request = authedRequestBuilder("/v1/public-canvases/${clean.encodeURL()}/image")
+            .get()
+            .build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw LuvApiException("Bild konnte nicht geladen werden (${response.code}).")
+            }
+            response.body?.bytes() ?: throw LuvApiException("Bild leer.")
+        }
     }
 
     suspend fun publishPublicCanvas(

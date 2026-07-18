@@ -8,9 +8,12 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Base64
 import android.util.Log
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.luv.couple.LuvApp
@@ -487,6 +490,17 @@ class PairConnectionService : Service() {
         runCatching {
             val json = JSONObject(text)
             when (json.optString("type")) {
+                "canvas_taken" -> {
+                    val message = json.optString("message").trim()
+                        .ifBlank { "Ein anderes Gerät hat die Leinwand betreten." }
+                    scope.launch {
+                        _events.emit(PairEvent.CanvasTaken(lobby.id, message))
+                    }
+                    Handler(Looper.getMainLooper()).post {
+                        Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
+                    }
+                    return
+                }
                 "live_notice" -> {
                     val id = json.optString("id").trim()
                     val message = json.optString("message").trim()
@@ -1690,6 +1704,8 @@ sealed class PairEvent {
     data class HistoryApplied(val lobbyId: String) : PairEvent()
     data class Cleared(val lobbyId: String) : PairEvent()
     data class LobbyGone(val lobbyId: String, val name: String) : PairEvent()
+    /** Anderes Gerät desselben Kontos hat die Leinwand betreten — nur Canvas schließen, Lobby bleibt. */
+    data class CanvasTaken(val lobbyId: String, val message: String) : PairEvent()
     data class ColorAssigned(val lobbyId: String, val colorIndex: Int) : PairEvent()
     data class RecolorReceived(val lobbyId: String, val nickname: String?, val colorIndex: Int) : PairEvent()
     data class ReactionReceived(val lobbyId: String, val emoji: String, val nickname: String?) : PairEvent()
