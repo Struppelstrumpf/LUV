@@ -620,7 +620,32 @@ class PairConnectionService : Service() {
                         done = done
                     )
                     if (done) {
-                        scope.launch { _events.emit(PairEvent.HistoryApplied(lobby.id)) }
+                        val stickersArr = json.optJSONArray("stickers")
+                        scope.launch {
+                            if (stickersArr != null) {
+                                val stickers = buildList {
+                                    for (i in 0 until stickersArr.length()) {
+                                        val o = stickersArr.optJSONObject(i) ?: continue
+                                        val id = o.optString("id").trim()
+                                        val emoji = o.optString("emoji").trim().take(8)
+                                        if (id.isBlank() || emoji.isBlank()) continue
+                                        add(
+                                            PairEvent.StickerPlaced(
+                                                lobbyId = lobby.id,
+                                                id = id,
+                                                emoji = emoji,
+                                                x = o.optDouble("x", 0.5).toFloat().coerceIn(0f, 1f),
+                                                y = o.optDouble("y", 0.5).toFloat().coerceIn(0f, 1f),
+                                                nickname = o.optString("nickname")
+                                                    .takeIf { it.isNotBlank() && it != "null" }
+                                            )
+                                        )
+                                    }
+                                }
+                                _events.emit(PairEvent.StickersHistory(lobby.id, stickers))
+                            }
+                            _events.emit(PairEvent.HistoryApplied(lobby.id))
+                        }
                     }
                     return
                 }
@@ -1622,6 +1647,10 @@ sealed class PairEvent {
         val x: Float,
         val y: Float,
         val nickname: String?
+    ) : PairEvent()
+    data class StickersHistory(
+        val lobbyId: String,
+        val stickers: List<StickerPlaced>
     ) : PairEvent()
     data class GameBoardReceived(val lobbyId: String, val game: String, val visible: Boolean) : PairEvent()
     data class GameState(

@@ -203,6 +203,7 @@ function restoreRoomsFromDisk() {
             }
           : { day: "", count: 0, nextAt: 0 },
       strokes: loadRoomStrokes(code),
+      stickers: loadRoomStickers(code),
     });
     const room = rooms.get(code);
     healRoomMembership(room);
@@ -218,9 +219,11 @@ const SNAPSHOT_DIR = path.join(DATA_DIR, "snapshots");
 const STROKES_DIR = path.join(DATA_DIR, "strokes");
 const MEMORY_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_STROKES_PER_ROOM = 2500;
+const MAX_STICKERS_PER_ROOM = 80;
 const MAX_POINTS_PER_STROKE = 420;
 const STROKE_HISTORY_CHUNK = 35;
 const strokeSaveTimers = new Map();
+const stickerSaveTimers = new Map();
 
 function ensureStrokesDir() {
   fs.mkdirSync(STROKES_DIR, { recursive: true });
@@ -231,6 +234,13 @@ function strokesFilePath(code) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "");
   return path.join(STROKES_DIR, `${clean}.json`);
+}
+
+function stickersFilePath(code) {
+  const clean = String(code || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  return path.join(STROKES_DIR, `${clean}.stickers.json`);
 }
 
 function loadRoomStrokes(code) {
@@ -270,6 +280,82 @@ function scheduleStrokeSave(code, room) {
       }
     }, 700)
   );
+}
+
+function loadRoomStickers(code) {
+  try {
+    const raw = fs.readFileSync(stickersFilePath(code), "utf8");
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map((s) => sanitizeStoredSticker(s))
+      .filter(Boolean)
+      .slice(-MAX_STICKERS_PER_ROOM);
+  } catch {
+    return [];
+  }
+}
+
+function saveRoomStickers(code, stickers) {
+  ensureStrokesDir();
+  const file = stickersFilePath(code);
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(Array.isArray(stickers) ? stickers : []));
+  fs.renameSync(tmp, file);
+}
+
+function scheduleStickerSave(code, room) {
+  const key = String(code || "").toUpperCase();
+  const prev = stickerSaveTimers.get(key);
+  if (prev) clearTimeout(prev);
+  stickerSaveTimers.set(
+    key,
+    setTimeout(() => {
+      stickerSaveTimers.delete(key);
+      try {
+        saveRoomStickers(key, room?.stickers || []);
+      } catch (err) {
+        console.warn("sticker save failed", key, err?.message || err);
+      }
+    }, 400)
+  );
+}
+
+function sanitizeStoredSticker(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const id = String(raw.id || "").trim();
+  const emoji = String(raw.emoji || "").trim().slice(0, 8);
+  if (!id || id.length > 80 || !emoji) return null;
+  const x = Math.min(1, Math.max(0, Number(raw.x)));
+  const y = Math.min(1, Math.max(0, Number(raw.y)));
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const nickname = String(raw.nickname || "").trim().slice(0, 18) || null;
+  return { id, emoji, x, y, nickname };
+}
+
+function ensureRoomStickers(room, code) {
+  if (!room) return [];
+  if (!Array.isArray(room.stickers)) {
+    room.stickers = loadRoomStickers(code);
+  }
+  return room.stickers;
+}
+
+function appendRoomSticker(room, code, sticker) {
+  const list = ensureRoomStickers(room, code);
+  const idx = list.findIndex((s) => s.id === sticker.id);
+  if (idx >= 0) list[idx] = sticker;
+  else list.push(sticker);
+  while (list.length > MAX_STICKERS_PER_ROOM) list.shift();
+  room.stickers = list;
+  scheduleStickerSave(code, room);
+  return true;
+}
+
+function clearRoomStickers(room, code) {
+  if (!room) return;
+  room.stickers = [];
+  scheduleStickerSave(code, room);
 }
 
 function sanitizeStoredStroke(raw) {
@@ -333,6 +419,7 @@ function clearRoomStrokes(room, code) {
   if (!room) return;
   room.strokes = [];
   scheduleStrokeSave(code, room);
+  clearRoomStickers(room, code);
 }
 
 function strokeFromSocketMessage(json, socket) {
@@ -357,11 +444,13 @@ function strokeFromSocketMessage(json, socket) {
 function sendCanvasHistory(socket, room, code) {
   if (!socket || socket.readyState !== 1) return;
   const strokes = ensureRoomStrokes(room, code);
+  const stickers = ensureRoomStickers(room, code);
   if (!strokes.length) {
     socket.send(
       JSON.stringify({
         type: "canvas_history",
         strokes: [],
+        stickers,
         done: true,
         replace: true,
       })
@@ -375,6 +464,7 @@ function sendCanvasHistory(socket, room, code) {
       JSON.stringify({
         type: "canvas_history",
         strokes: chunk,
+        stickers: done ? stickers : undefined,
         done,
         replace: i === 0,
       })
@@ -543,6 +633,7 @@ function hydrateRoom(code, data, tokenOverride) {
           }
         : { day: "", count: 0, nextAt: 0 },
     strokes: loadRoomStrokes(code),
+    stickers: loadRoomStickers(code),
   };
 }
 
@@ -2973,6 +3064,7 @@ app.post("/v1/rooms", (req, res) => {
     publicShare: { day: "", count: 0, nextAt: 0 },
     publicProposal: null,
     strokes: [],
+    stickers: [],
   });
   ensureHostedRooms(ctx.user);
   ctx.user.hostedRooms[code] = {
@@ -4943,6 +5035,32 @@ wss.on("connection", (socket, req) => {
 
     if (type === "undo") {
       removeRoomStroke(room, code, json.id);
+    }
+
+    if (type === "sticker_place") {
+      const sticker = sanitizeStoredSticker({
+        id: json.id,
+        emoji: json.emoji,
+        x: json.x,
+        y: json.y,
+        nickname: json.nickname || socket.luvNickname || null,
+      });
+      if (!sticker) return;
+      appendRoomSticker(room, code, sticker);
+      touchCanvasActivity(room, room.sockets.size);
+      const relay = JSON.stringify({
+        type: "sticker_place",
+        id: sticker.id,
+        emoji: sticker.emoji,
+        x: sticker.x,
+        y: sticker.y,
+        nickname: sticker.nickname,
+      });
+      for (const [id, peer] of room.sockets.entries()) {
+        if (id === peerId) continue;
+        if (peer.readyState === 1) peer.send(relay);
+      }
+      return;
     }
 
     if (type === "presence" && json.active === true) {

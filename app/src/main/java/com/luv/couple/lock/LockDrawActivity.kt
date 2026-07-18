@@ -377,6 +377,9 @@ class LockDrawActivity : ComponentActivity() {
                     is PairEvent.StickerPlaced -> if (event.lobbyId == id) {
                         upsertCommittedSticker(event.id, event.emoji, event.x, event.y)
                     }
+                    is PairEvent.StickersHistory -> if (event.lobbyId == id) {
+                        replaceStickersFromHistory(event.stickers)
+                    }
                     is PairEvent.GameBoardReceived -> if (event.lobbyId == id) {
                         applyOverlayBoard(event.game, event.visible)
                     }
@@ -755,6 +758,34 @@ class LockDrawActivity : ComponentActivity() {
         stickerOverlay.removeAllViews()
         placedStickers.clear()
         draftStickerId = null
+    }
+
+    private fun replaceStickersFromHistory(stickers: List<PairEvent.StickerPlaced>) {
+        val keepDraft = (draftStickerId?.let { placedStickers[it] }?.tag as? StickerTag)
+            ?.takeIf { it.drafting }
+        stickerOverlay.removeAllViews()
+        placedStickers.clear()
+        draftStickerId = null
+        stickers.forEach { s ->
+            upsertCommittedSticker(s.id, s.emoji, s.x, s.y)
+        }
+        if (keepDraft != null) {
+            draftStickerId = keepDraft.id
+            val size = stickerSizePx()
+            val tv = TextView(this).apply {
+                text = keepDraft.emoji
+                gravity = Gravity.CENTER
+                textSize = 36f
+                alpha = 0.92f
+                elevation = 18f
+                setShadowLayer(10f, 0f, 3f, 0x66000000)
+                tag = keepDraft
+            }
+            stickerOverlay.addView(tv, FrameLayout.LayoutParams(size, size))
+            placedStickers[keepDraft.id] = tv
+            positionStickerView(tv, keepDraft.x, keepDraft.y)
+            enableDraftDrag(tv)
+        }
     }
 
     private data class StickerTag(
