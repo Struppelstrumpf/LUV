@@ -90,6 +90,76 @@ const EMOJI_SHOP_PRICES = {
   "🤞": 8, "🤟": 8, "🤘": 8, "👏": 8, "🙌": 10, "👋": 6,
 };
 
+const DEFAULT_PET = "🐣";
+
+const THEME_SHOP_PRICES = {
+  meadow: 0,
+  forest: 18,
+  sunset: 20,
+  night: 20,
+  snow: 18,
+  blossom: 22,
+  ocean: 22,
+  rain: 18,
+  autumn: 20,
+  stars: 24,
+  cabin: 22,
+  lake: 22,
+  lavender: 24,
+  hearth: 24,
+};
+
+const STICKER_SHOP_PRICES = {
+  "☀️": 6, "😎": 8, "💌": 10, "🏠": 8, "🐦": 8, "🌳": 6, "🌻": 8, "🦔": 12,
+  "🐶": 10, "🐱": 10, "⭐": 6, "✨": 6, "❤️": 8, "🌹": 10, "🌈": 10, "🍀": 6,
+  "🎈": 8, "🎁": 12, "☕": 6, "🎵": 6, "🦋": 8, "🐝": 6, "🌙": 6, "🔥": 8,
+  "💕": 10, "🫶": 12, "✏️": 5, "🎨": 10,
+};
+
+const PET_SHOP_PRICES = {
+  "🐣": 0, "🐦": 14, "🐔": 16, "🐸": 16, "🐶": 20, "🐱": 20, "🐰": 22,
+  "🐹": 18, "🐻": 24, "🦊": 26, "🐼": 28, "🐨": 26, "🐯": 30, "🦁": 32,
+  "🐮": 20, "🐷": 20, "🐧": 22, "🐢": 22, "🦋": 18, "🦄": 40,
+};
+
+function ensureInventory(user) {
+  if (!user.inventory || typeof user.inventory !== "object") {
+    user.inventory = {};
+  }
+  const inv = user.inventory;
+  if (!inv.emojis || typeof inv.emojis !== "object") inv.emojis = {};
+  if (!Array.isArray(inv.themes)) inv.themes = [];
+  if (!inv.stickers || typeof inv.stickers !== "object") inv.stickers = {};
+  if (!Array.isArray(inv.pets)) inv.pets = [];
+  // Starter
+  const starterEmojis = ["👍", "❌", "❤️", "😂", "😱", "😡", "😭"];
+  for (const e of starterEmojis) {
+    if (!inv.emojis[e] || inv.emojis[e] < 1) inv.emojis[e] = 1;
+  }
+  if (!inv.themes.includes("meadow")) inv.themes.push("meadow");
+  // Bereits am Profil genutzte Themes behalten (kein Soft-Lock nach Shop-Umstellung)
+  const profileTheme = String(user.profileCanvas?.themeId || "").trim();
+  if (profileTheme && THEME_SHOP_PRICES[profileTheme] != null && !inv.themes.includes(profileTheme)) {
+    inv.themes.push(profileTheme);
+  }
+  if (!inv.pets.includes(DEFAULT_PET)) inv.pets.push(DEFAULT_PET);
+  const profilePet = String(user.profileCanvas?.companionEmoji || "").trim().slice(0, 8);
+  if (profilePet && PET_SHOP_PRICES[profilePet] != null && !inv.pets.includes(profilePet)) {
+    inv.pets.push(profilePet);
+  }
+  if (!inv.equippedPet || !inv.pets.includes(inv.equippedPet)) {
+    inv.equippedPet =
+      profilePet && inv.pets.includes(profilePet) ? profilePet : DEFAULT_PET;
+  }
+  user.inventory = inv;
+  return inv;
+}
+
+function userPetEmoji(user) {
+  const inv = ensureInventory(user);
+  return String(inv.equippedPet || DEFAULT_PET).slice(0, 8) || DEFAULT_PET;
+}
+
 /** @type {Map<string, any>} */
 const rooms = new Map();
 
@@ -962,6 +1032,7 @@ function roomRosterAll(room) {
       colorIndex,
       active: false,
       online: false,
+      petEmoji: u ? userPetEmoji(u) : DEFAULT_PET,
     });
   }
   offline.sort((a, b) =>
@@ -1827,11 +1898,13 @@ function roomConnectedMembers(room) {
     const colorIndex = Number.isFinite(Number(sock.luvColorIndex))
       ? Math.max(0, Math.floor(Number(sock.luvColorIndex)))
       : 0;
+    const u = userId ? getDb().users?.[userId] : null;
     out.push({
       userId: userId || peerId,
       nickname: nick,
       colorIndex,
       active: Boolean(sock.luvCanvasActive),
+      petEmoji: u ? userPetEmoji(u) : DEFAULT_PET,
     });
   }
   return out;
@@ -3089,6 +3162,19 @@ app.get("/v1/shop/packs", (req, res) => {
   });
 });
 
+function requireCoins(ctx, price, res) {
+  if ((ctx.user.coins || 0) < price) {
+    res.status(402).json({
+      error: "no_coins",
+      message: "Nicht genug Coins.",
+      need: price,
+      coins: ctx.user.coins || 0,
+    });
+    return false;
+  }
+  return true;
+}
+
 /** Itemshop: Emoji für Coins kaufen (Mehrfachkauf erlaubt). */
 app.post("/v1/shop/buy-emoji", (req, res) => {
   const ctx = requireAuth(req, res);
@@ -3101,32 +3187,111 @@ app.post("/v1/shop/buy-emoji", (req, res) => {
     });
   }
   const price = Number(EMOJI_SHOP_PRICES[emoji]) || 0;
-  if (price < 1) {
-    return res.status(400).json({ error: "bad_price" });
-  }
-  if ((ctx.user.coins || 0) < price) {
-    return res.status(402).json({
-      error: "no_coins",
-      message: "Nicht genug Coins.",
-      need: price,
-      coins: ctx.user.coins || 0,
-    });
-  }
+  if (price < 1) return res.status(400).json({ error: "bad_price" });
+  if (!requireCoins(ctx, price, res)) return;
   applyLedger(ctx.user.id, -price, "buy_emoji", emoji);
-  if (!ctx.user.inventory || typeof ctx.user.inventory !== "object") {
-    ctx.user.inventory = { emojis: {} };
-  }
-  if (!ctx.user.inventory.emojis || typeof ctx.user.inventory.emojis !== "object") {
-    ctx.user.inventory.emojis = {};
-  }
-  const prev = Number(ctx.user.inventory.emojis[emoji]) || 0;
-  ctx.user.inventory.emojis[emoji] = prev + 1;
+  const inv = ensureInventory(ctx.user);
+  inv.emojis[emoji] = (Number(inv.emojis[emoji]) || 0) + 1;
   scheduleSave();
   return res.json({
     ok: true,
     emoji,
-    owned: ctx.user.inventory.emojis[emoji],
+    owned: inv.emojis[emoji],
     price,
+    user: publicUser(ctx.user),
+  });
+});
+
+app.post("/v1/shop/buy-theme", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const themeId = String(req.body?.themeId || "").trim().slice(0, 32);
+  if (!themeId || THEME_SHOP_PRICES[themeId] == null) {
+    return res.status(400).json({ error: "unknown_item", message: "Hintergrund unbekannt." });
+  }
+  const price = Number(THEME_SHOP_PRICES[themeId]) || 0;
+  const inv = ensureInventory(ctx.user);
+  if (inv.themes.includes(themeId)) {
+    return res.json({ ok: true, themeId, alreadyOwned: true, user: publicUser(ctx.user) });
+  }
+  if (price > 0 && !requireCoins(ctx, price, res)) return;
+  if (price > 0) applyLedger(ctx.user.id, -price, "buy_theme", themeId);
+  inv.themes.push(themeId);
+  scheduleSave();
+  return res.json({ ok: true, themeId, price, user: publicUser(ctx.user) });
+});
+
+app.post("/v1/shop/buy-sticker", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const emoji = String(req.body?.emoji || "").trim().slice(0, 8);
+  if (!emoji || STICKER_SHOP_PRICES[emoji] == null) {
+    return res.status(400).json({ error: "unknown_item", message: "Sticker unbekannt." });
+  }
+  const price = Number(STICKER_SHOP_PRICES[emoji]) || 0;
+  if (price < 1) return res.status(400).json({ error: "bad_price" });
+  if (!requireCoins(ctx, price, res)) return;
+  applyLedger(ctx.user.id, -price, "buy_sticker", emoji);
+  const inv = ensureInventory(ctx.user);
+  inv.stickers[emoji] = (Number(inv.stickers[emoji]) || 0) + 1;
+  scheduleSave();
+  return res.json({
+    ok: true,
+    emoji,
+    owned: inv.stickers[emoji],
+    price,
+    user: publicUser(ctx.user),
+  });
+});
+
+app.post("/v1/shop/buy-pet", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const emoji = String(req.body?.emoji || "").trim().slice(0, 8);
+  if (!emoji || PET_SHOP_PRICES[emoji] == null) {
+    return res.status(400).json({ error: "unknown_item", message: "Begleiter unbekannt." });
+  }
+  const price = Number(PET_SHOP_PRICES[emoji]) || 0;
+  const inv = ensureInventory(ctx.user);
+  if (inv.pets.includes(emoji)) {
+    return res.json({ ok: true, emoji, alreadyOwned: true, user: publicUser(ctx.user) });
+  }
+  if (price > 0 && !requireCoins(ctx, price, res)) return;
+  if (price > 0) applyLedger(ctx.user.id, -price, "buy_pet", emoji);
+  inv.pets.push(emoji);
+  scheduleSave();
+  return res.json({ ok: true, emoji, price, user: publicUser(ctx.user) });
+});
+
+app.post("/v1/me/equip-pet", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const emoji = String(req.body?.emoji || "").trim().slice(0, 8);
+  const inv = ensureInventory(ctx.user);
+  if (!emoji || !inv.pets.includes(emoji)) {
+    return res.status(400).json({ error: "not_owned" });
+  }
+  inv.equippedPet = emoji;
+  // Profil-Begleiter mitziehen
+  if (!ctx.user.profileCanvas || typeof ctx.user.profileCanvas !== "object") {
+    ctx.user.profileCanvas = {};
+  }
+  ctx.user.profileCanvas.companionEmoji = emoji;
+  scheduleSave();
+  // Avatare in aktiven Lobbys aktualisieren
+  for (const room of rooms.values()) {
+    let inRoom = false;
+    for (const sock of room.sockets.values()) {
+      if (sock.luvUserId === ctx.user.id) {
+        inRoom = true;
+        break;
+      }
+    }
+    if (inRoom) broadcastPeerCount(room);
+  }
+  return res.json({
+    ok: true,
+    equippedPet: emoji,
     user: publicUser(ctx.user),
   });
 });
@@ -3134,21 +3299,15 @@ app.post("/v1/shop/buy-emoji", (req, res) => {
 app.get("/v1/me/inventory", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
-  const inv = ctx.user.inventory && typeof ctx.user.inventory === "object"
-    ? ctx.user.inventory
-    : { emojis: {} };
-  const emojis = inv.emojis && typeof inv.emojis === "object" ? inv.emojis : {};
-  // Starter-Set für Reaktionsleiste immer mindestens 1×
-  const starter = ["👍", "❌", "❤️", "😂", "😱", "😡", "😭"];
-  for (const e of starter) {
-    if (!emojis[e] || emojis[e] < 1) emojis[e] = Math.max(1, Number(emojis[e]) || 0);
-  }
-  ctx.user.inventory = { ...inv, emojis };
+  const inv = ensureInventory(ctx.user);
+  scheduleSave();
   return res.json({
     ok: true,
-    emojis,
-    gear: Array.isArray(inv.gear) ? inv.gear : [],
-    pets: Array.isArray(inv.pets) ? inv.pets : [],
+    emojis: inv.emojis,
+    themes: inv.themes,
+    stickers: inv.stickers,
+    pets: inv.pets,
+    equippedPet: inv.equippedPet || DEFAULT_PET,
   });
 });
 

@@ -1509,7 +1509,8 @@ class PairConnectionService : Service() {
                                 nickname = nick,
                                 colorIndex = o.optInt("colorIndex", -1),
                                 active = o.optBoolean("active", false),
-                                online = if (o.has("online")) o.optBoolean("online", true) else true
+                                online = if (o.has("online")) o.optBoolean("online", true) else true,
+                                petEmoji = o.optString("petEmoji", "🐣").trim().ifBlank { "🐣" }
                             )
                         )
                     }

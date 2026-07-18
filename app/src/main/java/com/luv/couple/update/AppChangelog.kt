@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.35",
+            listOf(
+                "Inventar-Emojis füllen die Reaktionsleiste (auch Ersetzen bei 8)",
+                "Hintergründe, Sticker & Begleiter im Itemshop — Begleiter am Avatar",
+            )
+        ),
+        Entry(
             "1.9.34",
             listOf(
                 "Home: Lobbies per Drag über andere hinweg verschieben",

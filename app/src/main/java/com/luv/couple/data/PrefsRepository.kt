@@ -49,6 +49,14 @@ class PrefsRepository(private val context: Context) {
     private val emojiBarKey = stringPreferencesKey("emoji_bar_json")
     /** Lokaler Cache Inventar-Emojis: JSON { "👍": 2, … } */
     private val ownedEmojisKey = stringPreferencesKey("owned_emojis_json")
+    /** Besitzte Profil-Themes: JSON-Array von Theme-IDs */
+    private val ownedThemesKey = stringPreferencesKey("owned_themes_json")
+    /** Besitzte Profil-Sticker: JSON { "🐶": 1, … } */
+    private val ownedStickersKey = stringPreferencesKey("owned_stickers_json")
+    /** Besitzte Begleiter: JSON-Array von Emojis */
+    private val ownedPetsKey = stringPreferencesKey("owned_pets_json")
+    /** Ausgerüsteter Begleiter (Avatar) */
+    private val equippedPetKey = stringPreferencesKey("equipped_pet")
     /** Pinseldicke auf der Leinwand (px) */
     private val brushWidthKey = floatPreferencesKey("brush_width")
     /** Profil-Leinwand JSON */
@@ -112,6 +120,22 @@ class PrefsRepository(private val context: Context) {
 
     val ownedEmojisFlow: Flow<Map<String, Int>> = context.dataStore.data.map { prefs ->
         parseOwnedEmojis(prefs[ownedEmojisKey])
+    }
+
+    val ownedThemesFlow: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        parseOwnedThemes(prefs[ownedThemesKey])
+    }
+
+    val ownedStickersFlow: Flow<Map<String, Int>> = context.dataStore.data.map { prefs ->
+        parseOwnedStickers(prefs[ownedStickersKey])
+    }
+
+    val ownedPetsFlow: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        parseOwnedPets(prefs[ownedPetsKey])
+    }
+
+    val equippedPetFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        parseEquippedPet(prefs[equippedPetKey], prefs[ownedPetsKey])
     }
 
     data class LastPublicCanvas(
@@ -542,6 +566,67 @@ class PrefsRepository(private val context: Context) {
         }
     }
 
+    suspend fun ownedThemes(): List<String> {
+        val prefs = context.dataStore.data.first()
+        return parseOwnedThemes(prefs[ownedThemesKey])
+    }
+
+    suspend fun ownedStickers(): Map<String, Int> {
+        val prefs = context.dataStore.data.first()
+        return parseOwnedStickers(prefs[ownedStickersKey])
+    }
+
+    suspend fun ownedPets(): List<String> {
+        val prefs = context.dataStore.data.first()
+        return parseOwnedPets(prefs[ownedPetsKey])
+    }
+
+    suspend fun equippedPet(): String {
+        val prefs = context.dataStore.data.first()
+        return parseEquippedPet(prefs[equippedPetKey], prefs[ownedPetsKey])
+    }
+
+    suspend fun setEquippedPet(emoji: String) {
+        val pet = emoji.trim().take(8).ifBlank {
+            com.luv.couple.shop.ShopCatalog.DEFAULT_PET
+        }
+        context.dataStore.edit { prefs ->
+            prefs[equippedPetKey] = pet
+        }
+    }
+
+    /** Volles Inventar vom Server in den lokalen Cache schreiben. */
+    suspend fun applyInventoryBag(
+        emojis: Map<String, Int>,
+        themes: List<String>,
+        stickers: Map<String, Int>,
+        pets: List<String>,
+        equippedPet: String
+    ) {
+        context.dataStore.edit { prefs ->
+            val eo = JSONObject()
+            emojis.forEach { (k, v) ->
+                if (k.isNotBlank() && v > 0) eo.put(k, v)
+            }
+            prefs[ownedEmojisKey] = eo.toString()
+            prefs[ownedThemesKey] = JSONArray(
+                themes.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+            ).toString()
+            val so = JSONObject()
+            stickers.forEach { (k, v) ->
+                if (k.isNotBlank() && v > 0) so.put(k, v)
+            }
+            prefs[ownedStickersKey] = so.toString()
+            val petList = pets.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+                .ifEmpty { listOf(com.luv.couple.shop.ShopCatalog.DEFAULT_PET) }
+            prefs[ownedPetsKey] = JSONArray(petList).toString()
+            val eq = equippedPet.trim().take(8)
+            prefs[equippedPetKey] =
+                if (eq.isNotBlank() && petList.contains(eq)) eq
+                else com.luv.couple.shop.ShopCatalog.DEFAULT_PET
+        }
+    }
+
     suspend fun removeLobby(lobbyId: String) {
         context.dataStore.edit { prefs ->
             val list = parseLobbies(prefs[lobbiesKey]).filterNot { it.id == lobbyId }
@@ -791,6 +876,52 @@ class PrefsRepository(private val context: Context) {
                 }
                 starter
             }.getOrDefault(starter)
+        }
+
+        fun parseOwnedThemes(raw: String?): List<String> {
+            val starter = listOf(com.luv.couple.profile.ProfileCatalog.DEFAULT_THEME_ID)
+            if (raw.isNullOrBlank()) return starter
+            return runCatching {
+                val arr = JSONArray(raw)
+                buildList {
+                    for (i in 0 until arr.length()) {
+                        arr.optString(i).trim().takeIf { it.isNotBlank() }?.let { add(it) }
+                    }
+                }.distinct().ifEmpty { starter }
+            }.getOrDefault(starter)
+        }
+
+        fun parseOwnedStickers(raw: String?): Map<String, Int> {
+            if (raw.isNullOrBlank()) return emptyMap()
+            return runCatching {
+                val o = JSONObject(raw)
+                buildMap {
+                    o.keys().forEach { key ->
+                        val n = o.optInt(key, 0)
+                        if (key.isNotBlank() && n > 0) put(key, n)
+                    }
+                }
+            }.getOrDefault(emptyMap())
+        }
+
+        fun parseOwnedPets(raw: String?): List<String> {
+            val starter = listOf(com.luv.couple.shop.ShopCatalog.DEFAULT_PET)
+            if (raw.isNullOrBlank()) return starter
+            return runCatching {
+                val arr = JSONArray(raw)
+                buildList {
+                    for (i in 0 until arr.length()) {
+                        arr.optString(i).trim().takeIf { it.isNotBlank() }?.let { add(it) }
+                    }
+                }.distinct().ifEmpty { starter }
+            }.getOrDefault(starter)
+        }
+
+        fun parseEquippedPet(equippedRaw: String?, petsRaw: String?): String {
+            val pets = parseOwnedPets(petsRaw)
+            val eq = equippedRaw?.trim().orEmpty()
+            return if (eq.isNotBlank() && pets.contains(eq)) eq
+            else com.luv.couple.shop.ShopCatalog.DEFAULT_PET
         }
 
         fun encodeQuietHours(schedule: QuietHoursSchedule): String {

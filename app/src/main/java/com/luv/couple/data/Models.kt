@@ -160,7 +160,9 @@ data class PeerInfo(
     /** Noch in der Lobby (auch kurz offline) */
     val online: Boolean = true,
     /** Hat die Lobby verlassen, Avatar nur noch wegen gezeichneter Striche */
-    val departed: Boolean = false
+    val departed: Boolean = false,
+    /** Ausgerüsteter Begleiter am Avatar */
+    val petEmoji: String = "🐣"
 )
 
 /** Ein Eintrag aus peers/welcome memberList */
@@ -169,7 +171,8 @@ data class RosterMember(
     val nickname: String,
     val colorIndex: Int = -1,
     val active: Boolean = false,
-    val online: Boolean = true
+    val online: Boolean = true,
+    val petEmoji: String = "🐣"
 )
 
 data class StrokePoint(val x: Float, val y: Float)

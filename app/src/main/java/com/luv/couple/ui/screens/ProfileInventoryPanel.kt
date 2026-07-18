@@ -84,6 +84,8 @@ fun ProfileInventoryPanel(
     mode: InventoryPanelMode,
     ownedStickers: List<String>,
     ownedEmojis: Map<String, Int> = emptyMap(),
+    ownedThemes: List<String> = listOf(ProfileCatalog.DEFAULT_THEME_ID),
+    ownedPets: List<String> = listOf("🐣"),
     currentThemeId: String,
     currentCompanion: String,
     hasGlass: Boolean,
@@ -106,6 +108,14 @@ fun ProfileInventoryPanel(
     var tab by remember(mode) { mutableIntStateOf(selectedTab.coerceIn(0, tabs.lastIndex)) }
     LaunchedEffect(selectedTab, tabs.size) {
         tab = selectedTab.coerceIn(0, tabs.lastIndex)
+    }
+    val themeItems = remember(ownedThemes) {
+        val owned = ownedThemes.toSet()
+        ProfileCatalog.THEMES.filter { it.id in owned }
+    }
+    val petItems = remember(ownedPets) {
+        val owned = ownedPets.toSet()
+        ProfileCatalog.COMPANIONS.filter { it in owned }.ifEmpty { listOf("🐣") }
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -243,56 +253,76 @@ fun ProfileInventoryPanel(
                         }
                     }
                 }
-                InvTab.Themes -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(s(80.dp)),
-                    modifier = gridMod,
-                    horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
-                    verticalArrangement = Arrangement.spacedBy(s(8.dp)),
-                    contentPadding = PaddingValues(bottom = s(4.dp))
-                ) {
-                    items(ProfileCatalog.THEMES, key = { it.id }) { theme ->
-                        val on = theme.id == currentThemeId
-                        Column(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(s(14.dp)))
-                                .background(if (on) AccentRose.copy(0.2f) else BgSoft)
-                                .border(
-                                    1.dp,
-                                    if (on) AccentRose.copy(0.65f) else Color.White.copy(0.08f),
-                                    RoundedCornerShape(s(14.dp))
+                InvTab.Themes -> if (themeItems.isEmpty()) {
+                    InvEmptyHint(
+                        title = "Noch keine Hintergründe.",
+                        body = "Im Itemshop unter Ausstattung kaufen.",
+                        onOpenItemShop = onOpenItemShop,
+                        scale = scale,
+                        modifier = gridMod
+                    )
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(s(80.dp)),
+                        modifier = gridMod,
+                        horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
+                        verticalArrangement = Arrangement.spacedBy(s(8.dp)),
+                        contentPadding = PaddingValues(bottom = s(4.dp))
+                    ) {
+                        items(themeItems, key = { it.id }) { theme ->
+                            val on = theme.id == currentThemeId
+                            Column(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(s(14.dp)))
+                                    .background(if (on) AccentRose.copy(0.2f) else BgSoft)
+                                    .border(
+                                        1.dp,
+                                        if (on) AccentRose.copy(0.65f) else Color.White.copy(0.08f),
+                                        RoundedCornerShape(s(14.dp))
+                                    )
+                                    .clickable { onTheme(theme) }
+                                    .padding(s(10.dp)),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(theme.emoji, fontSize = ts(26.sp))
+                                Spacer(modifier = Modifier.height(s(4.dp)))
+                                Text(
+                                    theme.label,
+                                    color = TextPrimary,
+                                    fontFamily = BodyFont,
+                                    fontSize = ts(11.sp),
+                                    maxLines = 1
                                 )
-                                .clickable { onTheme(theme) }
-                                .padding(s(10.dp)),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(theme.emoji, fontSize = ts(26.sp))
-                            Spacer(modifier = Modifier.height(s(4.dp)))
-                            Text(
-                                theme.label,
-                                color = TextPrimary,
-                                fontFamily = BodyFont,
-                                fontSize = ts(11.sp),
-                                maxLines = 1
-                            )
+                            }
                         }
                     }
                 }
-                InvTab.Stickers -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(s(58.dp)),
-                    modifier = gridMod,
-                    contentPadding = PaddingValues(s(4.dp)),
-                    horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
-                    verticalArrangement = Arrangement.spacedBy(s(8.dp))
-                ) {
-                    items(ownedStickers, key = { it }) { emoji ->
-                        Box(
-                            modifier = Modifier
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(s(14.dp)))
-                                .background(BgSoft)
-                                .clickable { onSticker(emoji) },
-                            contentAlignment = Alignment.Center
-                        ) { Text(emoji, fontSize = ts(26.sp)) }
+                InvTab.Stickers -> if (ownedStickers.isEmpty()) {
+                    InvEmptyHint(
+                        title = "Noch keine Sticker.",
+                        body = "Im Itemshop unter Ausstattung kaufen.",
+                        onOpenItemShop = onOpenItemShop,
+                        scale = scale,
+                        modifier = gridMod
+                    )
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(s(58.dp)),
+                        modifier = gridMod,
+                        contentPadding = PaddingValues(s(4.dp)),
+                        horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
+                        verticalArrangement = Arrangement.spacedBy(s(8.dp))
+                    ) {
+                        items(ownedStickers, key = { it }) { emoji ->
+                            Box(
+                                modifier = Modifier
+                                    .aspectRatio(1f)
+                                    .clip(RoundedCornerShape(s(14.dp)))
+                                    .background(BgSoft)
+                                    .clickable { onSticker(emoji) },
+                                contentAlignment = Alignment.Center
+                            ) { Text(emoji, fontSize = ts(26.sp)) }
+                        }
                     }
                 }
                 InvTab.Companions -> LazyVerticalGrid(
@@ -301,7 +331,7 @@ fun ProfileInventoryPanel(
                     horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
                     verticalArrangement = Arrangement.spacedBy(s(8.dp))
                 ) {
-                    items(ProfileCatalog.COMPANIONS, key = { it }) { emoji ->
+                    items(petItems, key = { it }) { emoji ->
                         val on = emoji == currentCompanion
                         Box(
                             modifier = Modifier
@@ -374,6 +404,8 @@ fun ProfileInventoryPanel(
 @Composable
 fun ProfileChestDialog(
     ownedStickers: List<String>,
+    ownedThemes: List<String> = listOf(ProfileCatalog.DEFAULT_THEME_ID),
+    ownedPets: List<String> = listOf("🐣"),
     currentThemeId: String,
     currentCompanion: String,
     hasGlass: Boolean,
@@ -396,6 +428,8 @@ fun ProfileChestDialog(
         ProfileInventoryPanel(
             mode = InventoryPanelMode.ProfileChest,
             ownedStickers = ownedStickers,
+            ownedThemes = ownedThemes,
+            ownedPets = ownedPets,
             currentThemeId = currentThemeId,
             currentCompanion = currentCompanion,
             hasGlass = hasGlass,
@@ -417,6 +451,27 @@ fun ProfileChestDialog(
                 .navigationBarsPadding(),
             showCardChrome = true
         )
+    }
+}
+
+@Composable
+private fun InvEmptyHint(
+    title: String,
+    body: String,
+    onOpenItemShop: () -> Unit,
+    scale: Float,
+    modifier: Modifier = Modifier
+) {
+    fun s(dp: Dp): Dp = dp * scale
+    fun ts(sp: TextUnit): TextUnit = (sp.value * scale).sp
+    Column(
+        modifier = modifier.padding(s(12.dp)),
+        verticalArrangement = Arrangement.spacedBy(s(10.dp)),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(title, color = TextPrimary, fontFamily = DisplayFont, fontSize = ts(16.sp))
+        Text(body, color = TextMuted, fontFamily = BodyFont, fontSize = ts(13.sp))
+        ShopLinkChip(label = "Zum Itemshop", onClick = onOpenItemShop, scale = scale)
     }
 }
 

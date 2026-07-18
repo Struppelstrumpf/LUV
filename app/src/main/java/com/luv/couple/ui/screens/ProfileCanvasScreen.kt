@@ -147,7 +147,11 @@ fun ProfileCanvasScreen(
     var editElId by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var loadedNick by remember { mutableStateOf(nickname) }
-    var ownedStickers by remember { mutableStateOf<Set<String>>(ProfileCatalog.FREE_STICKERS.toSet()) }
+    var ownedStickers by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var ownedThemes by remember {
+        mutableStateOf(listOf(ProfileCatalog.DEFAULT_THEME_ID))
+    }
+    var ownedPets by remember { mutableStateOf(listOf(com.luv.couple.shop.ShopCatalog.DEFAULT_PET)) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var displayCoins by remember { mutableIntStateOf(myCoins) }
     var tipPopIds by remember { mutableStateOf<List<Long>>(emptyList()) }
@@ -182,10 +186,27 @@ fun ProfileCanvasScreen(
                 }
             }
             savedSnapshot = state.snapshotKey()
-            val owned = withContext(Dispatchers.IO) {
-                runCatching { prefs.ownedEmojis() }.getOrDefault(emptyMap())
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val remote = LuvApiClient.fetchInventory()
+                    prefs.applyInventoryBag(
+                        emojis = remote.emojis,
+                        themes = remote.themes,
+                        stickers = remote.stickers,
+                        pets = remote.pets,
+                        equippedPet = remote.equippedPet
+                    )
+                }
             }
-            ownedStickers = (ProfileCatalog.FREE_STICKERS + owned.keys).toSet()
+            ownedStickers = withContext(Dispatchers.IO) {
+                prefs.ownedStickers().keys
+            }
+            ownedThemes = withContext(Dispatchers.IO) { prefs.ownedThemes() }
+            ownedPets = withContext(Dispatchers.IO) { prefs.ownedPets() }
+            val equipped = withContext(Dispatchers.IO) { prefs.equippedPet() }
+            if (state.companionEmoji != equipped) {
+                state = state.copy(companionEmoji = equipped)
+            }
             displayCoins = AccountSession.account.value?.coins ?: myCoins
             profileReady = true
         } else if (!userId.isNullOrBlank()) {
@@ -271,6 +292,12 @@ fun ProfileCanvasScreen(
             selectedId = el.id
         }
         showChest = false
+        scope.launch {
+            runCatching {
+                val eq = LuvApiClient.equipPet(emoji)
+                withContext(Dispatchers.IO) { prefs.setEquippedPet(eq) }
+            }
+        }
     }
 
     fun placeGlass() {
@@ -561,6 +588,8 @@ fun ProfileCanvasScreen(
         if (showChest && editable) {
             ProfileChestDialog(
                 ownedStickers = ownedStickers.toList().sorted(),
+                ownedThemes = ownedThemes,
+                ownedPets = ownedPets,
                 currentThemeId = state.themeId,
                 currentCompanion = state.companionEmoji,
                 hasGlass = state.layout.any { it.type == ProfileElType.Glass },

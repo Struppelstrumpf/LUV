@@ -120,6 +120,7 @@ class LockDrawActivity : ComponentActivity() {
     private var hasVotedClear = false
     private var forcedUpdateDialog: androidx.appcompat.app.AlertDialog? = null
     private var strokeMemoryView: TextView? = null
+    private var myPetEmoji: String = ShopCatalog.DEFAULT_PET
     private val statusHideRunnable = Runnable {
         statusView.animate().alpha(0f).setDuration(180).withEndAction {
             statusView.visibility = View.GONE
@@ -585,6 +586,10 @@ class LockDrawActivity : ComponentActivity() {
 
     private fun bindReactionBar() {
         lifecycleScope.launch {
+            myPetEmoji = withContext(Dispatchers.IO) {
+                runCatching { LuvApp.instance.prefs.equippedPet() }
+                    .getOrDefault(ShopCatalog.DEFAULT_PET)
+            }
             val bar = withContext(Dispatchers.IO) {
                 runCatching { LuvApp.instance.prefs.emojiBar() }.getOrDefault(ShopCatalog.DEFAULT_BAR)
             }
@@ -1776,9 +1781,11 @@ class LockDrawActivity : ComponentActivity() {
             }
             if (aid != null) drawAuthorByNick[key] = aid
         }
-        val live = PairSessionState.legendPeers(id, nickname, myColor, myUserId).map { peer ->
+        val live = PairSessionState.legendPeers(
+            id, nickname, myColor, myUserId, myPetEmoji
+        ).map { peer ->
             if (peer.peerKey == "me") {
-                peer.copy(colorIndex = myColor)
+                peer.copy(colorIndex = myColor, petEmoji = myPetEmoji)
             } else {
                 val drawn = drawColorByNick[peer.nickname.trim().lowercase(Locale.getDefault())]
                 if (drawn != null) peer.copy(colorIndex = drawn) else peer
@@ -1869,8 +1876,9 @@ class LockDrawActivity : ComponentActivity() {
         val onCanvas = !peer.departed && (peer.active || peer.peerKey == "me" || painting)
         val ringPad = if (onCanvas) (3 * dp).toInt() else 0
         val wrap = FrameLayout(this).apply {
-            clipChildren = true
-            clipToPadding = true
+            // Begleiter-Badge darf über den Kreis ragen
+            clipChildren = false
+            clipToPadding = false
             layoutParams = LinearLayout.LayoutParams(size + ringPad * 2, size + ringPad * 2)
             elevation = 0f
             if (onCanvas) {
@@ -1879,8 +1887,6 @@ class LockDrawActivity : ComponentActivity() {
                     setColor(0x00000000)
                     setStroke((2.5f * dp).toInt(), 0xFFFFFFFF.toInt())
                 }
-                outlineProvider = ViewOutlineProvider.BACKGROUND
-                clipToOutline = true
             }
         }
         val fillColor = if (peer.departed) {
@@ -1915,6 +1921,24 @@ class LockDrawActivity : ComponentActivity() {
             elevation = 0f
         }
         wrap.addView(circle)
+        val pet = peer.petEmoji.trim().ifBlank { ShopCatalog.DEFAULT_PET }
+        wrap.addView(
+            TextView(this).apply {
+                text = pet
+                gravity = Gravity.CENTER
+                textSize = 11f
+                includeFontPadding = false
+                layoutParams = FrameLayout.LayoutParams(
+                    (16 * dp).toInt(),
+                    (16 * dp).toInt()
+                ).apply {
+                    gravity = Gravity.BOTTOM or Gravity.END
+                    marginEnd = (-2 * dp).toInt()
+                    bottomMargin = (-2 * dp).toInt()
+                }
+                elevation = 4f * dp
+            }
+        )
         wrap.isClickable = true
         wrap.isFocusable = true
         wrap.setOnClickListener { showPeerProfileDialog(peer) }

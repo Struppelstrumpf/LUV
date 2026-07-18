@@ -473,6 +473,14 @@ object LuvApiClient {
         json.optBoolean("banned", false)
     }
 
+    data class InventoryBag(
+        val emojis: Map<String, Int>,
+        val themes: List<String>,
+        val stickers: Map<String, Int>,
+        val pets: List<String>,
+        val equippedPet: String
+    )
+
     suspend fun buyEmoji(emoji: String): Pair<AccountInfo, Int> = withContext(Dispatchers.IO) {
         val body = JSONObject().put("emoji", emoji.trim().take(8)).toString()
         val json = authedPost("/v1/shop/buy-emoji", body)
@@ -481,15 +489,77 @@ object LuvApiClient {
         user to json.optInt("owned", 1)
     }
 
-    suspend fun fetchInventory(): Map<String, Int> = withContext(Dispatchers.IO) {
+    suspend fun buyTheme(themeId: String): AccountInfo = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("themeId", themeId.trim().take(32)).toString()
+        val json = authedPost("/v1/shop/buy-theme", body)
+        val user = AccountInfo.fromApi(json.getJSONObject("user"))
+        AccountSession.setAccount(user)
+        user
+    }
+
+    suspend fun buySticker(emoji: String): Pair<AccountInfo, Int> = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("emoji", emoji.trim().take(8)).toString()
+        val json = authedPost("/v1/shop/buy-sticker", body)
+        val user = AccountInfo.fromApi(json.getJSONObject("user"))
+        AccountSession.setAccount(user)
+        user to json.optInt("owned", 1)
+    }
+
+    suspend fun buyPet(emoji: String): AccountInfo = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("emoji", emoji.trim().take(8)).toString()
+        val json = authedPost("/v1/shop/buy-pet", body)
+        val user = AccountInfo.fromApi(json.getJSONObject("user"))
+        AccountSession.setAccount(user)
+        user
+    }
+
+    suspend fun equipPet(emoji: String): String = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("emoji", emoji.trim().take(8)).toString()
+        val json = authedPost("/v1/me/equip-pet", body)
+        json.optString("equippedPet", emoji.trim().take(8))
+    }
+
+    suspend fun fetchInventory(): InventoryBag = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/me/inventory")
-        val o = json.optJSONObject("emojis") ?: return@withContext emptyMap()
-        buildMap {
+        val emojis = buildMap {
+            val o = json.optJSONObject("emojis") ?: return@buildMap
             o.keys().forEach { key ->
                 val n = o.optInt(key, 0)
                 if (key.isNotBlank() && n > 0) put(key, n)
             }
         }
+        val themes = buildList {
+            val arr = json.optJSONArray("themes")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    arr.optString(i).trim().takeIf { it.isNotBlank() }?.let { add(it) }
+                }
+            }
+        }.distinct()
+        val stickers = buildMap {
+            val o = json.optJSONObject("stickers") ?: return@buildMap
+            o.keys().forEach { key ->
+                val n = o.optInt(key, 0)
+                if (key.isNotBlank() && n > 0) put(key, n)
+            }
+        }
+        val pets = buildList {
+            val arr = json.optJSONArray("pets")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    arr.optString(i).trim().takeIf { it.isNotBlank() }?.let { add(it) }
+                }
+            }
+        }.distinct()
+        val equipped = json.optString("equippedPet", com.luv.couple.shop.ShopCatalog.DEFAULT_PET)
+            .trim().ifBlank { com.luv.couple.shop.ShopCatalog.DEFAULT_PET }
+        InventoryBag(
+            emojis = emojis,
+            themes = themes,
+            stickers = stickers,
+            pets = pets,
+            equippedPet = equipped
+        )
     }
 
     suspend fun fetchMyProfileCanvas(): Pair<String, com.luv.couple.profile.ProfileState> =
@@ -829,7 +899,8 @@ object LuvApiClient {
                         nickname = nick,
                         colorIndex = o.optInt("colorIndex", -1),
                         active = o.optBoolean("active", false),
-                        online = if (o.has("online")) o.optBoolean("online", true) else true
+                        online = if (o.has("online")) o.optBoolean("online", true) else true,
+                        petEmoji = o.optString("petEmoji", "🐣").trim().ifBlank { "🐣" }
                     )
                 )
             }

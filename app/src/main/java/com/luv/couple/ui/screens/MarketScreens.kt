@@ -76,6 +76,8 @@ import com.luv.couple.profile.ProfileElType
 import com.luv.couple.profile.ProfileState
 import com.luv.couple.shop.ShopCatalog
 import com.luv.couple.shop.ShopEmoji
+import com.luv.couple.shop.ShopPet
+import com.luv.couple.shop.ShopTheme
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -420,6 +422,13 @@ private fun CoinPackCard(pack: ShopPack, onBuy: () -> Unit) {
     }
 }
 
+private sealed class ShopPendingBuy {
+    data class Emoji(val item: ShopEmoji) : ShopPendingBuy()
+    data class Theme(val item: ShopTheme) : ShopPendingBuy()
+    data class Sticker(val item: ShopEmoji) : ShopPendingBuy()
+    data class Pet(val item: ShopPet) : ShopPendingBuy()
+}
+
 @Composable
 private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
     val context = LocalContext.current
@@ -427,40 +436,69 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
     val prefs = LuvApp.instance.prefs
     val account by AccountSession.account.collectAsStateWithLifecycle()
     var tab by remember { mutableIntStateOf(0) }
-    val owned by prefs.ownedEmojisFlow.collectAsStateWithLifecycle(initialValue = emptyMap())
-    var busyEmoji by remember { mutableStateOf<String?>(null) }
-    var pendingBuy by remember { mutableStateOf<ShopEmoji?>(null) }
+    val ownedEmojis by prefs.ownedEmojisFlow.collectAsStateWithLifecycle(initialValue = emptyMap())
+    val ownedThemes by prefs.ownedThemesFlow.collectAsStateWithLifecycle(
+        initialValue = listOf(ProfileCatalog.DEFAULT_THEME_ID)
+    )
+    val ownedStickers by prefs.ownedStickersFlow.collectAsStateWithLifecycle(initialValue = emptyMap())
+    val ownedPets by prefs.ownedPetsFlow.collectAsStateWithLifecycle(
+        initialValue = listOf(ShopCatalog.DEFAULT_PET)
+    )
+    var busyKey by remember { mutableStateOf<String?>(null) }
+    var pendingBuy by remember { mutableStateOf<ShopPendingBuy?>(null) }
 
-    LaunchedEffect(Unit) {
+    suspend fun reloadBag() {
         runCatching {
             val remote = LuvApiClient.fetchInventory()
-            if (remote.isNotEmpty()) prefs.setOwnedEmojis(remote)
+            prefs.applyInventoryBag(
+                emojis = remote.emojis,
+                themes = remote.themes,
+                stickers = remote.stickers,
+                pets = remote.pets,
+                equippedPet = remote.equippedPet
+            )
         }
         onRefreshInventory()
     }
 
-    pendingBuy?.let { item ->
+    LaunchedEffect(Unit) { reloadBag() }
+
+    pendingBuy?.let { pending ->
+        val preview = when (pending) {
+            is ShopPendingBuy.Emoji -> pending.item.emoji
+            is ShopPendingBuy.Theme -> pending.item.emoji
+            is ShopPendingBuy.Sticker -> pending.item.emoji
+            is ShopPendingBuy.Pet -> pending.item.emoji
+        }
+        val price = when (pending) {
+            is ShopPendingBuy.Emoji -> pending.item.priceCoins
+            is ShopPendingBuy.Theme -> pending.item.priceCoins
+            is ShopPendingBuy.Sticker -> pending.item.priceCoins
+            is ShopPendingBuy.Pet -> pending.item.priceCoins
+        }
+        val label = when (pending) {
+            is ShopPendingBuy.Emoji -> "dieses Emoji"
+            is ShopPendingBuy.Theme -> "den Hintergrund „${pending.item.label}“"
+            is ShopPendingBuy.Sticker -> "diesen Sticker"
+            is ShopPendingBuy.Pet -> "den Begleiter „${pending.item.label}“"
+        }
         AlertDialog(
-            onDismissRequest = { if (busyEmoji == null) pendingBuy = null },
+            onDismissRequest = { if (busyKey == null) pendingBuy = null },
             containerColor = BgSoft,
             title = {
-                Text(
-                    "Kaufen?",
-                    fontFamily = DisplayFont,
-                    fontSize = 22.sp,
-                    color = TextPrimary
-                )
+                Text("Kaufen?", fontFamily = DisplayFont, fontSize = 22.sp, color = TextPrimary)
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        item.emoji,
+                        preview,
                         fontSize = 40.sp,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
-                        "Für ${item.priceCoins} Coins in dein Inventar legen?",
+                        if (price <= 0) "Kostenlos in dein Inventar legen?"
+                        else "Für $price Coins $label in dein Inventar legen?",
                         color = TextMuted,
                         fontFamily = BodyFont,
                         fontSize = 14.sp,
@@ -476,18 +514,34 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
             },
             confirmButton = {
                 TextButton(
-                    enabled = busyEmoji == null,
+                    enabled = busyKey == null,
                     onClick = {
-                        busyEmoji = item.emoji
+                        busyKey = preview
                         scope.launch {
                             runCatching {
-                                val (_, ownedCount) = LuvApiClient.buyEmoji(item.emoji)
-                                val next = owned.toMutableMap()
-                                next[item.emoji] = ownedCount
-                                prefs.setOwnedEmojis(next)
+                                when (pending) {
+                                    is ShopPendingBuy.Emoji -> {
+                                        val (_, ownedCount) = LuvApiClient.buyEmoji(pending.item.emoji)
+                                        val next = ownedEmojis.toMutableMap()
+                                        next[pending.item.emoji] = ownedCount
+                                        prefs.setOwnedEmojis(next)
+                                    }
+                                    is ShopPendingBuy.Theme -> {
+                                        LuvApiClient.buyTheme(pending.item.id)
+                                        reloadBag()
+                                    }
+                                    is ShopPendingBuy.Sticker -> {
+                                        LuvApiClient.buySticker(pending.item.emoji)
+                                        reloadBag()
+                                    }
+                                    is ShopPendingBuy.Pet -> {
+                                        LuvApiClient.buyPet(pending.item.emoji)
+                                        reloadBag()
+                                    }
+                                }
                                 Toast.makeText(
                                     context,
-                                    "${item.emoji} gekauft (−${item.priceCoins})",
+                                    if (price <= 0) "$preview erhalten" else "$preview gekauft (−$price)",
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 pendingBuy = null
@@ -498,18 +552,19 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
-                            busyEmoji = null
+                            busyKey = null
                         }
                     }
                 ) {
-                    Text("Kaufen", color = AccentRose, fontFamily = DisplayFont)
+                    Text(
+                        if (price <= 0) "Nehmen" else "Kaufen",
+                        color = AccentRose,
+                        fontFamily = DisplayFont
+                    )
                 }
             },
             dismissButton = {
-                TextButton(
-                    enabled = busyEmoji == null,
-                    onClick = { pendingBuy = null }
-                ) {
+                TextButton(enabled = busyKey == null, onClick = { pendingBuy = null }) {
                     Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
                 }
             }
@@ -552,54 +607,107 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
         }
         Spacer(modifier = Modifier.height(12.dp))
         when (tab) {
-            0 -> EmptyMarketCard("Ausstattung", "Bald: Outfits & Leinwand-Schmuck für Coins.")
-            1 -> EmptyMarketCard("Begleiter", "Bald: kleine Begleiter auf eurer Leinwand.")
-            else -> {
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 88.dp),
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(ShopCatalog.EMOJIS, key = { it.emoji }) { item ->
-                        val count = owned[item.emoji] ?: 0
-                        Box(
-                            modifier = Modifier
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(BgSoft)
-                                .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(16.dp))
-                                .clickable(enabled = busyEmoji == null) {
-                                    pendingBuy = item
-                                }
-                                .padding(8.dp)
-                        ) {
-                            Text(
-                                item.emoji,
-                                fontSize = 32.sp,
-                                modifier = Modifier.align(Alignment.Center)
-                            )
-                            Text(
-                                "${item.priceCoins}",
-                                color = AccentRose,
-                                fontFamily = DisplayFont,
-                                fontSize = 12.sp,
-                                modifier = Modifier.align(Alignment.BottomStart)
-                            )
-                            if (count > 0) {
-                                Text(
-                                    "×$count",
-                                    color = TextMuted,
-                                    fontFamily = BodyFont,
-                                    fontSize = 11.sp,
-                                    modifier = Modifier.align(Alignment.BottomEnd)
-                                )
-                            }
-                        }
-                    }
+            0 -> LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 88.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(ShopCatalog.THEMES, key = { "t-${it.id}" }) { item ->
+                    val have = item.id in ownedThemes
+                    ShopGridCell(
+                        emoji = item.emoji,
+                        price = item.priceCoins,
+                        ownedLabel = if (have) "✓" else null,
+                        enabled = busyKey == null && !have,
+                        onClick = { pendingBuy = ShopPendingBuy.Theme(item) }
+                    )
+                }
+                items(ShopCatalog.STICKERS, key = { "s-${it.emoji}" }) { item ->
+                    val count = ownedStickers[item.emoji] ?: 0
+                    ShopGridCell(
+                        emoji = item.emoji,
+                        price = item.priceCoins,
+                        ownedLabel = if (count > 0) "×$count" else null,
+                        enabled = busyKey == null,
+                        onClick = { pendingBuy = ShopPendingBuy.Sticker(item) }
+                    )
                 }
             }
+            1 -> LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 88.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(ShopCatalog.PETS, key = { it.emoji }) { item ->
+                    val have = item.emoji in ownedPets
+                    ShopGridCell(
+                        emoji = item.emoji,
+                        price = item.priceCoins,
+                        ownedLabel = if (have) "✓" else null,
+                        enabled = busyKey == null && !have,
+                        onClick = { pendingBuy = ShopPendingBuy.Pet(item) }
+                    )
+                }
+            }
+            else -> LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 88.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(ShopCatalog.EMOJIS, key = { it.emoji }) { item ->
+                    val count = ownedEmojis[item.emoji] ?: 0
+                    ShopGridCell(
+                        emoji = item.emoji,
+                        price = item.priceCoins,
+                        ownedLabel = if (count > 0) "×$count" else null,
+                        enabled = busyKey == null,
+                        onClick = { pendingBuy = ShopPendingBuy.Emoji(item) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShopGridCell(
+    emoji: String,
+    price: Int,
+    ownedLabel: String?,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(16.dp))
+            .background(BgSoft)
+            .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(16.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(8.dp)
+    ) {
+        Text(emoji, fontSize = 32.sp, modifier = Modifier.align(Alignment.Center))
+        Text(
+            if (price <= 0) "frei" else "$price",
+            color = AccentRose,
+            fontFamily = DisplayFont,
+            fontSize = 12.sp,
+            modifier = Modifier.align(Alignment.BottomStart)
+        )
+        if (ownedLabel != null) {
+            Text(
+                ownedLabel,
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 11.sp,
+                modifier = Modifier.align(Alignment.BottomEnd)
+            )
         }
     }
 }
@@ -613,28 +721,77 @@ fun InventoryScreen(
     onOpenItemShop: () -> Unit,
     onOpenProfileDesigner: () -> Unit
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val prefs = LuvApp.instance.prefs
     val owned by prefs.ownedEmojisFlow.collectAsStateWithLifecycle(initialValue = emptyMap())
+    val ownedThemes by prefs.ownedThemesFlow.collectAsStateWithLifecycle(
+        initialValue = listOf(ProfileCatalog.DEFAULT_THEME_ID)
+    )
+    val ownedStickersMap by prefs.ownedStickersFlow.collectAsStateWithLifecycle(initialValue = emptyMap())
+    val ownedPets by prefs.ownedPetsFlow.collectAsStateWithLifecycle(
+        initialValue = listOf(ShopCatalog.DEFAULT_PET)
+    )
+    val equippedPet by prefs.equippedPetFlow.collectAsStateWithLifecycle(
+        initialValue = ShopCatalog.DEFAULT_PET
+    )
+    val emojiBar by prefs.emojiBarFlow.collectAsStateWithLifecycle(
+        initialValue = ShopCatalog.DEFAULT_BAR
+    )
     var profile by remember {
         mutableStateOf(ProfileState(layout = ProfileCatalog.defaultLayout(nickname)))
     }
     var pendingAction by remember { mutableStateOf<ProfilePlaceAction?>(null) }
+    var pendingBarEmoji by remember { mutableStateOf<String?>(null) }
+    var barFullEmoji by remember { mutableStateOf<String?>(null) }
+    var replacePickFor by remember { mutableStateOf<String?>(null) }
+    var showBarEditor by remember { mutableStateOf(false) }
 
     LaunchedEffect(nickname) {
         runCatching {
             val remote = LuvApiClient.fetchInventory()
-            if (remote.isNotEmpty()) prefs.setOwnedEmojis(remote)
+            prefs.applyInventoryBag(
+                emojis = remote.emojis,
+                themes = remote.themes,
+                stickers = remote.stickers,
+                pets = remote.pets,
+                equippedPet = remote.equippedPet
+            )
         }
         val json = runCatching { prefs.profileCanvasJson() }.getOrNull()
         profile = ProfileCatalog.decode(json, nickname)
+        val pet = runCatching { prefs.equippedPet() }.getOrDefault(ShopCatalog.DEFAULT_PET)
+        if (profile.companionEmoji != pet) {
+            profile = profile.copy(companionEmoji = pet)
+        }
     }
 
-    val stickers = remember(owned) {
-        (ProfileCatalog.FREE_STICKERS + owned.keys).distinct().sorted()
+    val stickers = remember(ownedStickersMap) {
+        ownedStickersMap.keys.sorted()
     }
 
     fun confirmPlace(action: ProfilePlaceAction) {
         pendingAction = action
+    }
+
+    fun addEmojiToBar(emoji: String, replaceIndex: Int? = null) {
+        scope.launch {
+            val current = prefs.emojiBar().toMutableList()
+            if (emoji in current) {
+                Toast.makeText(context, "Schon in der Reaktionsleiste", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            if (replaceIndex != null && replaceIndex in current.indices) {
+                current[replaceIndex] = emoji
+            } else if (current.size < ShopCatalog.MAX_BAR) {
+                current.add(emoji)
+            } else {
+                barFullEmoji = emoji
+                return@launch
+            }
+            prefs.setEmojiBar(current)
+            Toast.makeText(context, "$emoji in die Reaktionsleiste", Toast.LENGTH_SHORT).show()
+        }
     }
 
     MenuBackdrop(includeNavigationBars = false) {
@@ -648,14 +805,46 @@ fun InventoryScreen(
                 mode = InventoryPanelMode.Menu,
                 ownedStickers = stickers,
                 ownedEmojis = owned,
+                ownedThemes = ownedThemes,
+                ownedPets = ownedPets,
                 currentThemeId = profile.themeId,
-                currentCompanion = profile.companionEmoji,
+                currentCompanion = equippedPet.ifBlank { profile.companionEmoji },
                 hasGlass = false,
                 hasBio = false,
                 onTheme = { confirmPlace(ProfilePlaceAction.Theme(it.id)) },
                 onSticker = { confirmPlace(ProfilePlaceAction.Sticker(it)) },
-                onCompanion = { confirmPlace(ProfilePlaceAction.Buddy(it)) },
-                onEmoji = { confirmPlace(ProfilePlaceAction.Sticker(it)) },
+                onCompanion = { emoji ->
+                    scope.launch {
+                        runCatching {
+                            val eq = LuvApiClient.equipPet(emoji)
+                            prefs.setEquippedPet(eq)
+                            profile = profile.copy(companionEmoji = eq)
+                            Toast.makeText(
+                                context,
+                                "$eq ausgerüstet",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }.onFailure {
+                            Toast.makeText(
+                                context,
+                                it.message ?: "Ausrüsten fehlgeschlagen",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                },
+                onEmoji = { emoji ->
+                    val bar = emojiBar
+                    when {
+                        emoji in bar -> Toast.makeText(
+                            context,
+                            "Schon in der Reaktionsleiste",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        bar.size >= ShopCatalog.MAX_BAR -> barFullEmoji = emoji
+                        else -> pendingBarEmoji = emoji
+                    }
+                },
                 onOpenMarketplace = onOpenMarketplace,
                 onOpenItemShop = onOpenItemShop,
                 selectedTab = selectedTab,
@@ -664,6 +853,136 @@ fun InventoryScreen(
                 showCardChrome = true
             )
         }
+    }
+
+    pendingBarEmoji?.let { emoji ->
+        AlertDialog(
+            onDismissRequest = { pendingBarEmoji = null },
+            containerColor = BgSoft,
+            title = {
+                Text("Reaktionsleiste?", fontFamily = DisplayFont, color = TextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(emoji, fontSize = 36.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                    Text(
+                        "Dieses Emoji in deine Reaktionsleiste (Leinwand oben rechts) aufnehmen?",
+                        fontFamily = BodyFont,
+                        color = TextMuted
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        addEmojiToBar(emoji)
+                        pendingBarEmoji = null
+                    }
+                ) {
+                    Text("Ja, aufnehmen", color = AccentRose, fontFamily = DisplayFont)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingBarEmoji = null }) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
+    }
+
+    barFullEmoji?.let { emoji ->
+        AlertDialog(
+            onDismissRequest = { barFullEmoji = null },
+            containerColor = BgSoft,
+            title = {
+                Text("Leiste voll", fontFamily = DisplayFont, color = TextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(emoji, fontSize = 36.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                    Text(
+                        "Die Reaktionsleiste hat schon 8 Emojis. Entweder eines auf den Papierkorb ziehen oder ein bestehendes ersetzen.",
+                        fontFamily = BodyFont,
+                        color = TextMuted
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        replacePickFor = emoji
+                        barFullEmoji = null
+                    }
+                ) {
+                    Text("Ersetzen", color = AccentRose, fontFamily = DisplayFont)
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(
+                        onClick = {
+                            barFullEmoji = null
+                            showBarEditor = true
+                        }
+                    ) {
+                        Text("Papierkorb", color = TextMuted, fontFamily = BodyFont)
+                    }
+                    TextButton(onClick = { barFullEmoji = null }) {
+                        Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
+                    }
+                }
+            }
+        )
+    }
+
+    replacePickFor?.let { newEmoji ->
+        AlertDialog(
+            onDismissRequest = { replacePickFor = null },
+            containerColor = BgSoft,
+            title = {
+                Text("Welches ersetzen?", fontFamily = DisplayFont, color = TextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Tippe das Emoji an, das durch $newEmoji ersetzt werden soll.",
+                        fontFamily = BodyFont,
+                        color = TextMuted
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        emojiBar.take(ShopCatalog.MAX_BAR).forEachIndexed { index, e ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .aspectRatio(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(BgDeep)
+                                    .clickable {
+                                        addEmojiToBar(newEmoji, replaceIndex = index)
+                                        replacePickFor = null
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(e, fontSize = 22.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { replacePickFor = null }) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
+    }
+
+    if (showBarEditor) {
+        EmojiBarEditorDialog(onDismiss = { showBarEditor = false })
     }
 
     val action = pendingAction

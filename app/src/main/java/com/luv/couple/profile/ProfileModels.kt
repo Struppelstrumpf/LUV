@@ -88,7 +88,7 @@ data class ProfileState(
     val themeId: String = ProfileCatalog.DEFAULT_THEME_ID,
     val statusEmoji: String = "😊",
     val bio: String = "",
-    val companionEmoji: String = "💕",
+    val companionEmoji: String = "🐣",
     val layout: List<ProfileLayoutEl> = emptyList()
 ) {
     /**
@@ -120,7 +120,7 @@ data class ProfileState(
         }.take(ProfileCatalog.MAX_DECOR + 4)
         val pet = extras.firstOrNull { it.type == ProfileElType.Pet }
         return copy(
-            companionEmoji = (pet?.emoji ?: companionEmoji).ifBlank { "💕" },
+            companionEmoji = (pet?.emoji ?: companionEmoji).ifBlank { "🐣" },
             bio = bio.take(ProfileCatalog.MAX_BIO),
             layout = core + extras
         )
@@ -166,12 +166,8 @@ object ProfileCatalog {
         ProfileTheme("hearth", "Kamin", "🔥", 0xFFFFAB91, 0xFFFFE0B2, 0xFFBF360C, 0xFF3E2723)
     )
 
-    val FREE_STICKERS: List<String> = listOf(
-        "☀️", "😎", "💌", "🏠", "🐦", "🌳", "🌻", "🦔",
-        "🐶", "🐱", "⭐", "✨", "❤️", "🌹", "🌈", "🍀",
-        "🎈", "🎁", "☕", "🎵", "🦋", "🐝", "🌙", "🔥",
-        "💕", "🫶", "✏️", "🎨"
-    )
+    /** Früher gratis — jetzt nur noch über Itemshop / Besitz. */
+    val FREE_STICKERS: List<String> = emptyList()
 
     val MOODS: List<ProfileMood> = listOf(
         ProfileMood("m-smile", "Fröhlich", "😊", true),
@@ -191,9 +187,10 @@ object ProfileCatalog {
         ProfileMood("m-rainbow", "Regenbogen", "🌈", true)
     )
 
+    /** Nur Tiere — Anzeige am Avatar; Besitz über Itemshop. */
     val COMPANIONS: List<String> = listOf(
-        "💕", "💖", "💗", "💘", "❤️", "🧡", "💛", "💚", "💙", "💜",
-        "🐶", "🐱", "🐰", "🐻", "🦊", "🐼", "🦄", "🦋", "🐣", "🐢"
+        "🐣", "🐦", "🐔", "🐸", "🐶", "🐱", "🐰", "🐹", "🐻", "🦊",
+        "🐼", "🐨", "🐯", "🦁", "🐮", "🐷", "🐧", "🐢", "🦋", "🦄"
     )
 
     val AVATAR_FACES: List<String> = listOf(
@@ -401,7 +398,7 @@ object ProfileCatalog {
                 themeId = o.optString("themeId", DEFAULT_THEME_ID),
                 statusEmoji = o.optString("statusEmoji", "😊").ifBlank { "😊" },
                 bio = o.optString("bio", "").take(MAX_BIO),
-                companionEmoji = o.optString("companionEmoji", "💕").ifBlank { "💕" },
+                companionEmoji = o.optString("companionEmoji", "🐣").ifBlank { "🐣" },
                 layout = layout
             ).normalized(nickname)
         }.getOrElse {

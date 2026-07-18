@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -429,6 +430,8 @@ fun LobbiesScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             UpdateBanner(state = updateState, onUpdate = onUpdateApp)
+            val equippedPet by LuvApp.instance.prefs.equippedPetFlow
+                .collectAsStateWithLifecycle(initialValue = com.luv.couple.shop.ShopCatalog.DEFAULT_PET)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -436,16 +439,28 @@ fun LobbiesScreen(
                 Box(
                     modifier = Modifier
                         .size(44.dp)
-                        .clip(CircleShape)
-                        .background(accent)
-                        .clickable(onClick = onOpenProfile),
-                    contentAlignment = Alignment.Center
+                        .clickable(onClick = onOpenProfile)
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                            .background(accent),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            nickname.take(1).uppercase(),
+                            color = Color.White,
+                            fontFamily = DisplayFont,
+                            fontSize = 20.sp
+                        )
+                    }
                     Text(
-                        nickname.take(1).uppercase(),
-                        color = Color.White,
-                        fontFamily = DisplayFont,
-                        fontSize = 20.sp
+                        equippedPet,
+                        fontSize = 16.sp,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .offset(x = 4.dp, y = 4.dp)
                     )
                 }
                 Column(modifier = Modifier.weight(1f)) {

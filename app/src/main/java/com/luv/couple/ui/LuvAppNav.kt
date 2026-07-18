@@ -437,7 +437,13 @@ fun LuvAppNav() {
     suspend fun syncInventory() {
         runCatching {
             val remote = LuvApiClient.fetchInventory()
-            if (remote.isNotEmpty()) prefs.setOwnedEmojis(remote)
+            prefs.applyInventoryBag(
+                emojis = remote.emojis,
+                themes = remote.themes,
+                stickers = remote.stickers,
+                pets = remote.pets,
+                equippedPet = remote.equippedPet
+            )
         }
     }
 

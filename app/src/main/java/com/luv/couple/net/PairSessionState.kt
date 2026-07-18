@@ -126,7 +126,8 @@ object PairSessionState {
                 active = m.active,
                 userId = uid ?: prev?.userId,
                 online = m.online,
-                departed = false
+                departed = false,
+                petEmoji = m.petEmoji.ifBlank { prev?.petEmoji ?: "🐣" }
             )
         }
         flow.value = next
@@ -177,7 +178,8 @@ object PairSessionState {
         lobbyId: String,
         myNickname: String?,
         myColor: Int,
-        myUserId: String? = null
+        myUserId: String? = null,
+        myPetEmoji: String = "🐣"
     ): List<PeerInfo> {
         val remote = peersByLobby[lobbyId]?.value?.values?.toList().orEmpty()
         val me = PeerInfo(
@@ -187,7 +189,8 @@ object PairSessionState {
             active = true,
             userId = myUserId,
             online = true,
-            departed = false
+            departed = false,
+            petEmoji = myPetEmoji.ifBlank { "🐣" }
         )
         // Für die Legende: nur noch aktive Lobby-Mitglieder (nicht departed)
         val others = remote.filter { peer ->

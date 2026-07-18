@@ -7,7 +7,10 @@ object ShopCatalog {
     const val MAX_BAR = 8
     val DEFAULT_BAR: List<String> = listOf("👍", "❌", "❤️", "😂", "😱", "😡", "😭")
 
-    /** Alle kaufbaren Emojis mit fairem Coin-Preis. */
+    /** Standard-Begleiter — jeder startet damit ausgerüstet. */
+    const val DEFAULT_PET = "🐣"
+
+    /** Alle kaufbaren Reaktions-Emojis mit fairem Coin-Preis. */
     val EMOJIS: List<ShopEmoji> = listOf(
         ShopEmoji("👍", 5), ShopEmoji("👎", 5), ShopEmoji("❌", 5), ShopEmoji("❤️", 8),
         ShopEmoji("🧡", 8), ShopEmoji("💛", 8), ShopEmoji("💚", 8), ShopEmoji("💙", 8),
@@ -41,6 +44,59 @@ object ShopCatalog {
         ShopEmoji("🙌", 10), ShopEmoji("👋", 6)
     ).distinctBy { it.emoji }
 
+    /** Profil-Hintergründe (meadow ist Starter, gratis). */
+    val THEMES: List<ShopTheme> = listOf(
+        ShopTheme("meadow", "Wiese", "🌿", 0),
+        ShopTheme("forest", "Wald", "🌲", 18),
+        ShopTheme("sunset", "Abendrot", "🌅", 20),
+        ShopTheme("night", "Nacht", "🌙", 20),
+        ShopTheme("snow", "Schnee", "❄️", 18),
+        ShopTheme("blossom", "Blüte", "🌸", 22),
+        ShopTheme("ocean", "Meer", "🌊", 22),
+        ShopTheme("rain", "Regen", "🌧️", 18),
+        ShopTheme("autumn", "Herbst", "🍂", 20),
+        ShopTheme("stars", "Sterne", "✨", 24),
+        ShopTheme("cabin", "Hütte", "🏠", 22),
+        ShopTheme("lake", "See", "🏞️", 22),
+        ShopTheme("lavender", "Lavendel", "💜", 24),
+        ShopTheme("hearth", "Kamin", "🔥", 24)
+    )
+
+    /** Profil-Sticker zum Kaufen. */
+    val STICKERS: List<ShopEmoji> = listOf(
+        ShopEmoji("☀️", 6), ShopEmoji("😎", 8), ShopEmoji("💌", 10), ShopEmoji("🏠", 8),
+        ShopEmoji("🐦", 8), ShopEmoji("🌳", 6), ShopEmoji("🌻", 8), ShopEmoji("🦔", 12),
+        ShopEmoji("🐶", 10), ShopEmoji("🐱", 10), ShopEmoji("⭐", 6), ShopEmoji("✨", 6),
+        ShopEmoji("❤️", 8), ShopEmoji("🌹", 10), ShopEmoji("🌈", 10), ShopEmoji("🍀", 6),
+        ShopEmoji("🎈", 8), ShopEmoji("🎁", 12), ShopEmoji("☕", 6), ShopEmoji("🎵", 6),
+        ShopEmoji("🦋", 8), ShopEmoji("🐝", 6), ShopEmoji("🌙", 6), ShopEmoji("🔥", 8),
+        ShopEmoji("💕", 10), ShopEmoji("🫶", 12), ShopEmoji("✏️", 5), ShopEmoji("🎨", 10)
+    ).distinctBy { it.emoji }
+
+    /** Nur Tiere — Herzen entfernt. Küken ist Starter. */
+    val PETS: List<ShopPet> = listOf(
+        ShopPet("🐣", "Küken", 0),
+        ShopPet("🐦", "Vogel", 14),
+        ShopPet("🐔", "Huhn", 16),
+        ShopPet("🐸", "Frosch", 16),
+        ShopPet("🐶", "Hund", 20),
+        ShopPet("🐱", "Katze", 20),
+        ShopPet("🐰", "Hase", 22),
+        ShopPet("🐹", "Hamster", 18),
+        ShopPet("🐻", "Bär", 24),
+        ShopPet("🦊", "Fuchs", 26),
+        ShopPet("🐼", "Panda", 28),
+        ShopPet("🐨", "Koala", 26),
+        ShopPet("🐯", "Tiger", 30),
+        ShopPet("🦁", "Löwe", 32),
+        ShopPet("🐮", "Kuh", 20),
+        ShopPet("🐷", "Schwein", 20),
+        ShopPet("🐧", "Pinguin", 22),
+        ShopPet("🐢", "Schildkröte", 22),
+        ShopPet("🦋", "Schmetterling", 18),
+        ShopPet("🦄", "Einhorn", 40)
+    )
+
     fun priceOf(emoji: String): Int =
         EMOJIS.firstOrNull { it.emoji == emoji }?.priceCoins ?: 10
 
@@ -62,5 +118,18 @@ object ShopCatalog {
 
 data class ShopEmoji(
     val emoji: String,
+    val priceCoins: Int
+)
+
+data class ShopTheme(
+    val id: String,
+    val label: String,
+    val emoji: String,
+    val priceCoins: Int
+)
+
+data class ShopPet(
+    val emoji: String,
+    val label: String,
     val priceCoins: Int
 )
