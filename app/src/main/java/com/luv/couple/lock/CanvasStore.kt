@@ -115,8 +115,12 @@ object CanvasStore {
         val id = resolveLobbyId(lobbyId) ?: return
         val safe = colorIndex.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
         cachedColorIndex = safe
-        if (isSoloLobby(id)) return
         val nick = cachedNickname
+        // Immer live an Peers senden (Avatar/Legende), auch wenn keine Striche umgefärbt werden
+        if (broadcast && ::appContext.isInitialized) {
+            PairConnectionService.sendRecolor(appContext, nick, safe, id)
+        }
+        if (isSoloLobby(id)) return
         val c = canvas(id)
         var changed = false
         val updated = c.strokes.map { stroke ->
@@ -132,9 +136,6 @@ object CanvasStore {
             c.strokes.clear()
             c.strokes.addAll(updated)
             bump(id)
-        }
-        if (broadcast && ::appContext.isInitialized) {
-            PairConnectionService.sendRecolor(appContext, nick, safe, id)
         }
     }
 

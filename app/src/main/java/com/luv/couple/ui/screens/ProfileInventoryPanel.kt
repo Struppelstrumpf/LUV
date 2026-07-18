@@ -149,17 +149,15 @@ fun ProfileInventoryPanel(
 
         Column(modifier = body) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("🧰", fontSize = ts(22.sp))
+                Text("🎒", fontSize = ts(22.sp))
                 Spacer(modifier = Modifier.width(s(8.dp)))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("TRUHE", color = TextMuted, fontFamily = BodyFont, fontSize = ts(11.sp))
-                    Text(
-                        "Dein Inventar",
-                        color = TextPrimary,
-                        fontFamily = DisplayFont,
-                        fontSize = ts(22.sp)
-                    )
-                }
+                Text(
+                    "Dein Inventar",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = ts(22.sp),
+                    modifier = Modifier.weight(1f)
+                )
                 if (onDismiss != null) {
                     Box(
                         modifier = Modifier

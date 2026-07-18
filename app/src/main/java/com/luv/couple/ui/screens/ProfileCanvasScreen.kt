@@ -1415,7 +1415,7 @@ private fun ProfileCanvasBoard(
                     .clickable(onClick = onOpenChest),
                 contentAlignment = Alignment.Center
             ) {
-                Text("🧰", fontSize = 22.sp)
+                Text("🎒", fontSize = 22.sp)
             }
         }
     }

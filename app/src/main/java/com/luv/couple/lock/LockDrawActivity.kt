@@ -1292,10 +1292,17 @@ class LockDrawActivity : ComponentActivity() {
         }
         // Solo: nur Pinsel/Hintergrund wechseln — alte Striche behalten Farben.
         // Zu zweit+: freigegebene (nach Join gemalte) Striche mitumfärben.
+        // Farbe immer live an alle (Avatar + offene Striche).
         CanvasStore.recolorOwnStrokes(safe, lobbyId, broadcast = sync)
         drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
         if (sync) {
             PairConnectionService.sendPresence(this, active = true, lobbyId = lobbyId)
+            PairConnectionService.sendRecolor(
+                this,
+                CanvasStore.cachedNickname,
+                safe,
+                lobbyId
+            )
         }
         refreshLegend()
     }

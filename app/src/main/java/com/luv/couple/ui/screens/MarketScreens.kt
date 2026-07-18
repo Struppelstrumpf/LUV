@@ -203,7 +203,9 @@ private fun MarketHub(
             LuvApiClient.MarketHubPreview(
                 emoji = "🪙",
                 label = ShopCatalog.playfulPackTitle(pack),
-                detail = "${pack.amountEur} € · ${pack.coins}"
+                detail = "${pack.amountEur} € · ${pack.coins}",
+                packId = pack.id,
+                packCoins = pack.coins
             )
         }
     }
@@ -218,12 +220,12 @@ private fun MarketHub(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(gap)
             ) {
-                Text("Markt", fontFamily = DisplayFont, fontSize = 30.sp, color = TextPrimary)
                 MarketTile(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
                     title = "Marktplatz",
+                    badge = "Neueste Angebote",
                     brush = Brush.linearGradient(listOf(Color(0xFF2A3148), Color(0xFF1A2030))),
                     previews = marketPreviews,
                     emptyHint = "Noch keine Angebote",
@@ -234,6 +236,7 @@ private fun MarketHub(
                         .weight(1f)
                         .fillMaxWidth(),
                     title = "Itemshop",
+                    badge = "Meistgekauft",
                     brush = Brush.linearGradient(listOf(Color(0xFF3A2438), Color(0xFF241828))),
                     previews = shopPreviews,
                     emptyHint = "Beliebte Items laden…",
@@ -244,6 +247,7 @@ private fun MarketHub(
                         .weight(1f)
                         .fillMaxWidth(),
                     title = "Coinshop",
+                    badge = "Angebote",
                     brush = Brush.linearGradient(listOf(Color(0xFF3A3020), Color(0xFF241C12))),
                     previews = coinPreviews,
                     emptyHint = "Bald verfügbar",
@@ -258,6 +262,7 @@ private fun MarketHub(
 private fun MarketTile(
     modifier: Modifier,
     title: String,
+    badge: String,
     brush: Brush,
     previews: List<LuvApiClient.MarketHubPreview>,
     emptyHint: String,
@@ -275,13 +280,27 @@ private fun MarketTile(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(
-                title,
-                color = TextPrimary,
-                fontFamily = DisplayFont,
-                fontSize = 22.sp,
-                maxLines = 1
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    title,
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 22.sp,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    badge,
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
             if (previews.isEmpty()) {
                 Box(
                     modifier = Modifier
@@ -320,16 +339,47 @@ private fun MarketTilePreviewCard(
     preview: LuvApiClient.MarketHubPreview,
     modifier: Modifier = Modifier
 ) {
+    val packImage = when {
+        preview.packCoins > 0 -> ShopCatalog.packImageRes(
+            ShopPack(
+                id = preview.packId.orEmpty(),
+                label = preview.label,
+                coins = preview.packCoins,
+                amountEur = ""
+            )
+        )
+        !preview.packId.isNullOrBlank() -> ShopCatalog.packImageRes(
+            ShopPack(
+                id = preview.packId,
+                label = preview.label,
+                coins = preview.packCoins.coerceAtLeast(1),
+                amountEur = ""
+            )
+        )
+        else -> null
+    }
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(16.dp))
             .background(Color.White.copy(0.07f))
             .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(16.dp))
-            .padding(horizontal = 10.dp, vertical = 12.dp),
+            .padding(horizontal = 10.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(preview.emoji, fontSize = 28.sp)
+        if (packImage != null) {
+            Image(
+                painter = painterResource(packImage),
+                contentDescription = preview.label,
+                modifier = Modifier
+                    .fillMaxWidth(0.72f)
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(12.dp)),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Text(preview.emoji, fontSize = 28.sp)
+        }
         Spacer(modifier = Modifier.height(6.dp))
         Text(
             preview.label,

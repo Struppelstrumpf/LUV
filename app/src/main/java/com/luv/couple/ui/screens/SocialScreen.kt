@@ -84,8 +84,6 @@ fun SocialScreen(
                 .padding(horizontal = 20.dp)
                 .padding(top = 20.dp, bottom = 8.dp)
         ) {
-            Text("Sozial", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
-            Spacer(modifier = Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)

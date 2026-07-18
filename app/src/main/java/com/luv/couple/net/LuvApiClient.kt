@@ -1691,7 +1691,10 @@ object LuvApiClient {
     data class MarketHubPreview(
         val emoji: String,
         val label: String,
-        val detail: String
+        val detail: String,
+        /** Coinshop: Pack-ID für Bildvorschau */
+        val packId: String? = null,
+        val packCoins: Int = 0
     )
 
     data class MarketHubData(
@@ -1740,7 +1743,9 @@ object LuvApiClient {
             MarketHubPreview(
                 emoji = "🪙",
                 label = label,
-                detail = "$eur € · $coins"
+                detail = "$eur € · $coins",
+                packId = o.optString("id").takeIf { it.isNotBlank() },
+                packCoins = coins
             )
         }
         MarketHubData(marketNewest = marketNewest, shopTop = shopTop, coinNewest = coinNewest)

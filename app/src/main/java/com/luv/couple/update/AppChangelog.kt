@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.77",
+            listOf(
+                "Markt-Kacheln mit Badges & Coinshop-Bildern",
+                "Menü aufgeräumt, Inventar-Rucksack, Farbe live synchron",
+            )
+        ),
+        Entry(
             "1.9.76",
             listOf(
                 "Leinwand: Vorlagen statt Spiele — zeichnen, speichern, platzieren",

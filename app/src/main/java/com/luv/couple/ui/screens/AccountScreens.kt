@@ -105,14 +105,7 @@ fun AccountHomeScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text("Konto", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
             UpdateBanner(state = updateState, onUpdate = onUpdateApp)
-            Text(
-                "Jeden Tag automatisch +${account?.dailyCoins ?: 10} Coins — nicht stapelbar. Gekaufte Coins bleiben.",
-                color = TextMuted,
-                fontFamily = BodyFont,
-                fontSize = 14.sp
-            )
 
             Row(
                 modifier = Modifier
