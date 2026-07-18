@@ -123,7 +123,9 @@ fun ProfileInventoryPanel(
     }
     val petItems = remember(ownedPets) {
         val owned = ownedPets.toSet()
-        ProfileCatalog.COMPANIONS.filter { it in owned }.ifEmpty { listOf("🐣") }
+        com.luv.couple.shop.ShopCatalog.PETS.map { it.emoji }
+            .filter { it in owned }
+            .ifEmpty { listOf("🐣") }
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {

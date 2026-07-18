@@ -12,6 +12,14 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.83",
+            listOf(
+                "Viele neue Hintergründe mit Animationen (Nordlicht, Vulkan, Sakura …)",
+                "Itemshop: mehr Begleiter (alle Tiere) und mehr Reaktions-Emojis",
+                "Vorlagen zeichnen: Pinseldicke einstellbar",
+            )
+        ),
+        Entry(
             "1.9.82",
             listOf(
                 "Itemshop: 500+ Sticker aus allen Kategorien, mit seltenen teuren Stufen",

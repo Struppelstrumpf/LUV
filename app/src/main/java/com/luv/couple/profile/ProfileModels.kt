@@ -73,7 +73,7 @@ data class ProfileTheme(
     val skyBottom: Long,
     val groundTop: Long,
     val groundBottom: Long,
-    /** rain | snow | stars | none */
+    /** rain | snow | stars | fire | petals | leaves | bubbles | sparkles | meteors | aurora | fog | storm | galaxy | none */
     val effect: String = "none"
 )
 
@@ -158,15 +158,32 @@ object ProfileCatalog {
         ProfileTheme("sunset", "Abendrot", "🌅", 0xFFFF8F00, 0xFFFFE0B2, 0xFFBF360C, 0xFF6D4C41),
         ProfileTheme("night", "Nacht", "🌙", 0xFF1A237E, 0xFF3949AB, 0xFF263238, 0xFF102027, "stars"),
         ProfileTheme("snow", "Schnee", "❄️", 0xFFB3E5FC, 0xFFE1F5FE, 0xFFECEFF1, 0xFFCFD8DC, "snow"),
-        ProfileTheme("blossom", "Blüte", "🌸", 0xFFF8BBD0, 0xFFFCE4EC, 0xFF81C784, 0xFF558B2F),
-        ProfileTheme("ocean", "Meer", "🌊", 0xFF4FC3F7, 0xFFB3E5FC, 0xFF00838F, 0xFF004D40),
+        ProfileTheme("blossom", "Blüte", "🌸", 0xFFF8BBD0, 0xFFFCE4EC, 0xFF81C784, 0xFF558B2F, "petals"),
+        ProfileTheme("ocean", "Meer", "🌊", 0xFF4FC3F7, 0xFFB3E5FC, 0xFF00838F, 0xFF004D40, "bubbles"),
         ProfileTheme("rain", "Regen", "🌧️", 0xFF607D8B, 0xFFB0BEC5, 0xFF455A64, 0xFF263238, "rain"),
-        ProfileTheme("autumn", "Herbst", "🍂", 0xFFFFB74D, 0xFFFFE0B2, 0xFFEF6C00, 0xFF5D4037),
+        ProfileTheme("autumn", "Herbst", "🍂", 0xFFFFB74D, 0xFFFFE0B2, 0xFFEF6C00, 0xFF5D4037, "leaves"),
         ProfileTheme("stars", "Sterne", "✨", 0xFF0D1B2A, 0xFF1B3A4B, 0xFF1B263B, 0xFF0D1B2A, "stars"),
         ProfileTheme("cabin", "Hütte", "🏠", 0xFFFFCC80, 0xFFFFE0B2, 0xFF6D4C41, 0xFF3E2723),
-        ProfileTheme("lake", "See", "🏞️", 0xFF4DD0E1, 0xFFB2EBF2, 0xFF00897B, 0xFF004D40),
-        ProfileTheme("lavender", "Lavendel", "💜", 0xFFCE93D8, 0xFFF3E5F5, 0xFF7E57C2, 0xFF4527A0),
-        ProfileTheme("hearth", "Kamin", "🔥", 0xFFFFAB91, 0xFFFFE0B2, 0xFFBF360C, 0xFF3E2723)
+        ProfileTheme("lake", "See", "🏞️", 0xFF4DD0E1, 0xFFB2EBF2, 0xFF00897B, 0xFF004D40, "bubbles"),
+        ProfileTheme("lavender", "Lavendel", "💜", 0xFFCE93D8, 0xFFF3E5F5, 0xFF7E57C2, 0xFF4527A0, "sparkles"),
+        ProfileTheme("hearth", "Kamin", "🔥", 0xFFFFAB91, 0xFFFFE0B2, 0xFFBF360C, 0xFF3E2723, "fire"),
+        // Neu
+        ProfileTheme("aurora", "Nordlicht", "🌌", 0xFF0B1D36, 0xFF163B5C, 0xFF1B263B, 0xFF0D1B2A, "aurora"),
+        ProfileTheme("galaxy", "Galaxie", "🪐", 0xFF12001F, 0xFF2A0850, 0xFF1A0033, 0xFF0A0014, "galaxy"),
+        ProfileTheme("meteor", "Sternschnuppen", "☄️", 0xFF0A1020, 0xFF1A2744, 0xFF121820, 0xFF0A0E14, "meteors"),
+        ProfileTheme("storm", "Gewitter", "⛈️", 0xFF37474F, 0xFF78909C, 0xFF263238, 0xFF102027, "storm"),
+        ProfileTheme("mist", "Nebel", "🌫️", 0xFF90A4AE, 0xFFCFD8DC, 0xFF78909C, 0xFF546E7A, "fog"),
+        ProfileTheme("desert", "Wüste", "🏜️", 0xFFFFCC80, 0xFFFFE0B2, 0xFFE65100, 0xFFBF360C),
+        ProfileTheme("volcano", "Vulkan", "🌋", 0xFF4A1520, 0xFF8D2F2F, 0xFF3E2723, 0xFF1B0000, "fire"),
+        ProfileTheme("coral", "Koralle", "🪸", 0xFF4DD0E1, 0xFF80DEEA, 0xFF00838F, 0xFF006064, "bubbles"),
+        ProfileTheme("sakura", "Sakura", "💮", 0xFFF8BBD0, 0xFFFFF0F5, 0xFFA5D6A7, 0xFF66BB6A, "petals"),
+        ProfileTheme("candy", "Candy", "🍭", 0xFFFF80AB, 0xFFFFE1F0, 0xFFEA80FC, 0xFFCE93D8, "sparkles"),
+        ProfileTheme("golden", "Goldstunde", "☀️", 0xFFFFB300, 0xFFFFE082, 0xFFEF6C00, 0xFF8D6E63, "sparkles"),
+        ProfileTheme("iceberg", "Eisberg", "🧊", 0xFFB3E5FC, 0xFFE1F5FE, 0xFF81D4FA, 0xFF4FC3F7, "snow"),
+        ProfileTheme("bamboo", "Bambus", "🎋", 0xFFAED581, 0xFFDCEDC8, 0xFF558B2F, 0xFF33691E),
+        ProfileTheme("vineyard", "Weinberg", "🍇", 0xFFCE93D8, 0xFFE1BEE7, 0xFF6A1B9A, 0xFF4A148C, "leaves"),
+        ProfileTheme("dawn", "Morgengrauen", "🌄", 0xFFFFAB91, 0xFFFFE0B2, 0xFF81C784, 0xFF558B2F),
+        ProfileTheme("ember", "Glut", "🧡", 0xFFBF360C, 0xFFFF8A65, 0xFF4E342E, 0xFF212121, "fire")
     )
 
     /** Früher gratis — jetzt nur noch über Itemshop / Besitz. */
@@ -192,9 +209,17 @@ object ProfileCatalog {
 
     /** Nur Tiere — Anzeige am Avatar; Besitz über Itemshop. */
     val COMPANIONS: List<String> = listOf(
-        "🐣", "🐦", "🐔", "🐸", "🐶", "🐱", "🐰", "🐹", "🐻", "🦊",
-        "🐼", "🐨", "🦉", "🐯", "🦁", "🐮", "🐷", "🐧", "🐢", "🦋", "🦄"
-    )
+        "🐣", "🐦", "🐔", "🐓", "🐤", "🐥", "🦆", "🦅", "🦉", "🦇", "🐺", "🐗",
+        "🐴", "🦄", "🐝", "🐛", "🦋", "🐌", "🐞", "🐜", "🦟", "🦗", "🕷️", "🦂",
+        "🐢", "🐍", "🦎", "🦖", "🦕", "🐙", "🦑", "🦐", "🦞", "🦀", "🐡", "🐠",
+        "🐟", "🐬", "🐳", "🐋", "🦈", "🐊", "🐅", "🐆", "🦓", "🦍", "🦧", "🦣",
+        "🐘", "🦛", "🦏", "🐪", "🐫", "🦒", "🦘", "🦬", "🐃", "🐂", "🐄", "🐎",
+        "🐖", "🐏", "🐑", "🦙", "🐐", "🦌", "🐕", "🐩", "🦮", "🐕‍🦺", "🐈", "🐈‍⬛",
+        "🪶", "🦤", "🦚", "🦜", "🦢", "🦩", "🕊️", "🐇", "🦝", "🦨", "🦡", "🦫",
+        "🦦", "🦥", "🐁", "🐀", "🐿️", "🦔", "🐾", "🐉", "🐲",
+        "🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐻‍❄️", "🐨", "🐯", "🦁",
+        "🐮", "🐷", "🐸", "🐵", "🙈", "🙉", "🙊", "🐧"
+    ).distinct()
 
     val AVATAR_FACES: List<String> = listOf(
         "", "😊", "🥰", "😎", "😍", "🤗", "😇", "🤠", "😺", "🐶", "🎨", "✏️"

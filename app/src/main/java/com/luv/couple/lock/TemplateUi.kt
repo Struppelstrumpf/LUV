@@ -26,10 +26,13 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +51,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import com.luv.couple.data.DrawTemplate
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.StrokePoint
@@ -266,10 +270,10 @@ fun TemplateEditorSheet(
 ) {
     val parts = remember { mutableStateListOf<TemplateStrokePart>() }
     var colorIndex by remember { mutableIntStateOf(0) }
+    var brushWidth by remember { mutableFloatStateOf(18f) }
     var currentPoints by remember { mutableStateOf<List<StrokePoint>>(emptyList()) }
     var saving by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val brushWidth = 18f
 
     BoxWithConstraints(
         modifier = Modifier
@@ -352,7 +356,39 @@ fun TemplateEditorSheet(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    "Pinsel",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp
+                )
+                Slider(
+                    value = brushWidth,
+                    onValueChange = { brushWidth = it.coerceIn(6f, 40f) },
+                    valueRange = 6f..40f,
+                    modifier = Modifier.weight(1f),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Accent,
+                        activeTrackColor = Accent,
+                        inactiveTrackColor = Color.White.copy(0.12f)
+                    )
+                )
+                Text(
+                    "${brushWidth.roundToInt()}",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 14.sp,
+                    modifier = Modifier.width(28.dp),
+                    textAlign = TextAlign.End
+                )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -364,7 +400,7 @@ fun TemplateEditorSheet(
                 Canvas(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(colorIndex, parts.size) {
+                        .pointerInput(colorIndex, brushWidth, parts.size) {
                             detectDragGestures(
                                 onDragStart = { offset ->
                                     val nx = (offset.x / size.width).coerceIn(0f, 1f)
