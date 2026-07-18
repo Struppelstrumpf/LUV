@@ -871,14 +871,16 @@ private fun ProfileElementView(
         }
 
         if (selected && editable) {
-            // Handles gegen Element-Scale gegenrechnen; Offset so, dass Mitte auf der Ecke sitzt
+            // Handles visuell gegen Parent-Scale gegenrechnen — Position in lokaler
+            // Box-Space (vor Scale), damit die Mitte immer auf der Ecke der Strichelung bleibt
             val handleMod = Modifier.graphicsLayer {
                 scaleX = invScale * (if (dragEl.flipX) -1f else 1f)
                 scaleY = invScale
                 transformOrigin = TransformOrigin(0.5f, 0.5f)
             }
-            // Halbe Handle-Größe in Parent-Koordinaten (Parent ist skaliert)
-            val cornerPad = 14.dp * invScale
+            // Halbe Layout-Größe (28.dp/2) — nicht mit invScale multiplizieren,
+            // sonst wandern die Handles bei Scale>1 nach innen
+            val cornerPad = 14.dp
 
             Box(
                 modifier = Modifier
