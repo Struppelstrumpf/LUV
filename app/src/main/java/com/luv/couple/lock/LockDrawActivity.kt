@@ -9,7 +9,6 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.util.Base64
 import android.util.TypedValue
-import android.os.SystemClock
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -86,7 +85,6 @@ class LockDrawActivity : ComponentActivity() {
     private var eraserOn = false
     private var emojiEditorHost: FrameLayout? = null
     private val placedStickers = linkedMapOf<String, TextView>()
-    private var draftStickerId: String? = null
     private lateinit var gameHud: LinearLayout
     private lateinit var gameHudTitle: TextView
     private lateinit var gameHudSubtitle: TextView
@@ -568,34 +566,108 @@ class LockDrawActivity : ComponentActivity() {
     }
 
     private fun attachEmojiGesture(view: TextView, emoji: String) {
-        var downAt = 0L
-        var longFired = false
-        val longPress = Runnable {
-            if (view.isPressed && !longFired) {
-                longFired = true
-                beginDraftSticker(emoji)
-            }
-        }
+        val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+        var downRawX = 0f
+        var downRawY = 0f
+        var dragging = false
+        var ghost: TextView? = null
         view.setOnTouchListener { v, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    downAt = SystemClock.uptimeMillis()
-                    longFired = false
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    dragging = false
                     v.isPressed = true
-                    v.postDelayed(longPress, 1000L)
+                    v.parent?.requestDisallowInterceptTouchEvent(true)
                     true
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    v.isPressed = false
-                    v.removeCallbacks(longPress)
-                    if (!longFired && event.actionMasked == MotionEvent.ACTION_UP) {
-                        if (SystemClock.uptimeMillis() - downAt < 1000L) sendReaction(emoji)
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - downRawX
+                    val dy = event.rawY - downRawY
+                    if (!dragging && dx * dx + dy * dy > slop * slop) {
+                        dragging = true
+                        v.isPressed = false
+                        v.alpha = 0.35f
+                        ghost = createBarDragGhost(emoji, event.rawX, event.rawY)
                     }
+                    if (dragging) {
+                        moveBarDragGhost(ghost, event.rawX, event.rawY)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    v.isPressed = false
+                    v.alpha = 1f
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
+                    if (dragging) {
+                        placeEmojiAtScreen(emoji, event.rawX, event.rawY)
+                    } else {
+                        sendReaction(emoji)
+                    }
+                    removeBarDragGhost(ghost)
+                    ghost = null
+                    dragging = false
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    v.isPressed = false
+                    v.alpha = 1f
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
+                    removeBarDragGhost(ghost)
+                    ghost = null
+                    dragging = false
                     true
                 }
                 else -> true
             }
         }
+    }
+
+    private fun createBarDragGhost(emoji: String, rawX: Float, rawY: Float): TextView? {
+        val root = rootView ?: return null
+        val size = stickerSizePx()
+        val ghost = TextView(this).apply {
+            text = emoji
+            gravity = Gravity.CENTER
+            textSize = 36f
+            elevation = 48f
+            alpha = 0.95f
+            setShadowLayer(12f, 0f, 4f, 0x66000000)
+            layoutParams = FrameLayout.LayoutParams(size, size)
+        }
+        root.addView(ghost)
+        moveBarDragGhost(ghost, rawX, rawY)
+        return ghost
+    }
+
+    private fun moveBarDragGhost(ghost: TextView?, rawX: Float, rawY: Float) {
+        val root = rootView ?: return
+        val g = ghost ?: return
+        val loc = IntArray(2)
+        root.getLocationOnScreen(loc)
+        val size = g.layoutParams?.width?.takeIf { it > 0 } ?: stickerSizePx()
+        g.x = rawX - loc[0] - size / 2f
+        g.y = rawY - loc[1] - size / 2f
+    }
+
+    private fun removeBarDragGhost(ghost: TextView?) {
+        val g = ghost ?: return
+        (g.parent as? ViewGroup)?.removeView(g)
+    }
+
+    private fun placeEmojiAtScreen(emoji: String, rawX: Float, rawY: Float) {
+        if (!::stickerOverlay.isInitialized) return
+        val loc = IntArray(2)
+        stickerOverlay.getLocationOnScreen(loc)
+        val w = stickerOverlay.width.coerceAtLeast(1)
+        val h = stickerOverlay.height.coerceAtLeast(1)
+        val localX = rawX - loc[0]
+        val localY = rawY - loc[1]
+        val nx = (localX / w).coerceIn(0.05f, 0.95f)
+        val ny = (localY / h).coerceIn(0.05f, 0.95f)
+        val id = UUID.randomUUID().toString()
+        upsertCommittedSticker(id, emoji, nx, ny)
+        PairConnectionService.sendStickerPlace(this, id, emoji, nx, ny, lobbyId)
     }
 
     private fun openEmojiBarEditor() {
@@ -635,94 +707,7 @@ class LockDrawActivity : ComponentActivity() {
     private fun stickerSizePx(): Int =
         (56f * resources.displayMetrics.density).toInt()
 
-    private fun beginDraftSticker(emoji: String) {
-        val existing = draftStickerId?.let { placedStickers[it] }
-        if (existing != null) {
-            stickerOverlay.removeView(existing)
-            placedStickers.remove(draftStickerId)
-        }
-        val id = UUID.randomUUID().toString()
-        draftStickerId = id
-        val size = stickerSizePx()
-        val tv = TextView(this).apply {
-            text = emoji
-            gravity = Gravity.CENTER
-            textSize = 36f
-            alpha = 0.92f
-            elevation = 18f
-            isClickable = true
-            isFocusable = true
-            setShadowLayer(10f, 0f, 3f, 0x66000000)
-            tag = StickerTag(id, emoji, 0.5f, 0.45f, drafting = true)
-        }
-        val lp = FrameLayout.LayoutParams(size, size)
-        stickerOverlay.addView(tv, lp)
-        placedStickers[id] = tv
-        positionStickerView(tv, 0.5f, 0.45f)
-        enableDraftDrag(tv)
-        Toast.makeText(this, "Ziehen & tippen zum Platzieren", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun enableDraftDrag(view: TextView) {
-        var lastX = 0f
-        var lastY = 0f
-        var moved = false
-        view.setOnTouchListener { v, event ->
-            val tag = v.tag as? StickerTag ?: return@setOnTouchListener false
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    lastX = event.rawX
-                    lastY = event.rawY
-                    moved = false
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = event.rawX - lastX
-                    val dy = event.rawY - lastY
-                    if (dx * dx + dy * dy > 16f) moved = true
-                    lastX = event.rawX
-                    lastY = event.rawY
-                    val w = stickerOverlay.width.coerceAtLeast(1)
-                    val h = stickerOverlay.height.coerceAtLeast(1)
-                    val nx = ((v.x + dx + v.width / 2f) / w).coerceIn(0.05f, 0.95f)
-                    val ny = ((v.y + dy + v.height / 2f) / h).coerceIn(0.05f, 0.95f)
-                    v.tag = tag.copy(x = nx, y = ny)
-                    positionStickerView(v as TextView, nx, ny)
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (!moved && tag.drafting) {
-                        commitDraftSticker(v as TextView)
-                    }
-                    true
-                }
-                else -> true
-            }
-        }
-    }
-
-    private fun commitDraftSticker(view: TextView) {
-        val tag = view.tag as? StickerTag ?: return
-        if (!tag.drafting) return
-        view.tag = tag.copy(drafting = false)
-        view.alpha = 1f
-        view.setOnTouchListener(null)
-        view.isClickable = false
-        view.isFocusable = false
-        draftStickerId = null
-        PairConnectionService.sendStickerPlace(
-            this,
-            tag.id,
-            tag.emoji,
-            tag.x,
-            tag.y,
-            lobbyId
-        )
-        Toast.makeText(this, "Emoji platziert", Toast.LENGTH_SHORT).show()
-    }
-
     private fun upsertCommittedSticker(id: String, emoji: String, x: Float, y: Float) {
-        if (id == draftStickerId) return
         val existing = placedStickers[id]
         val tv = existing ?: TextView(this).apply {
             gravity = Gravity.CENTER
@@ -765,36 +750,13 @@ class LockDrawActivity : ComponentActivity() {
     private fun clearAllStickers() {
         stickerOverlay.removeAllViews()
         placedStickers.clear()
-        draftStickerId = null
     }
 
     private fun replaceStickersFromHistory(stickers: List<PairEvent.StickerPlaced>) {
-        val keepDraft = (draftStickerId?.let { placedStickers[it] }?.tag as? StickerTag)
-            ?.takeIf { it.drafting }
         stickerOverlay.removeAllViews()
         placedStickers.clear()
-        draftStickerId = null
         stickers.forEach { s ->
             upsertCommittedSticker(s.id, s.emoji, s.x, s.y)
-        }
-        if (keepDraft != null) {
-            draftStickerId = keepDraft.id
-            val size = stickerSizePx()
-            val tv = TextView(this).apply {
-                text = keepDraft.emoji
-                gravity = Gravity.CENTER
-                textSize = 36f
-                alpha = 0.92f
-                elevation = 18f
-                isClickable = true
-                isFocusable = true
-                setShadowLayer(10f, 0f, 3f, 0x66000000)
-                tag = keepDraft
-            }
-            stickerOverlay.addView(tv, FrameLayout.LayoutParams(size, size))
-            placedStickers[keepDraft.id] = tv
-            positionStickerView(tv, keepDraft.x, keepDraft.y)
-            enableDraftDrag(tv)
         }
     }
 
@@ -803,7 +765,7 @@ class LockDrawActivity : ComponentActivity() {
         val emoji: String,
         val x: Float,
         val y: Float,
-        val drafting: Boolean
+        val drafting: Boolean = false
     )
 
     private fun sendReaction(emoji: String) {
