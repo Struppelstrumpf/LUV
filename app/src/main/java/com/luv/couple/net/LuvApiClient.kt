@@ -1628,6 +1628,64 @@ object LuvApiClient {
             )
         }
 
+    data class MarketHubPreview(
+        val emoji: String,
+        val label: String,
+        val detail: String
+    )
+
+    data class MarketHubData(
+        val marketNewest: List<MarketHubPreview>,
+        val shopTop: List<MarketHubPreview>,
+        val coinNewest: List<MarketHubPreview>
+    )
+
+    suspend fun fetchMarketHub(): MarketHubData = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/market/hub")
+        fun parsePreviews(key: String, mapper: (org.json.JSONObject) -> MarketHubPreview?): List<MarketHubPreview> {
+            val arr = json.optJSONArray(key) ?: return emptyList()
+            return buildList {
+                for (i in 0 until arr.length()) {
+                    mapper(arr.optJSONObject(i) ?: continue)?.let { add(it) }
+                }
+            }
+        }
+        val marketNewest = parsePreviews("marketNewest") { o ->
+            val emoji = o.optString("emoji").ifBlank { "📦" }
+            val label = o.optString("label").ifBlank { emoji }
+            val price = o.optInt("priceCoins", 0)
+            val trade = o.optBoolean("allowTrade", false)
+            val detail = when {
+                trade && price <= 0 -> "Tausch"
+                trade -> "$price 🪙 · Tausch"
+                price > 0 -> "$price 🪙"
+                else -> "Angebot"
+            }
+            MarketHubPreview(emoji = emoji, label = label, detail = detail)
+        }
+        val shopTop = parsePreviews("shopTop") { o ->
+            val emoji = o.optString("emoji").ifBlank { "✨" }
+            val label = o.optString("label").ifBlank { emoji }
+            val price = o.optInt("priceCoins", 0)
+            MarketHubPreview(
+                emoji = emoji,
+                label = label,
+                detail = if (price > 0) "$price 🪙" else "Gratis"
+            )
+        }
+        val coinNewest = parsePreviews("coinNewest") { o ->
+            val coins = o.optInt("coins", 0)
+            val eur = o.optString("amountEur").ifBlank { "—" }
+            val label = o.optString("label").ifBlank { "$coins Coins" }
+            MarketHubPreview(
+                emoji = "🪙",
+                label = label,
+                detail = "$eur € · $coins"
+            )
+        }
+        MarketHubData(marketNewest = marketNewest, shopTop = shopTop, coinNewest = coinNewest)
+    }
+
     suspend fun fetchMarket(
         mode: String = "market",
         category: String = "all",

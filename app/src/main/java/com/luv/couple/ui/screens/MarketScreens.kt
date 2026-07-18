@@ -138,6 +138,7 @@ fun MarketScreen(
     }
     when (panel) {
         MarketPanel.Hub -> MarketHub(
+            packs = packs,
             onOpenMarketplace = {
                 deepLinked = false
                 panel = MarketPanel.Marketplace
@@ -184,10 +185,28 @@ fun MarketScreen(
 
 @Composable
 private fun MarketHub(
+    packs: List<ShopPack>,
     onOpenMarketplace: () -> Unit,
     onOpenItemShop: () -> Unit,
     onOpenCoinShop: () -> Unit
 ) {
+    var hub by remember { mutableStateOf<LuvApiClient.MarketHubData?>(null) }
+    LaunchedEffect(Unit) {
+        hub = runCatching { LuvApiClient.fetchMarketHub() }.getOrNull()
+    }
+    val marketPreviews = hub?.marketNewest.orEmpty()
+    val shopPreviews = hub?.shopTop.orEmpty()
+    val coinPreviews = remember(hub, packs) {
+        val fromApi = hub?.coinNewest.orEmpty()
+        if (fromApi.isNotEmpty()) fromApi
+        else packs.take(2).map { pack ->
+            LuvApiClient.MarketHubPreview(
+                emoji = "🪙",
+                label = ShopCatalog.playfulPackTitle(pack),
+                detail = "${pack.amountEur} € · ${pack.coins}"
+            )
+        }
+    }
     MenuBackdrop(includeNavigationBars = false) {
         BoxWithConstraints(
             modifier = Modifier
@@ -205,8 +224,9 @@ private fun MarketHub(
                         .weight(1f)
                         .fillMaxWidth(),
                     title = "Marktplatz",
-                    subtitle = "Entdecken & tauschen",
                     brush = Brush.linearGradient(listOf(Color(0xFF2A3148), Color(0xFF1A2030))),
+                    previews = marketPreviews,
+                    emptyHint = "Noch keine Angebote",
                     onClick = onOpenMarketplace
                 )
                 MarketTile(
@@ -214,8 +234,9 @@ private fun MarketHub(
                         .weight(1f)
                         .fillMaxWidth(),
                     title = "Itemshop",
-                    subtitle = "Emojis, Begleiter & mehr",
                     brush = Brush.linearGradient(listOf(Color(0xFF3A2438), Color(0xFF241828))),
+                    previews = shopPreviews,
+                    emptyHint = "Beliebte Items laden…",
                     onClick = onOpenItemShop
                 )
                 MarketTile(
@@ -223,8 +244,9 @@ private fun MarketHub(
                         .weight(1f)
                         .fillMaxWidth(),
                     title = "Coinshop",
-                    subtitle = "Handvoll bis Schatztruhe",
                     brush = Brush.linearGradient(listOf(Color(0xFF3A3020), Color(0xFF241C12))),
+                    previews = coinPreviews,
+                    emptyHint = "Bald verfügbar",
                     onClick = onOpenCoinShop
                 )
             }
@@ -236,8 +258,9 @@ private fun MarketHub(
 private fun MarketTile(
     modifier: Modifier,
     title: String,
-    subtitle: String,
     brush: Brush,
+    previews: List<LuvApiClient.MarketHubPreview>,
+    emptyHint: String,
     onClick: () -> Unit
 ) {
     Box(
@@ -246,13 +269,84 @@ private fun MarketTile(
             .background(brush)
             .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(22.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        contentAlignment = Alignment.CenterStart
+            .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, color = TextPrimary, fontFamily = DisplayFont, fontSize = 26.sp)
-            Text(subtitle, color = TextMuted, fontFamily = BodyFont, fontSize = 14.sp)
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                title,
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 22.sp,
+                maxLines = 1
+            )
+            if (previews.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(emptyHint, color = TextMuted, fontFamily = BodyFont, fontSize = 13.sp)
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    previews.take(2).forEach { preview ->
+                        MarketTilePreviewCard(
+                            preview = preview,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxSize()
+                        )
+                    }
+                    if (previews.size == 1) {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun MarketTilePreviewCard(
+    preview: LuvApiClient.MarketHubPreview,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.White.copy(0.07f))
+            .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(16.dp))
+            .padding(horizontal = 10.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(preview.emoji, fontSize = 28.sp)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            preview.label,
+            color = TextPrimary,
+            fontFamily = DisplayFont,
+            fontSize = 13.sp,
+            maxLines = 1,
+            textAlign = TextAlign.Center
+        )
+        Text(
+            preview.detail,
+            color = TextMuted,
+            fontFamily = BodyFont,
+            fontSize = 11.sp,
+            maxLines = 1,
+            textAlign = TextAlign.Center
+        )
     }
 }
 

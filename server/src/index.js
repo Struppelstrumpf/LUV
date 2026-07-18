@@ -2492,6 +2492,118 @@ function listShopPacks(user, ip) {
   return packs;
 }
 
+/** Globale Itemshop-Kaufzähler (für Markt-Hub „meistgekauft“). */
+function ensureShopStats(db) {
+  if (!db.shopStats || typeof db.shopStats !== "object") db.shopStats = {};
+  return db.shopStats;
+}
+
+function bumpShopPurchase(kind, itemId) {
+  const id = String(itemId || "").trim();
+  const k = String(kind || "").trim();
+  if (!k || !id) return;
+  const stats = ensureShopStats(getDb());
+  const key = `${k}:${id}`;
+  stats[key] = Math.min(1_000_000, (Number(stats[key]) || 0) + 1);
+}
+
+function shopItemPrice(kind, itemId) {
+  if (kind === "emojis") return Number(EMOJI_SHOP_PRICES[itemId]) || 0;
+  if (kind === "stickers") return Number(STICKER_SHOP_PRICES[itemId]) || 0;
+  if (kind === "pets") return Number(PET_SHOP_PRICES[itemId]) || 0;
+  if (kind === "themes") return Number(THEME_SHOP_PRICES[itemId]) || 0;
+  return 0;
+}
+
+/** Einmalig Ledger → Stats (ältere Käufe zählen auch). */
+function backfillShopStatsFromLedger(db) {
+  if (db.shopStatsBackfilled) return;
+  const stats = ensureShopStats(db);
+  const reasonKind = {
+    buy_emoji: "emojis",
+    buy_sticker: "stickers",
+    buy_pet: "pets",
+    buy_theme: "themes",
+  };
+  if (Array.isArray(db.ledger)) {
+    for (const e of db.ledger) {
+      const kind = reasonKind[e?.reason];
+      const itemId = String(e?.ref || "").trim();
+      if (!kind || !itemId) continue;
+      const key = `${kind}:${itemId}`;
+      stats[key] = (Number(stats[key]) || 0) + 1;
+    }
+  }
+  db.shopStatsBackfilled = true;
+}
+
+function topShopPurchases(limit = 2) {
+  const db = getDb();
+  backfillShopStatsFromLedger(db);
+  const stats = ensureShopStats(db);
+  const ranked = Object.entries(stats)
+    .map(([key, n]) => {
+      const i = key.indexOf(":");
+      if (i < 1) return null;
+      const kind = key.slice(0, i);
+      const itemId = key.slice(i + 1);
+      if (!["emojis", "stickers", "pets", "themes"].includes(kind)) return null;
+      if (!isKnownInventoryItem(kind, itemId)) return null;
+      const meta = marketItemMeta(kind, itemId);
+      if (!meta) return null;
+      return {
+        kind,
+        itemId,
+        emoji: meta.emoji || itemId,
+        label: meta.label || itemId,
+        priceCoins: shopItemPrice(kind, itemId),
+        bought: Number(n) || 0,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.bought - a.bought || a.label.localeCompare(b.label, "de"));
+
+  const out = ranked.slice(0, limit);
+  // Fallback wenn noch niemand gekauft hat
+  const fallbacks = [
+    { kind: "stickers", itemId: "🦋", emoji: "🦋", label: "🦋", priceCoins: 8, bought: 0 },
+    { kind: "pets", itemId: "🦊", emoji: "🦊", label: "🦊", priceCoins: 26, bought: 0 },
+    { kind: "emojis", itemId: "🥰", emoji: "🥰", label: "🥰", priceCoins: 12, bought: 0 },
+  ];
+  for (const f of fallbacks) {
+    if (out.length >= limit) break;
+    if (out.some((x) => x.kind === f.kind && x.itemId === f.itemId)) continue;
+    out.push(f);
+  }
+  return out.slice(0, limit);
+}
+
+function newestMarketListings(limit = 2) {
+  const db = getDb();
+  const listings = market.ensureMarket(db);
+  const now = Date.now();
+  return Object.values(listings)
+    .filter((e) => {
+      if (!e || e.status !== "open") return false;
+      if (e.private) return false;
+      if (e.expiresAt && e.expiresAt < now) return false;
+      return true;
+    })
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, limit)
+    .map((e) => ({
+      id: e.id,
+      kind: e.kind,
+      itemId: e.itemId,
+      emoji: e.emoji,
+      label: e.label,
+      priceCoins: Number(e.priceCoins) || 0,
+      allowTrade: Boolean(e.allowTrade),
+      sellerNickname: e.sellerNickname || "",
+      createdAt: e.createdAt || 0,
+    }));
+}
+
 function applySuperAdmin(user) {
   if (!user) return user;
   const email = String(user.googleEmail || "")
@@ -5048,6 +5160,7 @@ app.post("/v1/shop/buy-emoji", (req, res) => {
   }
   const inv = ensureInventory(ctx.user);
   inv.emojis[emoji] = Math.min(999, (Number(inv.emojis[emoji]) || 0) + 1);
+  bumpShopPurchase("emojis", emoji);
   scheduleSave();
   return res.json({
     ok: true,
@@ -5075,6 +5188,7 @@ app.post("/v1/shop/buy-theme", (req, res) => {
     return res.status(402).json({ error: "no_coins", message: "Nicht genug Coins." });
   }
   inv.themes.push(themeId);
+  bumpShopPurchase("themes", themeId);
   scheduleSave();
   return res.json({ ok: true, themeId, price, user: publicUser(ctx.user) });
 });
@@ -5097,6 +5211,7 @@ app.post("/v1/shop/buy-sticker", (req, res) => {
   }
   const inv = ensureInventory(ctx.user);
   inv.stickers[emoji] = Math.min(999, (Number(inv.stickers[emoji]) || 0) + 1);
+  bumpShopPurchase("stickers", emoji);
   scheduleSave();
   return res.json({
     ok: true,
@@ -5127,6 +5242,7 @@ app.post("/v1/shop/buy-pet", (req, res) => {
     trackAch(ctx.user, "coins_spent", price);
   }
   inv.pets.push(emoji);
+  bumpShopPurchase("pets", emoji);
   trackAch(ctx.user, "pets_bought", 1);
   syncAchInventoryMetrics(ctx.user);
   scheduleSave();
@@ -5320,6 +5436,19 @@ function marketItemMeta(kind, itemId) {
   }
   return null;
 }
+
+/** Markt-Hub-Kacheln: neueste Angebote + meistgekaufte Shop-Items. */
+app.get("/v1/market/hub", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const ip = clientIp(req);
+  return res.json({
+    ok: true,
+    marketNewest: newestMarketListings(2),
+    shopTop: topShopPurchases(2),
+    coinNewest: listShopPacks(ctx.user, ip).slice(0, 2),
+  });
+});
 
 app.get("/v1/market", (req, res) => {
   const ctx = requireAuth(req, res);
