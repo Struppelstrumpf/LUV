@@ -631,6 +631,20 @@ class PrefsRepository(private val context: Context) {
         }
     }
 
+    /** Peer hat gezeichnet → Home-Kachel kann glühen, bis die Leinwand geöffnet wird. */
+    suspend fun bumpLobbyLastCanvasAt(lobbyId: String, at: Long = System.currentTimeMillis()) {
+        if (lobbyId.isBlank() || at <= 0L) return
+        context.dataStore.edit { prefs ->
+            val list = parseLobbies(prefs[lobbiesKey]).toMutableList()
+            val idx = list.indexOfFirst { it.id == lobbyId }
+            if (idx < 0) return@edit
+            val cur = list[idx]
+            if (at <= cur.lastCanvasAt) return@edit
+            list[idx] = cur.copy(lastCanvasAt = at)
+            prefs[lobbiesKey] = encodeLobbies(list)
+        }
+    }
+
     suspend fun upsertLobby(lobby: Lobby) {
         context.dataStore.edit { prefs ->
             val list = parseLobbies(prefs[lobbiesKey]).toMutableList()

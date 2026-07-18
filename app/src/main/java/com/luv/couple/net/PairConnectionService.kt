@@ -1029,6 +1029,14 @@ class PairConnectionService : Service() {
                     nickname = message.stroke.nickname ?: "Jemand",
                     lobbyId = lobby.id
                 )
+                val myId = AccountSession.account.value?.id
+                val fromPeer = !message.stroke.isLocal &&
+                    (message.stroke.authorId.isNullOrBlank() || message.stroke.authorId != myId)
+                if (fromPeer) {
+                    scope.launch {
+                        LuvApp.instance.prefs.bumpLobbyLastCanvasAt(lobby.id)
+                    }
+                }
                 scope.launch { _events.emit(PairEvent.StrokeReceived(lobby.id, message.stroke)) }
             }
             is PairMessage.UndoMsg -> {
@@ -1073,6 +1081,14 @@ class PairConnectionService : Service() {
                     nickname = message.nickname,
                     lobbyId = lobby.id
                 )
+                val myNick = AccountSession.account.value?.nickname?.trim().orEmpty()
+                val fromPeer = message.nickname.isNullOrBlank() ||
+                    !message.nickname.equals(myNick, ignoreCase = true)
+                if (fromPeer) {
+                    scope.launch {
+                        LuvApp.instance.prefs.bumpLobbyLastCanvasAt(lobby.id)
+                    }
+                }
                 scope.launch {
                     _events.emit(
                         PairEvent.StickerPlaced(

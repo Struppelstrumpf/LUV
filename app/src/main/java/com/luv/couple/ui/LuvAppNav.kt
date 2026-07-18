@@ -427,6 +427,8 @@ fun LuvAppNav() {
         if (finishOnboarding) {
             refreshAccount()
         }
+        // Erfolge / Tagesfortschritt kommen vom Server — nach Login neu laden
+        AchievementsBadge.refresh()
     }
 
     fun connectGoogle() {

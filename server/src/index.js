@@ -1507,6 +1507,7 @@ function ensureHostedRooms(user) {
   if (!user.hostedRooms || typeof user.hostedRooms !== "object") {
     user.hostedRooms = {};
   }
+  return user.hostedRooms;
 }
 
 /**
@@ -2762,6 +2763,36 @@ function absorbUserInto(target, source) {
   mergeInventory(target, source);
   mergeFriends(target, source);
   mergeSettings(target, source);
+  ach.mergeAchievements(target, source);
+  // Tagesbonus / Sessions: nicht durchs Zusammenführen neu claimbar machen
+  const day = todayKey();
+  if (source.lastDailyGrantDate === day || target.lastDailyGrantDate === day) {
+    target.lastDailyGrantDate = day;
+  } else {
+    const dates = [target.lastDailyGrantDate, source.lastDailyGrantDate].filter(Boolean);
+    if (dates.length) target.lastDailyGrantDate = dates.sort().pop();
+  }
+  if (!target.sessionsByDay || typeof target.sessionsByDay !== "object") {
+    target.sessionsByDay = {};
+  }
+  for (const [d, n] of Object.entries(source.sessionsByDay || {})) {
+    target.sessionsByDay[d] = Math.max(
+      Number(target.sessionsByDay[d]) || 0,
+      Number(n) || 0
+    );
+  }
+  if (!target.drawLocks || typeof target.drawLocks !== "object") target.drawLocks = {};
+  for (const [k, v] of Object.entries(source.drawLocks || {})) {
+    if (!target.drawLocks[k]) target.drawLocks[k] = v;
+  }
+  ensurePendingLootboxes(target);
+  ensurePendingLootboxes(source);
+  for (const p of source.pendingLootboxes || []) {
+    if (p?.id && !target.pendingLootboxes.some((x) => x.id === p.id)) {
+      target.pendingLootboxes.push(p);
+    }
+  }
+  source.pendingLootboxes = [];
   ensureJoinedRooms(target);
   ensureJoinedRooms(source);
   for (const [code, meta] of Object.entries(source.joinedRooms || {})) {
@@ -5170,7 +5201,7 @@ app.post("/v1/economy/draw-session", (req, res) => {
   if (!result.ok) {
     return res.status(402).json({
       error: "no_coins",
-      message: "Keine freien Sessions und keine Coins mehr. Morgen gibt’s wieder 10 — oder Shop.",
+      message: `Keine freien Sessions und keine Coins mehr. Morgen gibt’s wieder ${DAILY_COINS} — oder Shop.`,
       user: publicUser(ctx.user),
     });
   }
@@ -6695,25 +6726,41 @@ app.post("/v1/rooms/random-match", (req, res) => {
   const RANDOM_CAP = 5;
   let targetCode = null;
   let targetRoom = null;
-  for (const [code, room] of rooms.entries()) {
-    if (!room?.isRandom) continue;
+  const considerRandom = (code, room) => {
+    if (!room?.isRandom) return;
     healRoomMembership(room);
     const cap = Math.min(MAX_PEERS, Math.max(1, Number(room.capacity) || RANDOM_CAP));
     const count = Array.isArray(room.memberUserIds) ? room.memberUserIds.length : 0;
-    if (count >= cap) continue;
+    if (count >= cap) return;
     if (room.memberUserIds?.includes(ctx.user.id)) {
       targetCode = code;
       targetRoom = room;
-      break;
+      return;
     }
     if (!targetRoom) {
       targetCode = code;
       targetRoom = room;
     }
+  };
+  for (const [code, room] of rooms.entries()) {
+    considerRandom(code, room);
+    if (targetRoom?.memberUserIds?.includes(ctx.user.id)) break;
+  }
+  // Auch persistierte Random-Lobbys (nach Restart) mit freien Plätzen
+  if (!targetRoom) {
+    const savedRooms = getDb().rooms || {};
+    for (const [code, saved] of Object.entries(savedRooms)) {
+      if (!saved || typeof saved !== "object" || !saved.isRandom) continue;
+      if (rooms.has(code)) continue;
+      const room = hydrateRoom(code, saved);
+      rooms.set(code, room);
+      considerRandom(code, room);
+      if (targetRoom?.memberUserIds?.includes(ctx.user.id)) break;
+    }
   }
 
   if (!targetRoom) {
-    const hostedCount = Object.keys(hosted).length;
+    const hostedCount = Object.keys(hosted || {}).length;
     if (hostedCount >= MAX_LOBBIES) {
       return res.status(403).json({
         error: "max_lobbies",

@@ -862,12 +862,12 @@ private fun LobbyCard(
             .background(BgSoft)
             .border(
                 width = when {
-                    hasNewDraw -> 2.5.dp
+                    hasNewDraw -> 3.5.dp
                     dragging || active -> 1.5.dp
                     else -> 1.dp
                 },
                 color = when {
-                    hasNewDraw -> accent.copy(alpha = 0.85f)
+                    hasNewDraw -> accent.copy(alpha = 0.95f)
                     dragging -> accent.copy(alpha = 0.7f)
                     active -> accent.copy(alpha = 0.55f)
                     else -> Color.White.copy(alpha = 0.06f)
@@ -877,10 +877,10 @@ private fun LobbyCard(
             .then(
                 if (hasNewDraw) {
                     Modifier.shadow(
-                        10.dp,
+                        18.dp,
                         RoundedCornerShape(22.dp),
-                        ambientColor = accent.copy(alpha = 0.45f),
-                        spotColor = accent.copy(alpha = 0.35f)
+                        ambientColor = accent.copy(alpha = 0.65f),
+                        spotColor = accent.copy(alpha = 0.55f)
                     )
                 } else {
                     Modifier
@@ -1034,7 +1034,10 @@ private fun SeatGrid(
         )
     }
 
-    val seats = maxPeers.coerceIn(2, PeerPalette.MAX_PEERS)
+    // Nur freigeschaltete Plätze + optional ein „+ Platz kaufen“ — keine grauen Geister-Kästen
+    val openSeats = capacity.coerceIn(1, maxPeers.coerceIn(2, PeerPalette.MAX_PEERS))
+    val showBuySlot = canManage && openSeats < maxPeers.coerceIn(2, PeerPalette.MAX_PEERS)
+    val seats = openSeats + if (showBuySlot) 1 else 0
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for (rowStart in 0 until seats step 5) {
             Row(
@@ -1042,30 +1045,30 @@ private fun SeatGrid(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 for (i in rowStart until minOf(rowStart + 5, seats)) {
-                    val filled = i < occupied
-                    val unlocked = i < capacity
+                    val isBuyTile = showBuySlot && i == openSeats
+                    val filled = !isBuyTile && i < occupied
+                    val unlocked = !isBuyTile && i < openSeats
                     val label = when {
+                        isBuyTile -> "+${PeerPalette.SLOT_COST}"
                         filled -> nicknames.getOrNull(i)?.takeIf { it.isNotBlank() } ?: "…"
-                        unlocked -> "+"
-                        else -> "${PeerPalette.SLOT_COST}"
+                        else -> "+"
                     }
                     SeatTile(
                         label = label,
                         filled = filled,
                         unlocked = unlocked,
+                        buySlot = isBuyTile,
                         accent = accent,
-                        enabled = canManage && !filled,
+                        enabled = canManage && (isBuyTile || (!filled && unlocked)),
                         modifier = Modifier.weight(1f),
                         onClick = {
                             when {
-                                !canManage || filled -> Unit
-                                unlocked -> onInvite()
-                                else -> confirmBuy = true
+                                isBuyTile -> confirmBuy = true
+                                unlocked && !filled -> onInvite()
                             }
                         }
                     )
                 }
-                // Platzhalter, damit letzte Reihe nicht auseinanderzieht
                 repeat((5 - (minOf(rowStart + 5, seats) - rowStart)).coerceAtLeast(0)) {
                     Spacer(modifier = Modifier.weight(1f))
                 }
@@ -1079,6 +1082,7 @@ private fun SeatTile(
     label: String,
     filled: Boolean,
     unlocked: Boolean,
+    buySlot: Boolean = false,
     accent: Color,
     enabled: Boolean,
     modifier: Modifier = Modifier,
@@ -1086,13 +1090,15 @@ private fun SeatTile(
 ) {
     val bg = when {
         filled -> accent.copy(alpha = 0.28f)
-        unlocked -> Color(0xFF151A24)
-        else -> Color(0xFF10141C)
+        buySlot -> accent.copy(alpha = 0.10f)
+        unlocked -> accent.copy(alpha = 0.08f)
+        else -> Color.Transparent
     }
     val border = when {
         filled -> accent.copy(alpha = 0.55f)
-        unlocked -> Color.White.copy(alpha = 0.14f)
-        else -> Color.White.copy(alpha = 0.06f)
+        buySlot -> accent.copy(alpha = 0.35f)
+        unlocked -> Color.White.copy(alpha = 0.16f)
+        else -> Color.Transparent
     }
     Box(
         modifier = modifier
@@ -1108,11 +1114,16 @@ private fun SeatTile(
             text = label,
             color = when {
                 filled -> TextPrimary
+                buySlot -> accent.copy(alpha = 0.9f)
                 unlocked -> Color(0xFF25D366)
                 else -> TextMuted
             },
-            fontFamily = if (unlocked && !filled) DisplayFont else BodyFont,
-            fontSize = if (unlocked && !filled) 26.sp else 11.sp,
+            fontFamily = if ((unlocked && !filled) || buySlot) DisplayFont else BodyFont,
+            fontSize = when {
+                buySlot -> 13.sp
+                unlocked && !filled -> 26.sp
+                else -> 11.sp
+            },
             fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.Center,
             maxLines = 2,

@@ -492,6 +492,66 @@ function publicAchievementsState(user, dayKey) {
   };
 }
 
+/**
+ * Beim Zusammenführen von Konten (z. B. Google-Link): Fortschritt nicht verlieren/cheaten.
+ * Nimmt je Metrik das Maximum, unlocked union, Daily-Claim wenn schon abgeholt.
+ */
+function mergeAchievements(target, source) {
+  if (!target || !source) return;
+  const ta = ensureAchievements(target);
+  const sa = ensureAchievements(source);
+  for (const [k, v] of Object.entries(sa.progress || {})) {
+    ta.progress[k] = Math.max(Number(ta.progress[k]) || 0, Number(v) || 0);
+  }
+  for (const [id, u] of Object.entries(sa.unlocked || {})) {
+    if (!u || typeof u !== "object") continue;
+    if (!ta.unlocked[id]) {
+      ta.unlocked[id] = { ...u };
+    } else {
+      ta.unlocked[id].claimed = Boolean(ta.unlocked[id].claimed || u.claimed);
+      const atA = Number(ta.unlocked[id].at) || 0;
+      const atB = Number(u.at) || 0;
+      if (atB > 0 && (atA <= 0 || atB < atA)) ta.unlocked[id].at = atB;
+    }
+  }
+  ta.streak = Math.max(Number(ta.streak) || 0, Number(sa.streak) || 0);
+  ta.totalAchCoins = Math.max(Number(ta.totalAchCoins) || 0, Number(sa.totalAchCoins) || 0);
+  const dayA = ta.daily?.date || "";
+  const dayB = sa.daily?.date || "";
+  if (dayB && (!dayA || dayB >= dayA)) {
+    if (dayB === dayA && ta.daily && sa.daily) {
+      ta.daily.rewardClaimed = Boolean(ta.daily.rewardClaimed || sa.daily.rewardClaimed);
+      ta.daily.completed = Boolean(ta.daily.completed || sa.daily.completed);
+      const tasksA = Array.isArray(ta.daily.tasks) ? ta.daily.tasks : [];
+      const tasksB = Array.isArray(sa.daily.tasks) ? sa.daily.tasks : [];
+      ta.daily.tasks = tasksA.map((t, i) => {
+        const o = tasksB[i];
+        if (!o) return t;
+        const progress = Math.max(Number(t.progress) || 0, Number(o.progress) || 0);
+        return {
+          ...t,
+          progress,
+          done: Boolean(t.done || o.done || progress >= (Number(t.target) || 1)),
+        };
+      });
+      if (sa.coinsEarnedDate === dayA) {
+        ta.coinsEarnedToday = Math.max(
+          Number(ta.coinsEarnedToday) || 0,
+          Number(sa.coinsEarnedToday) || 0
+        );
+      }
+    } else if (dayB > dayA) {
+      ta.daily = JSON.parse(JSON.stringify(sa.daily));
+      ta.coinsEarnedDate = sa.coinsEarnedDate || ta.coinsEarnedDate;
+      ta.coinsEarnedToday = Number(sa.coinsEarnedToday) || 0;
+      ta.lastDailyCompleteDate = sa.lastDailyCompleteDate || ta.lastDailyCompleteDate;
+    }
+  }
+  const lcdA = ta.lastDailyCompleteDate || "";
+  const lcdB = sa.lastDailyCompleteDate || "";
+  if (lcdB && (!lcdA || lcdB > lcdA)) ta.lastDailyCompleteDate = lcdB;
+}
+
 module.exports = {
   ACHIEVEMENTS,
   ACHIEVEMENT_DAILY_CAP,
@@ -503,4 +563,5 @@ module.exports = {
   claimDailyReward,
   publicAchievementsState,
   remainingAchCoinsToday,
+  mergeAchievements,
 };
