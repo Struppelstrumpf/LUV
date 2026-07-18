@@ -112,9 +112,9 @@ data class ProfileState(
         val extras = layout.filter { el ->
             when (el.type) {
                 ProfileElType.Avatar, ProfileElType.Name -> false
-                // Stimmung & Freitext bewusst entfernt
-                ProfileElType.Status, ProfileElType.Text, ProfileElType.Bio -> false
-                ProfileElType.Sticker, ProfileElType.Glass, ProfileElType.Pet -> true
+                // Stimmung & Freitext-Overlays entfernt; Bio optional auf der Leinwand
+                ProfileElType.Status, ProfileElType.Text -> false
+                ProfileElType.Sticker, ProfileElType.Glass, ProfileElType.Pet, ProfileElType.Bio -> true
             }
         }.take(ProfileCatalog.MAX_DECOR + 4)
         val pet = extras.firstOrNull { it.type == ProfileElType.Pet }
@@ -138,7 +138,8 @@ object ProfileCatalog {
     val EDITABLE_TYPES = setOf(
         ProfileElType.Avatar,
         ProfileElType.Name,
-        ProfileElType.Glass
+        ProfileElType.Glass,
+        ProfileElType.Bio
     )
 
     val TEXT_COLORS: List<String> = listOf(
@@ -233,6 +234,19 @@ object ProfileCatalog {
         fontFamily = ProfileFont.Cozy
     )
 
+    fun newBio(text: String = ""): ProfileLayoutEl = ProfileLayoutEl(
+        id = "el-bio",
+        type = ProfileElType.Bio,
+        x = 50f,
+        y = 88f,
+        scale = 1f,
+        z = 13,
+        text = text.take(MAX_BIO),
+        color = "#FFFFFF",
+        fontSize = 12f,
+        fontFamily = ProfileFont.Cozy
+    )
+
     fun newSticker(emoji: String, layout: List<ProfileLayoutEl>): ProfileLayoutEl {
         val n = layout.count { it.type == ProfileElType.Sticker }
         val col = n % 4
@@ -271,23 +285,41 @@ object ProfileCatalog {
         return if (abs(r) > 90f) 0f else r
     }
 
-    fun dragRadius(type: ProfileElType, scale: Float): Float {
-        val base = when (type) {
-            ProfileElType.Avatar -> 7.5f
-            ProfileElType.Glass -> 7f
-            ProfileElType.Pet -> 6.5f
-            ProfileElType.Name -> 11f
-            ProfileElType.Bio -> 13f
-            ProfileElType.Text -> 9f
-            ProfileElType.Sticker -> 3.5f
-            ProfileElType.Status -> 3f
-        }
-        return (base * scale).coerceIn(3f, 18f)
-    }
+    /**
+     * Begrenzt die Mittelpunkt-%-Position so, dass die visuelle Kante
+     * (baseSize × scale) genau am Canvas-Rand anliegen kann.
+     * Für [Name] zusätzlich etwas Luft, damit der ganze Name sichtbar bleibt.
+     */
+    fun clampPos(
+        el: ProfileLayoutEl,
+        x: Float,
+        y: Float,
+        boardW: Float,
+        boardH: Float,
+        baseSizePx: Float,
+        nameText: String? = null
+    ): Pair<Float, Float> {
+        val w = boardW.coerceAtLeast(1f)
+        val h = boardH.coerceAtLeast(1f)
+        val s = el.scale.coerceIn(0.35f, 2.5f)
+        val visual = (baseSizePx * s).coerceAtLeast(8f)
+        var halfX = (visual / 2f) / w * 100f
+        var halfY = (visual / 2f) / h * 100f
 
-    fun clampPos(el: ProfileLayoutEl, x: Float, y: Float): Pair<Float, Float> {
-        val r = dragRadius(el.type, el.scale)
-        return x.coerceIn(r, 100f - r) to y.coerceIn(r, 100f - r)
+        if (el.type == ProfileElType.Name) {
+            // Name linksbündig im Kasten: Breite am Text schätzen, ganzer Name bleibt im Canvas
+            val label = nameText?.takeIf { it.isNotBlank() } ?: el.text.orEmpty()
+            val fontPx = (el.fontSize ?: 18f) * s
+            val estimated = (label.length.coerceAtLeast(1) * fontPx * 0.62f)
+                .coerceIn(visual * 0.5f, w * 0.92f)
+            halfX = (estimated / 2f) / w * 100f
+            halfY = (fontPx * 0.75f) / h * 100f
+        }
+
+        // Minimale Margin, damit nichts komplett abgeschnitten wird
+        halfX = halfX.coerceIn(0.8f, 48f)
+        halfY = halfY.coerceIn(0.8f, 48f)
+        return x.coerceIn(halfX, 100f - halfX) to y.coerceIn(halfY, 100f - halfY)
     }
 
     fun parseColor(hex: String?, fallback: Long = 0xFFFFFFFF): androidx.compose.ui.graphics.Color {

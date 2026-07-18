@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.19",
+            listOf(
+                "Profil: Elemente bis an den Rand ziehen, Name bleibt vollständig sichtbar",
+            )
+        ),
+        Entry(
             "1.9.18",
             listOf(
                 "Profil-Leinwand: stabiles Verschieben, Standard wie Bild, kein Element-Reset",

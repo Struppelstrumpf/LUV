@@ -222,6 +222,21 @@ fun ProfileCanvasScreen(
         showChest = false
     }
 
+    fun placeBio() {
+        if (!editable) return
+        val existing = state.layout.firstOrNull { it.type == ProfileElType.Bio }
+        if (existing != null) {
+            selectedId = existing.id
+            showChest = false
+            return
+        }
+        val el = ProfileCatalog.newBio(state.bio)
+        patchLayout(state.layout + el)
+        selectedId = el.id
+        editElId = el.id
+        showChest = false
+    }
+
     fun placeSticker(emoji: String) {
         if (!editable) return
         if (state.layout.count { it.type == ProfileElType.Sticker } >= ProfileCatalog.MAX_DECOR) {
@@ -360,8 +375,17 @@ fun ProfileCanvasScreen(
                 Spacer(modifier = Modifier.height(6.dp))
                 BasicTextField(
                     value = state.bio,
-                    onValueChange = {
-                        state = state.copy(bio = it.take(ProfileCatalog.MAX_BIO))
+                    onValueChange = { raw ->
+                        val next = raw.take(ProfileCatalog.MAX_BIO)
+                        state = state.copy(bio = next)
+                        val bioEl = state.layout.firstOrNull { it.type == ProfileElType.Bio }
+                        if (bioEl != null) {
+                            patchLayout(
+                                state.layout.map {
+                                    if (it.type == ProfileElType.Bio) it.copy(text = next) else it
+                                }
+                            )
+                        }
                     },
                     textStyle = TextStyle(
                         color = TextPrimary,
@@ -429,10 +453,12 @@ fun ProfileCanvasScreen(
                 currentThemeId = state.themeId,
                 currentCompanion = state.companionEmoji,
                 hasGlass = state.layout.any { it.type == ProfileElType.Glass },
+                hasBio = state.layout.any { it.type == ProfileElType.Bio },
                 onTheme = { setTheme(it) },
                 onSticker = { placeSticker(it) },
                 onCompanion = { placeCompanion(it) },
                 onGlass = { placeGlass() },
+                onBio = { placeBio() },
                 onOpenShop = {
                     showChest = false
                     if (onOpenShop != null) onOpenShop()
@@ -452,7 +478,8 @@ fun ProfileCanvasScreen(
                 nickname = loadedNick,
                 onChange = { next ->
                     if (next.type == ProfileElType.Bio) {
-                        state = state.copy(bio = next.text.orEmpty()).normalized(loadedNick)
+                        state = state.copy(bio = next.text.orEmpty())
+                        updateEl(next)
                     } else {
                         updateEl(next)
                     }
@@ -722,7 +749,10 @@ private fun ProfileElementView(
                                 accY += drag.y
                                 val nx = origX + accX / boardW * 100f
                                 val ny = origY + accY / boardH * 100f
-                                val (cx, cy) = ProfileCatalog.clampPos(dragEl, nx, ny)
+                                val (cx, cy) = ProfileCatalog.clampPos(
+                                    dragEl, nx, ny, boardW, boardH, baseSize,
+                                    nameText = nickname
+                                )
                                 val next = dragEl.copy(x = cx, y = cy)
                                 dragEl = next
                                 onChange(next)
@@ -913,21 +943,30 @@ private fun ElementContent(
             fontFamily = font,
             fontSize = sizeSp,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            overflow = TextOverflow.Clip,
             textAlign = TextAlign.Start,
+            softWrap = false,
             modifier = Modifier.fillMaxWidth()
         )
         ProfileElType.Status -> Text(el.emoji ?: el.text ?: "😊", fontSize = 30.sp)
-        ProfileElType.Bio -> Text(
-            el.text?.takeIf { it.isNotBlank() } ?: "…",
-            color = color.copy(alpha = if (el.text.isNullOrBlank()) 0.55f else 1f),
-            fontFamily = font,
-            fontSize = sizeSp,
-            textAlign = TextAlign.Center,
-            maxLines = 3,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 6.dp)
-        )
+        ProfileElType.Bio -> {
+            val body = el.text.orEmpty()
+            if (body.isBlank()) {
+                // Kein „…“ — leerer Trefferbereich, per ✕ entfernbar
+                Box(modifier = Modifier.fillMaxSize())
+            } else {
+                Text(
+                    body,
+                    color = color,
+                    fontFamily = font,
+                    fontSize = sizeSp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 4,
+                    overflow = TextOverflow.Clip,
+                    modifier = Modifier.padding(horizontal = 6.dp)
+                )
+            }
+        }
         ProfileElType.Pet -> {
             Box(
                 modifier = Modifier
@@ -971,10 +1010,12 @@ private fun ProfileChestDialog(
     currentThemeId: String,
     currentCompanion: String,
     hasGlass: Boolean,
+    hasBio: Boolean,
     onTheme: (ProfileTheme) -> Unit,
     onSticker: (String) -> Unit,
     onCompanion: (String) -> Unit,
     onGlass: () -> Unit,
+    onBio: () -> Unit,
     onOpenShop: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1021,7 +1062,7 @@ private fun ProfileChestDialog(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                listOf("Hintergrund", "Sticker", "Begleiter", "Münzglas").forEachIndexed { i, label ->
+                listOf("Hintergrund", "Sticker", "Begleiter", "Extras").forEachIndexed { i, label ->
                     val on = tab == i
                     Box(
                         modifier = Modifier
@@ -1109,25 +1150,51 @@ private fun ProfileChestDialog(
                         ) { Text(emoji, fontSize = 30.sp) }
                     }
                 }
-                else -> Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(160.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(if (hasGlass) AccentRose.copy(0.18f) else BgSoft)
-                        .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(16.dp))
-                        .clickable(onClick = onGlass),
-                    contentAlignment = Alignment.Center
+                else -> Column(
+                    modifier = Modifier.fillMaxWidth().height(220.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("🏺", fontSize = 40.sp)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            if (hasGlass) "Münzglas ist auf der Leinwand" else "Münzglas platzieren",
-                            color = TextPrimary,
-                            fontFamily = DisplayFont,
-                            fontSize = 16.sp
-                        )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (hasGlass) AccentRose.copy(0.18f) else BgSoft)
+                            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(16.dp))
+                            .clickable(onClick = onGlass),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("🏺", fontSize = 36.sp)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                if (hasGlass) "Münzglas auf der Leinwand" else "Münzglas platzieren",
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 15.sp
+                            )
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (hasBio) AccentRose.copy(0.18f) else BgSoft)
+                            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(16.dp))
+                            .clickable(onClick = onBio),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("📝", fontSize = 36.sp)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                if (hasBio) "Bio auf der Leinwand" else "Bio platzieren",
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 15.sp
+                            )
+                        }
                     }
                 }
             }
