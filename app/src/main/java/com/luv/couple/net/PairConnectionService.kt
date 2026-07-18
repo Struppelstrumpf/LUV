@@ -1399,7 +1399,11 @@ class PairConnectionService : Service() {
         private val _reconnectUi = MutableStateFlow<Map<String, LobbyReconnectUi>>(emptyMap())
         val reconnectUi: StateFlow<Map<String, LobbyReconnectUi>> = _reconnectUi.asStateFlow()
 
-        private val _events = MutableSharedFlow<PairEvent>(extraBufferCapacity = 128)
+        // Großer Buffer — bei schnellem Malen dürfen keine Stroke-Events verloren gehen
+        private val _events = MutableSharedFlow<PairEvent>(
+            extraBufferCapacity = 512,
+            onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+        )
         val events: SharedFlow<PairEvent> = _events.asSharedFlow()
 
         private fun updateAggregate(value: ConnectionState) {

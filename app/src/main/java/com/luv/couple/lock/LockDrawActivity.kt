@@ -360,8 +360,10 @@ class LockDrawActivity : ComponentActivity() {
             }
         }
         lifecycleScope.launch {
-            PairConnectionService.events.collectLatest { event ->
-                val id = lobbyId ?: return@collectLatest
+            // collect (nicht collectLatest): Striche dürfen nicht verworfen werden,
+            // wenn der nächste Event schon ankommt.
+            PairConnectionService.events.collect { event ->
+                val id = lobbyId ?: return@collect
                 when (event) {
                     is PairEvent.StrokeReceived -> if (event.lobbyId == id) {
                         drawingView.addStroke(event.stroke, fadeIn = true)

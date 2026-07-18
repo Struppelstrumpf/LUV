@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.58",
+            listOf(
+                "Zeichnen in der Lobby: alle sehen die Striche zuverlässig live",
+            )
+        ),
+        Entry(
             "1.9.57",
             listOf(
                 "Meldung „anderes Gerät auf der Leinwand“ nur bei offener Leinwand",

@@ -904,31 +904,34 @@ function sendCanvasHistory(socket, room, code) {
   if (!socket || socket.readyState !== 1) return;
   const strokes = ensureRoomStrokes(room, code);
   const stickers = stickersFromEmojiStrokes(strokes);
+  const sendChunk = (payload) => {
+    try {
+      if (socket.readyState === 1) socket.send(JSON.stringify(payload));
+    } catch (err) {
+      console.warn("sendCanvasHistory failed:", err?.message || err);
+    }
+  };
   if (!strokes.length) {
-    socket.send(
-      JSON.stringify({
-        type: "canvas_history",
-        strokes: [],
-        stickers,
-        done: true,
-        replace: true,
-      })
-    );
+    sendChunk({
+      type: "canvas_history",
+      strokes: [],
+      stickers,
+      done: true,
+      replace: true,
+    });
     return;
   }
   for (let i = 0; i < strokes.length; i += STROKE_HISTORY_CHUNK) {
     const chunk = strokes.slice(i, i + STROKE_HISTORY_CHUNK);
     const done = i + STROKE_HISTORY_CHUNK >= strokes.length;
-    socket.send(
-      JSON.stringify({
-        type: "canvas_history",
-        strokes: chunk,
-        // Stickers immer im letzten Chunk — leeres Array löscht Client-State korrekt
-        ...(done ? { stickers } : {}),
-        done,
-        replace: i === 0,
-      })
-    );
+    sendChunk({
+      type: "canvas_history",
+      strokes: chunk,
+      // Stickers immer im letzten Chunk — leeres Array löscht Client-State korrekt
+      ...(done ? { stickers } : {}),
+      done,
+      replace: i === 0,
+    });
   }
 }
 
@@ -2572,11 +2575,58 @@ function consumeDrawSession(user, lobbyCode) {
   return { ok: true, charged: true, free: false };
 }
 
-function broadcastRoom(room, payload, exceptSocket = null) {
+/** WS-Send ohne den Relay-Loop bei einem toten Socket abzubrechen. */
+function safeSend(sock, data, room = null, peerId = null) {
+  if (!sock || sock.readyState !== 1) {
+    if (room && peerId && room.sockets.get(peerId) === sock) {
+      room.sockets.delete(peerId);
+    }
+    return false;
+  }
+  try {
+    sock.send(data);
+    return true;
+  } catch (err) {
+    console.warn("ws safeSend failed:", err?.message || err);
+    try {
+      sock.close();
+    } catch {
+      /* ignore */
+    }
+    if (room && peerId && room.sockets.get(peerId) === sock) {
+      room.sockets.delete(peerId);
+    }
+    return false;
+  }
+}
+
+/** Tote / halb-offene Sockets aus der Map werfen — verhindert „B sieht, C nicht“. */
+function pruneDeadSockets(room) {
+  if (!room?.sockets) return;
+  for (const [id, sock] of [...room.sockets.entries()]) {
+    if (!sock || sock.readyState !== 1) {
+      room.sockets.delete(id);
+    }
+  }
+}
+
+/** An alle Peers außer Sender — jeder Send isoliert. */
+function relayToPeers(room, payload, exceptPeerId = null) {
+  if (!room) return;
+  pruneDeadSockets(room);
   const text = typeof payload === "string" ? payload : JSON.stringify(payload);
-  for (const sock of room.sockets.values()) {
+  for (const [id, peer] of room.sockets.entries()) {
+    if (exceptPeerId && id === exceptPeerId) continue;
+    safeSend(peer, text, room, id);
+  }
+}
+
+function broadcastRoom(room, payload, exceptSocket = null) {
+  pruneDeadSockets(room);
+  const text = typeof payload === "string" ? payload : JSON.stringify(payload);
+  for (const [id, sock] of room.sockets.entries()) {
     if (exceptSocket && sock === exceptSocket) continue;
-    if (sock.readyState === 1) sock.send(text);
+    safeSend(sock, text, room, id);
   }
 }
 
@@ -6517,6 +6567,10 @@ wss.on("connection", (socket, req) => {
       if (socket.luvCanvasActive && user?.id) {
         kickOtherCanvasSockets(room, user.id, socket);
       }
+      // Leinwand frisch geöffnet → History (holt nach, was vor dem Öffnen gemalt wurde)
+      if (socket.luvCanvasActive && !wasActive) {
+        sendCanvasHistory(socket, room, code);
+      }
       if (socket.luvNickname && !json.nickname) {
         json.nickname = socket.luvNickname;
       } else if (json.nickname) {
@@ -7042,10 +7096,7 @@ wss.on("connection", (socket, req) => {
       if (room.game && (room.game.type === json.game || !json.game)) {
         stopRoomGame(room);
       }
-      for (const [id, peer] of room.sockets.entries()) {
-        if (id === peerId) continue;
-        if (peer.readyState === 1) peer.send(text);
-      }
+      relayToPeers(room, text, peerId);
       return;
     }
 
@@ -7100,10 +7151,7 @@ wss.on("connection", (socket, req) => {
       };
       if (stored.emoji) relayPayload.emoji = stored.emoji;
       const relay = JSON.stringify(relayPayload);
-      for (const [id, peer] of room.sockets.entries()) {
-        if (id === peerId) continue;
-        if (peer.readyState === 1) peer.send(relay);
-      }
+      relayToPeers(room, relay, peerId);
       // Legacy: Emoji-Strich zusätzlich als sticker_place für alte Clients
       if (stored.emoji && stored.points?.[0]) {
         const legacy = JSON.stringify({
@@ -7114,10 +7162,7 @@ wss.on("connection", (socket, req) => {
           y: stored.points[0].y,
           nickname: stored.nickname,
         });
-        for (const [id, peer] of room.sockets.entries()) {
-          if (id === peerId) continue;
-          if (peer.readyState === 1) peer.send(legacy);
-        }
+        relayToPeers(room, legacy, peerId);
       }
       return;
     }
@@ -7177,12 +7222,8 @@ wss.on("connection", (socket, req) => {
         y: sticker.y,
         nickname: sticker.nickname,
       });
-      for (const [id, peer] of room.sockets.entries()) {
-        if (id === peerId) continue;
-        if (peer.readyState !== 1) continue;
-        peer.send(strokeRelay);
-        peer.send(stickerRelay);
-      }
+      relayToPeers(room, strokeRelay, peerId);
+      relayToPeers(room, stickerRelay, peerId);
       return;
     }
 
@@ -7193,12 +7234,8 @@ wss.on("connection", (socket, req) => {
       touchCanvasActivity(room, room.sockets.size);
       const undoRelay = JSON.stringify({ type: "undo", id: sid });
       const relay = JSON.stringify({ type: "sticker_remove", id: sid });
-      for (const [id, peer] of room.sockets.entries()) {
-        if (id === peerId) continue;
-        if (peer.readyState !== 1) continue;
-        peer.send(undoRelay);
-        peer.send(relay);
-      }
+      relayToPeers(room, undoRelay, peerId);
+      relayToPeers(room, relay, peerId);
       return;
     }
 
@@ -7206,11 +7243,8 @@ wss.on("connection", (socket, req) => {
       touchCanvasActivity(room, room.sockets.size);
     }
 
-    // Relay to others
-    for (const [id, peer] of room.sockets.entries()) {
-      if (id === peerId) continue;
-      if (peer.readyState === 1) peer.send(text);
-    }
+    // Relay to others (clear, recolor, presence, …)
+    relayToPeers(room, text, peerId);
   });
 
   socket.on("close", () => {
