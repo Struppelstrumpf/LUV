@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.luv.couple.LuvApp
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.PublicCanvasPreview
 import com.luv.couple.ui.theme.BodyFont
@@ -50,70 +51,94 @@ import com.luv.couple.ui.theme.LuvWordmark
 import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import kotlin.random.Random
 
 /**
- * Splash beim normalen App-Öffnen: random öffentliche Leinwand.
- * Zeigt sofort das zuletzt gecachte Bild (kein Schwarzbild), lädt parallel neu.
+ * Splash: zeigt sofort das gecachte Bild (ohne auf Netz zu warten),
+ * markiert es als gesehen, lädt parallel ein noch ungesehenes Bild für den nächsten Start.
  */
 @Composable
 fun PublicCanvasSplash(
     onFinished: () -> Unit
 ) {
     val context = LocalContext.current.applicationContext
+    val prefs = LuvApp.instance.prefs
     var preview by remember { mutableStateOf<PublicCanvasPreview?>(null) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     var ready by remember { mutableStateOf(false) }
     val progress = remember { Animatable(0f) }
 
     LaunchedEffect(Unit) {
-        // 1) Sofort Cache (Memory/Disk) — verhindert schwarze Sekunden
-        val cached = PublicSplashCache.memoryEntry()
-            ?: PublicSplashCache.loadLast(context)
-        if (cached != null) {
-            preview = cached.preview
-            bitmap = cached.bitmap
-            ready = true
-        }
-
-        // 2) Parallel neues Random laden (Anzeige oder nächster Start)
-        val fetched = withContext(Dispatchers.IO) {
-            LuvApiClient.fetchRandomPublicCanvas()
-        }
-        val freshBmp = if (fetched != null) {
-            async(Dispatchers.IO) {
-                PublicSplashCache.downloadBitmap(fetched.imageUrl)
-            }.await()
-        } else null
-
-        if (fetched != null && freshBmp != null) {
-            PublicSplashCache.save(context, fetched, freshBmp)
-            if (!ready) {
-                preview = fetched
-                bitmap = freshBmp
+        coroutineScope {
+            // 1) Sofort Cache → Bild + Animation ohne Netzwartezeit
+            val cached = PublicSplashCache.memoryEntry()
+                ?: PublicSplashCache.loadLast(context)
+            if (cached != null) {
+                preview = cached.preview
+                bitmap = cached.bitmap
                 ready = true
-            } else if (fetched.id != preview?.id && progress.value < 0.4f) {
-                // Frühe Phase: auf frisches Bild wechseln
-                preview = fetched
-                bitmap = freshBmp
+                launch {
+                    runCatching { prefs.markSplashSeen(cached.preview.id) }
+                }
+                launch {
+                    progress.snapTo(0f)
+                    progress.animateTo(1f, animationSpec = tween(1900, easing = LinearEasing))
+                    delay(120)
+                    onFinished()
+                }
+            }
+
+            // 2) Parallel: nächstes ungesehenes Bild holen (für diesen oder nächsten Start)
+            val fetchJob = async(Dispatchers.IO) {
+                var seen = runCatching { prefs.seenSplashIds() }.getOrDefault(emptySet())
+                // Aktuell angezeigtes nicht nochmal als „frisch“ speichern
+                val showingId = cached?.preview?.id
+                if (!showingId.isNullOrBlank()) seen = seen + showingId
+                val fetched = LuvApiClient.fetchRandomPublicCanvas(seen)
+                if (fetched != null && fetched.cycled) {
+                    runCatching { prefs.clearSeenSplashIds() }
+                }
+                if (fetched == null) return@async null
+                val bmp = PublicSplashCache.downloadBitmap(fetched.imageUrl) ?: return@async null
+                PublicSplashCache.Entry(fetched, bmp)
+            }
+
+            val fresh = fetchJob.await()
+            if (fresh != null) {
+                PublicSplashCache.save(context, fresh.preview, fresh.bitmap)
+                if (!ready) {
+                    // Kein Cache: jetzt anzeigen und animieren
+                    preview = fresh.preview
+                    bitmap = fresh.bitmap
+                    ready = true
+                    launch {
+                        runCatching { prefs.markSplashSeen(fresh.preview.id) }
+                    }
+                    progress.snapTo(0f)
+                    progress.animateTo(1f, animationSpec = tween(1900, easing = LinearEasing))
+                    delay(120)
+                    onFinished()
+                } else if (
+                    fresh.preview.id != preview?.id &&
+                    progress.value < 0.25f
+                ) {
+                    // Sehr früh: auf wirklich neues Bild wechseln
+                    preview = fresh.preview
+                    bitmap = fresh.bitmap
+                    launch {
+                        runCatching { prefs.markSplashSeen(fresh.preview.id) }
+                    }
+                }
+            } else if (!ready) {
+                onFinished()
             }
         }
-
-        if (!ready || bitmap == null || preview == null) {
-            onFinished()
-            return@LaunchedEffect
-        }
-
-        progress.snapTo(0f)
-        progress.animateTo(1f, animationSpec = tween(1900, easing = LinearEasing))
-        delay(120)
-        onFinished()
     }
 
     if (!ready || bitmap == null || preview == null) {
-        // Kurz nur beim allerersten Start ohne Cache — Brand statt Schwarz
         Box(
             modifier = Modifier
                 .fillMaxSize()

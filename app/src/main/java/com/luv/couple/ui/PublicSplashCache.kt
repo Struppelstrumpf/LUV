@@ -112,10 +112,22 @@ object PublicSplashCache {
         }.getOrNull()
     }
 
-    /** Im Hintergrund: Random holen + cachen, damit der nächste Kaltstart sofort Bild hat. */
+    /**
+     * Im Hintergrund: ungesehenes Bild cachen.
+     * Mit Cache: nächstes ungesehenes für den folgenden Start.
+     * Ohne Cache: irgendeines, damit der erste Splash nicht warten muss.
+     */
     suspend fun warmup(context: Context) {
-        if (loadLast(context) != null) return
-        val fetched = LuvApiClient.fetchRandomPublicCanvas() ?: return
+        val prefs = runCatching { LuvApp.instance.prefs }.getOrNull()
+        val seen = prefs?.let { runCatching { it.seenSplashIds() }.getOrNull() }.orEmpty()
+        val cached = loadLast(context)
+        val exclude = if (cached != null) seen + cached.preview.id else seen
+        val fetched = LuvApiClient.fetchRandomPublicCanvas(exclude) ?: return
+        if (fetched.cycled) {
+            runCatching { prefs?.clearSeenSplashIds() }
+        }
+        // Gleiches Bild wie Cache und nicht cycled → nichts überschreiben
+        if (cached != null && fetched.id == cached.preview.id && !fetched.cycled) return
         val bmp = downloadBitmap(fetched.imageUrl) ?: return
         save(context, fetched, bmp)
     }

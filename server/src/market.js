@@ -217,10 +217,11 @@ function takeItemFromUser(user, ensureInventory, kind, itemId) {
   const inv = ensureInventory(user);
   if (kind === "pets") {
     if (itemId === "🐣") return false; // Starter nicht verkaufen
+    // Ausgerüstet → nicht entnehmen (Caller muss vorher prüfen)
+    if (inv.equippedPet === itemId) return false;
     const i = inv.pets.indexOf(itemId);
     if (i < 0) return false;
     inv.pets.splice(i, 1);
-    if (inv.equippedPet === itemId) inv.equippedPet = "🐣";
     return true;
   }
   if (kind === "themes") {

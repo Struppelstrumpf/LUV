@@ -96,6 +96,15 @@ function scheduleSave() {
   }, 200);
 }
 
+/** Sofort speichern — für Coin-/Item-Transaktionen (Markt, Tip, …). */
+function flushSave() {
+  if (writeTimer) {
+    clearTimeout(writeTimer);
+    writeTimer = null;
+  }
+  save(db);
+}
+
 function todayKey(tzOffsetMin = 0) {
   // Tagesgrenze 0:00 Europe/Berlin (MEZ/MESZ)
   void tzOffsetMin;
@@ -142,6 +151,7 @@ module.exports = {
   getDb,
   save,
   scheduleSave,
+  flushSave,
   todayKey,
   hashSecret,
   newId,

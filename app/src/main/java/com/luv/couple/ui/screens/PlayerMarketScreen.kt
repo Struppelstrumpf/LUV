@@ -140,13 +140,37 @@ fun PlayerMarketScreen(
     val ownedPets by prefs.ownedPetsFlow.collectAsStateWithLifecycle(
         initialValue = listOf(ShopCatalog.DEFAULT_PET)
     )
+    val equippedPet by prefs.equippedPetFlow.collectAsStateWithLifecycle(
+        initialValue = ShopCatalog.DEFAULT_PET
+    )
+    val emojiBar by prefs.emojiBarFlow.collectAsStateWithLifecycle(
+        initialValue = ShopCatalog.DEFAULT_BAR
+    )
+    var profileThemeId by remember { mutableStateOf(ProfileCatalog.DEFAULT_THEME_ID) }
+    var profileCompanion by remember { mutableStateOf(ShopCatalog.DEFAULT_PET) }
+
+    LaunchedEffect(Unit) {
+        val json = prefs.profileCanvasJson().orEmpty()
+        if (json.isNotBlank()) {
+            runCatching {
+                val o = org.json.JSONObject(json)
+                profileThemeId = o.optString("themeId", ProfileCatalog.DEFAULT_THEME_ID)
+                    .ifBlank { ProfileCatalog.DEFAULT_THEME_ID }
+                profileCompanion = o.optString("companionEmoji", ShopCatalog.DEFAULT_PET)
+                    .ifBlank { ShopCatalog.DEFAULT_PET }
+            }
+        }
+    }
 
     fun inventoryPicks(): List<InventoryPick> = buildList {
+        // Ausgerüstete / Profil-Items nicht anbieten (Server prüft zusätzlich)
         ownedPets.filter { it != ShopCatalog.DEFAULT_PET }.forEach { pet ->
+            if (pet == equippedPet || pet == profileCompanion) return@forEach
             val label = ShopCatalog.PETS.firstOrNull { it.emoji == pet }?.label ?: pet
             add(InventoryPick("pets", pet, label, pet, 1))
         }
         ownedThemes.filter { it != ProfileCatalog.DEFAULT_THEME_ID }.forEach { themeId ->
+            if (themeId == profileThemeId) return@forEach
             val theme = ShopCatalog.THEMES.firstOrNull { it.id == themeId }
             add(
                 InventoryPick(
@@ -162,14 +186,15 @@ fun PlayerMarketScreen(
             if (count > 0) add(InventoryPick("stickers", emoji, emoji, emoji, count))
         }
         ownedEmojis.forEach { (emoji, count) ->
-            if (count > 0 && emoji !in ShopCatalog.DEFAULT_BAR) {
-                add(InventoryPick("emojis", emoji, emoji, emoji, count))
-            }
+            if (count <= 0 || emoji in ShopCatalog.DEFAULT_BAR) return@forEach
+            // Letztes Exemplar in der Reaktionsleiste → nicht anbieten
+            if (emoji in emojiBar && count <= 1) return@forEach
+            add(InventoryPick("emojis", emoji, emoji, emoji, count))
         }
     }
 
-    suspend fun syncInventory() {
-        runCatching {
+    suspend fun syncInventory(): Boolean {
+        return runCatching {
             val remote = LuvApiClient.fetchInventory()
             prefs.applyInventoryBag(
                 emojis = remote.emojis,
@@ -178,6 +203,14 @@ fun PlayerMarketScreen(
                 pets = remote.pets,
                 equippedPet = remote.equippedPet
             )
+            true
+        }.getOrElse {
+            Toast.makeText(
+                context,
+                "Inventar-Sync fehlgeschlagen — bitte neu laden",
+                Toast.LENGTH_SHORT
+            ).show()
+            false
         }
     }
 
@@ -569,8 +602,8 @@ fun PlayerMarketScreen(
                 scope.launch {
                     runCatching {
                         LuvApiClient.buyMarketListing(listing.id)
-                        syncInventory()
                     }.onSuccess {
+                        syncInventory()
                         Toast.makeText(context, "${listing.label} gekauft", Toast.LENGTH_SHORT).show()
                         previewListing = null
                         refreshOffersIfOpen()

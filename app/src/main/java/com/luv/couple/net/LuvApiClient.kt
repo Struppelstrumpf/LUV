@@ -81,7 +81,9 @@ data class PublicCanvasPreview(
     val nameLine: String,
     val imageUrl: String,
     val createdAt: Long = 0L,
-    val expiresAt: Long = 0L
+    val expiresAt: Long = 0L,
+    /** true = alle Exclude-IDs waren schon gesehen, Zyklus neu gestartet */
+    val cycled: Boolean = false
 )
 
 data class RemoteLobby(
@@ -1910,6 +1912,9 @@ object LuvApiClient {
                     message = when (json?.optString("error")) {
                         "not_owned" -> "Artikel nicht im Inventar."
                         "not_sellable" -> "Diesen Artikel kannst du nicht anbieten."
+                        "equipped" -> json.optString("message")
+                            .takeIf { it.isNotBlank() }
+                            ?: "Artikel ist ausgerüstet — zuerst wechseln."
                         "bad_price" -> "Preis mind. 1 Coin oder Tausch aktivieren."
                         "need_target" -> "Privates Angebot braucht einen Empfänger."
                         "self" -> "Nicht an dich selbst."
@@ -2380,12 +2385,25 @@ object LuvApiClient {
         }
     }
 
-    suspend fun fetchRandomPublicCanvas(): PublicCanvasPreview? = withContext(Dispatchers.IO) {
+    suspend fun fetchRandomPublicCanvas(
+        excludeIds: Collection<String> = emptyList()
+    ): PublicCanvasPreview? = withContext(Dispatchers.IO) {
         runCatching {
-            val request = Request.Builder()
-                .url("${baseUrl()}/v1/public-canvases/random")
-                .get()
-                .build()
+            val exclude = excludeIds
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .take(80)
+                .joinToString(",")
+            val url = buildString {
+                append(baseUrl())
+                append("/v1/public-canvases/random")
+                if (exclude.isNotEmpty()) {
+                    append("?exclude=")
+                    append(java.net.URLEncoder.encode(exclude, Charsets.UTF_8.name()))
+                }
+            }
+            val request = Request.Builder().url(url).get().build()
             http.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
                 if (!response.isSuccessful) return@runCatching null
@@ -2407,7 +2425,10 @@ object LuvApiClient {
                     nameLine = json.optString("nameLine").ifBlank {
                         json.optString("hostNickname", "Jemand")
                     },
-                    imageUrl = json.optString("imageUrl")
+                    imageUrl = json.optString("imageUrl"),
+                    createdAt = json.optLong("createdAt", 0L),
+                    expiresAt = json.optLong("expiresAt", 0L),
+                    cycled = json.optBoolean("cycled", false)
                 )
             }
         }.getOrNull()

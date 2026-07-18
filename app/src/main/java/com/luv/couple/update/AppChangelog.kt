@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.89",
+            listOf(
+                "Markt: ausgerüstete Items nicht anbieten, Coins/Items zuverlässiger",
+                "Ladebild: jedes veröffentlichte Bild erst einmal, dann neue",
+            )
+        ),
+        Entry(
             "1.9.88",
             listOf(
                 "App-Start: kein langes Schwarzbild mehr vor dem Ladebild",

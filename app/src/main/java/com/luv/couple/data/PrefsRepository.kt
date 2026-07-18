@@ -43,6 +43,8 @@ class PrefsRepository(private val context: Context) {
     private val lastPublicNameKey = stringPreferencesKey("last_public_canvas_name")
     private val lastPublicImageKey = stringPreferencesKey("last_public_canvas_image")
     private val lastPublicHostKey = stringPreferencesKey("last_public_canvas_host")
+    /** Bereits im Splash gezeigte öffentliche Bilder (IDs, | getrennt) */
+    private val seenSplashIdsKey = stringPreferencesKey("seen_splash_canvas_ids")
     /** Bereits gemeldete Lobby-Beitritte: "lobbyId|userIdOrNick" */
     private val joinAnnouncedKey = stringPreferencesKey("join_announced_json")
     /** Ruhezeiten Mo–So: JSON { "1":[{"s":1320,"e":420},…], … } */
@@ -562,6 +564,28 @@ class PrefsRepository(private val context: Context) {
             while (parts.size > 40) parts.removeAt(0)
             prefs[seenMemoriesKey] = parts.joinToString("|")
         }
+    }
+
+    suspend fun seenSplashIds(): Set<String> {
+        val raw = context.dataStore.data.first()[seenSplashIdsKey].orEmpty()
+        return raw.split('|').map { it.trim() }.filter { it.isNotBlank() }.toSet()
+    }
+
+    suspend fun markSplashSeen(id: String) {
+        val clean = id.trim()
+        if (clean.isBlank()) return
+        context.dataStore.edit { prefs ->
+            val prev = prefs[seenSplashIdsKey].orEmpty()
+            val parts = prev.split('|').map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
+            if (clean !in parts) parts.add(clean)
+            while (parts.size > 200) parts.removeAt(0)
+            prefs[seenSplashIdsKey] = parts.joinToString("|")
+        }
+    }
+
+    /** Seen-Liste leeren (wenn Server alle Bilder durchhat → neuer Zyklus). */
+    suspend fun clearSeenSplashIds() {
+        context.dataStore.edit { it.remove(seenSplashIdsKey) }
     }
 
     suspend fun lastClearDay(): String? = context.dataStore.data.first()[lastClearDayKey]

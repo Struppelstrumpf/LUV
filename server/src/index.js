@@ -7,6 +7,7 @@ const { WebSocketServer } = require("ws");
 const {
   getDb,
   scheduleSave,
+  flushSave,
   todayKey,
   hashSecret,
   newId,
@@ -586,6 +587,85 @@ function expireOpenListing(entry) {
   entry.status = "expired";
   entry.expiredAt = Date.now();
   return true;
+}
+
+/** Alle abgelaufenen Markt-Angebote auflösen (Items zurück). */
+function sweepExpiredMarketListings() {
+  const listings = market.ensureMarket(getDb());
+  let n = 0;
+  for (const entry of Object.values(listings)) {
+    if (expireOpenListing(entry)) n += 1;
+  }
+  if (n > 0) scheduleSave();
+  return n;
+}
+
+/**
+ * Ausgerüstete Items nicht verkaufen (Profil / Reaktionsleiste).
+ * @returns {string|null} Fehlermeldung oder null wenn ok
+ */
+function marketItemEquippedLock(user, kind, itemId) {
+  if (!user || !kind || !itemId) return null;
+  const inv = ensureInventory(user);
+  const id = String(itemId).trim();
+  if (kind === "pets") {
+    if (String(inv.equippedPet || "") === id) {
+      return "Begleiter ist ausgerüstet — zuerst einen anderen wählen.";
+    }
+    const companion = String(user.profileCanvas?.companionEmoji || "").trim();
+    if (companion && companion === id) {
+      return "Begleiter ist auf dem Profil — zuerst wechseln.";
+    }
+    return null;
+  }
+  if (kind === "themes") {
+    const themeId = String(user.profileCanvas?.themeId || "").trim();
+    if (themeId && themeId === id) {
+      return "Hintergrund ist auf dem Profil aktiv — zuerst wechseln.";
+    }
+    return null;
+  }
+  if (kind === "emojis") {
+    const settings = ensureSettings(user);
+    const bar = Array.isArray(settings.emojiBar) ? settings.emojiBar : [];
+    const inBar = bar.some((e) => String(e) === id);
+    const count = Number(inv.emojis?.[id]) || 0;
+    if (inBar && count <= 1) {
+      return "Emoji ist in der Reaktionsleiste — zuerst entfernen.";
+    }
+    return null;
+  }
+  // Stickers: freier Bestand ist schon ohne Profil-Platzierungen
+  return null;
+}
+
+/** Nach Verkauf/Entnahme: Profil-Ghosts bereinigen. */
+function cleanupProfileAfterItemRemoved(user, kind, itemId) {
+  if (!user || !kind || !itemId) return;
+  const id = String(itemId).trim();
+  const inv = ensureInventory(user);
+  if (kind === "pets") {
+    if (String(inv.equippedPet || "") === id || !inv.pets.includes(inv.equippedPet)) {
+      inv.equippedPet = DEFAULT_PET;
+    }
+    if (user.profileCanvas && String(user.profileCanvas.companionEmoji || "") === id) {
+      user.profileCanvas.companionEmoji = inv.equippedPet || DEFAULT_PET;
+    }
+  }
+  if (kind === "themes" && user.profileCanvas) {
+    if (String(user.profileCanvas.themeId || "") === id) {
+      user.profileCanvas.themeId = "meadow";
+    }
+  }
+  if (kind === "emojis") {
+    const settings = ensureSettings(user);
+    if (Array.isArray(settings.emojiBar)) {
+      const count = Number(inv.emojis?.[id]) || 0;
+      if (count <= 0) {
+        settings.emojiBar = settings.emojiBar.filter((e) => String(e) !== id);
+      }
+    }
+  }
 }
 
 /** Einfaches IP-Rate-Limit (Anti-Account-Farming). */
@@ -2076,6 +2156,7 @@ const PAID_CREDIT_REASONS = new Set([
   "public_share_reward",
   "glass_tip_recv",
   "pet_kraul_recv",
+  "market_sell",
 ]);
 
 const PUBLIC_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -2228,10 +2309,35 @@ function listPublicCanvasEntries() {
     .sort((a, b) => Number(b.createdAt) - Number(a.createdAt));
 }
 
-function pickRandomPublicCanvas() {
+/**
+ * Zufällige öffentliche Leinwand.
+ * @param {Set<string>|string[]} [excludeIds] bereits gesehene IDs
+ * @returns {{ entry: object, cycled: boolean }|null}
+ */
+function pickRandomPublicCanvas(excludeIds) {
   const list = listPublicCanvasEntries();
   if (!list.length) return null;
-  return list[crypto.randomInt(0, list.length)];
+  const exclude = excludeIds instanceof Set
+    ? excludeIds
+    : new Set(
+        (Array.isArray(excludeIds) ? excludeIds : [])
+          .map((x) => String(x || "").trim())
+          .filter(Boolean)
+      );
+  const fresh = exclude.size
+    ? list.filter((e) => e && e.id && !exclude.has(e.id))
+    : list;
+  if (fresh.length) {
+    return {
+      entry: fresh[crypto.randomInt(0, fresh.length)],
+      cycled: false,
+    };
+  }
+  // Alle schon gesehen → Zyklus neu
+  return {
+    entry: list[crypto.randomInt(0, list.length)],
+    cycled: true,
+  };
 }
 
 function publicCanvasImageUrl(id) {
@@ -4059,6 +4165,9 @@ function resolvePublicShare(room, code) {
 
 setInterval(cleanupRooms, 60_000).unref();
 setInterval(() => {
+  sweepExpiredMarketListings();
+}, 5 * 60_000).unref();
+setInterval(() => {
   cleanupCanvasMemories();
   cleanupPublicCanvases();
   for (const [code, room] of rooms.entries()) {
@@ -4912,7 +5021,7 @@ app.post("/v1/users/:userId/tip-glass", (req, res) => {
   target.glassTipsRecvDay = recv.day;
   trackAch(ctx.user, "tips_given", 1);
   trackAch(target, "tips_received", 1);
-  scheduleSave();
+  flushSave();
 
   const after = glassTipRecvState(target);
   return res.json({
@@ -5478,7 +5587,7 @@ app.post("/v1/shop/buy-emoji", (req, res) => {
   const inv = ensureInventory(ctx.user);
   inv.emojis[emoji] = Math.min(999, (Number(inv.emojis[emoji]) || 0) + 1);
   bumpShopPurchase("emojis", emoji);
-  scheduleSave();
+  flushSave();
   return res.json({
     ok: true,
     emoji,
@@ -5506,7 +5615,7 @@ app.post("/v1/shop/buy-theme", (req, res) => {
   }
   inv.themes.push(themeId);
   bumpShopPurchase("themes", themeId);
-  scheduleSave();
+  flushSave();
   return res.json({ ok: true, themeId, price, user: publicUser(ctx.user) });
 });
 
@@ -5529,7 +5638,7 @@ app.post("/v1/shop/buy-sticker", (req, res) => {
   const inv = ensureInventory(ctx.user);
   inv.stickers[emoji] = Math.min(999, (Number(inv.stickers[emoji]) || 0) + 1);
   bumpShopPurchase("stickers", emoji);
-  scheduleSave();
+  flushSave();
   return res.json({
     ok: true,
     emoji,
@@ -5562,7 +5671,7 @@ app.post("/v1/shop/buy-pet", (req, res) => {
   bumpShopPurchase("pets", emoji);
   trackAch(ctx.user, "pets_bought", 1);
   syncAchInventoryMetrics(ctx.user);
-  scheduleSave();
+  flushSave();
   return res.json({ ok: true, emoji, price, user: publicUser(ctx.user) });
 });
 
@@ -5874,12 +5983,12 @@ app.get("/v1/market/hub", (req, res) => {
 app.get("/v1/market", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
+  sweepExpiredMarketListings();
   trackAch(ctx.user, "market_opens", 1);
   const mode = String(req.query.mode || "market") === "private" ? "private" : "market";
   const category = String(req.query.category || "all").trim() || "all";
   const q = String(req.query.q || "").trim().slice(0, 40);
   const data = market.aggregateMarket(getDb(), ctx.user.id, { category, q, mode });
-  scheduleSave();
   return res.json({ ok: true, ...data });
 });
 
@@ -5900,6 +6009,7 @@ app.get("/v1/market/offers", (req, res) => {
 app.get("/v1/market/mine", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
+  sweepExpiredMarketListings();
   const listings = market.ensureMarket(getDb());
   const mine = Object.values(listings)
     .filter((e) => e && e.sellerId === ctx.user.id && e.status === "open")
@@ -5959,10 +6069,15 @@ app.post("/v1/market/list", (req, res) => {
   if (!market.userOwnsItem(ctx.user, ensureInventory, kind, itemId)) {
     return res.status(400).json({ error: "not_owned", message: "Artikel nicht im Inventar." });
   }
+  const equippedLock = marketItemEquippedLock(ctx.user, kind, itemId);
+  if (equippedLock) {
+    return res.status(400).json({ error: "equipped", message: equippedLock });
+  }
   // Item aus Inventar nehmen (Reservierung)
   if (!market.takeItemFromUser(ctx.user, ensureInventory, kind, itemId)) {
     return res.status(400).json({ error: "not_owned", message: "Artikel nicht verfügbar." });
   }
+  cleanupProfileAfterItemRemoved(ctx.user, kind, itemId);
   const listings = market.ensureMarket(getDb());
   const id = market.newListingId();
   const entry = {
@@ -5990,7 +6105,7 @@ app.post("/v1/market/list", (req, res) => {
   trackAch(ctx.user, "market_listed", 1);
   if (isPrivate) trackAch(ctx.user, "market_private", 1);
   syncAchInventoryMetrics(ctx.user);
-  scheduleSave();
+  flushSave();
   return res.status(201).json({
     ok: true,
     listing: market.listingPublic(entry, ctx.user.id, getDb()),
@@ -6019,7 +6134,7 @@ app.post("/v1/market/:id/cancel", (req, res) => {
   safeGiveItem(ctx.user, entry.kind, entry.itemId);
   entry.status = "cancelled";
   syncAchInventoryMetrics(ctx.user);
-  scheduleSave();
+  flushSave();
   return res.json({ ok: true, user: publicUser(ctx.user) });
 });
 
@@ -6089,7 +6204,7 @@ app.post("/v1/market/:id/buy", (req, res) => {
   trackAch(seller, "market_sold", 1);
   syncAchInventoryMetrics(ctx.user);
   syncAchInventoryMetrics(seller);
-  scheduleSave();
+  flushSave();
   return res.json({
     ok: true,
     user: publicUser(ctx.user),
@@ -6149,14 +6264,19 @@ app.post("/v1/market/:id/trade", (req, res) => {
   if (!isKnownInventoryItem(entry.kind, entry.itemId) || !isKnownInventoryItem(offerKind, offerItemId)) {
     return res.status(400).json({ error: "invalid_item", message: "Artikel ungültig." });
   }
+  const equippedLock = marketItemEquippedLock(ctx.user, offerKind, offerItemId);
+  if (equippedLock) {
+    return res.status(400).json({ error: "equipped", message: equippedLock });
+  }
   if (!market.takeItemFromUser(ctx.user, ensureInventory, offerKind, offerItemId)) {
     return res.status(400).json({ error: "not_owned", message: "Dein Tauschartikel fehlt." });
   }
+  cleanupProfileAfterItemRemoved(ctx.user, offerKind, offerItemId);
   const seller = getDb().users?.[entry.sellerId];
   if (!seller) {
     safeGiveItem(ctx.user, offerKind, offerItemId);
     entry.status = "cancelled";
-    scheduleSave();
+    flushSave();
     return res.status(404).json({ error: "seller_gone" });
   }
   entry.status = "traded";
@@ -6171,7 +6291,7 @@ app.post("/v1/market/:id/trade", (req, res) => {
   trackAch(seller, "market_trades", 1);
   syncAchInventoryMetrics(ctx.user);
   syncAchInventoryMetrics(seller);
-  scheduleSave();
+  flushSave();
   return res.json({ ok: true, user: publicUser(ctx.user) });
 });
 
@@ -6893,11 +7013,18 @@ app.get("/v1/share-line", (_req, res) => {
   return res.json({ line: pickShareLine() });
 });
 
-app.get("/v1/public-canvases/random", (_req, res) => {
-  const entry = pickRandomPublicCanvas();
-  if (!entry) return res.json({ available: false });
+app.get("/v1/public-canvases/random", (req, res) => {
+  const rawExclude = String(req.query.exclude || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 80);
+  const picked = pickRandomPublicCanvas(rawExclude);
+  if (!picked?.entry) return res.json({ available: false });
+  const entry = picked.entry;
   return res.json({
     available: true,
+    cycled: Boolean(picked.cycled),
     id: entry.id,
     lobbyName: entry.lobbyName || "Lobby",
     hostNickname: entry.hostNickname || "Jemand",
@@ -7206,7 +7333,7 @@ app.post("/v1/admin/public-reports/:id/delete", (req, res) => {
 /** Landing /luv — OG-Preview mit zufälligem cozy Spruch (für WhatsApp & Co.). */
 function serveLandingHtml(req, res) {
   const line = pickShareLine();
-  const picked = pickRandomPublicCanvas();
+  const picked = pickRandomPublicCanvas()?.entry || null;
   const ogImage = picked
     ? publicCanvasImageUrl(picked.id)
     : "https://reineke.pro/downloads/luv/og.jpg?v=1813";
@@ -7300,7 +7427,7 @@ app.get("/invite/:code", (req, res) => {
   const host = room?.hostNickname || "Jemand";
   const joinUrl = `https://reineke.pro/luv/j/${code}`;
   const deep = code ? `luv://join/${code}` : "https://reineke.pro/luv/";
-  const picked = pickRandomPublicCanvas();
+  const picked = pickRandomPublicCanvas()?.entry || null;
   const ogImage = picked
     ? publicCanvasImageUrl(picked.id)
     : "https://reineke.pro/downloads/luv/og.jpg?v=1813";
