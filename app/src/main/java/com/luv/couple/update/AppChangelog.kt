@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.80",
+            listOf(
+                "Update-Hinweis auf der Leinwand wie im Hauptmenü lesbar",
+            )
+        ),
+        Entry(
             "1.9.79",
             listOf(
                 "Vorlagen: Löschen per Papierkorb mit Bestätigung",

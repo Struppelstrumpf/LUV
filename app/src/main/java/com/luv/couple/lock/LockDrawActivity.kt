@@ -51,9 +51,12 @@ import com.luv.couple.net.PairSessionState
 import com.luv.couple.net.PublicVoteEvent
 import com.luv.couple.notify.LiveProximity
 import com.luv.couple.shop.ShopCatalog
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.ui.screens.BrushStudioSheet
 import com.luv.couple.ui.screens.EmojiBarEditorDialog
+import com.luv.couple.ui.screens.ForcedUpdateDialog
 import com.luv.couple.ui.screens.ProfileCanvasScreen
+import com.luv.couple.ui.screens.requiresForcedUpdate
 import com.luv.couple.ui.theme.LuvTheme
 import com.luv.couple.update.AppUpdater
 import com.luv.couple.update.UpdateUiState
@@ -127,7 +130,7 @@ class LockDrawActivity : ComponentActivity() {
     private val guessBubbles = linkedMapOf<String, MutableList<Pair<String, Boolean>>>()
     private val correctGuessers = mutableSetOf<String>()
     private var hasVotedClear = false
-    private var forcedUpdateDialog: androidx.appcompat.app.AlertDialog? = null
+    private var forcedUpdateHost: FrameLayout? = null
     private var strokeMemoryView: TextView? = null
     private var myPetEmoji: String = ShopCatalog.DEFAULT_PET
     private val statusHideRunnable = Runnable {
@@ -1908,93 +1911,55 @@ class LockDrawActivity : ComponentActivity() {
     private fun observeForcedUpdates() {
         lifecycleScope.launch {
             AppUpdater.state.collectLatest { state ->
-                val release = when (state) {
-                    is UpdateUiState.Available -> state.release
-                    is UpdateUiState.Downloading -> state.release
-                    is UpdateUiState.Ready -> state.release
-                    is UpdateUiState.Error -> state.release
-                    else -> null
+                if (state.requiresForcedUpdate()) {
+                    showForcedUpdateOverlay()
+                } else {
+                    dismissForcedUpdateOverlay()
                 }
-                if (release == null) {
-                    forcedUpdateDialog?.dismiss()
-                    forcedUpdateDialog = null
-                    return@collectLatest
-                }
-                val action = when (state) {
-                    is UpdateUiState.Downloading ->
-                        "Lädt… ${(state.progress * 100).toInt()}% — bitte kurz warten"
-                    is UpdateUiState.Ready -> "Installation öffnen"
-                    is UpdateUiState.Error -> "Erneut versuchen"
-                    else -> "Jetzt aktualisieren"
-                }
-                val teasers = com.luv.couple.update.AppChangelog
-                    .teaserLines(release.versionName, maxItems = 3)
-                    .joinToString("\n") { "· $it" }
-                val message = buildString {
-                    append("LUV ${release.versionName} ist da. Damit alles weiter reibungslos läuft, brauchst du kurz die neue Version.")
-                    if (teasers.isNotBlank()) {
-                        append("\n\nNeu:\n")
-                        append(teasers)
-                    }
-                    append("\n\nDaten bleiben erhalten — ohne Update geht’s nicht weiter.")
-                    if (state is UpdateUiState.Error) {
-                        append("\n\n")
-                        append(state.message)
-                    }
-                }
-
-                val existing = forcedUpdateDialog
-                if (existing?.isShowing == true) {
-                    existing.setMessage(message)
-                    existing.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.text = action
-                    existing.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.isEnabled =
-                        state !is UpdateUiState.Downloading
-                    return@collectLatest
-                }
-
-                val dialog = MaterialAlertDialogBuilder(this@LockDrawActivity)
-                    .setTitle("Zeit für ein Update ♥")
-                    .setMessage(message)
-                    .setCancelable(false)
-                    .setPositiveButton(action, null)
-                    .create()
-                dialog.setCanceledOnTouchOutside(false)
-                dialog.setOnShowListener {
-                    dialog.window?.let { win ->
-                        // Weißer Frost statt schwarzem Dim
-                        win.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                        win.setDimAmount(0f)
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                            win.addFlags(android.view.WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
-                            win.setBackgroundBlurRadius(72)
-                            runCatching {
-                                win.attributes = win.attributes.apply { blurBehindRadius = 72 }
-                            }
-                        }
-                        win.decorView.setBackgroundColor(
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                                0xC7FFFFFF.toInt()
-                            } else {
-                                0xE6FFFFFF.toInt()
-                            }
-                        )
-                    }
-                    dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                        if (AppUpdater.state.value is UpdateUiState.Downloading) return@setOnClickListener
-                        lifecycleScope.launch {
-                            val ready = AppUpdater.state.value as? UpdateUiState.Ready
-                            if (ready != null) {
-                                AppUpdater.installApkFile(this@LockDrawActivity, ready.file)
-                            } else {
-                                AppUpdater.downloadAndInstall(this@LockDrawActivity)
-                            }
-                        }
-                    }
-                }
-                forcedUpdateDialog = dialog
-                dialog.show()
             }
         }
+    }
+
+    /** Gleicher Update-Dialog wie im Hauptmenü (lesbare dunkle Karte). */
+    private fun showForcedUpdateOverlay() {
+        val root = rootView ?: return
+        if (forcedUpdateHost != null) return
+        val host = fullscreenComposeHost().apply { elevation = 90f }
+        val compose = ComposeView(this).apply {
+            setContent {
+                val state by AppUpdater.state.collectAsStateWithLifecycle()
+                LuvTheme {
+                    ForcedUpdateDialog(
+                        state = state,
+                        onUpdate = {
+                            if (AppUpdater.state.value is UpdateUiState.Downloading) return@ForcedUpdateDialog
+                            lifecycleScope.launch {
+                                val ready = AppUpdater.state.value as? UpdateUiState.Ready
+                                if (ready != null) {
+                                    AppUpdater.installApkFile(this@LockDrawActivity, ready.file)
+                                } else {
+                                    AppUpdater.downloadAndInstall(this@LockDrawActivity)
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+        }
+        host.addView(
+            compose,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        root.addView(host)
+        forcedUpdateHost = host
+    }
+
+    private fun dismissForcedUpdateOverlay() {
+        forcedUpdateHost?.let { rootView?.removeView(it) }
+        forcedUpdateHost = null
     }
 
     private fun refreshLegend() {
