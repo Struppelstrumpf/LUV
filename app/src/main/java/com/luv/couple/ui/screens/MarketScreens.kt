@@ -30,6 +30,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -1078,11 +1080,14 @@ private fun LootboxTab(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
+    val prefs = LuvApp.instance.prefs
+    val confirmBuy by prefs.lootboxConfirmBuyFlow.collectAsStateWithLifecycle(initialValue = true)
     var tapsLeft by remember { mutableIntStateOf(0) }
     var pendingReward by remember { mutableStateOf<com.luv.couple.net.LootboxResult?>(null) }
     var phase by remember { mutableStateOf("idle") } // idle | tapping | reveal
     var shake by remember { mutableFloatStateOf(0f) }
     var flash by remember { mutableFloatStateOf(0f) }
+    var showConfirmBuy by remember { mutableStateOf(false) }
     val shakeAnim by animateFloatAsState(shake, label = "lootShake")
     val flashAnim by animateFloatAsState(flash, label = "lootFlash")
 
@@ -1100,6 +1105,70 @@ private fun LootboxTab(
         "pets" -> ShopCatalog.PETS.firstOrNull { it.emoji == result.itemId }?.label
             ?: result.label
         else -> result.emoji.ifBlank { result.label }
+    }
+
+    fun startLootboxPurchase() {
+        if (coins < ShopCatalog.LOOTBOX_PRICE_COINS) {
+            Toast.makeText(context, "Nicht genug Coins", Toast.LENGTH_SHORT).show()
+            return
+        }
+        onBusy("lootbox")
+        scope.launch {
+            runCatching { LuvApiClient.buyLootbox() }
+                .onSuccess { result ->
+                    pendingReward = result
+                    tapsLeft = ShopCatalog.LOOTBOX_TAP_COUNT
+                    phase = "tapping"
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                }
+                .onFailure {
+                    Toast.makeText(
+                        context,
+                        it.message ?: "Kauf fehlgeschlagen",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            onBusy(null)
+        }
+    }
+
+    if (showConfirmBuy) {
+        AlertDialog(
+            onDismissRequest = { if (!busy) showConfirmBuy = false },
+            containerColor = BgSoft,
+            title = {
+                Text("Lootbox kaufen?", fontFamily = DisplayFont, color = TextPrimary)
+            },
+            text = {
+                Text(
+                    "Für ${ShopCatalog.LOOTBOX_PRICE_COINS} Coins öffnen? " +
+                        "Der Inhalt ist zufällig und nicht erstattungsfähig.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        showConfirmBuy = false
+                        startLootboxPurchase()
+                    }
+                ) {
+                    Text(
+                        "Kaufen · ${ShopCatalog.LOOTBOX_PRICE_COINS} Coins",
+                        color = AccentRose,
+                        fontFamily = DisplayFont
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !busy, onClick = { showConfirmBuy = false }) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -1145,33 +1214,18 @@ private fun LootboxTab(
                         .clickable(enabled = !busy && phase != "reveal") {
                             when (phase) {
                                 "idle" -> {
-                                    if (coins < ShopCatalog.LOOTBOX_PRICE_COINS) {
-                                        Toast.makeText(
-                                            context,
-                                            "Nicht genug Coins",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                        return@clickable
-                                    }
-                                    onBusy("lootbox")
-                                    scope.launch {
-                                        runCatching { LuvApiClient.buyLootbox() }
-                                            .onSuccess { result ->
-                                                pendingReward = result
-                                                tapsLeft = ShopCatalog.LOOTBOX_TAP_COUNT
-                                                phase = "tapping"
-                                                haptics.performHapticFeedback(
-                                                    HapticFeedbackType.LongPress
-                                                )
-                                            }
-                                            .onFailure {
-                                                Toast.makeText(
-                                                    context,
-                                                    it.message ?: "Kauf fehlgeschlagen",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
-                                            }
-                                        onBusy(null)
+                                    if (confirmBuy) {
+                                        if (coins < ShopCatalog.LOOTBOX_PRICE_COINS) {
+                                            Toast.makeText(
+                                                context,
+                                                "Nicht genug Coins",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        } else {
+                                            showConfirmBuy = true
+                                        }
+                                    } else {
+                                        startLootboxPurchase()
                                     }
                                 }
                                 "tapping" -> {
@@ -1212,17 +1266,58 @@ private fun LootboxTab(
                     textAlign = TextAlign.Center
                 )
             }
-            Text(
-                "Zufallsinhalt aus dem Itemshop. Chance steigt mit günstigeren Items; " +
-                    "teure Items sind seltener. Sehr teure Items sind extrem selten. " +
-                    "Coins für Lootboxen sind nicht erstattungsfähig. Details in den AGB.",
-                color = TextMuted.copy(alpha = 0.85f),
-                fontFamily = BodyFont,
-                fontSize = 11.sp,
-                lineHeight = 15.sp,
-                textAlign = TextAlign.Center,
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.padding(bottom = 10.dp)
-            )
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Kauf bestätigen",
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            if (confirmBuy) {
+                                "Vor dem Kauf nachfragen"
+                            } else {
+                                "Direkt mit Tippen kaufen"
+                            },
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 12.sp
+                        )
+                    }
+                    Switch(
+                        checked = confirmBuy,
+                        onCheckedChange = { on ->
+                            scope.launch { prefs.setLootboxConfirmBuy(on) }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = MaleBlue,
+                            uncheckedThumbColor = Color.White.copy(alpha = 0.85f),
+                            uncheckedTrackColor = Color.White.copy(alpha = 0.18f)
+                        )
+                    )
+                }
+                Text(
+                    "Zufallsinhalt aus dem Itemshop. Chance steigt mit günstigeren Items; " +
+                        "teure Items sind seltener. Sehr teure Items sind extrem selten. " +
+                        "Coins für Lootboxen sind nicht erstattungsfähig. Details in den AGB.",
+                    color = TextMuted.copy(alpha = 0.85f),
+                    fontFamily = BodyFont,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
         if (flashAnim > 0.05f) {
             Box(

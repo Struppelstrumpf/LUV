@@ -71,6 +71,8 @@ class PrefsRepository(private val context: Context) {
     private val lobbyCanvasSeenKey = stringPreferencesKey("lobby_canvas_seen_json")
     /** Zuletzt bekannte Anzahl pending Markt-Verkäufe (für Push bei Anstieg) */
     private val pendingSalesKnownKey = intPreferencesKey("pending_sales_known_count")
+    /** Lootbox: vor Kauf bestätigen (Standard an) */
+    private val lootboxConfirmBuyKey = booleanPreferencesKey("lootbox_confirm_buy")
 
     // Legacy keys — Migration
     private val genderKey = stringPreferencesKey("gender")
@@ -454,6 +456,14 @@ class PrefsRepository(private val context: Context) {
 
     suspend fun isPartnerHapticEnabled(): Boolean =
         context.dataStore.data.first()[partnerHapticKey] ?: true
+
+    val lootboxConfirmBuyFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[lootboxConfirmBuyKey] ?: true
+    }
+
+    suspend fun setLootboxConfirmBuy(enabled: Boolean) {
+        context.dataStore.edit { it[lootboxConfirmBuyKey] = enabled }
+    }
 
     /** true = noch nicht gemeldet (jetzt markieren), false = schon bekannt */
     suspend fun claimJoinAnnouncement(lobbyId: String, peerKey: String): Boolean {
