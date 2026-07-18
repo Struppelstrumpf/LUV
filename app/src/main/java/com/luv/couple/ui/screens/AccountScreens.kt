@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -811,7 +813,7 @@ fun SimpleBottomBar(
     onSelect: (Int) -> Unit
 ) {
     // Home · Galerie · Inventar · Markt · Zahnrad (Konto)
-    val labels = listOf("Home", "Galerie", "Inventar", "Markt", "⚙")
+    val labels = listOf("Home", "Galerie", "Inventar", "Markt", null)
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -822,33 +824,82 @@ fun SimpleBottomBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .height(52.dp)
                 .clip(RoundedCornerShape(28.dp))
                 .background(Color(0xEE171C24))
                 .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(28.dp))
                 .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             labels.forEachIndexed { index, label ->
                 val active = selected == index
                 Box(
                     modifier = Modifier
                         .weight(1f)
+                        .fillMaxHeight()
                         .clip(RoundedCornerShape(22.dp))
                         .background(if (active) AccentRose.copy(alpha = 0.22f) else Color.Transparent)
-                        .clickable { onSelect(index) }
-                        .padding(vertical = 11.dp),
+                        .clickable { onSelect(index) },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        label,
-                        color = if (active) TextPrimary else TextMuted,
-                        fontFamily = DisplayFont,
-                        fontSize = if (label == "⚙") 18.sp else 12.sp,
-                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                        maxLines = 1
-                    )
+                    if (label == null) {
+                        BottomBarGear(
+                            color = if (active) TextPrimary else TextMuted,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    } else {
+                        Text(
+                            label,
+                            color = if (active) TextPrimary else TextMuted,
+                            fontFamily = DisplayFont,
+                            fontSize = 12.sp,
+                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                            maxLines = 1,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun BottomBarGear(
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val stroke = size.minDimension * 0.12f
+        val cx = center.x
+        val cy = center.y
+        val ringR = size.minDimension * 0.28f
+        val toothR = size.minDimension * 0.42f
+        val holeR = size.minDimension * 0.12f
+        drawCircle(
+            color = color,
+            radius = ringR,
+            center = center,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke)
+        )
+        val teeth = 8
+        for (i in 0 until teeth) {
+            val a = (Math.PI * 2.0 * i) / teeth
+            drawCircle(
+                color = color,
+                radius = stroke * 0.85f,
+                center = androidx.compose.ui.geometry.Offset(
+                    cx + kotlin.math.cos(a).toFloat() * toothR,
+                    cy + kotlin.math.sin(a).toFloat() * toothR
+                )
+            )
+        }
+        drawCircle(
+            color = color,
+            radius = holeR,
+            center = center,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke * 0.85f)
+        )
     }
 }
