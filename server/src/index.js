@@ -198,6 +198,43 @@ const PET_SHOP_PRICES = {
   "🐮": 20, "🐷": 20, "🐧": 22, "🐢": 22, "🦋": 18, "🦄": 40,
 };
 
+const STARTER_EMOJIS = ["👍", "❌", "❤️", "😂", "😱", "😡", "😭"];
+
+/** Nur Katalog-/Starter-Items — verhindert eingeschmuggelte Fake-Items. */
+function isKnownInventoryItem(kind, itemId) {
+  const id = String(itemId || "").trim();
+  if (!id) return false;
+  if (kind === "pets") return id === DEFAULT_PET || PET_SHOP_PRICES[id] != null;
+  if (kind === "themes") return id === "meadow" || THEME_SHOP_PRICES[id] != null;
+  if (kind === "stickers") return STICKER_SHOP_PRICES[id] != null;
+  if (kind === "emojis") {
+    return STARTER_EMOJIS.includes(id) || EMOJI_SHOP_PRICES[id] != null;
+  }
+  return false;
+}
+
+function scrubInventoryCatalog(inv) {
+  inv.pets = (inv.pets || []).filter((p) => isKnownInventoryItem("pets", p));
+  inv.themes = (inv.themes || []).filter((t) => isKnownInventoryItem("themes", t));
+  for (const e of Object.keys(inv.stickers || {})) {
+    if (!isKnownInventoryItem("stickers", e)) delete inv.stickers[e];
+    else inv.stickers[e] = Math.min(999, Math.max(0, Math.floor(Number(inv.stickers[e]) || 0)));
+    if (inv.stickers[e] <= 0) delete inv.stickers[e];
+  }
+  for (const e of Object.keys(inv.emojis || {})) {
+    if (!isKnownInventoryItem("emojis", e)) delete inv.emojis[e];
+    else inv.emojis[e] = Math.min(999, Math.max(0, Math.floor(Number(inv.emojis[e]) || 0)));
+    if (inv.emojis[e] <= 0) delete inv.emojis[e];
+  }
+}
+
+/** Item nur gutschreiben, wenn es im Shop-Katalog existiert. */
+function safeGiveItem(user, kind, itemId) {
+  if (!isKnownInventoryItem(kind, itemId)) return false;
+  market.giveItemToUser(user, ensureInventory, kind, itemId);
+  return true;
+}
+
 function ensureInventory(user) {
   if (!user.inventory || typeof user.inventory !== "object") {
     user.inventory = {};
@@ -207,9 +244,10 @@ function ensureInventory(user) {
   if (!Array.isArray(inv.themes)) inv.themes = [];
   if (!inv.stickers || typeof inv.stickers !== "object") inv.stickers = {};
   if (!Array.isArray(inv.pets)) inv.pets = [];
+  // Fremde/Fake-Items aus Mods oder alten Bugs entfernen
+  scrubInventoryCatalog(inv);
   // Starter
-  const starterEmojis = ["👍", "❌", "❤️", "😂", "😱", "😡", "😭"];
-  for (const e of starterEmojis) {
+  for (const e of STARTER_EMOJIS) {
     if (!inv.emojis[e] || inv.emojis[e] < 1) inv.emojis[e] = 1;
   }
   if (!inv.themes.includes("meadow")) inv.themes.push("meadow");
@@ -269,7 +307,7 @@ function expireOpenListing(entry) {
   if (!entry.expiresAt || entry.expiresAt >= Date.now()) return false;
   const seller = getDb().users?.[entry.sellerId];
   if (seller) {
-    market.giveItemToUser(seller, ensureInventory, entry.kind, entry.itemId);
+    safeGiveItem(seller, entry.kind, entry.itemId);
   }
   entry.status = "expired";
   entry.expiredAt = Date.now();
@@ -382,16 +420,18 @@ function mergeInventory(target, source) {
   const a = ensureInventory(target);
   const b = ensureInventory(source);
   for (const [e, n] of Object.entries(b.emojis || {})) {
-    a.emojis[e] = Math.max(Number(a.emojis[e]) || 0, Number(n) || 0);
+    if (!isKnownInventoryItem("emojis", e)) continue;
+    a.emojis[e] = Math.min(999, Math.max(Number(a.emojis[e]) || 0, Number(n) || 0));
   }
   for (const [e, n] of Object.entries(b.stickers || {})) {
-    a.stickers[e] = Math.max(Number(a.stickers[e]) || 0, Number(n) || 0);
+    if (!isKnownInventoryItem("stickers", e)) continue;
+    a.stickers[e] = Math.min(999, Math.max(Number(a.stickers[e]) || 0, Number(n) || 0));
   }
   for (const t of b.themes || []) {
-    if (t && !a.themes.includes(t)) a.themes.push(t);
+    if (t && isKnownInventoryItem("themes", t) && !a.themes.includes(t)) a.themes.push(t);
   }
   for (const p of b.pets || []) {
-    if (p && !a.pets.includes(p)) a.pets.push(p);
+    if (p && isKnownInventoryItem("pets", p) && !a.pets.includes(p)) a.pets.push(p);
   }
   if (!a.equippedPet || !a.pets.includes(a.equippedPet)) {
     a.equippedPet = b.equippedPet && a.pets.includes(b.equippedPet)
@@ -4912,12 +4952,15 @@ app.post("/v1/shop/buy-emoji", (req, res) => {
   }
   const price = Number(EMOJI_SHOP_PRICES[emoji]) || 0;
   if (price < 1) return res.status(400).json({ error: "bad_price" });
+  if (!isKnownInventoryItem("emojis", emoji)) {
+    return res.status(400).json({ error: "unknown_item", message: "Dieses Emoji gibt es im Shop nicht." });
+  }
   if (!requireCoins(ctx, price, res)) return;
   if (!applyLedger(ctx.user.id, -price, "buy_emoji", emoji)) {
     return res.status(402).json({ error: "no_coins", message: "Nicht genug Coins." });
   }
   const inv = ensureInventory(ctx.user);
-  inv.emojis[emoji] = (Number(inv.emojis[emoji]) || 0) + 1;
+  inv.emojis[emoji] = Math.min(999, (Number(inv.emojis[emoji]) || 0) + 1);
   scheduleSave();
   return res.json({
     ok: true,
@@ -4958,12 +5001,15 @@ app.post("/v1/shop/buy-sticker", (req, res) => {
   }
   const price = Number(STICKER_SHOP_PRICES[emoji]) || 0;
   if (price < 1) return res.status(400).json({ error: "bad_price" });
+  if (!isKnownInventoryItem("stickers", emoji)) {
+    return res.status(400).json({ error: "unknown_item", message: "Sticker unbekannt." });
+  }
   if (!requireCoins(ctx, price, res)) return;
   if (!applyLedger(ctx.user.id, -price, "buy_sticker", emoji)) {
     return res.status(402).json({ error: "no_coins", message: "Nicht genug Coins." });
   }
   const inv = ensureInventory(ctx.user);
-  inv.stickers[emoji] = (Number(inv.stickers[emoji]) || 0) + 1;
+  inv.stickers[emoji] = Math.min(999, (Number(inv.stickers[emoji]) || 0) + 1);
   scheduleSave();
   return res.json({
     ok: true,
@@ -5176,7 +5222,13 @@ function marketItemMeta(kind, itemId) {
     return { category: "stickers", emoji: id, label: id, sellable: STICKER_SHOP_PRICES[id] != null };
   }
   if (kind === "emojis") {
-    return { category: "emojis", emoji: id, label: id, sellable: true };
+    return {
+      category: "emojis",
+      emoji: id,
+      label: id,
+      // Nur Katalog-Emojis (Starter-Minimum bleibt in takeItem geschützt)
+      sellable: EMOJI_SHOP_PRICES[id] != null,
+    };
   }
   return null;
 }
@@ -5249,7 +5301,7 @@ app.post("/v1/market/list", (req, res) => {
     return res.status(400).json({ error: "self", message: "Nicht an dich selbst." });
   }
   const meta = marketItemMeta(kind, itemId);
-  if (!meta?.sellable) {
+  if (!meta?.sellable || !isKnownInventoryItem(kind, itemId)) {
     return res.status(400).json({ error: "not_sellable", message: "Diesen Artikel kannst du nicht anbieten." });
   }
   if (!market.userOwnsItem(ctx.user, ensureInventory, kind, itemId)) {
@@ -5312,7 +5364,7 @@ app.post("/v1/market/:id/cancel", (req, res) => {
     scheduleSave();
     return res.json({ ok: true, expired: true, user: publicUser(ctx.user) });
   }
-  market.giveItemToUser(ctx.user, ensureInventory, entry.kind, entry.itemId);
+  safeGiveItem(ctx.user, entry.kind, entry.itemId);
   entry.status = "cancelled";
   syncAchInventoryMetrics(ctx.user);
   scheduleSave();
@@ -5347,6 +5399,14 @@ app.post("/v1/market/:id/buy", (req, res) => {
       message: "Du hast diesen Artikel schon.",
     });
   }
+  if (!isKnownInventoryItem(entry.kind, entry.itemId)) {
+    // Ungültiges Listing → Item an Seller zurück, kein Kauf
+    const sellerBad = getDb().users?.[entry.sellerId];
+    if (sellerBad) safeGiveItem(sellerBad, entry.kind, entry.itemId);
+    entry.status = "cancelled";
+    scheduleSave();
+    return res.status(400).json({ error: "invalid_item", message: "Artikel ungültig." });
+  }
   const price = Math.max(1, Number(entry.priceCoins) || 0);
   ensureDailyGrant(ctx.user);
   if ((ctx.user.coins || 0) < price) {
@@ -5370,7 +5430,7 @@ app.post("/v1/market/:id/buy", (req, res) => {
     return res.status(402).json({ error: "no_coins", message: "Nicht genug Coins." });
   }
   applyLedger(seller.id, price, "market_sell", id);
-  market.giveItemToUser(ctx.user, ensureInventory, entry.kind, entry.itemId);
+  safeGiveItem(ctx.user, entry.kind, entry.itemId);
   market.recordPrice(getDb(), entry.kind, entry.itemId, price);
   trackAch(ctx.user, "market_bought", 1);
   trackAch(ctx.user, "coins_spent", price);
@@ -5434,12 +5494,15 @@ app.post("/v1/market/:id/trade", (req, res) => {
   if (!meta?.sellable) {
     return res.status(400).json({ error: "not_sellable" });
   }
+  if (!isKnownInventoryItem(entry.kind, entry.itemId) || !isKnownInventoryItem(offerKind, offerItemId)) {
+    return res.status(400).json({ error: "invalid_item", message: "Artikel ungültig." });
+  }
   if (!market.takeItemFromUser(ctx.user, ensureInventory, offerKind, offerItemId)) {
     return res.status(400).json({ error: "not_owned", message: "Dein Tauschartikel fehlt." });
   }
   const seller = getDb().users?.[entry.sellerId];
   if (!seller) {
-    market.giveItemToUser(ctx.user, ensureInventory, offerKind, offerItemId);
+    safeGiveItem(ctx.user, offerKind, offerItemId);
     entry.status = "cancelled";
     scheduleSave();
     return res.status(404).json({ error: "seller_gone" });
@@ -5450,8 +5513,8 @@ app.post("/v1/market/:id/trade", (req, res) => {
   entry.tradeReceivedKind = offerKind;
   entry.tradeReceivedItemId = offerItemId;
   // Buyer bekommt Listing-Item, Seller bekommt Offer-Item
-  market.giveItemToUser(ctx.user, ensureInventory, entry.kind, entry.itemId);
-  market.giveItemToUser(seller, ensureInventory, offerKind, offerItemId);
+  safeGiveItem(ctx.user, entry.kind, entry.itemId);
+  safeGiveItem(seller, offerKind, offerItemId);
   trackAch(ctx.user, "market_trades", 1);
   trackAch(seller, "market_trades", 1);
   syncAchInventoryMetrics(ctx.user);
