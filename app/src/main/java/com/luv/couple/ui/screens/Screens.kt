@@ -256,7 +256,7 @@ fun LobbiesScreen(
     onRenameLobby: (Lobby) -> Unit,
     onLeaveLobby: (Lobby) -> Unit,
     onReconnect: (Lobby) -> Unit,
-    onEditNickname: () -> Unit,
+    onOpenProfile: () -> Unit,
     updateState: UpdateUiState = UpdateUiState.Idle,
     onUpdateApp: () -> Unit = {}
 ) {
@@ -432,7 +432,7 @@ fun LobbiesScreen(
                         .size(44.dp)
                         .clip(CircleShape)
                         .background(accent)
-                        .clickable(onClick = onEditNickname),
+                        .clickable(onClick = onOpenProfile),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(

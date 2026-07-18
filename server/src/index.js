@@ -2763,6 +2763,86 @@ app.patch("/v1/me", (req, res) => {
   return res.json({ user: publicUser(ctx.user) });
 });
 
+function sanitizeProfileCanvas(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const themeId = String(raw.themeId || "meadow").trim().slice(0, 32) || "meadow";
+  const statusEmoji = String(raw.statusEmoji || "😊").trim().slice(0, 8) || "😊";
+  const bio = String(raw.bio || "").trim().slice(0, 280);
+  const layoutIn = Array.isArray(raw.layout) ? raw.layout : [];
+  const layout = [];
+  for (const el of layoutIn.slice(0, 48)) {
+    if (!el || typeof el !== "object") continue;
+    const id = String(el.id || "").trim().slice(0, 64);
+    const type = String(el.type || "sticker").trim().slice(0, 16);
+    if (!id) continue;
+    layout.push({
+      id,
+      type,
+      x: Math.min(100, Math.max(0, Number(el.x) || 50)),
+      y: Math.min(100, Math.max(0, Number(el.y) || 50)),
+      scale: Math.min(2.5, Math.max(0.35, Number(el.scale) || 1)),
+      rotation: Number(el.rotation) || 0,
+      flipX: Boolean(el.flipX),
+      visible: el.visible !== false,
+      z: Math.max(0, Math.min(100, Number(el.z) || 10)),
+      emoji: String(el.emoji || "").trim().slice(0, 8) || null,
+      text: String(el.text || "").trim().slice(0, 80) || null,
+      color: String(el.color || "").trim().slice(0, 16) || null,
+    });
+  }
+  return { themeId, statusEmoji, bio, layout };
+}
+
+app.get("/v1/me/profile", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const profile = sanitizeProfileCanvas(ctx.user.profileCanvas) || {
+    themeId: "meadow",
+    statusEmoji: "😊",
+    bio: "",
+    layout: [],
+  };
+  return res.json({
+    nickname: ctx.user.nickname || "Du",
+    userId: ctx.user.id,
+    profile,
+  });
+});
+
+app.put("/v1/me/profile", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const profile = sanitizeProfileCanvas(req.body?.profile || req.body);
+  if (!profile) return res.status(400).json({ error: "invalid_profile" });
+  ctx.user.profileCanvas = profile;
+  scheduleSave();
+  return res.json({
+    ok: true,
+    nickname: ctx.user.nickname || "Du",
+    userId: ctx.user.id,
+    profile,
+  });
+});
+
+app.get("/v1/users/:userId/profile", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const user = db.users?.[uid];
+  if (!user) return res.status(404).json({ error: "not_found" });
+  const profile = sanitizeProfileCanvas(user.profileCanvas) || {
+    themeId: "meadow",
+    statusEmoji: "😊",
+    bio: "",
+    layout: [],
+  };
+  return res.json({
+    nickname: user.nickname || "Jemand",
+    userId: user.id,
+    profile,
+  });
+});
+
 app.post("/v1/me/daily-claim", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;

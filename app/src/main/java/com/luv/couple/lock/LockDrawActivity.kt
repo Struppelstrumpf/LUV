@@ -47,6 +47,8 @@ import com.luv.couple.notify.LiveProximity
 import com.luv.couple.shop.ShopCatalog
 import com.luv.couple.ui.screens.BrushStudioSheet
 import com.luv.couple.ui.screens.EmojiBarEditorDialog
+import com.luv.couple.ui.screens.ProfileCanvasScreen
+import com.luv.couple.ui.theme.LuvTheme
 import com.luv.couple.update.AppUpdater
 import com.luv.couple.update.UpdateUiState
 import kotlinx.coroutines.Dispatchers
@@ -86,6 +88,7 @@ class LockDrawActivity : ComponentActivity() {
     private var eraserOn = false
     private var emojiEditorHost: FrameLayout? = null
     private var brushStudioHost: FrameLayout? = null
+    private var profileHost: FrameLayout? = null
     private lateinit var gameHud: LinearLayout
     private lateinit var gameHudTitle: TextView
     private lateinit var gameHudSubtitle: TextView
@@ -1918,30 +1921,54 @@ class LockDrawActivity : ComponentActivity() {
     }
 
     private fun showPeerProfileDialog(peer: PeerInfo) {
+        val root = rootView ?: return
+        if (profileHost != null) return
         val myId = AccountSession.account.value?.id
         val isMe = peer.peerKey == "me" ||
             (!myId.isNullOrBlank() && peer.userId == myId)
-        val status = when {
-            peer.departed -> "Hat die Lobby verlassen"
-            peer.active -> "Gerade auf der Leinwand"
-            peer.online -> "In der Lobby"
-            else -> "Kurz offline"
+        val host = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            elevation = 48f
+            isClickable = true
+            setBackgroundColor(0xEE0E1117.toInt())
         }
-        val message = buildString {
-            append(peer.nickname.trim().ifBlank { "Jemand" })
-            append("\n")
-            append(status)
+        fun dismissProfile() {
+            root.removeView(host)
+            profileHost = null
         }
-        val builder = MaterialAlertDialogBuilder(this)
-            .setTitle("Profil")
-            .setMessage(message)
-            .setNegativeButton("Schließen", null)
-        if (!isMe) {
-            builder.setPositiveButton("Melden") { _, _ ->
-                showReportPeerDialog(peer)
+        val compose = ComposeView(this).apply {
+            setContent {
+                LuvTheme {
+                    ProfileCanvasScreen(
+                        nickname = peer.nickname.trim().ifBlank { "Jemand" },
+                        colorIndex = peer.colorIndex,
+                        editable = isMe,
+                        userId = if (isMe) null else peer.userId,
+                        onClose = { dismissProfile() },
+                        onReport = if (!isMe) {
+                            {
+                                dismissProfile()
+                                showReportPeerDialog(peer)
+                            }
+                        } else {
+                            null
+                        }
+                    )
+                }
             }
         }
-        builder.show()
+        host.addView(
+            compose,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        root.addView(host)
+        profileHost = host
     }
 
     private fun showReportPeerDialog(peer: PeerInfo) {

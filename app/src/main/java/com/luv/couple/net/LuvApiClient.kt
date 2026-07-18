@@ -491,6 +491,34 @@ object LuvApiClient {
         }
     }
 
+    suspend fun fetchMyProfileCanvas(): Pair<String, com.luv.couple.profile.ProfileState> =
+        withContext(Dispatchers.IO) {
+            val json = authedGet("/v1/me/profile")
+            val nick = json.optString("nickname", "Du")
+            val raw = json.optJSONObject("profile")?.toString()
+            nick to com.luv.couple.profile.ProfileCatalog.decode(raw, nick)
+        }
+
+    suspend fun saveMyProfileCanvas(state: com.luv.couple.profile.ProfileState): Boolean =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject()
+                .put("profile", JSONObject(com.luv.couple.profile.ProfileCatalog.encode(state)))
+                .toString()
+            runCatching { authedPut("/v1/me/profile", body) }.isSuccess
+        }
+
+    suspend fun fetchUserProfileCanvas(userId: String): Pair<String, com.luv.couple.profile.ProfileState>? =
+        withContext(Dispatchers.IO) {
+            val uid = userId.trim()
+            if (uid.isBlank()) return@withContext null
+            runCatching {
+                val json = authedGet("/v1/users/${uid.encodeURL()}/profile")
+                val nick = json.optString("nickname", "Jemand")
+                val raw = json.optJSONObject("profile")?.toString()
+                nick to com.luv.couple.profile.ProfileCatalog.decode(raw, nick)
+            }.getOrNull()
+        }
+
     suspend fun shopPacks(): Pair<Boolean, List<ShopPack>> = withContext(Dispatchers.IO) {
         val request = authedRequestBuilder("/v1/shop/packs").get().build()
         http.newCall(request).execute().use { response ->
@@ -666,6 +694,17 @@ object LuvApiClient {
     private fun authedPatch(path: String, jsonBody: String): JSONObject {
         val request = authedRequestBuilder(path)
             .patch(jsonBody.toRequestBody(jsonMedia))
+            .build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw LuvApiException("API-Fehler (${response.code})")
+            return JSONObject(raw)
+        }
+    }
+
+    private fun authedPut(path: String, jsonBody: String): JSONObject {
+        val request = authedRequestBuilder(path)
+            .put(jsonBody.toRequestBody(jsonMedia))
             .build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()

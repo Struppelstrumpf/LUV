@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.15",
+            listOf(
+                "Profil-Leinwand: Sticker, Hintergründe und Truhe",
+                "Profil vom Menü-Avatar und von Leinwand-Avataren öffnen",
+            )
+        ),
+        Entry(
             "1.8.99",
             listOf(
                 "Schwamm ohne graues Kästchen — gelb nur wenn aktiv",

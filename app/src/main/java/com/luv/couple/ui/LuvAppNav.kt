@@ -64,6 +64,7 @@ import com.luv.couple.ui.screens.InventoryScreen
 import com.luv.couple.ui.screens.LobbiesScreen
 import com.luv.couple.ui.screens.MarketScreen
 import com.luv.couple.ui.screens.NicknameScreen
+import com.luv.couple.ui.screens.ProfileCanvasScreen
 import com.luv.couple.ui.screens.QuietHoursScreen
 import com.luv.couple.ui.screens.SettingsScreen
 import com.luv.couple.ui.screens.RedeemScreen
@@ -85,6 +86,7 @@ object Routes {
     const val REDEEM = "redeem"
     const val ADMIN = "admin"
     const val NICKNAME = "nickname"
+    const val PROFILE = "profile"
     const val SETTINGS = "settings"
     const val QUIET_HOURS = "quiet_hours"
     const val RENAME = "rename/{lobbyId}"
@@ -756,7 +758,7 @@ fun LuvAppNav() {
                             onReconnect = { lobby ->
                                 PairConnectionService.reconnectNow(context, lobby.id)
                             },
-                            onEditNickname = { navController.navigate(Routes.NICKNAME) },
+                            onOpenProfile = { navController.navigate(Routes.PROFILE) },
                             updateState = updateState,
                             onUpdateApp = { startAppUpdate() }
                         )
@@ -853,6 +855,16 @@ fun LuvAppNav() {
                         navController.popBackStack()
                     }
                 }
+            )
+        }
+
+        composable(Routes.PROFILE) {
+            ProfileCanvasScreen(
+                nickname = nickname ?: "Du",
+                colorIndex = colorIndex,
+                editable = true,
+                onClose = { navController.popBackStack() },
+                onEditNickname = { navController.navigate(Routes.NICKNAME) }
             )
         }
 

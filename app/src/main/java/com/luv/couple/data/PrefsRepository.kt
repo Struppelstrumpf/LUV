@@ -51,6 +51,8 @@ class PrefsRepository(private val context: Context) {
     private val ownedEmojisKey = stringPreferencesKey("owned_emojis_json")
     /** Pinseldicke auf der Leinwand (px) */
     private val brushWidthKey = floatPreferencesKey("brush_width")
+    /** Profil-Leinwand JSON */
+    private val profileCanvasKey = stringPreferencesKey("profile_canvas_json")
 
     // Legacy keys — Migration
     private val genderKey = stringPreferencesKey("gender")
@@ -151,6 +153,13 @@ class PrefsRepository(private val context: Context) {
         context.dataStore.edit {
             it[brushWidthKey] = width.coerceIn(6f, 40f)
         }
+    }
+
+    suspend fun profileCanvasJson(): String? =
+        context.dataStore.data.first()[profileCanvasKey]
+
+    suspend fun setProfileCanvasJson(json: String) {
+        context.dataStore.edit { it[profileCanvasKey] = json }
     }
 
     suspend fun setTutorialDone(done: Boolean = true) {
