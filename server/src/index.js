@@ -209,22 +209,66 @@ function ensureInventory(user) {
     if (!inv.emojis[e] || inv.emojis[e] < 1) inv.emojis[e] = 1;
   }
   if (!inv.themes.includes("meadow")) inv.themes.push("meadow");
-  // Bereits am Profil genutzte Themes behalten (kein Soft-Lock nach Shop-Umstellung)
-  const profileTheme = String(user.profileCanvas?.themeId || "").trim();
-  if (profileTheme && THEME_SHOP_PRICES[profileTheme] != null && !inv.themes.includes(profileTheme)) {
-    inv.themes.push(profileTheme);
-  }
   if (!inv.pets.includes(DEFAULT_PET)) inv.pets.push(DEFAULT_PET);
-  const profilePet = String(user.profileCanvas?.companionEmoji || "").trim().slice(0, 8);
-  if (profilePet && PET_SHOP_PRICES[profilePet] != null && !inv.pets.includes(profilePet)) {
-    inv.pets.push(profilePet);
-  }
+  // WICHTIG: Keine Shop-Items aus profileCanvas „schenken“ — sonst Inventar-Bypass per PUT /profile
   if (!inv.equippedPet || !inv.pets.includes(inv.equippedPet)) {
-    inv.equippedPet =
-      profilePet && inv.pets.includes(profilePet) ? profilePet : DEFAULT_PET;
+    inv.equippedPet = DEFAULT_PET;
   }
   user.inventory = inv;
   return inv;
+}
+
+/** Theme/Begleiter nur wenn im Inventar (oder kostenlos). */
+function clampProfileToInventory(user, profile) {
+  if (!profile || typeof profile !== "object") return profile;
+  const inv = ensureInventory(user);
+  let themeId = String(profile.themeId || "meadow").trim().slice(0, 32) || "meadow";
+  if (!inv.themes.includes(themeId)) themeId = "meadow";
+  let companionEmoji =
+    String(profile.companionEmoji || DEFAULT_PET).trim().slice(0, 8) || DEFAULT_PET;
+  if (!inv.pets.includes(companionEmoji)) companionEmoji = DEFAULT_PET;
+  // Sticker im Layout nur behalten, wenn besessen (oder kein Shop-Preis = frei)
+  const layout = Array.isArray(profile.layout)
+    ? profile.layout.filter((el) => {
+        if (!el || el.type !== "sticker") return true;
+        const emoji = String(el.emoji || el.text || "").trim().slice(0, 8);
+        if (!emoji) return false;
+        if (STICKER_SHOP_PRICES[emoji] == null) return true;
+        return (Number(inv.stickers[emoji]) || 0) > 0;
+      })
+    : [];
+  return { ...profile, themeId, companionEmoji, layout };
+}
+
+function userOwnsCanvasEmoji(user, emoji) {
+  const e = String(emoji || "").trim().slice(0, 8);
+  if (!e) return true;
+  const inv = ensureInventory(user);
+  if ((Number(inv.emojis[e]) || 0) > 0) return true;
+  if ((Number(inv.stickers[e]) || 0) > 0) return true;
+  // Freie Shop-Preise 0 oder nicht gelistet → erlaubt
+  if (EMOJI_SHOP_PRICES[e] === 0) return true;
+  if (STICKER_SHOP_PRICES[e] === 0) return true;
+  if (EMOJI_SHOP_PRICES[e] == null && STICKER_SHOP_PRICES[e] == null) return true;
+  return false;
+}
+
+/** Einfaches IP-Rate-Limit (Anti-Account-Farming). */
+const rateBuckets = new Map();
+function rateLimit(key, max, windowMs) {
+  const now = Date.now();
+  let b = rateBuckets.get(key);
+  if (!b || now - b.start >= windowMs) {
+    b = { start: now, count: 0 };
+    rateBuckets.set(key, b);
+  }
+  b.count += 1;
+  if (rateBuckets.size > 5000) {
+    for (const [k, v] of rateBuckets) {
+      if (now - v.start >= windowMs) rateBuckets.delete(k);
+    }
+  }
+  return b.count <= max;
 }
 
 function userPetEmoji(user) {
@@ -3161,6 +3205,13 @@ app.get("/v1/auth/config", (_req, res) => {
 });
 
 app.post("/v1/auth/device", (req, res) => {
+  const ip = clientIp(req);
+  if (!rateLimit(`auth_device:${ip}`, 40, 60 * 60 * 1000)) {
+    return res.status(429).json({
+      error: "rate_limited",
+      message: "Zu viele Anmeldeversuche. Bitte später erneut.",
+    });
+  }
   const installId = String(req.body?.installId || "").trim();
   const installSecret = String(req.body?.installSecret || "").trim();
   let nickname = String(req.body?.nickname || "").trim().slice(0, 18);
@@ -3172,6 +3223,12 @@ app.post("/v1/auth/device", (req, res) => {
   let user = Object.values(db.users).find((u) => u.secretHash === secretHash);
   let created = false;
   if (!user) {
+    if (!rateLimit(`auth_signup:${ip}`, 3, 24 * 60 * 60 * 1000)) {
+      return res.status(429).json({
+        error: "rate_limited",
+        message: "Zu viele neue Konten von diesem Netz. Bitte später oder mit Google anmelden.",
+      });
+    }
     if (!nickname || nickname.length < 2) nickname = "Luv";
     user = {
       id: newId("u"),
@@ -3442,13 +3499,20 @@ function sanitizeProfileCanvas(raw) {
 app.get("/v1/me/profile", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
-  const profile = sanitizeProfileCanvas(ctx.user.profileCanvas) || {
+  const raw = sanitizeProfileCanvas(ctx.user.profileCanvas) || {
     themeId: "meadow",
     statusEmoji: "😊",
-    companionEmoji: "💕",
+    companionEmoji: DEFAULT_PET,
     bio: "",
     layout: [],
   };
+  const profile = clampProfileToInventory(ctx.user, raw);
+  if (
+    JSON.stringify(ctx.user.profileCanvas || {}) !== JSON.stringify(profile)
+  ) {
+    ctx.user.profileCanvas = profile;
+    scheduleSave();
+  }
   return res.json({
     nickname: ctx.user.nickname || "Du",
     userId: ctx.user.id,
@@ -3459,8 +3523,10 @@ app.get("/v1/me/profile", (req, res) => {
 app.put("/v1/me/profile", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
-  const profile = sanitizeProfileCanvas(req.body?.profile || req.body);
-  if (!profile) return res.status(400).json({ error: "invalid_profile" });
+  const raw = sanitizeProfileCanvas(req.body?.profile || req.body);
+  if (!raw) return res.status(400).json({ error: "invalid_profile" });
+  // Nur besessene Themes/Pets/Sticker — kein Shop-Bypass über Profil-JSON
+  const profile = clampProfileToInventory(ctx.user, raw);
   ctx.user.profileCanvas = profile;
   scheduleSave();
   return res.json({
@@ -3479,16 +3545,18 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   const user = db.users?.[uid];
   if (!user) return res.status(404).json({ error: "not_found" });
   ensureCoinBuckets(user);
-  const profile = sanitizeProfileCanvas(user.profileCanvas) || {
+  const raw = sanitizeProfileCanvas(user.profileCanvas) || {
     themeId: "meadow",
     statusEmoji: "😊",
     companionEmoji: DEFAULT_PET,
     bio: "",
     layout: [],
   };
+  const profile = clampProfileToInventory(user, raw);
   const petEmoji = userPetEmoji(user);
   if (!profile.companionEmoji) profile.companionEmoji = petEmoji;
   const isSelf = uid === ctx.user.id;
+  const areFriends = !isSelf && friendRelation(ctx.user, uid) === "friends";
   return res.json({
     nickname: user.nickname || "Jemand",
     userId: user.id,
@@ -3496,7 +3564,7 @@ app.get("/v1/users/:userId/profile", (req, res) => {
     profile,
     petEmoji,
     friendStatus: isSelf ? "self" : friendRelation(ctx.user, uid),
-    canPetKraul: !isSelf && canPetKraulToday(ctx.user, uid),
+    canPetKraul: areFriends && canPetKraulToday(ctx.user, uid),
   });
 });
 
@@ -3635,7 +3703,7 @@ app.put("/v1/me/friends/order", (req, res) => {
   });
 });
 
-/** Begleiter kraulen — Empfänger +1 Coin, 1× pro Person / Tag (0:00 Berlin). */
+/** Begleiter kraulen — nur Freunde, Empfänger +1 Coin, 1× pro Person / Tag. */
 app.post("/v1/users/:userId/pet-kraul", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
@@ -3647,6 +3715,12 @@ app.post("/v1/users/:userId/pet-kraul", (req, res) => {
   const db = getDb();
   const target = db.users?.[toId];
   if (!target) return res.status(404).json({ error: "not_found" });
+  if (friendRelation(ctx.user, toId) !== "friends") {
+    return res.status(403).json({
+      error: "friends_only",
+      message: "Kraulen geht nur bei Freunden.",
+    });
+  }
   ensureCoinBuckets(ctx.user);
   ensureCoinBuckets(target);
   if (!canPetKraulToday(ctx.user, toId)) {
@@ -3655,7 +3729,20 @@ app.post("/v1/users/:userId/pet-kraul", (req, res) => {
       message: "Diesen Begleiter hast du heute schon gekrault.",
     });
   }
+  // Empfänger: max. 25 Kraul-Coins / Tag (Farming-Deckel)
+  const day = todayKey();
+  if (target.petKraulRecvDay !== day) {
+    target.petKraulRecvDay = day;
+    target.petKraulRecvCount = 0;
+  }
+  if ((target.petKraulRecvCount || 0) >= 25) {
+    return res.status(400).json({
+      error: "recv_cap",
+      message: "Heute schon genug Kraule bekommen.",
+    });
+  }
   applyLedger(toId, 1, "pet_kraul_recv", ctx.user.id);
+  target.petKraulRecvCount = (target.petKraulRecvCount || 0) + 1;
   markPetKraul(ctx.user, toId);
   scheduleSave();
   const petEmoji = userPetEmoji(target);
@@ -4340,23 +4427,40 @@ app.post("/v1/webhooks/mollie", async (req, res) => {
     const db = getDb();
     let payment = db.payments[id];
     if (!payment) {
+      // Ohne lokalen Checkout-Record: nur mit gültigem Pack aus PACKS (kein Metadata-Coins)
+      const packId = String(data.metadata?.packId || "");
+      const pack = PACKS[packId];
+      const userId = String(data.metadata?.userId || "");
+      if (!pack || !userId || !db.users[userId]) {
+        return res.status(200).send("ok");
+      }
       payment = {
         id,
-        userId: data.metadata?.userId,
-        packId: data.metadata?.packId,
-        coins: Number(data.metadata?.coins || 0),
+        userId,
+        packId: pack.id,
+        coins: Number(pack.coins) || 0,
         status: data.status,
         createdAt: Date.now(),
         credited: false,
+        ip: String(data.metadata?.ip || ""),
       };
       db.payments[id] = payment;
     }
     payment.status = data.status;
-    if (data.status === "paid" && !payment.credited && payment.userId && payment.coins > 0) {
-      applyLedger(payment.userId, payment.coins, "mollie_purchase", id);
+    const packId = payment.packId || data.metadata?.packId;
+    const pack = packId ? PACKS[packId] : null;
+    const creditCoins = pack
+      ? Number(pack.coins) || 0
+      : Number(payment.coins) || 0;
+    if (pack) payment.coins = creditCoins;
+    if (
+      data.status === "paid" &&
+      !payment.credited &&
+      payment.userId &&
+      creditCoins > 0
+    ) {
+      applyLedger(payment.userId, creditCoins, "mollie_purchase", id);
       payment.credited = true;
-      const packId = payment.packId || data.metadata?.packId;
-      const pack = PACKS[packId];
       if (pack?.oncePerUserAndIp) {
         const user = db.users[payment.userId];
         if (user) user.introOfferUsed = true;
@@ -6375,6 +6479,16 @@ wss.on("connection", (socket, req) => {
             })
           );
         }
+        if (json.emoji && !userOwnsCanvasEmoji(user, json.emoji)) {
+          socket.send(
+            JSON.stringify({
+              type: "economy_block",
+              error: "not_owned",
+              message: "Dieses Emoji ist nicht in deinem Inventar.",
+            })
+          );
+          return;
+        }
       }
       const stored = strokeFromSocketMessage(json, socket);
       if (!stored) return;
@@ -6420,6 +6534,16 @@ wss.on("connection", (socket, req) => {
     }
 
     if (type === "sticker_place") {
+      if (user && json.emoji && !userOwnsCanvasEmoji(user, json.emoji)) {
+        socket.send(
+          JSON.stringify({
+            type: "economy_block",
+            error: "not_owned",
+            message: "Dieser Sticker ist nicht in deinem Inventar.",
+          })
+        );
+        return;
+      }
       // Legacy → als Emoji-Strich in die gleiche History wie Linien
       const sticker = sanitizeStoredSticker({
         id: json.id,

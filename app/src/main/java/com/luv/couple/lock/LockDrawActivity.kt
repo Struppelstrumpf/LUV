@@ -1652,7 +1652,7 @@ class LockDrawActivity : ComponentActivity() {
         maybeShowPendingClearVote()
         maybeShowPendingPublicVote()
         lifecycleScope.launch {
-            runCatching { AppUpdater.check(this@LockDrawActivity, notify = false) }
+            runCatching { AppUpdater.checkOnNavigate(this@LockDrawActivity) }
             val id = lobbyId ?: return@launch
             val lobby = withContext(Dispatchers.IO) {
                 LuvApp.instance.prefs.snapshot().lobbies.firstOrNull { it.id == id }

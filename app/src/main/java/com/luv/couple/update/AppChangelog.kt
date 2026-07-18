@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.41",
+            listOf(
+                "Update-Check bei Tab- und Menüwechseln — Käufe bleiben gespeichert",
+                "Sicherheit: Shop, Inventar & Coins nur noch vom Server",
+            )
+        ),
+        Entry(
             "1.9.40",
             listOf(
                 "Update-Hinweis: Hintergrund weiß verschwommen",

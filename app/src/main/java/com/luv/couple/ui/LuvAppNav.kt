@@ -24,6 +24,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.luv.couple.LuvApp
@@ -716,6 +717,13 @@ fun LuvAppNav() {
 
     val destination = startDestination ?: return
 
+    // Bei jeder Menü-/Screen-Navigation auf Updates prüfen (throttled)
+    val navRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+    LaunchedEffect(navRoute, tab) {
+        if (destination != Routes.MAIN && navRoute == null) return@LaunchedEffect
+        runCatching { AppUpdater.checkOnNavigate(context) }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
     NavHost(navController = navController, startDestination = destination) {
         composable(Routes.TUTORIAL) {
@@ -949,6 +957,8 @@ fun LuvAppNav() {
                         if (next == 4) accountMessage = null
                         tab = next
                         scope.launch {
+                            // Update-Check bei Tab-Wechsel (Käufe/API laufen weiter)
+                            runCatching { AppUpdater.checkOnNavigate(context) }
                             when (next) {
                                 2 -> syncInventory()
                                 3 -> {

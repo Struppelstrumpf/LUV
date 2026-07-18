@@ -66,6 +66,9 @@ object AppUpdater {
 
     private val checking = AtomicBoolean(false)
     private val downloading = AtomicBoolean(false)
+    @Volatile
+    private var lastNavCheckAt = 0L
+    private const val NAV_CHECK_MIN_MS = 8_000L
 
     fun offerFocus() {
         _focusRequest.value = true
@@ -130,6 +133,25 @@ object AppUpdater {
         is UpdateUiState.Ready -> s.release
         is UpdateUiState.Error -> s.release
         else -> null
+    }
+
+    /**
+     * Leichter Check bei Tab-/Menüwechseln.
+     * Throttled — unterbricht keine laufenden Käufe/Downloads.
+     */
+    suspend fun checkOnNavigate(context: Context): AppRelease? {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastNavCheckAt < NAV_CHECK_MIN_MS) {
+            return currentReleaseOrNull()
+        }
+        // Während Download/Ready nicht stören
+        when (_state.value) {
+            is UpdateUiState.Downloading, is UpdateUiState.Ready ->
+                return currentReleaseOrNull()
+            else -> Unit
+        }
+        lastNavCheckAt = now
+        return check(context, notify = false)
     }
 
     suspend fun check(context: Context, notify: Boolean = true): AppRelease? = withContext(Dispatchers.IO) {

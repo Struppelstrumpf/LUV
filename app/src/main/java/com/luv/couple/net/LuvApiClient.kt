@@ -1255,6 +1255,8 @@ object LuvApiClient {
     private fun authedRequestBuilder(path: String): Request.Builder {
         val b = Request.Builder().url("${baseUrl()}$path")
         sessionToken?.let { b.header("Authorization", "Bearer $it") }
+        b.header("X-Luv-Version-Code", BuildConfig.VERSION_CODE.toString())
+        b.header("X-Luv-Version-Name", BuildConfig.VERSION_NAME)
         return b
     }
 
