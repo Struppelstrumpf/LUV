@@ -5267,6 +5267,20 @@ app.get("/v1/market", (req, res) => {
   return res.json({ ok: true, ...data });
 });
 
+/** Angebote zu einem Item (Nasebär-Drill-down). */
+app.get("/v1/market/offers", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const mode = String(req.query.mode || "market") === "private" ? "private" : "market";
+  const kind = String(req.query.kind || "").trim();
+  const itemId = String(req.query.itemId || "").trim().slice(0, 24);
+  if (!["pets", "themes", "stickers", "emojis"].includes(kind) || !itemId) {
+    return res.status(400).json({ error: "bad_item", message: "Item ungültig." });
+  }
+  const data = market.listOffersForItem(getDb(), ctx.user.id, { kind, itemId, mode });
+  return res.json({ ok: true, ...data });
+});
+
 app.get("/v1/market/mine", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;

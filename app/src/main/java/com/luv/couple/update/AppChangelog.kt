@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.73",
+            listOf(
+                "Marktplatz: ein Item mit günstigstem Preis, dann alle Angebote",
+            )
+        ),
+        Entry(
             "1.9.72",
             listOf(
                 "Münzglas: max. 10 Coins pro Profil und Tag (0 Uhr MEZ)",

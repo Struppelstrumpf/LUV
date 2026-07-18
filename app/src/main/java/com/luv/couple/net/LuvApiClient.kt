@@ -1411,6 +1411,16 @@ object LuvApiClient {
         val mode: String
     )
 
+    data class MarketOffersResult(
+        val kind: String,
+        val itemId: String,
+        val label: String,
+        val emoji: String,
+        val category: String,
+        val offers: List<MarketListing>,
+        val count: Int
+    )
+
     private fun parseAchievementsState(json: JSONObject): AchievementsState {
         val dailyJson = json.optJSONObject("daily") ?: JSONObject()
         val tasks = buildList {
@@ -1503,15 +1513,18 @@ object LuvApiClient {
     }
 
     private fun parseMarketItem(o: JSONObject): MarketItem? {
+        val kind = o.optString("kind")
+        val itemId = o.optString("itemId")
+        if (kind.isBlank() || itemId.isBlank()) return null
         val listingId = o.optString("listingId").ifBlank { o.optString("id") }
-        if (listingId.isBlank()) return null
+            .ifBlank { "$kind|$itemId" }
         return MarketItem(
             listingId = listingId,
-            kind = o.optString("kind"),
-            itemId = o.optString("itemId"),
-            label = o.optString("label"),
-            emoji = o.optString("emoji"),
-            category = o.optString("category"),
+            kind = kind,
+            itemId = itemId,
+            label = o.optString("label").ifBlank { itemId },
+            emoji = o.optString("emoji").ifBlank { "?" },
+            category = o.optString("category").ifBlank { kind },
             priceCoins = o.optInt("priceCoins", 0),
             allowTrade = o.optBoolean("allowTrade", false),
             trend = o.optString("trend", "="),
@@ -1632,6 +1645,34 @@ object LuvApiClient {
             items = items,
             count = json.optInt("count", items.size),
             mode = json.optString("mode", m)
+        )
+    }
+
+    suspend fun fetchMarketOffers(
+        kind: String,
+        itemId: String,
+        mode: String = "market"
+    ): MarketOffersResult = withContext(Dispatchers.IO) {
+        val m = if (mode == "private") "private" else "market"
+        val path =
+            "/v1/market/offers?mode=$m&kind=${kind.trim().encodeURL()}&itemId=${itemId.trim().encodeURL()}"
+        val json = authedGet(path)
+        val offers = buildList {
+            val arr = json.optJSONArray("offers")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    parseMarketListing(arr.optJSONObject(i) ?: continue)?.let { add(it) }
+                }
+            }
+        }
+        MarketOffersResult(
+            kind = json.optString("kind", kind),
+            itemId = json.optString("itemId", itemId),
+            label = json.optString("label").ifBlank { itemId },
+            emoji = json.optString("emoji").ifBlank { "?" },
+            category = json.optString("category", kind),
+            offers = offers,
+            count = json.optInt("count", offers.size)
         )
     }
 

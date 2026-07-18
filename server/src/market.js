@@ -96,7 +96,7 @@ function aggregateMarket(db, viewerId, { category, q, mode }) {
     return true;
   });
 
-  // Gruppieren nach kind+itemId für Markt-Ansicht (wie Nasebär Artikelzeilen)
+  // Ein Eintrag pro Item (Nasebär): günstigster Preis, Anzahl Angebote
   const groups = new Map();
   for (const e of active) {
     if (category && category !== "all" && e.category !== category) continue;
@@ -104,7 +104,7 @@ function aggregateMarket(db, viewerId, { category, q, mode }) {
       const hay = `${e.label} ${e.emoji} ${e.sellerNickname}`.toLowerCase();
       if (!hay.includes(q.toLowerCase())) continue;
     }
-    const key = `${e.kind}|${e.itemId}|${e.allowTrade ? "t" : "c"}|${e.priceCoins}`;
+    const key = `${e.kind}|${e.itemId}`;
     if (!groups.has(key)) {
       groups.set(key, {
         key,
@@ -113,25 +113,29 @@ function aggregateMarket(db, viewerId, { category, q, mode }) {
         label: e.label,
         emoji: e.emoji,
         category: e.category,
-        priceCoins: e.priceCoins,
-        allowTrade: Boolean(e.allowTrade),
         listings: [],
-        minPrice: e.priceCoins,
       });
     }
-    const g = groups.get(key);
-    g.listings.push(e);
-    g.minPrice = Math.min(g.minPrice, e.priceCoins);
+    groups.get(key).listings.push(e);
   }
 
   const items = [...groups.values()]
     .map((g) => {
-      const sorted = g.listings.sort((a, b) => a.priceCoins - b.priceCoins);
-      // Kaufbares Listing bevorzugen — eigenes Angebot darf Fremd-Stock nicht blockieren
+      const sorted = [...g.listings].sort((a, b) => {
+        const pa = Number(a.priceCoins) || 0;
+        const pb = Number(b.priceCoins) || 0;
+        if (pa !== pb) return pa - pb;
+        return (a.createdAt || 0) - (b.createdAt || 0);
+      });
+      const coinOffers = sorted.filter((l) => (Number(l.priceCoins) || 0) > 0);
+      const minPrice = coinOffers.length
+        ? Math.min(...coinOffers.map((l) => Number(l.priceCoins) || 0))
+        : Math.min(...sorted.map((l) => Number(l.priceCoins) || 0));
       const buyable = sorted.find((l) => l.sellerId !== viewerId);
       const best = buyable || sorted[0];
       const hasMine = sorted.some((l) => l.sellerId === viewerId);
       const allMine = !buyable;
+      const anyTrade = sorted.some((l) => l.allowTrade);
       return {
         listingId: best.id,
         kind: g.kind,
@@ -139,9 +143,9 @@ function aggregateMarket(db, viewerId, { category, q, mode }) {
         label: g.label,
         emoji: g.emoji,
         category: g.category,
-        priceCoins: g.minPrice,
-        allowTrade: g.allowTrade,
-        trend: trendFor(db, g.kind, g.itemId, g.minPrice),
+        priceCoins: Number.isFinite(minPrice) ? minPrice : 0,
+        allowTrade: anyTrade,
+        trend: trendFor(db, g.kind, g.itemId, minPrice),
         stock: g.listings.length,
         offerCount: g.listings.length,
         isMine: allMine,
@@ -156,6 +160,47 @@ function aggregateMarket(db, viewerId, { category, q, mode }) {
     items,
     count: items.length,
     mode: mode || "market",
+  };
+}
+
+/** Alle offenen Angebote zu einem Item (für Drill-down). */
+function listOffersForItem(db, viewerId, { kind, itemId, mode }) {
+  const listings = ensureMarket(db);
+  const now = Date.now();
+  const k = String(kind || "").trim();
+  const id = String(itemId || "").trim();
+  if (!k || !id) return { offers: [], count: 0 };
+
+  const offers = Object.values(listings)
+    .filter((e) => {
+      if (!e || e.status !== "open") return false;
+      if (e.kind !== k || e.itemId !== id) return false;
+      if (e.expiresAt && e.expiresAt < now) return false;
+      if (mode === "private") {
+        return (
+          e.private &&
+          (e.sellerId === viewerId || e.targetUserId === viewerId)
+        );
+      }
+      return !e.private;
+    })
+    .map((e) => listingPublic(e, viewerId, db))
+    .filter(Boolean)
+    .sort((a, b) => {
+      const pa = Number(a.priceCoins) || 0;
+      const pb = Number(b.priceCoins) || 0;
+      if (pa !== pb) return pa - pb;
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+
+  return {
+    kind: k,
+    itemId: id,
+    label: offers[0]?.label || id,
+    emoji: offers[0]?.emoji || "?",
+    category: offers[0]?.category || k,
+    offers,
+    count: offers.length,
   };
 }
 
@@ -231,6 +276,7 @@ module.exports = {
   CATEGORIES,
   ensureMarket,
   aggregateMarket,
+  listOffersForItem,
   listingPublic,
   newListingId,
   recordPrice,
