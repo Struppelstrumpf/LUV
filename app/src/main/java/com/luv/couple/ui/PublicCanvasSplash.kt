@@ -105,9 +105,9 @@ fun PublicCanvasSplash(
         preview = fetched
         bitmap = bmp
         ready = true
+        // Genau 2 Sekunden öffentliches Bild zeigen (nach Netzwerk-Verbindung)
         progress.snapTo(0f)
-        progress.animateTo(1f, animationSpec = tween(1900, easing = LinearEasing))
-        delay(120)
+        progress.animateTo(1f, animationSpec = tween(2000, easing = LinearEasing))
         onFinished()
     }
 

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.91",
+            listOf(
+                "App-Start: öffentliches Ladebild zwei Sekunden sichtbar",
+            )
+        ),
+        Entry(
             "1.9.90",
             listOf(
                 "App-Start: Zwei-Handy-Animation beim Laden",
