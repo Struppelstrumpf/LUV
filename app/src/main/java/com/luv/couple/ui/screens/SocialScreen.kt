@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -71,55 +73,59 @@ fun SocialScreen(
         runCatching { LuvApiClient.pingAchievement("social_opens") }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(
+    MenuBackdrop(includeNavigationBars = false) {
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
                 .padding(horizontal = 20.dp)
-                .padding(top = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(top = 20.dp, bottom = 8.dp)
         ) {
-            listOf("Freunde", "Erfolge").forEachIndexed { index, label ->
-                val active = tab == index
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(if (active) AccentRose.copy(0.28f) else BgSoft)
-                        .clickable { tab = index }
-                        .padding(vertical = 10.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        label,
-                        color = TextPrimary,
-                        fontFamily = if (active) DisplayFont else BodyFont,
-                        fontSize = 14.sp
-                    )
+            Text("Sozial", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("Freunde", "Erfolge").forEachIndexed { index, label ->
+                    val active = tab == index
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (active) AccentRose.copy(0.28f) else BgSoft)
+                            .clickable { tab = index }
+                            .padding(vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            label,
+                            color = TextPrimary,
+                            fontFamily = if (active) DisplayFont else BodyFont,
+                            fontSize = 14.sp,
+                            softWrap = false
+                        )
+                    }
                 }
             }
-        }
-        when (tab) {
-            0 -> FriendsPanel(onOpenFriendProfile = onOpenFriendProfile)
-            else -> MenuBackdrop(includeNavigationBars = false) {
-                Column(
+            Spacer(modifier = Modifier.height(14.dp))
+            when (tab) {
+                0 -> FriendsPanel(
+                    modifier = Modifier.weight(1f),
+                    onOpenFriendProfile = onOpenFriendProfile
+                )
+                else -> AchievementsPanel(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 20.dp)
-                        .padding(top = 14.dp, bottom = 8.dp)
-                ) {
-                    AchievementsPanel(
-                        modifier = Modifier.fillMaxSize(),
-                        onCoinsGranted = { amount ->
-                            if (amount > 0) {
-                                scope.launch {
-                                    runCatching { LuvApiClient.me() }
-                                        .onSuccess { AccountSession.setAccount(it) }
-                                }
+                        .weight(1f)
+                        .fillMaxSize(),
+                    onCoinsGranted = { amount ->
+                        if (amount > 0) {
+                            scope.launch {
+                                runCatching { LuvApiClient.me() }
+                                    .onSuccess { AccountSession.setAccount(it) }
                             }
                         }
-                    )
-                }
+                    }
+                )
             }
         }
     }
@@ -127,6 +133,7 @@ fun SocialScreen(
 
 @Composable
 private fun FriendsPanel(
+    modifier: Modifier = Modifier,
     onOpenFriendProfile: (userId: String, nickname: String) -> Unit
 ) {
     val context = LocalContext.current
@@ -193,147 +200,141 @@ private fun FriendsPanel(
         return idx.coerceIn(0, friends.lastIndex)
     }
 
-    MenuBackdrop(includeNavigationBars = false) {
-        Column(
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(
+                rememberScrollState(),
+                enabled = dragId == null
+            ),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // Runde Plus-Kachel: Spitzname suchen
+        Box(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 20.dp)
-                .padding(top = 20.dp, bottom = 8.dp)
-                .verticalScroll(
-                    rememberScrollState(),
-                    enabled = dragId == null
-                ),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+                .size(56.dp)
+                .clip(CircleShape)
+                .background(AccentRose)
+                .clickable { showAddFriend = true },
+            contentAlignment = Alignment.Center
         ) {
-            Text("Sozial", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
+            Text("+", color = Color.White, fontFamily = DisplayFont, fontSize = 28.sp)
+        }
 
-            // Runde Plus-Kachel: Spitzname suchen
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(AccentRose)
-                    .clickable { showAddFriend = true },
-                contentAlignment = Alignment.Center
-            ) {
-                Text("+", color = Color.White, fontFamily = DisplayFont, fontSize = 28.sp)
-            }
-
-            if (incoming.isNotEmpty()) {
-                incoming.forEach { card ->
-                    FriendRequestRow(
-                        card = card,
-                        busy = busyId == card.userId,
-                        onAccept = {
-                            busyId = card.userId
-                            scope.launch {
-                                runCatching { LuvApiClient.acceptFriend(card.userId) }
-                                    .onSuccess { reload() }
-                                    .onFailure {
-                                        Toast.makeText(
-                                            context,
-                                            it.message ?: "Annehmen fehlgeschlagen",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                busyId = null
-                            }
-                        },
-                        onDecline = {
-                            busyId = card.userId
-                            scope.launch {
-                                runCatching { LuvApiClient.declineFriend(card.userId) }
-                                    .onSuccess { reload() }
-                                    .onFailure {
-                                        Toast.makeText(
-                                            context,
-                                            it.message ?: "Ablehnen fehlgeschlagen",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                busyId = null
-                            }
-                        },
-                        onOpen = { onOpenFriendProfile(card.userId, card.nickname) }
-                    )
-                }
-            }
-
-            when {
-                loading && friends.isEmpty() && incoming.isEmpty() -> {
-                    Text("Lade…", color = TextMuted, fontFamily = BodyFont)
-                }
-                friends.isEmpty() && incoming.isEmpty() -> Unit
-                else -> {
-                    friends.forEachIndexed { index, card ->
-                        val dragging = dragId == card.userId
-                        val lift = if (dragging) dragOffsetY else 0f
-                        FriendRow(
-                            card = card,
-                            modifier = Modifier
-                                .zIndex(if (dragging) 10f else 0f)
-                                .graphicsLayer {
-                                    translationY = lift
-                                    shadowElevation = if (dragging) 12f else 0f
-                                    alpha = if (
-                                        dragId != null &&
-                                        !dragging &&
-                                        dragHoverIndex == index
-                                    ) 0.55f else 1f
+        if (incoming.isNotEmpty()) {
+            incoming.forEach { card ->
+                FriendRequestRow(
+                    card = card,
+                    busy = busyId == card.userId,
+                    onAccept = {
+                        busyId = card.userId
+                        scope.launch {
+                            runCatching { LuvApiClient.acceptFriend(card.userId) }
+                                .onSuccess { reload() }
+                                .onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        it.message ?: "Annehmen fehlgeschlagen",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
                                 }
-                                .onSizeChanged { rowHeights[card.userId] = it.height }
-                                .pointerInput(card.userId, friends.map { it.userId }) {
-                                    detectDragGesturesAfterLongPress(
-                                        onDragStart = {
-                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            dragId = card.userId
-                                            dragOffsetY = 0f
-                                            dragHoverIndex = index
-                                        },
-                                        onDrag = { change, drag ->
-                                            change.consume()
-                                            dragOffsetY += drag.y
-                                            dragHoverIndex = hoverIndexFor(index, dragOffsetY)
-                                        },
-                                        onDragEnd = {
-                                            val from = friends.indexOfFirst { it.userId == dragId }
-                                            val to = dragHoverIndex
-                                            if (from >= 0 && to >= 0 && from != to) {
-                                                val next = friends.toMutableList()
-                                                val item = next.removeAt(from)
-                                                next.add(to.coerceIn(0, next.size), item)
-                                                persistOrder(next)
-                                            }
-                                            dragId = null
-                                            dragOffsetY = 0f
-                                            dragHoverIndex = -1
-                                        },
-                                        onDragCancel = {
-                                            dragId = null
-                                            dragOffsetY = 0f
-                                            dragHoverIndex = -1
-                                        }
-                                    )
+                            busyId = null
+                        }
+                    },
+                    onDecline = {
+                        busyId = card.userId
+                        scope.launch {
+                            runCatching { LuvApiClient.declineFriend(card.userId) }
+                                .onSuccess { reload() }
+                                .onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        it.message ?: "Ablehnen fehlgeschlagen",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
                                 }
-                                .clickable { onOpenFriendProfile(card.userId, card.nickname) },
-                            trailing = {
-                                Text("≡", color = TextMuted, fontSize = 18.sp)
-                            }
-                        )
-                    }
-                }
+                            busyId = null
+                        }
+                    },
+                    onOpen = { onOpenFriendProfile(card.userId, card.nickname) }
+                )
             }
+        }
 
-            if (outgoing.isNotEmpty()) {
-                outgoing.forEach { card ->
+        when {
+            loading && friends.isEmpty() && incoming.isEmpty() -> {
+                Text("Lade…", color = TextMuted, fontFamily = BodyFont)
+            }
+            friends.isEmpty() && incoming.isEmpty() -> Unit
+            else -> {
+                friends.forEachIndexed { index, card ->
+                    val dragging = dragId == card.userId
+                    val lift = if (dragging) dragOffsetY else 0f
                     FriendRow(
                         card = card,
-                        subtitle = "Anfrage ausstehend",
-                        modifier = Modifier.clickable {
-                            onOpenFriendProfile(card.userId, card.nickname)
+                        modifier = Modifier
+                            .zIndex(if (dragging) 10f else 0f)
+                            .graphicsLayer {
+                                translationY = lift
+                                shadowElevation = if (dragging) 12f else 0f
+                                alpha = if (
+                                    dragId != null &&
+                                    !dragging &&
+                                    dragHoverIndex == index
+                                ) 0.55f else 1f
+                            }
+                            .onSizeChanged { rowHeights[card.userId] = it.height }
+                            .pointerInput(card.userId, friends.map { it.userId }) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        dragId = card.userId
+                                        dragOffsetY = 0f
+                                        dragHoverIndex = index
+                                    },
+                                    onDrag = { change, drag ->
+                                        change.consume()
+                                        dragOffsetY += drag.y
+                                        dragHoverIndex = hoverIndexFor(index, dragOffsetY)
+                                    },
+                                    onDragEnd = {
+                                        val from = friends.indexOfFirst { it.userId == dragId }
+                                        val to = dragHoverIndex
+                                        if (from >= 0 && to >= 0 && from != to) {
+                                            val next = friends.toMutableList()
+                                            val item = next.removeAt(from)
+                                            next.add(to.coerceIn(0, next.size), item)
+                                            persistOrder(next)
+                                        }
+                                        dragId = null
+                                        dragOffsetY = 0f
+                                        dragHoverIndex = -1
+                                    },
+                                    onDragCancel = {
+                                        dragId = null
+                                        dragOffsetY = 0f
+                                        dragHoverIndex = -1
+                                    }
+                                )
+                            }
+                            .clickable { onOpenFriendProfile(card.userId, card.nickname) },
+                        trailing = {
+                            Text("≡", color = TextMuted, fontSize = 18.sp)
                         }
                     )
                 }
+            }
+        }
+
+        if (outgoing.isNotEmpty()) {
+            outgoing.forEach { card ->
+                FriendRow(
+                    card = card,
+                    subtitle = "Anfrage ausstehend",
+                    modifier = Modifier.clickable {
+                        onOpenFriendProfile(card.userId, card.nickname)
+                    }
+                )
             }
         }
     }
