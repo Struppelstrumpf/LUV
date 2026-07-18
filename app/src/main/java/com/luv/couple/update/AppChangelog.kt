@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.86",
+            listOf(
+                "Vorlage zeichnen: Vollbild, Rückgängig/Speichern oben, Schließen nur per ✕",
+            )
+        ),
+        Entry(
             "1.9.85",
             listOf(
                 "Profil gestalten: Avatar, Name, Sticker und Glas unabhängig verschieben",

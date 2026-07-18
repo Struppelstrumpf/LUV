@@ -17,8 +17,10 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -275,227 +277,219 @@ fun TemplateEditorSheet(
     var saving by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    BoxWithConstraints(
+    // Vollbild — kein Tippen am Rand schließt (Stift/Tablet). Nur ✕ oder Speichern.
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(0.6f))
-            .clickable(onClick = onDismiss),
-        contentAlignment = Alignment.Center
+            .background(SheetBg)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
-        val sheetW = maxWidth * 0.94f
-        val sheetH = maxHeight * 0.88f
-        Column(
-            modifier = Modifier
-                .width(sheetW)
-                .height(sheetH)
-                .clip(RoundedCornerShape(24.dp))
-                .background(SheetBg)
-                .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(24.dp))
-                .clickable(enabled = false) {}
-                .padding(14.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "Neue Vorlage",
-                    color = TextPrimary,
-                    fontFamily = DisplayFont,
-                    fontSize = 22.sp,
-                    modifier = Modifier.weight(1f)
-                )
-                Text(
-                    "✕",
-                    color = TextMuted,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable(onClick = onDismiss)
-                        .padding(10.dp)
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                repeat(8) { i ->
-                    val c = Color(PeerPalette.strokeColor(i))
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .aspectRatio(1f)
-                            .clip(CircleShape)
-                            .background(c)
-                            .border(
-                                if (colorIndex == i) 2.dp else 0.dp,
-                                Color.White,
-                                CircleShape
-                            )
-                            .clickable { colorIndex = i }
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                repeat(8) { j ->
-                    val i = j + 8
-                    val c = Color(PeerPalette.strokeColor(i))
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .aspectRatio(1f)
-                            .clip(CircleShape)
-                            .background(c)
-                            .border(
-                                if (colorIndex == i) 2.dp else 0.dp,
-                                Color.White,
-                                CircleShape
-                            )
-                            .clickable { colorIndex = i }
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            Text(
+                "Neue Vorlage",
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 20.sp,
+                modifier = Modifier.weight(1f),
+                maxLines = 1
+            )
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.White.copy(0.08f))
+                    .clickable(enabled = parts.isNotEmpty()) {
+                        if (parts.isNotEmpty()) parts.removeAt(parts.lastIndex)
+                    }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                contentAlignment = Alignment.Center
             ) {
                 Text(
-                    "Pinsel",
-                    color = TextMuted,
+                    "Rückgängig",
+                    color = if (parts.isEmpty()) TextMuted.copy(0.45f) else TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 13.sp
                 )
-                Slider(
-                    value = brushWidth,
-                    onValueChange = { brushWidth = it.coerceIn(6f, 40f) },
-                    valueRange = 6f..40f,
-                    modifier = Modifier.weight(1f),
-                    colors = SliderDefaults.colors(
-                        thumbColor = Accent,
-                        activeTrackColor = Accent,
-                        inactiveTrackColor = Color.White.copy(0.12f)
-                    )
-                )
-                Text(
-                    "${brushWidth.roundToInt()}",
-                    color = TextPrimary,
-                    fontFamily = DisplayFont,
-                    fontSize = 14.sp,
-                    modifier = Modifier.width(28.dp),
-                    textAlign = TextAlign.End
-                )
             }
-            Spacer(modifier = Modifier.height(6.dp))
             Box(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Color(0xFF0A1018))
-                    .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(18.dp))
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (parts.isEmpty() || saving) Accent.copy(0.35f) else Accent)
+                    .clickable(enabled = parts.isNotEmpty() && !saving) {
+                        saving = true
+                        scope.launch {
+                            onSave(parts.toList())
+                            saving = false
+                        }
+                    }
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(colorIndex, brushWidth, parts.size) {
-                            detectDragGestures(
-                                onDragStart = { offset ->
-                                    val nx = (offset.x / size.width).coerceIn(0f, 1f)
-                                    val ny = (offset.y / size.height).coerceIn(0f, 1f)
-                                    currentPoints = listOf(StrokePoint(nx, ny))
-                                },
-                                onDrag = { change, _ ->
-                                    change.consume()
-                                    val nx = (change.position.x / size.width).coerceIn(0f, 1f)
-                                    val ny = (change.position.y / size.height).coerceIn(0f, 1f)
-                                    currentPoints = currentPoints + StrokePoint(nx, ny)
-                                },
-                                onDragEnd = {
-                                    if (currentPoints.size >= 2) {
-                                        parts.add(
-                                            TemplateStrokePart(
-                                                points = currentPoints.toList(),
-                                                width = brushWidth,
-                                                colorIndex = colorIndex
-                                            )
-                                        )
-                                    }
-                                    currentPoints = emptyList()
-                                },
-                                onDragCancel = { currentPoints = emptyList() }
-                            )
-                        }
-                ) {
-                    val short = min(size.width, size.height)
-                    fun drawPart(part: TemplateStrokePart, alpha: Float = 1f) {
-                        if (part.points.size < 2) return
-                        val path = Path()
-                        part.points.forEachIndexed { idx, p ->
-                            val x = p.x * size.width
-                            val y = p.y * size.height
-                            if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                        }
-                        val col = Color(PeerPalette.strokeColor(part.colorIndex)).copy(alpha = alpha)
-                        drawPath(
-                            path,
-                            color = col,
-                            style = Stroke(
-                                width = (part.width / 1000f) * short,
-                                cap = StrokeCap.Round,
-                                join = StrokeJoin.Round
-                            )
-                        )
-                    }
-                    parts.forEach { drawPart(it) }
-                    if (currentPoints.size >= 2) {
-                        drawPart(
-                            TemplateStrokePart(currentPoints, brushWidth, colorIndex),
-                            alpha = 0.9f
-                        )
-                    }
-                }
+                Text(
+                    if (saving) "…" else "Speichern",
+                    color = Color(0xFF0A1018),
+                    fontFamily = DisplayFont,
+                    fontSize = 14.sp
+                )
             }
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
+            Text(
+                "✕",
+                color = TextMuted,
+                fontSize = 18.sp,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable(onClick = onDismiss)
+                    .padding(10.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            repeat(8) { i ->
+                val c = Color(PeerPalette.strokeColor(i))
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color.White.copy(0.08f))
-                        .clickable {
-                            if (parts.isNotEmpty()) parts.removeAt(parts.lastIndex)
-                        }
-                        .padding(vertical = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("Rückgängig", color = TextMuted, fontFamily = BodyFont, fontSize = 14.sp)
-                }
+                        .aspectRatio(1f)
+                        .clip(CircleShape)
+                        .background(c)
+                        .border(
+                            if (colorIndex == i) 2.dp else 0.dp,
+                            Color.White,
+                            CircleShape
+                        )
+                        .clickable { colorIndex = i }
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            repeat(8) { j ->
+                val i = j + 8
+                val c = Color(PeerPalette.strokeColor(i))
                 Box(
                     modifier = Modifier
-                        .weight(1.4f)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(if (parts.isEmpty() || saving) Accent.copy(0.35f) else Accent)
-                        .clickable(enabled = parts.isNotEmpty() && !saving) {
-                            saving = true
-                            scope.launch {
-                                onSave(parts.toList())
-                                saving = false
-                            }
-                        }
-                        .padding(vertical = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        if (saving) "Speichern…" else "Speichern",
-                        color = Color(0xFF0A1018),
-                        fontFamily = DisplayFont,
-                        fontSize = 16.sp
+                        .weight(1f)
+                        .aspectRatio(1f)
+                        .clip(CircleShape)
+                        .background(c)
+                        .border(
+                            if (colorIndex == i) 2.dp else 0.dp,
+                            Color.White,
+                            CircleShape
+                        )
+                        .clickable { colorIndex = i }
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                "Pinsel",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 13.sp
+            )
+            Slider(
+                value = brushWidth,
+                onValueChange = { brushWidth = it.coerceIn(6f, 40f) },
+                valueRange = 6f..40f,
+                modifier = Modifier.weight(1f),
+                colors = SliderDefaults.colors(
+                    thumbColor = Accent,
+                    activeTrackColor = Accent,
+                    inactiveTrackColor = Color.White.copy(0.12f)
+                )
+            )
+            Text(
+                "${brushWidth.roundToInt()}",
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 14.sp,
+                modifier = Modifier.width(28.dp),
+                textAlign = TextAlign.End
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color(0xFF0A1018))
+                .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(18.dp))
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(colorIndex, brushWidth, parts.size) {
+                        detectDragGestures(
+                            onDragStart = { offset ->
+                                val nx = (offset.x / size.width).coerceIn(0f, 1f)
+                                val ny = (offset.y / size.height).coerceIn(0f, 1f)
+                                currentPoints = listOf(StrokePoint(nx, ny))
+                            },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                val nx = (change.position.x / size.width).coerceIn(0f, 1f)
+                                val ny = (change.position.y / size.height).coerceIn(0f, 1f)
+                                currentPoints = currentPoints + StrokePoint(nx, ny)
+                            },
+                            onDragEnd = {
+                                if (currentPoints.size >= 2) {
+                                    parts.add(
+                                        TemplateStrokePart(
+                                            points = currentPoints.toList(),
+                                            width = brushWidth,
+                                            colorIndex = colorIndex
+                                        )
+                                    )
+                                }
+                                currentPoints = emptyList()
+                            },
+                            onDragCancel = { currentPoints = emptyList() }
+                        )
+                    }
+            ) {
+                val short = min(size.width, size.height)
+                fun drawPart(part: TemplateStrokePart, alpha: Float = 1f) {
+                    if (part.points.size < 2) return
+                    val path = Path()
+                    part.points.forEachIndexed { idx, p ->
+                        val x = p.x * size.width
+                        val y = p.y * size.height
+                        if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                    }
+                    val col = Color(PeerPalette.strokeColor(part.colorIndex)).copy(alpha = alpha)
+                    drawPath(
+                        path,
+                        color = col,
+                        style = Stroke(
+                            width = (part.width / 1000f) * short,
+                            cap = StrokeCap.Round,
+                            join = StrokeJoin.Round
+                        )
+                    )
+                }
+                parts.forEach { drawPart(it) }
+                if (currentPoints.size >= 2) {
+                    drawPart(
+                        TemplateStrokePart(currentPoints, brushWidth, colorIndex),
+                        alpha = 0.9f
                     )
                 }
             }
