@@ -2247,16 +2247,17 @@ function roomCapacity(room) {
   const fallback = defaultLobbyCapacity(Boolean(room?.isFree));
   let n = Number(room?.capacity);
   if (!Number.isFinite(n) || n < 1) n = fallback;
-  // Nach Restart/Bug nie kleiner als bekannte Mitglieder — sonst room_full-Flapping
-  // (verbunden → sofort wieder raus) und jeder sieht nur sich selbst.
-  const members = Array.isArray(room?.memberUserIds) ? room.memberUserIds.length : 0;
-  const colors =
-    room?.colorByUserId && typeof room.colorByUserId === "object"
-      ? Object.keys(room.colorByUserId).length
-      : 0;
-  const peak = Math.max(1, Number(room?.peakPeers) || 1);
-  n = Math.max(n, fallback, members, colors, peak);
-  return Math.min(MAX_PEERS, Math.floor(n));
+  // Cap nur über Create-Default + bezahlte Slots — nie über Members/Peak aufblasen
+  // (sonst lässt sich Kapazität ohne SLOT_COST umgehen).
+  return Math.min(MAX_PEERS, Math.max(fallback, Math.floor(n)));
+}
+
+function roomMemberCount(room) {
+  if (!room) return 0;
+  const ids = Array.isArray(room.memberUserIds) ? room.memberUserIds : [];
+  const set = new Set(ids.filter(Boolean));
+  if (room.hostUserId) set.add(room.hostUserId);
+  return set.size;
 }
 
 /**
@@ -6063,14 +6064,33 @@ app.post("/v1/users/:userId/tip-glass", (req, res) => {
       received: recv.received,
     });
   }
-  if ((ctx.user.coins || 0) < 1) {
-    return res.status(402).json({ error: "insufficient_coins" });
+  ensureCoinBuckets(ctx.user);
+  // Tips nur aus paidCoins — verhindert Tagescoins → permanente Paid-Coins
+  if ((ctx.user.paidCoins || 0) < 1) {
+    return res.status(402).json({
+      error: "need_paid_coins",
+      message: "Tippen geht nur mit echten Coins (nicht mit Tagescoins).",
+    });
   }
-
-  if (!applyLedger(ctx.user.id, -1, "glass_tip", toId)) {
-    return res.status(402).json({ error: "insufficient_coins" });
+  ctx.user.paidCoins -= 1;
+  syncCoinTotal(ctx.user);
+  const tipDb = getDb();
+  tipDb.ledger.push({
+    id: newId("led"),
+    userId: ctx.user.id,
+    delta: -1,
+    reason: "glass_tip",
+    refId: toId,
+    at: Date.now(),
+    balance: ctx.user.coins,
+  });
+  if (tipDb.ledger.length > 5000) tipDb.ledger.splice(0, tipDb.ledger.length - 5000);
+  if (!applyLedger(toId, 1, "glass_tip_recv", ctx.user.id)) {
+    // Rollback Spender
+    ctx.user.paidCoins += 1;
+    syncCoinTotal(ctx.user);
+    return res.status(500).json({ error: "tip_failed" });
   }
-  applyLedger(toId, 1, "glass_tip_recv", ctx.user.id);
   target.glassTipsRecvCount = recv.received + 1;
   target.glassTipsRecvDay = recv.day;
   trackAch(ctx.user, "tips_given", 1);
@@ -8488,16 +8508,17 @@ app.post("/v1/rooms/:code/join", (req, res) => {
       message: "Nur das Brautpaar darf die Hochzeitsleinwand betreten.",
     });
   }
-  if (!alreadyHere && uniqueConnectedCount(room) >= capacity) {
-    if (isKnownMember) {
-      room.capacity = Math.min(MAX_PEERS, Math.max(capacity, uniqueConnectedCount(room) + 1));
-      capacity = room.capacity;
-    } else {
+  // Neue Mitglieder: verbundene Sockets UND gespeicherte Members gegen Cap prüfen
+  if (!isKnownMember) {
+    const seatsTaken = Math.max(uniqueConnectedCount(room), roomMemberCount(room));
+    if (seatsTaken >= capacity) {
       return res.status(409).json({
         error: "room_full",
         message: "Lobby ist voll — jemand kann weitere Plätze freischalten.",
       });
     }
+  } else if (!alreadyHere && uniqueConnectedCount(room) >= capacity) {
+    // Bekanntes Mitglied darf reconnecten, Cap nicht gratis erhöhen
   }
   rememberMember(room, ctx.user.id);
   healRoomMembership(room);
@@ -9245,7 +9266,12 @@ app.post("/v1/rooms/:code/canvas-snapshot", (req, res) => {
   if (token && room.token !== token && room.hostUserId !== ctx.user.id) {
     return res.status(403).json({ error: "forbidden" });
   }
-  rememberMember(room, ctx.user.id);
+  const snapMember =
+    (Array.isArray(room.memberUserIds) && room.memberUserIds.includes(ctx.user.id)) ||
+    room.hostUserId === ctx.user.id;
+  if (!snapMember) {
+    return res.status(403).json({ error: "not_member", message: "Nur Lobby-Mitglieder." });
+  }
   const b64 = String(req.body?.imageBase64 || "").replace(/^data:image\/\w+;base64,/, "");
   if (!b64 || b64.length < 80 || b64.length > 6_000_000) {
     return res.status(400).json({ error: "bad_image" });
@@ -9286,7 +9312,12 @@ app.post("/v1/rooms/:code/canvas-touch", (req, res) => {
   const found = roomForAuth(req.params.code, token, ctx.user);
   if (!found) return res.status(404).json({ error: "room_not_found" });
   const { code, room } = found;
-  rememberMember(room, ctx.user.id);
+  const touchMember =
+    (Array.isArray(room.memberUserIds) && room.memberUserIds.includes(ctx.user.id)) ||
+    room.hostUserId === ctx.user.id;
+  if (!touchMember) {
+    return res.status(403).json({ error: "not_member", message: "Nur Lobby-Mitglieder." });
+  }
   touchRoom(room);
   // Bei neuer Aktivität: pending Release zurücknehmen, wenn wieder jemand malt
   const mem = canvasMemories();
@@ -9435,20 +9466,17 @@ wss.on("connection", (socket, req) => {
       ((Array.isArray(room.memberUserIds) && room.memberUserIds.includes(user.id)) ||
         room.hostUserId === user.id)
   );
-  if (others >= capacity) {
-    if (isKnownMember) {
-      // Bekanntes Mitglied nie aussperren — Platz nachziehen
-      room.capacity = Math.min(MAX_PEERS, Math.max(capacity, others + 1));
-      capacity = room.capacity;
-      persistRooms();
-    } else {
+  if (!isKnownMember) {
+    const seatsTaken = Math.max(others, roomMemberCount(room));
+    if (seatsTaken >= capacity) {
       console.log(
-        `ws room_full code=${code} others=${others} cap=${capacity} user=${user?.id || "?"}`
+        `ws room_full code=${code} seats=${seatsTaken} cap=${capacity} user=${user?.id || "?"}`
       );
       socket.close(4409, "room_full");
       return;
     }
   }
+  // Bekannte Mitglieder: Reconnect/Zweitgerät erlaubt, Cap nicht aufblasen
   if (user?.nickname && room.hostUserId && user.id === room.hostUserId) {
     room.hostNickname = user.nickname;
   }

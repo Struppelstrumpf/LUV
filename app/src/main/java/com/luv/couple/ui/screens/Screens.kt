@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -438,6 +440,60 @@ fun LobbiesScreen(
         )
     }
 
+    if (showLobbyPlusDialog) {
+        AlertDialog(
+            onDismissRequest = { showLobbyPlusDialog = false },
+            containerColor = BgSoft,
+            title = {
+                Text(
+                    "Lobby",
+                    fontFamily = DisplayFont,
+                    color = TextPrimary,
+                    fontSize = 22.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PrimaryButton(
+                        label = if (canCreateFreeLobby) {
+                            "Neue Lobby"
+                        } else {
+                            "Neue Lobby · ${PeerPalette.LOBBY_CREATE_COST} Coins"
+                        },
+                        color = accent,
+                        onClick = {
+                            showLobbyPlusDialog = false
+                            onCreateLobby()
+                        }
+                    )
+                    PrimaryButton(
+                        "Beitreten",
+                        BgSoft,
+                        {
+                            showLobbyPlusDialog = false
+                            onJoinLobby()
+                        },
+                        bordered = true
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    PrimaryButton(
+                        "🎲 Random Lobby",
+                        MaleBlue,
+                        {
+                            showLobbyPlusDialog = false
+                            onRandomLobby()
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLobbyPlusDialog = false }) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
+    }
+
     ScreenBackdrop(includeNavigationBars = false) {
         Column(
             modifier = Modifier
@@ -549,60 +605,6 @@ fun LobbiesScreen(
                     )
                 }
                 return@Column
-            }
-
-            if (showLobbyPlusDialog) {
-                AlertDialog(
-                    onDismissRequest = { showLobbyPlusDialog = false },
-                    title = {
-                        Text(
-                            "Lobby",
-                            fontFamily = DisplayFont,
-                            color = TextPrimary,
-                            fontSize = 22.sp
-                        )
-                    },
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            PrimaryButton(
-                                label = if (canCreateFreeLobby) {
-                                    "Neue Lobby"
-                                } else {
-                                    "Neue Lobby · ${PeerPalette.LOBBY_CREATE_COST} Coins"
-                                },
-                                color = accent,
-                                onClick = {
-                                    showLobbyPlusDialog = false
-                                    onCreateLobby()
-                                }
-                            )
-                            PrimaryButton(
-                                "Beitreten",
-                                BgSoft,
-                                {
-                                    showLobbyPlusDialog = false
-                                    onJoinLobby()
-                                },
-                                bordered = true
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            PrimaryButton(
-                                "🎲 Random Lobby",
-                                MaleBlue,
-                                {
-                                    showLobbyPlusDialog = false
-                                    onRandomLobby()
-                                }
-                            )
-                        }
-                    },
-                    confirmButton = {},
-                    dismissButton = {
-                        TextButton(onClick = { showLobbyPlusDialog = false }) {
-                            Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
-                        }
-                    }
-                )
             }
 
             if (!error.isNullOrBlank()) {
@@ -1266,72 +1268,66 @@ fun CreateLobbyScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(28.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Column {
-                Text(
-                    "Zurück",
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    modifier = Modifier
-                        .clickable(onClick = onBack)
-                        .padding(vertical = 8.dp)
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("Neue Lobby", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    if (canCreateFree) {
-                        "Jetzt gratis · 1 Person einladen inklusive · weitere Plätze je ${PeerPalette.SLOT_COST} Coins"
-                    } else {
-                        "Kostet $lobbyCreateCost Coins · 3 Einladungen inklusive · weitere Plätze je ${PeerPalette.SLOT_COST} Coins"
-                    },
-                    color = if (canCreateFree) Color(0xFF3DDC97) else TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 15.sp,
-                    lineHeight = 21.sp
-                )
-                Spacer(modifier = Modifier.height(24.dp))
-                SoftField(
-                    value = name,
-                    onValueChange = { name = it.take(PeerPalette.MAX_LOBBY_NAME_LENGTH) },
-                    hint = "Zusammen",
-                    onConfirm = {
-                        onCreate(name.trim().ifBlank { "Zusammen" }, hostColorSide)
-                    }
-                )
-                Spacer(modifier = Modifier.height(20.dp))
-                Text("Deine Farbe", color = TextPrimary, fontFamily = DisplayFont, fontSize = 18.sp)
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    "Der Nächste bekommt automatisch die andere. Ab der dritten Person gibt’s weitere Farben.",
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 13.sp
-                )
-                Spacer(modifier = Modifier.height(14.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    HostColorChoice(
-                        label = "Blau",
-                        color = MaleBlue,
-                        selected = hostColorSide == "blue",
-                        onClick = { hostColorSide = "blue" },
-                        modifier = Modifier.weight(1f)
-                    )
-                    HostColorChoice(
-                        label = "Lila",
-                        color = FemalePurple,
-                        selected = hostColorSide == "purple",
-                        onClick = { hostColorSide = "purple" },
-                        modifier = Modifier.weight(1f)
-                    )
+            Text(
+                "Zurück",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                modifier = Modifier
+                    .clickable(onClick = onBack)
+                    .padding(vertical = 8.dp)
+            )
+            Text("Neue Lobby", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
+            Text(
+                if (canCreateFree) {
+                    "Jetzt gratis · 1 Person einladen inklusive · weitere Plätze je ${PeerPalette.SLOT_COST} Coins"
+                } else {
+                    "Kostet $lobbyCreateCost Coins · 3 Einladungen inklusive · weitere Plätze je ${PeerPalette.SLOT_COST} Coins"
+                },
+                color = if (canCreateFree) Color(0xFF3DDC97) else TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 15.sp,
+                lineHeight = 21.sp
+            )
+            SoftField(
+                value = name,
+                onValueChange = { name = it.take(PeerPalette.MAX_LOBBY_NAME_LENGTH) },
+                hint = "Zusammen",
+                onConfirm = {
+                    onCreate(name.trim().ifBlank { "Zusammen" }, hostColorSide)
                 }
-                if (!error.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
-                }
+            )
+            Text("Deine Farbe", color = TextPrimary, fontFamily = DisplayFont, fontSize = 18.sp)
+            Text(
+                "Der Nächste bekommt automatisch die andere. Ab der dritten Person gibt’s weitere Farben.",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 13.sp
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                HostColorChoice(
+                    label = "Blau",
+                    color = MaleBlue,
+                    selected = hostColorSide == "blue",
+                    onClick = { hostColorSide = "blue" },
+                    modifier = Modifier.weight(1f)
+                )
+                HostColorChoice(
+                    label = "Lila",
+                    color = FemalePurple,
+                    selected = hostColorSide == "purple",
+                    onClick = { hostColorSide = "purple" },
+                    modifier = Modifier.weight(1f)
+                )
             }
+            if (!error.isNullOrBlank()) {
+                Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
             PrimaryButton(
                 if (canCreateFree) "Lobby erstellen" else "Für $lobbyCreateCost Coins erstellen",
                 AccentRose,
@@ -1435,7 +1431,7 @@ fun InviteLobbyDialog(
                         else -> Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(280.dp)
+                                .heightIn(max = 280.dp)
                                 .verticalScroll(rememberScrollState()),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
@@ -1723,58 +1719,53 @@ fun JoinScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(28.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Column {
-                Text(
-                    "Zurück",
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    modifier = Modifier
-                        .clickable(onClick = onBack)
-                        .padding(vertical = 8.dp)
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("Beitreten", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    "Link, Code — oder einfach den QR-Code scannen",
-                    color = TextMuted,
-                    fontFamily = BodyFont
-                )
-                Spacer(modifier = Modifier.height(24.dp))
-                SoftField(
-                    value = code,
-                    onValueChange = { code = it },
-                    hint = "https://reineke.pro/luv/j/…",
-                    onConfirm = { onPreview(code) }
-                )
-                if (!error.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
-                }
+            Text(
+                "Zurück",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                modifier = Modifier
+                    .clickable(onClick = onBack)
+                    .padding(vertical = 8.dp)
+            )
+            Text("Beitreten", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
+            Text(
+                "Link, Code — oder einfach den QR-Code scannen",
+                color = TextMuted,
+                fontFamily = BodyFont
+            )
+            SoftField(
+                value = code,
+                onValueChange = { code = it },
+                hint = "https://reineke.pro/luv/j/…",
+                onConfirm = { onPreview(code) }
+            )
+            if (!error.isNullOrBlank()) {
+                Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
             }
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                PrimaryButton("Weiter", AccentRose, { onPreview(code) })
-                PrimaryButton(
-                    "QR Code scannen",
-                    BgSoft,
-                    {
-                        scanLauncher.launch(
-                            com.journeyapps.barcodescanner.ScanOptions()
-                                .setDesiredBarcodeFormats(
-                                    com.journeyapps.barcodescanner.ScanOptions.QR_CODE
-                                )
-                                .setPrompt("Lobby-QR scannen")
-                                .setBeepEnabled(false)
-                                .setOrientationLocked(true)
-                        )
-                    },
-                    bordered = true
-                )
-                PrimaryButton("Abbrechen", BgSoft, onBack, bordered = true)
-            }
+            Spacer(modifier = Modifier.height(8.dp))
+            PrimaryButton("Weiter", AccentRose, { onPreview(code) })
+            PrimaryButton(
+                "QR Code scannen",
+                BgSoft,
+                {
+                    scanLauncher.launch(
+                        com.journeyapps.barcodescanner.ScanOptions()
+                            .setDesiredBarcodeFormats(
+                                com.journeyapps.barcodescanner.ScanOptions.QR_CODE
+                            )
+                            .setPrompt("Lobby-QR scannen")
+                            .setBeepEnabled(false)
+                            .setOrientationLocked(true)
+                    )
+                },
+                bordered = true
+            )
+            PrimaryButton("Abbrechen", BgSoft, onBack, bordered = true)
         }
     }
 }

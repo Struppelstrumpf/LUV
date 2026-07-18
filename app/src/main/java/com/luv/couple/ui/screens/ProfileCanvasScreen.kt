@@ -27,12 +27,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -1104,9 +1106,16 @@ fun ProfileCanvasScreen(
         if (showDivorce && !divorceStep2) {
             AlertDialog(
                 onDismissRequest = { showDivorce = false },
-                title = { Text("Scheidung", fontFamily = DisplayFont) },
+                containerColor = BgSoft,
+                title = { Text("Scheidung", fontFamily = DisplayFont, color = TextPrimary) },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 280.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Text(
                             "Tippe „scheiden“ zur Bestätigung. Partner muss nicht zustimmen. " +
                                 "Ehepartner-Extra, Hochzeitsbild und Ehering entfallen. " +
@@ -1120,7 +1129,7 @@ fun ProfileCanvasScreen(
                             textStyle = TextStyle(color = TextPrimary, fontFamily = BodyFont),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(BgSoft, RoundedCornerShape(12.dp))
+                                .background(BgDeep, RoundedCornerShape(12.dp))
                                 .padding(12.dp)
                         )
                     }
@@ -2401,14 +2410,16 @@ private fun WeddingGuestbookDialog(
     LaunchedEffect(profileUserId) {
         wedding = LuvApiClient.fetchWedding(profileUserId)
     }
+    val guestbookMaxH = (LocalConfiguration.current.screenHeightDp * 0.5f).dp
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Hochzeits-Gästebuch", fontFamily = DisplayFont) },
+        containerColor = BgSoft,
+        title = { Text("Hochzeits-Gästebuch", fontFamily = DisplayFont, color = TextPrimary) },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(360.dp)
+                    .heightIn(max = guestbookMaxH)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {

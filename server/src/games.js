@@ -432,7 +432,8 @@ function applyAction(game, peerId, nickname, action, payload) {
       if (game.solvedBy) return { game, error: "done" };
       const guess = normalize(payload?.text || "");
       if (!guess) return { game, error: "empty" };
-      if (guess === game.answerNorm || game.answerNorm.includes(guess) || guess.includes(game.answerNorm)) {
+      // Nur exakte Norm-Gleichheit — keine Teilstring-Treffer ("i" ≠ "liebe")
+      if (guess === game.answerNorm) {
         game.solvedBy = nick;
         game.scores[peerId] = (game.scores[peerId] || 0) + 1;
         finish(game, peerId, `${nick} hat das Emoji-Rätsel gelöst!`);
@@ -458,8 +459,17 @@ function applyAction(game, peerId, nickname, action, payload) {
     case "taprace": {
       if (act !== "tap") return { game, error: "bad_action" };
       if (Date.now() > game.endsAt) return { game, error: "timeout" };
-      game.taps[peerId] = (game.taps[peerId] || 0) + 1;
-      game.scores[peerId] = game.taps[peerId];
+      if (!game.tapAt) game.tapAt = {};
+      const now = Date.now();
+      const last = Number(game.tapAt[peerId]) || 0;
+      // Max ~18 Taps/s — Auto-Clicker drosseln
+      if (now - last < 55) return { game, error: "rate" };
+      game.tapAt[peerId] = now;
+      const next = (game.taps[peerId] || 0) + 1;
+      // 15s-Runde · ~18 taps/s + kleiner Puffer
+      if (next > 280) return { game, error: "cap" };
+      game.taps[peerId] = next;
+      game.scores[peerId] = next;
       return { game };
     }
 

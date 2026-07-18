@@ -5,9 +5,11 @@ import android.net.Uri
 import android.util.Log
 import android.widget.Toast
 import com.luv.couple.data.Stroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -17,8 +19,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.sp
+import com.luv.couple.ui.theme.BgDeep
+import com.luv.couple.ui.theme.BodyFont
+import com.luv.couple.ui.theme.TextMuted
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -1384,6 +1391,14 @@ fun LuvAppNav() {
             val lobby = shareLobby ?: lobbies.lastOrNull()
             if (lobby == null) {
                 LaunchedEffect(Unit) { navController.popBackStack(Routes.MAIN, false) }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(BgDeep),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Zurück …", color = TextMuted, fontFamily = BodyFont, fontSize = 15.sp)
+                }
                 return@composable
             }
             HostShareScreen(
@@ -1523,6 +1538,14 @@ fun LuvAppNav() {
             val lobby = lobbies.firstOrNull { it.id == lobbyId }
             if (lobby == null) {
                 LaunchedEffect(Unit) { navController.popBackStack() }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(BgDeep),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Zurück …", color = TextMuted, fontFamily = BodyFont, fontSize = 15.sp)
+                }
                 return@composable
             }
             RenameLobbyScreen(
