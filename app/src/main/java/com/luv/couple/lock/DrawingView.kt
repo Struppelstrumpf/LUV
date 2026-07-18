@@ -48,6 +48,13 @@ class DrawingView @JvmOverloads constructor(
     private var pendingDot: StrokePoint? = null
     var myColorIndex: Int = 0
 
+    /** Aktuelle Pinseldicke für den Live-Strich und neue Zeichnungen. */
+    var myBrushWidth: Float = 18f
+        set(value) {
+            field = value.coerceIn(6f, 40f)
+            invalidate()
+        }
+
     /** Expliziter Leinwand-Ton — verhindert „schwarzen“ Flash ohne Strokes. */
     var canvasBackground: Int = 0xFF0E1A24.toInt()
         set(value) {
@@ -203,7 +210,7 @@ class DrawingView @JvmOverloads constructor(
             }
         } else {
             paint.color = PeerPalette.strokeColor(myColorIndex)
-            paint.strokeWidth = 18f
+            paint.strokeWidth = myBrushWidth
             canvas.drawPath(currentPath, paint)
         }
     }

@@ -60,6 +60,8 @@ object CanvasStore {
         private set
     @Volatile var cachedColorIndex: Int = 0
         private set
+    @Volatile var cachedBrushWidth: Float = 18f
+        private set
     @Volatile private var knownLobbyIds: Set<String> = emptySet()
 
     private lateinit var appContext: Context
@@ -71,6 +73,10 @@ object CanvasStore {
     fun updateProfile(nickname: String?, colorIndex: Int) {
         cachedNickname = nickname
         cachedColorIndex = colorIndex.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
+    }
+
+    fun updateBrushWidth(width: Float) {
+        cachedBrushWidth = width.coerceIn(6f, 40f)
     }
 
     /** Allein in der Lobby (≤1 Verbundener) → Mehrfarben ohne Umfärben alter Striche. */
@@ -255,7 +261,7 @@ object CanvasStore {
 
     fun addLocalStroke(
         points: List<StrokePoint>,
-        width: Float = 18f,
+        width: Float = cachedBrushWidth,
         lobbyId: String? = null
     ) {
         if (points.size < 2) return

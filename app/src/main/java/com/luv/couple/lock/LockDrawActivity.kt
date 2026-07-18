@@ -45,6 +45,7 @@ import com.luv.couple.net.PairSessionState
 import com.luv.couple.net.PublicVoteEvent
 import com.luv.couple.notify.LiveProximity
 import com.luv.couple.shop.ShopCatalog
+import com.luv.couple.ui.screens.BrushStudioSheet
 import com.luv.couple.ui.screens.EmojiBarEditorDialog
 import com.luv.couple.update.AppUpdater
 import com.luv.couple.update.UpdateUiState
@@ -84,6 +85,7 @@ class LockDrawActivity : ComponentActivity() {
     private var reactionExpanded = false
     private var eraserOn = false
     private var emojiEditorHost: FrameLayout? = null
+    private var brushStudioHost: FrameLayout? = null
     private lateinit var gameHud: LinearLayout
     private lateinit var gameHudTitle: TextView
     private lateinit var gameHudSubtitle: TextView
@@ -280,6 +282,9 @@ class LockDrawActivity : ComponentActivity() {
                 withContext(Dispatchers.IO) { LuvApp.instance.prefs.setActiveLobby(id) }
             }
             CanvasStore.updateProfile(snap.nickname, snap.colorIndex)
+            val brushW = withContext(Dispatchers.IO) { LuvApp.instance.prefs.brushWidth() }
+            CanvasStore.updateBrushWidth(brushW)
+            if (::drawingView.isInitialized) drawingView.myBrushWidth = brushW
             CanvasStore.updateKnownLobbies(snap.lobbies.map { it.id })
             val lobby = snap.lobbies.firstOrNull { it.id == lobbyId }
             lobbyTitle.text = lobby?.name.orEmpty()
@@ -299,7 +304,11 @@ class LockDrawActivity : ComponentActivity() {
         observeForcedUpdates()
 
         drawingView.onStrokeFinished = { points ->
-            CanvasStore.addLocalStroke(points, lobbyId = lobbyId)
+            CanvasStore.addLocalStroke(
+                points,
+                width = drawingView.myBrushWidth,
+                lobbyId = lobbyId
+            )
             // Kein Fade: eigener Strich sofort sichtbar (sonst wirkt die Leinwand kurz „schwarz“)
             drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
             refreshLegend()
@@ -1088,26 +1097,65 @@ class LockDrawActivity : ComponentActivity() {
     }
 
     private fun showColorPicker() {
+        openBrushStudio()
+    }
+
+    private fun openBrushStudio() {
+        val root = rootView ?: return
+        if (brushStudioHost != null) return
         val id = lobbyId ?: return
         val mine = CanvasStore.cachedColorIndex
-        val myUserId = com.luv.couple.net.AccountSession.account.value?.id
+        val myUserId = AccountSession.account.value?.id
         val taken = PairSessionState.takenColorIndices(
             id,
             CanvasStore.cachedNickname,
             myUserId
         ) +
             CanvasStore.snapshot(id)
-                .filter { !it.isLocal && !it.nickname.equals(CanvasStore.cachedNickname, ignoreCase = true) }
+                .filter {
+                    !it.isLocal &&
+                        !it.nickname.equals(CanvasStore.cachedNickname, ignoreCase = true)
+                }
                 .map { it.colorIndex }
                 .toSet()
-        CanvasGameUi.showColorPickerSheet(
-            activity = this,
-            mine = mine,
-            taken = taken,
-            colorCount = PeerPalette.COLOR_COUNT,
-            strokeColor = { PeerPalette.strokeColor(it) },
-            onPick = { applyMyColor(it, persist = true, sync = true) }
+        val host = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            elevation = 42f
+            isClickable = true
+        }
+        val compose = ComposeView(this).apply {
+            setContent {
+                BrushStudioSheet(
+                    selectedColor = mine,
+                    takenColors = taken,
+                    brushWidth = drawingView.myBrushWidth,
+                    onColorPick = { applyMyColor(it, persist = true, sync = true) },
+                    onBrushWidthChange = { w ->
+                        drawingView.myBrushWidth = w
+                        CanvasStore.updateBrushWidth(w)
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            LuvApp.instance.prefs.setBrushWidth(w)
+                        }
+                    },
+                    onDismiss = {
+                        root.removeView(host)
+                        brushStudioHost = null
+                    }
+                )
+            }
+        }
+        host.addView(
+            compose,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
         )
+        root.addView(host)
+        brushStudioHost = host
     }
 
     private fun confirmClearCanvas() {

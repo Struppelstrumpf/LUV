@@ -73,8 +73,8 @@
     <string name="game_pick_word">Wähle dein Wort</string>
     <string name="game_you_draw">Du malst</string>
     <string name="game_stop">Spiel beenden</string>
-    <string name="color_picker_title">Deine Farbe</string>
-    <string name="color_picker_hint">Freie Farben tippen — Linien wechseln für alle mit.</string>
+    <string name="color_picker_title">Pinsel</string>
+    <string name="color_picker_hint">Farbe und Strichstärke — freie Farben tippen.</string>
     <string name="partner_draw_channel">LUV Hinweise</string>
     <string name="partner_draw_channel_desc">Beitritt, Zeichnen und Tagesbonus</string>
     <string name="partner_draw_title">LUV</string>

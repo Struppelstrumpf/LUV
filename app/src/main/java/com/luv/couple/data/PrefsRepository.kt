@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -48,6 +49,8 @@ class PrefsRepository(private val context: Context) {
     private val emojiBarKey = stringPreferencesKey("emoji_bar_json")
     /** Lokaler Cache Inventar-Emojis: JSON { "👍": 2, … } */
     private val ownedEmojisKey = stringPreferencesKey("owned_emojis_json")
+    /** Pinseldicke auf der Leinwand (px) */
+    private val brushWidthKey = floatPreferencesKey("brush_width")
 
     // Legacy keys — Migration
     private val genderKey = stringPreferencesKey("gender")
@@ -139,6 +142,15 @@ class PrefsRepository(private val context: Context) {
     suspend fun setColorIndex(index: Int) {
         val safe = index.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
         context.dataStore.edit { it[colorIndexKey] = safe.toString() }
+    }
+
+    suspend fun brushWidth(): Float =
+        (context.dataStore.data.first()[brushWidthKey] ?: 18f).coerceIn(6f, 40f)
+
+    suspend fun setBrushWidth(width: Float) {
+        context.dataStore.edit {
+            it[brushWidthKey] = width.coerceIn(6f, 40f)
+        }
     }
 
     suspend fun setTutorialDone(done: Boolean = true) {
