@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -88,7 +89,7 @@ private fun tabsFor(mode: InventoryPanelMode): List<InvTab> = when (mode) {
 @Composable
 fun ProfileInventoryPanel(
     mode: InventoryPanelMode,
-    ownedStickers: List<String>,
+    ownedStickers: Map<String, Int>,
     ownedEmojis: Map<String, Int> = emptyMap(),
     ownedThemes: List<String> = listOf(ProfileCatalog.DEFAULT_THEME_ID),
     ownedPets: List<String> = listOf("🐣"),
@@ -194,18 +195,30 @@ fun ProfileInventoryPanel(
                                 tab = i
                                 onTabChange(i)
                             }
-                            .padding(vertical = s(9.dp), horizontal = s(8.dp)),
+                            .padding(vertical = s(9.dp), horizontal = s(4.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            invTab.label,
-                            color = TextPrimary,
-                            fontFamily = if (on) DisplayFont else BodyFont,
-                            fontSize = ts(11.sp),
-                            softWrap = true,
-                            maxLines = 2,
-                            textAlign = TextAlign.Center
-                        )
+                        BoxWithConstraints(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val base = 10f * scale
+                            val fontSp = when {
+                                invTab.label.length > 10 && maxWidth < 72.dp -> (base * 0.78f).sp
+                                invTab.label.length > 8 && maxWidth < 84.dp -> (base * 0.88f).sp
+                                else -> base.sp
+                            }
+                            Text(
+                                invTab.label,
+                                color = TextPrimary,
+                                fontFamily = if (on) DisplayFont else BodyFont,
+                                fontSize = fontSp,
+                                softWrap = false,
+                                maxLines = 1,
+                                overflow = TextOverflow.Clip,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 }
             }
@@ -218,7 +231,7 @@ fun ProfileInventoryPanel(
 
             when (tabs.getOrNull(tab)) {
                 InvTab.Emojis -> {
-                    val entries = ownedEmojis.entries.sortedBy { it.key }
+                    val entries = ownedEmojis.entries.filter { it.value > 0 }.sortedBy { it.key }
                     if (entries.isEmpty()) {
                         Box(modifier = gridMod, contentAlignment = Alignment.Center) {
                             Text(
@@ -251,7 +264,7 @@ fun ProfileInventoryPanel(
                                         fontSize = ts(26.sp),
                                         modifier = Modifier.align(Alignment.Center)
                                     )
-                                    if (count > 1) {
+                                    if (count > 0) {
                                         Text(
                                             "×$count",
                                             color = TextMuted,
@@ -319,31 +332,49 @@ fun ProfileInventoryPanel(
                         }
                     }
                 }
-                InvTab.Stickers -> if (ownedStickers.isEmpty()) {
-                    InvEmptyHint(
-                        title = "Noch keine Sticker.",
-                        body = "Im Itemshop unter Sticker kaufen — z. B. Schmetterling.",
-                        onOpenItemShop = onOpenItemShop,
-                        scale = scale,
-                        modifier = gridMod
-                    )
-                } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(5),
-                        modifier = gridMod,
-                        contentPadding = PaddingValues(s(4.dp)),
-                        horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
-                        verticalArrangement = Arrangement.spacedBy(s(8.dp))
-                    ) {
-                        items(ownedStickers, key = { it }) { emoji ->
-                            Box(
-                                modifier = Modifier
-                                    .aspectRatio(1f)
-                                    .clip(RoundedCornerShape(s(14.dp)))
-                                    .background(BgSoft)
-                                    .clickable { onSticker(emoji) },
-                                contentAlignment = Alignment.Center
-                            ) { Text(emoji, fontSize = ts(26.sp)) }
+                InvTab.Stickers -> {
+                    val stickerEntries = ownedStickers.entries.filter { it.value > 0 }.sortedBy { it.key }
+                    if (stickerEntries.isEmpty()) {
+                        InvEmptyHint(
+                            title = "Noch keine Sticker.",
+                            body = "Im Itemshop unter Sticker kaufen — z. B. Schmetterling.",
+                            onOpenItemShop = onOpenItemShop,
+                            scale = scale,
+                            modifier = gridMod
+                        )
+                    } else {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(5),
+                            modifier = gridMod,
+                            contentPadding = PaddingValues(s(4.dp)),
+                            horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
+                            verticalArrangement = Arrangement.spacedBy(s(8.dp))
+                        ) {
+                            items(stickerEntries, key = { it.key }) { (emoji, count) ->
+                                Box(
+                                    modifier = Modifier
+                                        .aspectRatio(1f)
+                                        .clip(RoundedCornerShape(s(14.dp)))
+                                        .background(BgSoft)
+                                        .clickable { onSticker(emoji) }
+                                        .padding(s(4.dp))
+                                ) {
+                                    Text(
+                                        emoji,
+                                        fontSize = ts(26.sp),
+                                        modifier = Modifier.align(Alignment.Center)
+                                    )
+                                    if (count > 0) {
+                                        Text(
+                                            "×$count",
+                                            color = TextMuted,
+                                            fontFamily = BodyFont,
+                                            fontSize = ts(10.sp),
+                                            modifier = Modifier.align(Alignment.BottomEnd)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -425,7 +456,7 @@ fun ProfileInventoryPanel(
 
 @Composable
 fun ProfileChestDialog(
-    ownedStickers: List<String>,
+    ownedStickers: Map<String, Int>,
     ownedThemes: List<String> = listOf(ProfileCatalog.DEFAULT_THEME_ID),
     ownedPets: List<String> = listOf("🐣"),
     currentThemeId: String,
@@ -541,8 +572,8 @@ private fun ShopLinkChip(
                 color = TextPrimary,
                 fontFamily = BodyFont,
                 fontSize = fontSp,
-                softWrap = true,
-                maxLines = 2,
+                softWrap = false,
+                maxLines = 1,
                 textAlign = TextAlign.Center
             )
         }

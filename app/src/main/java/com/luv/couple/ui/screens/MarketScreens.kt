@@ -901,10 +901,6 @@ fun InventoryScreen(
         }
     }
 
-    val stickers = remember(ownedStickersMap) {
-        ownedStickersMap.keys.sorted()
-    }
-
     fun confirmPlace(action: ProfilePlaceAction) {
         pendingAction = action
     }
@@ -938,7 +934,7 @@ fun InventoryScreen(
         ) {
             ProfileInventoryPanel(
                 mode = InventoryPanelMode.Menu,
-                ownedStickers = stickers,
+                ownedStickers = ownedStickersMap,
                 ownedEmojis = owned,
                 ownedThemes = ownedThemes,
                 ownedPets = ownedPets,

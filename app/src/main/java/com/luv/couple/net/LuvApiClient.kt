@@ -1173,12 +1173,44 @@ object LuvApiClient {
             nick to com.luv.couple.profile.ProfileCatalog.decode(raw, nick)
         }
 
-    suspend fun saveMyProfileCanvas(state: com.luv.couple.profile.ProfileState): Boolean =
+    /**
+     * Speichert Profil. Bei Erfolg optional Inventar (Sticker-Verbrauch).
+     */
+    suspend fun saveMyProfileCanvas(state: com.luv.couple.profile.ProfileState): Pair<Boolean, InventoryBag?> =
         withContext(Dispatchers.IO) {
             val body = JSONObject()
                 .put("profile", JSONObject(com.luv.couple.profile.ProfileCatalog.encode(state)))
                 .toString()
-            runCatching { authedPut("/v1/me/profile", body) }.isSuccess
+            runCatching {
+                val json = authedPut("/v1/me/profile", body)
+                val invJson = json.optJSONObject("inventory")
+                val inv = if (invJson != null) {
+                    fun counts(o: org.json.JSONObject?): Map<String, Int> = buildMap {
+                        if (o == null) return@buildMap
+                        o.keys().forEach { key ->
+                            val n = o.optInt(key, 0)
+                            if (key.isNotBlank() && n > 0) put(key, n)
+                        }
+                    }
+                    fun list(arr: org.json.JSONArray?): List<String> = buildList {
+                        if (arr == null) return@buildList
+                        for (i in 0 until arr.length()) {
+                            arr.optString(i).trim().takeIf { it.isNotBlank() }?.let { add(it) }
+                        }
+                    }.distinct()
+                    InventoryBag(
+                        emojis = counts(invJson.optJSONObject("emojis")),
+                        themes = list(invJson.optJSONArray("themes")),
+                        stickers = counts(invJson.optJSONObject("stickers")),
+                        pets = list(invJson.optJSONArray("pets")),
+                        equippedPet = invJson.optString(
+                            "equippedPet",
+                            com.luv.couple.shop.ShopCatalog.DEFAULT_PET
+                        ).trim().ifBlank { com.luv.couple.shop.ShopCatalog.DEFAULT_PET }
+                    )
+                } else null
+                true to inv
+            }.getOrElse { false to null }
         }
 
     data class PeerProfile(

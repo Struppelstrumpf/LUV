@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -414,8 +415,9 @@ fun PlayerMarketScreen(
                                         displayLabel,
                                         color = if (active) MarketBrown else MarketBrownMuted,
                                         fontFamily = if (active) DisplayFont else BodyFont,
-                                        fontSize = ui.ts(11.sp),
-                                        softWrap = true
+                                        fontSize = ui.ts(10.sp),
+                                        softWrap = false,
+                                        maxLines = 1
                                     )
                                 }
                             }
@@ -430,39 +432,55 @@ fun PlayerMarketScreen(
                             fontSize = ui.ts(12.sp)
                         )
                         Spacer(modifier = Modifier.height(ui.s(6.dp)))
-                        when {
-                            loading && items.isEmpty() -> {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("Lade…", color = MarketBrownMuted, fontFamily = BodyFont)
+                        val offersProduct = offersItem
+                        if (offersProduct != null) {
+                            MarketOffersPanel(
+                                product = offersProduct,
+                                offers = offersList,
+                                loading = offersLoading,
+                                ui = ui,
+                                onBack = {
+                                    offersItem = null
+                                    offersList = emptyList()
+                                    previewListing = null
+                                },
+                                onSelectOffer = { previewListing = it }
+                            )
+                        } else {
+                            when {
+                                loading && items.isEmpty() -> {
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("Lade…", color = MarketBrownMuted, fontFamily = BodyFont)
+                                    }
                                 }
-                            }
-                            items.isEmpty() -> {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        "Noch keine Angebote hier.",
-                                        color = MarketBrownMuted,
-                                        fontFamily = BodyFont,
-                                        fontSize = ui.ts(13.sp)
-                                    )
-                                }
-                            }
-                            else -> {
-                                LazyColumn(
-                                    modifier = Modifier.fillMaxSize(),
-                                    verticalArrangement = Arrangement.spacedBy(ui.s(8.dp))
-                                ) {
-                                    items(items, key = { "${it.kind}|${it.itemId}" }) { item ->
-                                        MarketItemRow(
-                                            item = item,
-                                            ui = ui,
-                                            onOpenOffers = { openOffers(item) }
+                                items.isEmpty() -> {
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            "Noch keine Angebote hier.",
+                                            color = MarketBrownMuted,
+                                            fontFamily = BodyFont,
+                                            fontSize = ui.ts(13.sp)
                                         )
+                                    }
+                                }
+                                else -> {
+                                    LazyColumn(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalArrangement = Arrangement.spacedBy(ui.s(8.dp))
+                                    ) {
+                                        items(items, key = { "${it.kind}|${it.itemId}" }) { item ->
+                                            MarketItemRow(
+                                                item = item,
+                                                ui = ui,
+                                                onOpenOffers = { openOffers(item) }
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -536,20 +554,6 @@ fun PlayerMarketScreen(
                 scope.launch { syncInventory() }
                 Toast.makeText(context, "Angebot erstellt", Toast.LENGTH_SHORT).show()
             }
-        )
-    }
-
-    offersItem?.let { product ->
-        MarketOffersDialog(
-            product = product,
-            offers = offersList,
-            loading = offersLoading,
-            onDismiss = {
-                offersItem = null
-                offersList = emptyList()
-                previewListing = null
-            },
-            onSelectOffer = { previewListing = it }
         )
     }
 
@@ -666,64 +670,101 @@ private fun MarketPillButton(
 }
 
 @Composable
-private fun MarketOffersDialog(
+private fun MarketOffersPanel(
     product: LuvApiClient.MarketItem,
     offers: List<LuvApiClient.MarketListing>,
     loading: Boolean,
-    onDismiss: () -> Unit,
+    ui: UiScale,
+    onBack: () -> Unit,
     onSelectOffer: (LuvApiClient.MarketListing) -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = MarketCream,
-        title = {
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val showScrollTop = listState.firstVisibleItemIndex > 0 ||
+        listState.firstVisibleItemScrollOffset > 40
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
             Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(ui.s(10.dp)))
+                    .background(MarketCreamDeep)
+                    .clickable(onClick = onBack)
+                    .padding(horizontal = ui.s(10.dp), vertical = ui.s(8.dp)),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(ui.s(8.dp))
             ) {
-                Text(product.emoji, fontSize = 28.sp)
-                Column {
-                    Text(product.label, fontFamily = DisplayFont, color = MarketBrown, fontSize = 20.sp)
+                Text("<", color = MarketBrown, fontFamily = DisplayFont, fontSize = ui.ts(20.sp))
+                Text(product.emoji, fontSize = ui.ts(22.sp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "${offers.size} Angebot${if (offers.size == 1) "" else "e"}",
+                        product.label,
+                        color = MarketBrown,
+                        fontFamily = DisplayFont,
+                        fontSize = ui.ts(14.sp),
+                        softWrap = true
+                    )
+                    Text(
+                        if (loading) "Lade..."
+                        else "${offers.size} Angebot${if (offers.size == 1) "" else "e"}",
                         color = MarketBrownMuted,
                         fontFamily = BodyFont,
-                        fontSize = 12.sp
+                        fontSize = ui.ts(11.sp)
                     )
                 }
+                Text("Zurück", color = MarketGold, fontFamily = DisplayFont, fontSize = ui.ts(12.sp))
             }
-        },
-        text = {
-            when {
-                loading -> Text("Lade Angebote…", color = MarketBrownMuted, fontFamily = BodyFont)
-                offers.isEmpty() -> Text(
-                    "Keine Angebote mehr.",
-                    color = MarketBrownMuted,
-                    fontFamily = BodyFont
-                )
-                else -> {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 360.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(offers, key = { it.id }) { offer ->
-                            MarketOfferRow(
-                                offer = offer,
-                                onClick = { onSelectOffer(offer) }
-                            )
-                        }
+            Spacer(modifier = Modifier.height(ui.s(8.dp)))
+            if (loading && offers.isEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Lade Angebote...", color = MarketBrownMuted, fontFamily = BodyFont)
+                }
+            } else if (offers.isEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Keine Angebote mehr.", color = MarketBrownMuted, fontFamily = BodyFont)
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(ui.s(8.dp))
+                ) {
+                    items(offers, key = { it.id }) { offer ->
+                        MarketOfferRow(
+                            offer = offer,
+                            onClick = { onSelectOffer(offer) }
+                        )
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Zurück", color = MarketBrownMuted, fontFamily = BodyFont)
-            }
         }
-    )
+        if (showScrollTop) {
+            Text(
+                "Nach oben",
+                color = Color.White,
+                fontFamily = DisplayFont,
+                fontSize = ui.ts(12.sp),
+                softWrap = false,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = ui.s(10.dp))
+                    .clip(RoundedCornerShape(ui.s(20.dp)))
+                    .background(MarketBrown)
+                    .clickable {
+                        scope.launch { listState.animateScrollToItem(0) }
+                    }
+                    .padding(horizontal = ui.s(14.dp), vertical = ui.s(8.dp))
+            )
+        }
+    }
 }
 
 @Composable

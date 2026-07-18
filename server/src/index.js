@@ -269,14 +269,11 @@ function clampProfileToInventory(user, profile) {
   let companionEmoji =
     String(profile.companionEmoji || DEFAULT_PET).trim().slice(0, 8) || DEFAULT_PET;
   if (!inv.pets.includes(companionEmoji)) companionEmoji = DEFAULT_PET;
-  // Sticker im Layout nur behalten, wenn besessen (oder kein Shop-Preis = frei)
+  // Sticker-Bestand: syncStickersOnProfileSave (Inventar = freier Stock, nicht auf der Leinwand)
   const layout = Array.isArray(profile.layout)
     ? profile.layout.filter((el) => {
         if (!el || el.type !== "sticker") return true;
-        const emoji = String(el.emoji || el.text || "").trim().slice(0, 8);
-        if (!emoji) return false;
-        if (STICKER_SHOP_PRICES[emoji] == null) return true;
-        return (Number(inv.stickers[emoji]) || 0) > 0;
+        return Boolean(String(el.emoji || el.text || "").trim());
       })
     : [];
   return { ...profile, themeId, companionEmoji, layout };
@@ -4099,20 +4096,88 @@ app.get("/v1/me/profile", (req, res) => {
   });
 });
 
+/** Sticker auf dem Profil zählen (emoji → Anzahl). */
+function countLayoutStickers(layout) {
+  const out = {};
+  if (!Array.isArray(layout)) return out;
+  for (const el of layout) {
+    if (!el || String(el.type).toLowerCase() !== "sticker") continue;
+    const e = String(el.emoji || el.text || "").trim().slice(0, 8);
+    if (!e) continue;
+    out[e] = (out[e] || 0) + 1;
+  }
+  return out;
+}
+
+/**
+ * Sticker-Inventar = freier Bestand (nicht auf Profil / Markt).
+ * Beim Platzieren abziehen, beim Entfernen zurückgeben.
+ * Einmalige Migration: Profil-Sticker vom Inventar abziehen.
+ */
+function migrateStickerInventoryIfNeeded(user) {
+  if (user.stickerInvMode === 2) return;
+  const inv = ensureInventory(user);
+  const onProfile = countLayoutStickers(user.profileCanvas?.layout);
+  for (const [e, n] of Object.entries(onProfile)) {
+    const have = Number(inv.stickers[e]) || 0;
+    if (have > 0 && n > 0) {
+      inv.stickers[e] = Math.max(0, have - n);
+      if (inv.stickers[e] <= 0) delete inv.stickers[e];
+    }
+  }
+  user.stickerInvMode = 2;
+}
+
+/** Profil-Sticker vs. Inventar abgleichen (delta). Gibt false wenn nicht genug Bestand. */
+function syncStickersOnProfileSave(user, newLayout) {
+  migrateStickerInventoryIfNeeded(user);
+  const inv = ensureInventory(user);
+  const oldC = countLayoutStickers(user.profileCanvas?.layout);
+  const newC = countLayoutStickers(newLayout);
+  const keys = new Set([...Object.keys(oldC), ...Object.keys(newC)]);
+  for (const e of keys) {
+    const delta = (newC[e] || 0) - (oldC[e] || 0);
+    if (delta > 0) {
+      const have = Number(inv.stickers[e]) || 0;
+      if (have < delta) return false;
+      inv.stickers[e] = have - delta;
+      if (inv.stickers[e] <= 0) delete inv.stickers[e];
+    } else if (delta < 0) {
+      inv.stickers[e] = (Number(inv.stickers[e]) || 0) + -delta;
+    }
+  }
+  return true;
+}
+
 app.put("/v1/me/profile", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   const raw = sanitizeProfileCanvas(req.body?.profile || req.body);
   if (!raw) return res.status(400).json({ error: "invalid_profile" });
-  // Nur besessene Themes/Pets/Sticker — kein Shop-Bypass über Profil-JSON
+  migrateStickerInventoryIfNeeded(ctx.user);
+  // Sticker-Platzierung verbraucht Inventar (frei), Entfernen gibt zurück
+  if (!syncStickersOnProfileSave(ctx.user, raw.layout)) {
+    return res.status(400).json({
+      error: "not_enough_stickers",
+      message: "Nicht genug Sticker im Inventar.",
+    });
+  }
   const profile = clampProfileToInventory(ctx.user, raw);
   ctx.user.profileCanvas = profile;
+  const inv = ensureInventory(ctx.user);
   scheduleSave();
   return res.json({
     ok: true,
     nickname: ctx.user.nickname || "Du",
     userId: ctx.user.id,
     profile,
+    inventory: {
+      stickers: inv.stickers,
+      emojis: inv.emojis,
+      themes: inv.themes,
+      pets: inv.pets,
+      equippedPet: inv.equippedPet || DEFAULT_PET,
+    },
   });
 });
 
@@ -5105,6 +5170,7 @@ app.post("/v1/me/equip-pet", (req, res) => {
 app.get("/v1/me/inventory", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
+  migrateStickerInventoryIfNeeded(ctx.user);
   const inv = ensureInventory(ctx.user);
   scheduleSave();
   return res.json({

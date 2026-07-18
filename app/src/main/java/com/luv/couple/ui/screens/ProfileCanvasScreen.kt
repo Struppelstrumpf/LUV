@@ -153,7 +153,7 @@ fun ProfileCanvasScreen(
     var editElId by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var loadedNick by remember { mutableStateOf(nickname) }
-    var ownedStickers by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var ownedStickers by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var ownedThemes by remember {
         mutableStateOf(listOf(ProfileCatalog.DEFAULT_THEME_ID))
     }
@@ -212,9 +212,7 @@ fun ProfileCanvasScreen(
                     )
                 }
             }
-            ownedStickers = withContext(Dispatchers.IO) {
-                prefs.ownedStickers().keys
-            }
+            ownedStickers = withContext(Dispatchers.IO) { prefs.ownedStickers() }
             ownedThemes = withContext(Dispatchers.IO) { prefs.ownedThemes() }
             ownedPets = withContext(Dispatchers.IO) { prefs.ownedPets() }
             val equipped = withContext(Dispatchers.IO) { prefs.equippedPet() }
@@ -302,6 +300,51 @@ fun ProfileCanvasScreen(
         state = state.copy(layout = next)
     }
 
+    fun stickerCounts(layout: List<ProfileLayoutEl>): Map<String, Int> =
+        layout.filter { it.type == ProfileElType.Sticker }
+            .mapNotNull { it.emoji?.trim()?.takeIf { e -> e.isNotBlank() } }
+            .groupingBy { it }
+            .eachCount()
+
+    /** Layout setzen und freien Sticker-Bestand anpassen (Platzieren verbraucht, Entfernen gibt zurück). */
+    fun applyLayoutWithStickerStock(next: List<ProfileLayoutEl>) {
+        if (!editable) {
+            patchLayout(next)
+            return
+        }
+        val oldC = stickerCounts(state.layout)
+        val newC = stickerCounts(next)
+        val keys = oldC.keys + newC.keys
+        val stock = ownedStickers.toMutableMap()
+        for (e in keys) {
+            val delta = (newC[e] ?: 0) - (oldC[e] ?: 0)
+            if (delta > 0) {
+                val have = stock[e] ?: 0
+                if (have < delta) {
+                    Toast.makeText(context, "Nicht genug $e im Inventar", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                val left = have - delta
+                if (left <= 0) stock.remove(e) else stock[e] = left
+            } else if (delta < 0) {
+                stock[e] = (stock[e] ?: 0) - delta
+            }
+        }
+        ownedStickers = stock
+        patchLayout(next)
+        scope.launch {
+            val emojis = withContext(Dispatchers.IO) { prefs.ownedEmojis() }
+            val equipped = withContext(Dispatchers.IO) { prefs.equippedPet() }
+            prefs.applyInventoryBag(
+                emojis = emojis,
+                themes = ownedThemes,
+                stickers = stock,
+                pets = ownedPets,
+                equippedPet = equipped
+            )
+        }
+    }
+
     fun updateEl(updated: ProfileLayoutEl) {
         patchLayout(state.layout.map { if (it.id == updated.id) updated else it })
     }
@@ -358,12 +401,16 @@ fun ProfileCanvasScreen(
 
     fun placeSticker(emoji: String) {
         if (!editable) return
+        if ((ownedStickers[emoji] ?: 0) < 1) {
+            Toast.makeText(context, "Kein $emoji mehr im Inventar", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (state.layout.count { it.type == ProfileElType.Sticker } >= ProfileCatalog.MAX_DECOR) {
             Toast.makeText(context, "Maximal ${ProfileCatalog.MAX_DECOR} Sticker", Toast.LENGTH_SHORT).show()
             return
         }
         val el = ProfileCatalog.newSticker(emoji, state.layout)
-        patchLayout(state.layout + el)
+        applyLayoutWithStickerStock(state.layout + el)
         selectedId = el.id
         showChest = false
     }
@@ -407,7 +454,24 @@ fun ProfileCanvasScreen(
             withContext(Dispatchers.IO) {
                 prefs.setProfileCanvasJson(ProfileCatalog.encode(clean))
             }
-            val ok = runCatching { LuvApiClient.saveMyProfileCanvas(clean) }.getOrDefault(false)
+            val saveResult = runCatching { LuvApiClient.saveMyProfileCanvas(clean) }
+                .getOrElse { false to null }
+            val ok = saveResult.first
+            val inv = saveResult.second
+            if (ok && inv != null) {
+                ownedStickers = inv.stickers
+                ownedThemes = inv.themes
+                ownedPets = inv.pets
+                withContext(Dispatchers.IO) {
+                    prefs.applyInventoryBag(
+                        emojis = inv.emojis,
+                        themes = inv.themes,
+                        stickers = inv.stickers,
+                        pets = inv.pets,
+                        equippedPet = inv.equippedPet
+                    )
+                }
+            }
             saving = false
             savedSnapshot = clean.snapshotKey()
             Toast.makeText(
@@ -507,7 +571,7 @@ fun ProfileCanvasScreen(
                     editable = editable,
                     selectedId = selectedId,
                     onSelect = { selectedId = it },
-                    onLayoutChange = { patchLayout(it) },
+                    onLayoutChange = { applyLayoutWithStickerStock(it) },
                     onOpenChest = { if (editable) showChest = true },
                     onEdit = { if (editable) editElId = it },
                     onTipGlass = if (!editable && !userId.isNullOrBlank() && canTipGlass && !tipBusy) {
@@ -808,7 +872,7 @@ fun ProfileCanvasScreen(
 
         if (showChest && editable) {
             ProfileChestDialog(
-                ownedStickers = ownedStickers.toList().sorted(),
+                ownedStickers = ownedStickers,
                 ownedThemes = ownedThemes,
                 ownedPets = ownedPets,
                 currentThemeId = state.themeId,

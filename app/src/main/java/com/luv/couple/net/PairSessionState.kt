@@ -318,7 +318,9 @@ object PairSessionState {
             active = active,
             userId = userId ?: prev?.userId,
             online = prev?.online != false,
-            departed = false
+            departed = false,
+            // Presence hat kein Pet — Roster-Wert behalten (sonst fällt Avatar auf 🐣 zurück)
+            petEmoji = prev?.petEmoji?.takeIf { it.isNotBlank() } ?: "🐣"
         )
         return next
     }

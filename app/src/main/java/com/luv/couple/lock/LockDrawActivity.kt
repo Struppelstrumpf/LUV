@@ -490,6 +490,16 @@ class LockDrawActivity : ComponentActivity() {
                 refreshLegend()
             }
         }
+        // Begleiter-Wechsel aus Profil/Inventar sofort in der Legende
+        lifecycleScope.launch {
+            LuvApp.instance.prefs.equippedPetFlow.collectLatest { pet ->
+                val next = pet.trim().ifBlank { ShopCatalog.DEFAULT_PET }
+                if (next != myPetEmoji) {
+                    myPetEmoji = next
+                    refreshLegend()
+                }
+            }
+        }
         lifecycleScope.launch {
             var id = lobbyId
             var tries = 0
@@ -1655,7 +1665,13 @@ class LockDrawActivity : ComponentActivity() {
         MidnightClear.checkAndClearIfNewDay(this)
         drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
         PairConnectionService.sendPresence(this, active = true, lobbyId = lobbyId)
-        refreshLegend()
+        lifecycleScope.launch {
+            myPetEmoji = withContext(Dispatchers.IO) {
+                runCatching { LuvApp.instance.prefs.equippedPet() }
+                    .getOrDefault(ShopCatalog.DEFAULT_PET)
+            }
+            refreshLegend()
+        }
         maybeShowPendingClearVote()
         maybeShowPendingPublicVote()
         lifecycleScope.launch {
