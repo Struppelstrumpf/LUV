@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.48",
+            listOf(
+                "Lobby-Glocke (Impulse) wird gespeichert und geräteübergreifend synchronisiert",
+            )
+        ),
+        Entry(
             "1.9.47",
             listOf(
                 "Verlassene Lobbys bleiben weg — kein Zurückholen nach Update oder Appstart",

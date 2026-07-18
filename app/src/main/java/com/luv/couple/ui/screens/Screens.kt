@@ -590,7 +590,11 @@ private fun LobbyCard(
     val peers by PairSessionState.peers(lobby.id).collectAsStateWithLifecycle()
     val proximityMap by LuvApp.instance.prefs.lobbyProximityFlow
         .collectAsStateWithLifecycle(initialValue = emptyMap())
-    val proximityOn = proximityMap[lobby.id] == true
+    val proximityCode = remember(lobby.code) {
+        lobby.code.trim().uppercase().removePrefix("LUV-")
+    }
+    val proximityOn = proximityMap[proximityCode] == true ||
+        proximityMap[lobby.id] == true
     val scope = rememberCoroutineScope()
     val capacity = when {
         liveCapacity > 0 -> liveCapacity
@@ -711,7 +715,7 @@ private fun LobbyCard(
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
-                        LuvApp.instance.prefs.setLobbyProximityEnabled(lobby.id, draftOn)
+                        LuvApp.instance.prefs.setLobbyProximityEnabled(lobby.code, draftOn)
                     }
                     showProximityDialog = false
                 }) {

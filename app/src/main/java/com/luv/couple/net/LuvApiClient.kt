@@ -381,7 +381,11 @@ object LuvApiClient {
         val prox = buildMap {
             val p = o.optJSONObject("lobbyProximity") ?: return@buildMap
             p.keys().forEach { key ->
-                if (p.optBoolean(key, false) && key.isNotBlank()) put(key, true)
+                if (!p.optBoolean(key, false)) return@forEach
+                val code = key.trim().uppercase().removePrefix("LUV-")
+                if (code.length in 3..16 && code.all { it.isLetterOrDigit() }) {
+                    put(code, true)
+                }
             }
         }
         val brush = o.optDouble("brushWidth", 18.0).toFloat().coerceIn(6f, 40f)
@@ -405,7 +409,13 @@ object LuvApiClient {
         val bar = org.json.JSONArray()
         settings.emojiBar.forEach { bar.put(it) }
         val prox = JSONObject()
-        settings.lobbyProximity.forEach { (k, v) -> if (v) prox.put(k, true) }
+        settings.lobbyProximity.forEach { (k, v) ->
+            if (!v) return@forEach
+            val code = k.trim().uppercase().removePrefix("LUV-")
+            if (code.length in 3..16 && code.all { it.isLetterOrDigit() }) {
+                prox.put(code, true)
+            }
+        }
         return JSONObject()
             .put("quietHours", quiet)
             .put("emojiBar", bar)

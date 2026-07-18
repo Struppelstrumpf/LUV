@@ -282,8 +282,19 @@ fun LuvAppNav() {
             if (serverEmpty && localQuiet.byDay.isNotEmpty()) {
                 runCatching { LuvApiClient.putSettings(prefs.buildCloudSettings()) }
             } else {
-                prefs.applySettingsBag(remoteSettings)
+                prefs.applySettingsBlob(remoteSettings)
             }
+        }
+        // Glocke/Impulse: auf Lobby-Codes migrieren und fehlende Cloud-Keys nachziehen
+        prefs.persistLobbyProximityMigration()
+        val cloudSettings = prefs.buildCloudSettings()
+        val remoteProxCodes = remoteSettings?.lobbyProximity?.keys
+            ?.map { it.trim().uppercase().removePrefix("LUV-") }
+            ?.filter { it.length in 3..16 }
+            ?.toSet()
+            .orEmpty()
+        if (cloudSettings.lobbyProximity.keys != remoteProxCodes) {
+            runCatching { LuvApiClient.putSettings(cloudSettings) }
         }
         syncInventory()
         runCatching {

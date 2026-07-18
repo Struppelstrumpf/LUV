@@ -338,7 +338,13 @@ class PrefsRepository(private val context: Context) {
     }
 
     suspend fun buildCloudSettings(): com.luv.couple.net.CloudSettings {
+        persistLobbyProximityMigration()
         val prefs = context.dataStore.data.first()
+        val lobbies = parseLobbies(prefs[lobbiesKey])
+        val prox = migrateLobbyProximityKeys(
+            parseLobbyProximity(prefs[lobbyProximityKey]),
+            lobbies
+        )
         return com.luv.couple.net.CloudSettings(
             quietHours = parseQuietHours(prefs[quietHoursKey]),
             emojiBar = parseEmojiBar(prefs[emojiBarKey]),
@@ -346,18 +352,28 @@ class PrefsRepository(private val context: Context) {
             partnerHaptic = prefs[partnerHapticKey] ?: true,
             liveProximityRich = prefs[liveProximityRichKey] ?: true,
             liveProximityWake = prefs[liveProximityWakeKey] ?: false,
-            lobbyProximity = parseLobbyProximity(prefs[lobbyProximityKey]),
+            lobbyProximity = prox,
             brushWidth = (prefs[brushWidthKey] ?: 18f).coerceIn(6f, 40f),
             updatedAt = System.currentTimeMillis()
         )
     }
 
-    suspend fun applySettingsBag(
+    suspend fun applySettingsBlob(
         settings: com.luv.couple.net.CloudSettings,
         skipMirror: Boolean = true
     ) {
         QuietHoursGate.update(settings.quietHours)
         context.dataStore.edit { prefs ->
+            val lobbies = parseLobbies(prefs[lobbiesKey])
+            val localProx = migrateLobbyProximityKeys(
+                parseLobbyProximity(prefs[lobbyProximityKey]),
+                lobbies
+            )
+            val remoteProx = migrateLobbyProximityKeys(settings.lobbyProximity, lobbies)
+            // Alte Cloud-UUIDs wirken wie „leer“ — lokale Codes behalten. Sonst Cloud ist Quelle.
+            val remoteLooksLikeLegacyUuids =
+                settings.lobbyProximity.isNotEmpty() && remoteProx.isEmpty()
+            val finalProx = if (remoteLooksLikeLegacyUuids) localProx else remoteProx
             prefs[quietHoursKey] = encodeQuietHours(settings.quietHours)
             if (settings.emojiBar.isNotEmpty()) {
                 prefs[emojiBarKey] = JSONArray(settings.emojiBar).toString()
@@ -366,10 +382,25 @@ class PrefsRepository(private val context: Context) {
             prefs[partnerHapticKey] = settings.partnerHaptic
             prefs[liveProximityRichKey] = settings.liveProximityRich
             prefs[liveProximityWakeKey] = settings.liveProximityWake
-            prefs[lobbyProximityKey] = encodeLobbyProximity(settings.lobbyProximity)
+            prefs[lobbyProximityKey] = encodeLobbyProximity(finalProx)
             prefs[brushWidthKey] = settings.brushWidth.coerceIn(6f, 40f)
         }
         if (!skipMirror) mirrorSettingsToCloud()
+    }
+
+    /** Alte Glocken-Keys (Lobby-UUID) → Invite-Code. */
+    suspend fun persistLobbyProximityMigration(): Boolean {
+        var changed = false
+        context.dataStore.edit { prefs ->
+            val lobbies = parseLobbies(prefs[lobbiesKey])
+            val old = parseLobbyProximity(prefs[lobbyProximityKey])
+            val next = migrateLobbyProximityKeys(old, lobbies)
+            if (next != old) {
+                prefs[lobbyProximityKey] = encodeLobbyProximity(next)
+                changed = true
+            }
+        }
+        return changed
     }
 
     private suspend fun mirrorSettingsToCloud() {
@@ -476,15 +507,30 @@ class PrefsRepository(private val context: Context) {
     suspend fun isLiveProximityWakeEnabled(): Boolean =
         context.dataStore.data.first()[liveProximityWakeKey] ?: false
 
-    suspend fun isLobbyProximityEnabled(lobbyId: String): Boolean {
-        val map = parseLobbyProximity(context.dataStore.data.first()[lobbyProximityKey])
-        return map[lobbyId] == true
+    suspend fun isLobbyProximityEnabled(lobbyIdOrCode: String): Boolean {
+        val prefs = context.dataStore.data.first()
+        val lobbies = parseLobbies(prefs[lobbiesKey])
+        val map = migrateLobbyProximityKeys(
+            parseLobbyProximity(prefs[lobbyProximityKey]),
+            lobbies
+        )
+        val code = resolveLobbyCode(lobbyIdOrCode, lobbies) ?: return false
+        return map[code] == true
     }
 
-    suspend fun setLobbyProximityEnabled(lobbyId: String, enabled: Boolean) {
+    /** Glocke / Nähe-Impulse pro Lobby — Key ist der Invite-Code (cloud-stabil). */
+    suspend fun setLobbyProximityEnabled(lobbyIdOrCode: String, enabled: Boolean) {
         context.dataStore.edit { prefs ->
-            val map = parseLobbyProximity(prefs[lobbyProximityKey]).toMutableMap()
-            if (enabled) map[lobbyId] = true else map.remove(lobbyId)
+            val lobbies = parseLobbies(prefs[lobbiesKey])
+            val code = resolveLobbyCode(lobbyIdOrCode, lobbies) ?: return@edit
+            val map = migrateLobbyProximityKeys(
+                parseLobbyProximity(prefs[lobbyProximityKey]),
+                lobbies
+            ).toMutableMap()
+            // Alt-Keys (UUID) für diese Lobby entfernen
+            lobbies.filter { normalizeLobbyCode(it.code) == code }.forEach { map.remove(it.id) }
+            map.remove(lobbyIdOrCode)
+            if (enabled) map[code] = true else map.remove(code)
             prefs[lobbyProximityKey] = encodeLobbyProximity(map)
         }
         mirrorSettingsToCloud()
@@ -746,11 +792,12 @@ class PrefsRepository(private val context: Context) {
             }
             val map = parseWidgetMap(prefs[widgetMapKey]).filterValues { it != lobbyId }
             prefs[widgetMapKey] = encodeWidgetMap(map)
+            val code = removed?.code?.let { normalizeLobbyCode(it) }.orEmpty()
             val prox = parseLobbyProximity(prefs[lobbyProximityKey]).toMutableMap()
-            if (prox.remove(lobbyId) != null) {
-                prefs[lobbyProximityKey] = encodeLobbyProximity(prox)
-            }
-            val code = removed?.code?.uppercase()?.removePrefix("LUV-").orEmpty()
+            var proxDirty = false
+            if (prox.remove(lobbyId) != null) proxDirty = true
+            if (code.length >= 3 && prox.remove(code) != null) proxDirty = true
+            if (proxDirty) prefs[lobbyProximityKey] = encodeLobbyProximity(prox)
             if (code.length >= 3) {
                 val set = parseDismissedLobbyCodes(prefs[dismissedLobbiesKey]).toMutableSet()
                 if (set.add(code)) {
@@ -969,6 +1016,39 @@ class PrefsRepository(private val context: Context) {
             val o = JSONObject()
             map.forEach { (k, v) -> if (v) o.put(k, true) }
             return o.toString()
+        }
+
+        fun normalizeLobbyCode(raw: String): String =
+            raw.trim().uppercase().removePrefix("LUV-")
+
+        fun resolveLobbyCode(lobbyIdOrCode: String, lobbies: List<Lobby>): String? {
+            val raw = lobbyIdOrCode.trim()
+            if (raw.isBlank()) return null
+            lobbies.firstOrNull { it.id == raw }?.let {
+                return normalizeLobbyCode(it.code).takeIf { c -> c.length >= 3 }
+            }
+            val code = normalizeLobbyCode(raw)
+            if (code.length in 3..16 && code.all { it.isLetterOrDigit() }) return code
+            return null
+        }
+
+        /** UUID-Keys → Invite-Code; orphante UUIDs ohne passende Lobby fallen weg. */
+        fun migrateLobbyProximityKeys(
+            map: Map<String, Boolean>,
+            lobbies: List<Lobby>
+        ): Map<String, Boolean> {
+            if (map.isEmpty()) return emptyMap()
+            val byId = lobbies.associateBy { it.id }
+            val out = linkedMapOf<String, Boolean>()
+            for ((k, v) in map) {
+                if (!v) continue
+                val code = resolveLobbyCode(k, lobbies)
+                    ?: byId[k]?.let { normalizeLobbyCode(it.code) }
+                if (!code.isNullOrBlank() && code.length in 3..16) {
+                    out[code] = true
+                }
+            }
+            return out
         }
 
         fun parseQuietHours(raw: String?): QuietHoursSchedule {

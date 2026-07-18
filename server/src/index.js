@@ -318,11 +318,19 @@ function sanitizeSettings(raw) {
       .filter((e, i, a) => a.indexOf(e) === i)
       .slice(0, 8);
   }
+  // Pro Lobby-Code (nicht lokale UUID) — sonst bricht Multi-Gerät-Sync die Glocke
   const lobbyProximity = {};
   if (src.lobbyProximity && typeof src.lobbyProximity === "object") {
     for (const [k, v] of Object.entries(src.lobbyProximity)) {
-      if (v === true && String(k).trim()) {
-        lobbyProximity[String(k).trim().slice(0, 64)] = true;
+      if (v !== true) continue;
+      const code = String(k || "")
+        .trim()
+        .toUpperCase()
+        .replace(/^LUV-/, "")
+        .slice(0, 16);
+      // Nur stabile Invite-Codes; UUIDs (mit Bindestrichen) verwerfen
+      if (code.length >= 3 && code.length <= 16 && /^[A-Z0-9]+$/.test(code)) {
+        lobbyProximity[code] = true;
       }
     }
   }
