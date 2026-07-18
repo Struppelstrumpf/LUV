@@ -794,7 +794,7 @@ fun AdminHubScreen(
                         AdminCard {
                             Text("Live-Hinweis", fontFamily = DisplayFont, color = TextPrimary, fontSize = 20.sp)
                             Text(
-                                "Kurze Nachricht an alle — erscheint als Popup (~5 Sekunden) mit schrumpfendem Balken.",
+                                "Nachricht an alle mit deinem Spitznamen. Wer gerade online ist, sieht sie sofort — andere beim nächsten App-Öffnen (bis 24 Stunden).",
                                 color = TextMuted,
                                 fontFamily = BodyFont,
                                 fontSize = 13.sp
@@ -972,7 +972,7 @@ fun LiveNoticePopup() {
                 .padding(14.dp)
         ) {
             Text(
-                "📣 ${current.authorNickname}",
+                "📣 Von ${current.authorNickname.ifBlank { "Team" }}",
                 color = AccentRose,
                 fontFamily = DisplayFont,
                 fontSize = 13.sp

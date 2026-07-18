@@ -15,6 +15,7 @@ const DEFAULT = {
   rooms: {},
   canvasMemories: {},
   publicCanvases: {},
+  liveNotice: null,
 };
 
 function ensureDir() {
@@ -37,6 +38,16 @@ function load() {
       payments: raw.payments || {},
       ledger: Array.isArray(raw.ledger) ? raw.ledger : [],
       rooms: raw.rooms && typeof raw.rooms === "object" ? raw.rooms : {},
+      canvasMemories:
+        raw.canvasMemories && typeof raw.canvasMemories === "object"
+          ? raw.canvasMemories
+          : {},
+      publicCanvases:
+        raw.publicCanvases && typeof raw.publicCanvases === "object"
+          ? raw.publicCanvases
+          : {},
+      liveNotice:
+        raw.liveNotice && typeof raw.liveNotice === "object" ? raw.liveNotice : null,
     };
   } catch {
     return structuredClone(DEFAULT);

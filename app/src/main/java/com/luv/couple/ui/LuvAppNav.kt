@@ -626,6 +626,11 @@ fun LuvAppNav() {
                 if (AccountSession.account.value?.googleLinked == true) {
                     runCatching { syncCloudAccount() }
                 }
+                if (!LuvApiClient.sessionToken.isNullOrBlank()) {
+                    runCatching {
+                        LuvApiClient.fetchLiveNotice()?.let { LiveNoticeBus.offer(it) }
+                    }
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

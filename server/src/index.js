@@ -2477,6 +2477,23 @@ function staffUserCard(user) {
   };
 }
 
+/** Live-Hinweise bleiben für Nachzügler sichtbar (nicht nur „gerade online“). */
+const LIVE_NOTICE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function staffDisplayName(user) {
+  const nick = String(user?.nickname || "")
+    .trim()
+    .slice(0, 18);
+  // Platzhalter-Spitzname „Luv“ nicht als Absender nutzen
+  if (nick && nick.toLowerCase() !== "luv") return nick;
+  const emailLocal = String(user?.googleEmail || "")
+    .split("@")[0]
+    .trim()
+    .slice(0, 18);
+  if (emailLocal) return emailLocal;
+  return nick || "Team";
+}
+
 function getLiveNotice() {
   const db = getDb();
   const n = db.liveNotice;
@@ -2486,10 +2503,16 @@ function getLiveNotice() {
     scheduleSave();
     return null;
   }
+  let authorNickname = String(n.authorNickname || "").trim().slice(0, 18);
+  if (!authorNickname || authorNickname.toLowerCase() === "luv") {
+    const author = n.authorId ? db.users?.[n.authorId] : null;
+    authorNickname = author ? staffDisplayName(author) : "Team";
+  }
   return {
     id: n.id,
     message: String(n.message).slice(0, 160),
-    authorNickname: n.authorNickname || "Team",
+    authorNickname,
+    authorId: n.authorId || null,
     createdAt: n.createdAt || Date.now(),
     expiresAt: n.expiresAt,
   };
@@ -4622,18 +4645,19 @@ app.post("/v1/admin/live-notice", (req, res) => {
     return res.status(400).json({ error: "empty", message: "Nachricht zu kurz." });
   }
   const now = Date.now();
+  const authorNickname = staffDisplayName(ctx.user);
   const notice = {
     id: newId("ln"),
     message,
-    authorNickname: String(ctx.user.nickname || "Team").slice(0, 18),
+    authorNickname,
     authorId: ctx.user.id,
     createdAt: now,
-    // Clients haben Zeit zum Abholen; Popup selbst läuft 5s
-    expiresAt: now + 60_000,
+    // 24h — auch wer die App später öffnet, sieht den Hinweis einmal
+    expiresAt: now + LIVE_NOTICE_TTL_MS,
   };
   getDb().liveNotice = notice;
   scheduleSave();
-  broadcastLiveNotice(notice);
+  broadcastLiveNotice(getLiveNotice());
   return res.json({ ok: true, notice: getLiveNotice() });
 });
 
@@ -6424,6 +6448,23 @@ wss.on("connection", (socket, req) => {
   );
   // Leinwand-Historie nach Welcome — überlebt App-/Server-Updates
   sendCanvasHistory(socket, room, code);
+  // Offener Live-Hinweis nachreichen (auch wenn nicht live verbunden beim Senden)
+  const pendingNotice = getLiveNotice();
+  if (pendingNotice && socket.readyState === 1) {
+    try {
+      socket.send(
+        JSON.stringify({
+          type: "live_notice",
+          id: pendingNotice.id,
+          message: pendingNotice.message,
+          authorNickname: pendingNotice.authorNickname,
+          createdAt: pendingNotice.createdAt,
+        })
+      );
+    } catch {
+      /* ignore */
+    }
+  }
   // Offene Public-Abstimmung: erst relevant, wenn die Person die Leinwand öffnet (presence)
   if (room.publicProposal?.status === "capturing") {
     sendPublicVoteOpen(socket, room, code);

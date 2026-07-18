@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.55",
+            listOf(
+                "Live-Hinweise: Absender mit Spitznamen, sichtbar auch beim späteren App-Öffnen",
+            )
+        ),
+        Entry(
             "1.9.54",
             listOf(
                 "Itemshop: Begleiter Eule und Tiger",

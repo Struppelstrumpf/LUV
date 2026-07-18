@@ -1014,7 +1014,9 @@ object LuvApiClient {
         LiveNotice(
             id = id,
             message = message,
-            authorNickname = o.optString("authorNickname", "Team"),
+            authorNickname = o.optString("authorNickname").trim()
+                .takeIf { it.isNotBlank() && !it.equals("Luv", ignoreCase = true) }
+                ?: "Team",
             createdAt = o.optLong("createdAt", System.currentTimeMillis())
         )
     }
@@ -1026,7 +1028,12 @@ object LuvApiClient {
         LiveNotice(
             id = o.optString("id"),
             message = o.optString("message"),
-            authorNickname = o.optString("authorNickname", "Team"),
+            authorNickname = o.optString("authorNickname").trim()
+                .takeIf { it.isNotBlank() && !it.equals("Luv", ignoreCase = true) }
+                ?: AccountSession.account.value?.nickname?.trim()?.takeIf {
+                    it.isNotBlank() && !it.equals("Luv", ignoreCase = true)
+                }
+                ?: "Team",
             createdAt = o.optLong("createdAt", System.currentTimeMillis())
         )
     }

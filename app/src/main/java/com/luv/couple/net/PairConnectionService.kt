@@ -505,11 +505,14 @@ class PairConnectionService : Service() {
                     val id = json.optString("id").trim()
                     val message = json.optString("message").trim()
                     if (id.isNotBlank() && message.isNotBlank()) {
+                        val author = json.optString("authorNickname").trim()
+                            .takeIf { it.isNotBlank() && !it.equals("Luv", ignoreCase = true) }
+                            ?: "Team"
                         LiveNoticeBus.offer(
                             LiveNotice(
                                 id = id,
                                 message = message,
-                                authorNickname = json.optString("authorNickname", "Team"),
+                                authorNickname = author,
                                 createdAt = json.optLong("createdAt", System.currentTimeMillis())
                             )
                         )

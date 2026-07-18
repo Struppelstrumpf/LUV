@@ -37,6 +37,8 @@ class PrefsRepository(private val context: Context) {
     private val sessionTokenKey = stringPreferencesKey("session_token")
     private val accountJsonKey = stringPreferencesKey("account_json")
     private val lastNotifiedUpdateKey = intPreferencesKey("last_notified_update_code")
+    /** Zuletzt angezeigter Admin-Live-Hinweis (einmalig pro Gerät) */
+    private val lastShownLiveNoticeKey = stringPreferencesKey("last_shown_live_notice_id")
     private val lastPublicIdKey = stringPreferencesKey("last_public_canvas_id")
     private val lastPublicNameKey = stringPreferencesKey("last_public_canvas_name")
     private val lastPublicImageKey = stringPreferencesKey("last_public_canvas_image")
@@ -415,6 +417,15 @@ class PrefsRepository(private val context: Context) {
 
     suspend fun setLastNotifiedUpdateCode(code: Int) {
         context.dataStore.edit { it[lastNotifiedUpdateKey] = code }
+    }
+
+    suspend fun lastShownLiveNoticeId(): String? =
+        context.dataStore.data.first()[lastShownLiveNoticeKey]?.takeIf { it.isNotBlank() }
+
+    suspend fun setLastShownLiveNoticeId(id: String) {
+        val clean = id.trim()
+        if (clean.isBlank()) return
+        context.dataStore.edit { it[lastShownLiveNoticeKey] = clean }
     }
 
     suspend fun sessionToken(): String? =
