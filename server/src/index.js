@@ -1563,6 +1563,11 @@ function absorbUserInto(target, source) {
   source.googleSub = null;
   source.googleEmail = null;
 
+  // Profil-Leinwand nicht bei Account-Merge verlieren
+  if (!target.profileCanvas && source.profileCanvas) {
+    target.profileCanvas = source.profileCanvas;
+  }
+
   destroyAllSessionsForUser(source.id);
   if (Array.isArray(db.ledger)) {
     for (const e of db.ledger) {
@@ -2851,6 +2856,7 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   const uid = String(req.params.userId || "").trim();
+  const db = getDb();
   const user = db.users?.[uid];
   if (!user) return res.status(404).json({ error: "not_found" });
   const profile = sanitizeProfileCanvas(user.profileCanvas) || {

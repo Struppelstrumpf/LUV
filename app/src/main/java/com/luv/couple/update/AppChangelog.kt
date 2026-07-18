@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.27",
+            listOf(
+                "Fremde Profile zeigen wieder das gespeicherte Layout (Server-Fix)",
+            )
+        ),
+        Entry(
             "1.9.26",
             listOf(
                 "Inventar wie Profil-Truhe — Marktplatz, Itemshop, Platzieren mit Bestätigung",
