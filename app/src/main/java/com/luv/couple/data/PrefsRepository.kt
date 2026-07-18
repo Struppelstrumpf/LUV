@@ -317,6 +317,7 @@ class PrefsRepository(private val context: Context) {
                     capacity = r.capacity,
                     isFree = r.isFree,
                     isRandom = r.isRandom || prev?.isRandom == true,
+                    isWedding = r.isWedding || prev?.isWedding == true,
                     hostNickname = r.hostNickname.ifBlank { prev?.hostNickname.orEmpty() },
                     hostColorSide = r.hostColorSide,
                     peakPeers = prev?.peakPeers ?: 1,
@@ -1040,6 +1041,7 @@ class PrefsRepository(private val context: Context) {
                                 capacity = o.optInt("capacity", PeerPalette.FREE_LOBBY_START_CAPACITY),
                                 isFree = o.optBoolean("isFree", false),
                                 isRandom = o.optBoolean("isRandom", false),
+                                isWedding = o.optBoolean("isWedding", false),
                                 hostNickname = o.optString("hostNickname", ""),
                                 hostColorSide = o.optString("hostColorSide", "blue").ifBlank { "blue" },
                                 peakPeers = o.optInt("peakPeers", 1).coerceAtLeast(1),
@@ -1065,6 +1067,7 @@ class PrefsRepository(private val context: Context) {
                         .put("capacity", lobby.capacity)
                         .put("isFree", lobby.isFree)
                         .put("isRandom", lobby.isRandom)
+                        .put("isWedding", lobby.isWedding)
                         .put("hostNickname", lobby.hostNickname)
                         .put("hostColorSide", lobby.hostColorSide)
                         .put("peakPeers", lobby.peakPeers.coerceAtLeast(1))

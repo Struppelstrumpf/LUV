@@ -97,12 +97,18 @@ fun ProfileInventoryPanel(
     currentCompanion: String,
     hasGlass: Boolean,
     hasBio: Boolean,
+    spouseName: String? = null,
+    engagedName: String? = null,
+    hasSpouse: Boolean = false,
+    hasEngaged: Boolean = false,
     onTheme: (ProfileTheme) -> Unit,
     onSticker: (String) -> Unit,
     onCompanion: (String) -> Unit,
     onEmoji: (String) -> Unit = {},
     onGlass: () -> Unit = {},
     onBio: () -> Unit = {},
+    onSpouse: () -> Unit = {},
+    onEngaged: () -> Unit = {},
     onOpenMarketplace: () -> Unit,
     onOpenItemShop: () -> Unit,
     onOpenGallery: (() -> Unit)? = null,
@@ -447,6 +453,56 @@ fun ProfileInventoryPanel(
                             )
                         }
                     }
+                    if (!spouseName.isNullOrBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .clip(RoundedCornerShape(s(16.dp)))
+                                .background(if (hasSpouse) Color(0x33FFD54F) else BgSoft)
+                                .border(1.dp, Color(0xFFFFD54F).copy(0.55f), RoundedCornerShape(s(16.dp)))
+                                .clickable(onClick = onSpouse),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("💍", fontSize = ts(34.sp))
+                                Spacer(modifier = Modifier.height(s(6.dp)))
+                                Text(
+                                    if (hasSpouse) "Ehepartner auf der Leinwand"
+                                    else "Ehepartner: $spouseName",
+                                    color = TextPrimary,
+                                    fontFamily = DisplayFont,
+                                    fontSize = ts(14.sp),
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                    if (!engagedName.isNullOrBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .clip(RoundedCornerShape(s(16.dp)))
+                                .background(if (hasEngaged) AccentRose.copy(0.18f) else BgSoft)
+                                .border(1.dp, AccentRose.copy(0.45f), RoundedCornerShape(s(16.dp)))
+                                .clickable(onClick = onEngaged),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("💝", fontSize = ts(34.sp))
+                                Spacer(modifier = Modifier.height(s(6.dp)))
+                                Text(
+                                    if (hasEngaged) "Verlobte:r auf der Leinwand"
+                                    else "Verlobte:r: $engagedName",
+                                    color = TextPrimary,
+                                    fontFamily = DisplayFont,
+                                    fontSize = ts(14.sp),
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
                 }
                 null -> Unit
             }
@@ -463,11 +519,17 @@ fun ProfileChestDialog(
     currentCompanion: String,
     hasGlass: Boolean,
     hasBio: Boolean,
+    spouseName: String? = null,
+    engagedName: String? = null,
+    hasSpouse: Boolean = false,
+    hasEngaged: Boolean = false,
     onTheme: (ProfileTheme) -> Unit,
     onSticker: (String) -> Unit,
     onCompanion: (String) -> Unit,
     onGlass: () -> Unit,
     onBio: () -> Unit,
+    onSpouse: () -> Unit = {},
+    onEngaged: () -> Unit = {},
     onOpenMarketplace: () -> Unit,
     onOpenItemShop: () -> Unit,
     selectedTab: Int = 0,
@@ -487,11 +549,17 @@ fun ProfileChestDialog(
             currentCompanion = currentCompanion,
             hasGlass = hasGlass,
             hasBio = hasBio,
+            spouseName = spouseName,
+            engagedName = engagedName,
+            hasSpouse = hasSpouse,
+            hasEngaged = hasEngaged,
             onTheme = onTheme,
             onSticker = onSticker,
             onCompanion = onCompanion,
             onGlass = onGlass,
             onBio = onBio,
+            onSpouse = onSpouse,
+            onEngaged = onEngaged,
             onOpenMarketplace = onOpenMarketplace,
             onOpenItemShop = onOpenItemShop,
             selectedTab = selectedTab,

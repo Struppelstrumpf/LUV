@@ -163,6 +163,7 @@ private fun FriendsPanel(
     var friends by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
     var incoming by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
     var outgoing by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
+    var marriageProposals by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var busyId by remember { mutableStateOf<String?>(null) }
     var dragId by remember { mutableStateOf<String?>(null) }
@@ -180,7 +181,10 @@ private fun FriendsPanel(
                     friends = it.friends
                     incoming = it.incoming
                     outgoing = it.outgoing
-                    com.luv.couple.net.NotificationBadges.setFriendIncoming(it.incoming.size)
+                    marriageProposals = it.marriageProposals
+                    com.luv.couple.net.NotificationBadges.setFriendIncoming(
+                        it.incoming.size + it.marriageProposals.size
+                    )
                     com.luv.couple.net.NotificationBadges.syncAppBadge(context)
                 }
                 .onFailure {
@@ -243,6 +247,48 @@ private fun FriendsPanel(
             Text("+", color = Color.White, fontFamily = DisplayFont, fontSize = 28.sp)
         }
 
+        if (marriageProposals.isNotEmpty()) {
+            Text("Heiratsanfragen", color = TextPrimary, fontFamily = DisplayFont, fontSize = 16.sp)
+            marriageProposals.forEach { card ->
+                FriendRequestRow(
+                    card = card,
+                    busy = busyId == "m-${card.userId}",
+                    acceptLabel = "Annehmen 💍",
+                    onAccept = {
+                        busyId = "m-${card.userId}"
+                        scope.launch {
+                            runCatching { LuvApiClient.acceptMarriage(card.userId) }
+                                .onSuccess { reload() }
+                                .onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        it.message ?: "Annehmen fehlgeschlagen",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            busyId = null
+                        }
+                    },
+                    onDecline = {
+                        busyId = "m-${card.userId}"
+                        scope.launch {
+                            runCatching { LuvApiClient.declineMarriage(card.userId) }
+                                .onSuccess { reload() }
+                                .onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        it.message ?: "Ablehnen fehlgeschlagen",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            busyId = null
+                        }
+                    },
+                    onOpen = { onOpenFriendProfile(card.userId, card.nickname) }
+                )
+            }
+        }
+
         if (incoming.isNotEmpty()) {
             incoming.forEach { card ->
                 FriendRequestRow(
@@ -294,6 +340,7 @@ private fun FriendsPanel(
                     val lift = if (dragging) dragOffsetY else 0f
                     FriendRow(
                         card = card,
+                        subtitle = friendSubtitle(card),
                         modifier = Modifier
                             .zIndex(if (dragging) 10f else 0f)
                             .graphicsLayer {
@@ -548,13 +595,30 @@ private fun AddFriendByNicknameDialog(
     )
 }
 
+private fun friendSubtitle(card: LuvApiClient.FriendCard): String {
+    val m = card.marriage
+    return when {
+        card.isSpouse -> "Ehepartner · Lv. ${card.friendshipLevel}"
+        card.isFiance && m?.status == "engaged" -> {
+            val d = (m.engageRemainingMs / (24 * 60 * 60 * 1000L)).coerceAtLeast(0)
+            "Verlobt · noch ${d + 1} Tage · Lv. ${card.friendshipLevel}"
+        }
+        card.isFiance && m?.status == "wedding" -> {
+            val d = (m.weddingRemainingMs / (24 * 60 * 60 * 1000L)).coerceAtLeast(0)
+            "Hochzeit · noch ${d + 1} Tage · Lv. ${card.friendshipLevel}"
+        }
+        else -> "Lv. ${card.friendshipLevel} / 100"
+    }
+}
+
 @Composable
 private fun FriendRequestRow(
     card: LuvApiClient.FriendCard,
     busy: Boolean,
     onAccept: () -> Unit,
     onDecline: () -> Unit,
-    onOpen: () -> Unit
+    onOpen: () -> Unit,
+    acceptLabel: String = "Annehmen"
 ) {
     Column(
         modifier = Modifier
@@ -571,7 +635,7 @@ private fun FriendRequestRow(
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = onAccept, enabled = !busy) {
-                Text("Annehmen", color = AccentRose, fontFamily = DisplayFont)
+                Text(acceptLabel, color = AccentRose, fontFamily = DisplayFont)
             }
             TextButton(onClick = onDecline, enabled = !busy) {
                 Text("Ablehnen", color = TextMuted, fontFamily = BodyFont)
@@ -588,11 +652,19 @@ private fun FriendRow(
     trailing: @Composable (() -> Unit)? = null
 ) {
     val color = Color(PeerPalette.strokeColor(PeerPalette.indexFor(card.nickname)))
+    val gold = Color(0xFFFFD54F)
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(BgSoft)
+            .background(if (card.isSpouse) Color(0x22FFD54F) else BgSoft)
+            .then(
+                if (card.isSpouse) {
+                    Modifier.border(2.dp, gold, RoundedCornerShape(16.dp))
+                } else {
+                    Modifier
+                }
+            )
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -601,13 +673,21 @@ private fun FriendRow(
             modifier = Modifier
                 .size(44.dp)
                 .clip(CircleShape)
-                .background(color),
+                .background(color)
+                .then(
+                    if (card.isSpouse) Modifier.border(2.dp, gold, CircleShape) else Modifier
+                ),
             contentAlignment = Alignment.Center
         ) {
             Text(card.petEmoji, fontSize = 22.sp)
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(card.nickname, color = TextPrimary, fontFamily = DisplayFont, fontSize = 17.sp)
+            Text(
+                if (card.isSpouse) "💍 ${card.nickname}" else card.nickname,
+                color = if (card.isSpouse) gold else TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 17.sp
+            )
             if (subtitle != null) {
                 Text(subtitle, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
             }

@@ -6,7 +6,7 @@ import java.util.UUID
 import kotlin.math.abs
 
 enum class ProfileElType {
-    Avatar, Name, Status, Bio, Glass, Pet, Sticker, Text;
+    Avatar, Name, Status, Bio, Glass, Pet, Sticker, Text, Spouse, Engaged;
 
     val wire: String
         get() = when (this) {
@@ -18,6 +18,8 @@ enum class ProfileElType {
             Pet -> "pet"
             Sticker -> "sticker"
             Text -> "text"
+            Spouse -> "spouse"
+            Engaged -> "engaged"
         }
 
     companion object {
@@ -29,6 +31,8 @@ enum class ProfileElType {
             "glass" -> Glass
             "pet" -> Pet
             "text" -> Text
+            "spouse" -> Spouse
+            "engaged" -> Engaged
             else -> Sticker
         }
     }
@@ -127,9 +131,10 @@ data class ProfileState(
                 ProfileElType.Status, ProfileElType.Text -> false
                 // Begleiter sitzt mittig im Avatar — kein separates Pet-Element
                 ProfileElType.Pet -> false
-                ProfileElType.Sticker, ProfileElType.Glass, ProfileElType.Bio -> true
+                ProfileElType.Sticker, ProfileElType.Glass, ProfileElType.Bio,
+                ProfileElType.Spouse, ProfileElType.Engaged -> true
             }
-        }.take(ProfileCatalog.MAX_DECOR + 4)
+        }.take(ProfileCatalog.MAX_DECOR + 6)
         return copy(
             companionEmoji = companionEmoji.ifBlank { legacyPet?.emoji.orEmpty() }
                 .ifBlank { "🐣" },
@@ -152,7 +157,9 @@ object ProfileCatalog {
         // Avatar zeigt nur den Begleiter — kein „Avatar gestalten“ mehr
         ProfileElType.Name,
         ProfileElType.Glass,
-        ProfileElType.Bio
+        ProfileElType.Bio,
+        ProfileElType.Spouse,
+        ProfileElType.Engaged
     )
 
     val TEXT_COLORS: List<String> = listOf(
@@ -266,6 +273,34 @@ object ProfileCatalog {
         z = 9,
         color = "#FFFFFF",
         fontSize = 11f,
+        fontFamily = ProfileFont.Cozy
+    )
+
+    fun newSpouse(nickname: String): ProfileLayoutEl = ProfileLayoutEl(
+        id = "el-spouse",
+        type = ProfileElType.Spouse,
+        x = 78f,
+        y = 74f,
+        scale = 0.95f,
+        z = 10,
+        emoji = "💍",
+        text = nickname.take(18),
+        color = "#FFD54F",
+        fontSize = 12f,
+        fontFamily = ProfileFont.Cozy
+    )
+
+    fun newEngaged(nickname: String): ProfileLayoutEl = ProfileLayoutEl(
+        id = "el-engaged",
+        type = ProfileElType.Engaged,
+        x = 78f,
+        y = 74f,
+        scale = 0.95f,
+        z = 10,
+        emoji = "💝",
+        text = nickname.take(18),
+        color = "#FF8AAB",
+        fontSize = 12f,
         fontFamily = ProfileFont.Cozy
     )
 

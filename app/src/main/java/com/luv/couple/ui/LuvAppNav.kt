@@ -564,6 +564,7 @@ fun LuvAppNav() {
                     capacity = room.capacity,
                     isFree = room.isFree,
                     isRandom = room.isRandom,
+                    isWedding = room.isWedding,
                     hostNickname = room.hostNickname,
                     hostColorSide = room.hostColorSide
                 )

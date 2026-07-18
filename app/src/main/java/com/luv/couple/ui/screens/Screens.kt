@@ -894,7 +894,11 @@ private fun LobbyCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     AutoShrinkLobbyName(
-                        name = if (lobby.isRandom) "🎲 Random" else lobby.name,
+                        name = when {
+                            lobby.isWedding -> "💒 Hochzeit"
+                            lobby.isRandom -> "🎲 Random"
+                            else -> lobby.name
+                        },
                         modifier = if (reorderEnabled) {
                             Modifier.pointerInput(lobby.id) {
                                 detectDragGesturesAfterLongPress(
@@ -913,6 +917,7 @@ private fun LobbyCard(
                     )
                     Text(
                         text = when {
+                            lobby.isWedding -> "Gemeinsame Hochzeitsleinwand · 7 Tage"
                             lobby.isRandom -> "Zufalls-Lobby · max. 5"
                             lobby.role == Role.HOST -> "Von dir erstellt"
                             else -> "Beigetreten"
@@ -949,7 +954,7 @@ private fun LobbyCard(
                 ReconnectBanner(reconnect = reconnect, accent = accent, onReconnect = onReconnect)
             }
             PrimaryButton("Leinwand öffnen", accent, onOpen)
-            if (!lobby.isRandom) {
+            if (!lobby.isRandom && !lobby.isWedding) {
                 SeatGrid(
                     capacity = capacity,
                     maxPeers = PeerPalette.MAX_PEERS,
@@ -961,19 +966,21 @@ private fun LobbyCard(
                     onBuy = onBuySeat
                 )
             }
-            if (lobby.role == Role.HOST && !lobby.isRandom) {
+            if (lobby.role == Role.HOST && !lobby.isRandom && !lobby.isWedding) {
                 PrimaryButton("Umbenennen", Color.Transparent, onRename, bordered = true)
             }
-            Text(
-                "Verlassen",
-                color = TextMuted,
-                fontFamily = BodyFont,
-                fontSize = 13.sp,
-                modifier = Modifier
-                    .align(Alignment.End)
-                    .clickable(onClick = { confirmLeave = true })
-                    .padding(4.dp)
-            )
+            if (!lobby.isWedding) {
+                Text(
+                    "Verlassen",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .clickable(onClick = { confirmLeave = true })
+                        .padding(4.dp)
+                )
+            }
         }
         // Pinke Basislinie + bei neuer Zeichnung weißer, glühender Laufstreifen
         LobbyCardActivityBorder(

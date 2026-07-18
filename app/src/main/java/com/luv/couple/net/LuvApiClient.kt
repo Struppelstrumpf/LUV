@@ -25,6 +25,7 @@ data class RoomSession(
     val capacity: Int = PeerPalette.FREE_LOBBY_START_CAPACITY,
     val isFree: Boolean = false,
     val isRandom: Boolean = false,
+    val isWedding: Boolean = false,
     val name: String = "Lobby",
     val hostNickname: String = "Host",
     val hostColorSide: String = "blue",
@@ -116,6 +117,7 @@ data class RemoteLobby(
     val capacity: Int,
     val isFree: Boolean,
     val isRandom: Boolean = false,
+    val isWedding: Boolean = false,
     val lastCanvasAt: Long = 0L,
     val hostColorSide: String,
     val invite: String,
@@ -455,6 +457,7 @@ object LuvApiClient {
                 capacity = o.optInt("capacity", PeerPalette.FREE_LOBBY_START_CAPACITY),
                 isFree = o.optBoolean("isFree", false),
                 isRandom = o.optBoolean("isRandom", false),
+                isWedding = o.optBoolean("isWedding", false),
                 lastCanvasAt = o.optLong("lastCanvasAt", 0L),
                 hostColorSide = o.optString("hostColorSide", "blue"),
                 invite = o.optString("invite"),
@@ -1322,6 +1325,27 @@ object LuvApiClient {
             }.getOrElse { false to null }
         }
 
+    data class MarriageInfo(
+        val id: String = "",
+        val status: String = "",
+        val partnerId: String? = null,
+        val partnerNickname: String? = null,
+        val partnerPetEmoji: String = "🐣",
+        val proposedBy: String? = null,
+        val engageRemainingMs: Long = 0L,
+        val weddingRemainingMs: Long = 0L,
+        val weddingLobbyCode: String? = null,
+        val marriedAt: Long = 0L,
+        val hasWeddingImage: Boolean = false
+    )
+
+    data class PartnerPublic(
+        val userId: String,
+        val nickname: String,
+        val petEmoji: String = "🐣",
+        val status: String? = null
+    )
+
     data class PeerProfile(
         val nickname: String,
         val state: com.luv.couple.profile.ProfileState,
@@ -1330,7 +1354,13 @@ object LuvApiClient {
         val friendStatus: String = "none",
         val canPetKraul: Boolean = true,
         val canTipGlass: Boolean = true,
-        val glassTipsRemaining: Int = 10
+        val glassTipsRemaining: Int = 10,
+        val friendshipLevel: Int = 0,
+        val canProposeMarriage: Boolean = false,
+        val canDivorce: Boolean = false,
+        val marriage: MarriageInfo? = null,
+        val spousePublic: PartnerPublic? = null,
+        val fiancePublic: PartnerPublic? = null
     )
 
     suspend fun fetchUserProfileCanvas(userId: String): PeerProfile? =
@@ -1354,7 +1384,13 @@ object LuvApiClient {
                     friendStatus = json.optString("friendStatus", "none"),
                     canPetKraul = json.optBoolean("canPetKraul", true),
                     canTipGlass = json.optBoolean("canTipGlass", true),
-                    glassTipsRemaining = json.optInt("glassTipsRemaining", 10)
+                    glassTipsRemaining = json.optInt("glassTipsRemaining", 10),
+                    friendshipLevel = json.optInt("friendshipLevel", 0),
+                    canProposeMarriage = json.optBoolean("canProposeMarriage", false),
+                    canDivorce = json.optBoolean("canDivorce", false),
+                    marriage = parseMarriageInfo(json.optJSONObject("marriage")),
+                    spousePublic = parsePartnerPublic(json.optJSONObject("spousePublic")),
+                    fiancePublic = parsePartnerPublic(json.optJSONObject("fiancePublic"))
                 )
             }.getOrNull()
         }
@@ -1369,20 +1405,74 @@ object LuvApiClient {
     data class FriendCard(
         val userId: String,
         val nickname: String,
-        val petEmoji: String
+        val petEmoji: String,
+        val friendshipLevel: Int = 0,
+        val isSpouse: Boolean = false,
+        val isFiance: Boolean = false,
+        val marriage: MarriageInfo? = null
     )
 
     data class FriendsBag(
         val friends: List<FriendCard>,
         val incoming: List<FriendCard>,
-        val outgoing: List<FriendCard>
+        val outgoing: List<FriendCard>,
+        val marriageProposals: List<FriendCard> = emptyList(),
+        val myMarriage: MarriageInfo? = null
     )
 
     data class PetKraulResult(
         val petEmoji: String,
         val toCoins: Int,
-        val amount: Int
+        val amount: Int,
+        val friendshipLevel: Int = 0,
+        val friendshipLevelBumped: Boolean = false
     )
+
+    data class GuestbookEntry(
+        val id: String,
+        val userId: String,
+        val nickname: String,
+        val text: String,
+        val createdAt: Long
+    )
+
+    data class WeddingInfo(
+        val marriage: MarriageInfo?,
+        val hasImage: Boolean,
+        val guestbook: List<GuestbookEntry>,
+        val canDeleteComments: Boolean
+    )
+
+    private fun parseMarriageInfo(o: JSONObject?): MarriageInfo? {
+        if (o == null) return null
+        val status = o.optString("status").trim()
+        if (status.isBlank()) return null
+        return MarriageInfo(
+            id = o.optString("id", ""),
+            status = status,
+            partnerId = o.optString("partnerId").takeIf { it.isNotBlank() },
+            partnerNickname = o.optString("partnerNickname").takeIf { it.isNotBlank() },
+            partnerPetEmoji = o.optString("partnerPetEmoji", "🐣").ifBlank { "🐣" },
+            proposedBy = o.optString("proposedBy").takeIf { it.isNotBlank() },
+            engageRemainingMs = o.optLong("engageRemainingMs", 0L),
+            weddingRemainingMs = o.optLong("weddingRemainingMs", 0L),
+            weddingLobbyCode = o.optString("weddingLobbyCode").takeIf { it.isNotBlank() },
+            marriedAt = o.optLong("marriedAt", 0L),
+            hasWeddingImage = o.optBoolean("hasWeddingImage", false)
+        )
+    }
+
+    private fun parsePartnerPublic(o: JSONObject?): PartnerPublic? {
+        if (o == null) return null
+        val id = o.optString("userId").trim()
+        if (id.isBlank()) return null
+        return PartnerPublic(
+            userId = id,
+            nickname = o.optString("nickname", "Jemand").trim().ifBlank { "Jemand" },
+            petEmoji = o.optString("petEmoji", "🐣").ifBlank { "🐣" },
+            status = o.optString("status").takeIf { it.isNotBlank() }
+        )
+    }
 
     private fun parseFriendCard(o: JSONObject?): FriendCard? {
         if (o == null) return null
@@ -1391,7 +1481,11 @@ object LuvApiClient {
         return FriendCard(
             userId = id,
             nickname = o.optString("nickname", "Jemand").trim().ifBlank { "Jemand" },
-            petEmoji = o.optString("petEmoji", "🐣").trim().ifBlank { "🐣" }
+            petEmoji = o.optString("petEmoji", "🐣").trim().ifBlank { "🐣" },
+            friendshipLevel = o.optInt("friendshipLevel", 0),
+            isSpouse = o.optBoolean("isSpouse", false),
+            isFiance = o.optBoolean("isFiance", false),
+            marriage = parseMarriageInfo(o.optJSONObject("marriage"))
         )
     }
 
@@ -1409,9 +1503,102 @@ object LuvApiClient {
         FriendsBag(
             friends = parseFriendCards(json.optJSONArray("friends")),
             incoming = parseFriendCards(json.optJSONArray("incoming")),
-            outgoing = parseFriendCards(json.optJSONArray("outgoing"))
+            outgoing = parseFriendCards(json.optJSONArray("outgoing")),
+            marriageProposals = parseFriendCards(json.optJSONArray("marriageProposals")),
+            myMarriage = parseMarriageInfo(json.optJSONObject("myMarriage"))
         )
     }
+
+    suspend fun proposeMarriage(userId: String): MarriageInfo? = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/users/${userId.trim().encodeURL()}/marry/propose", "{}")
+        parseMarriageInfo(json.optJSONObject("marriage"))
+    }
+
+    suspend fun acceptMarriage(userId: String): MarriageInfo? = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("userId", userId.trim()).toString()
+        val json = authedPost("/v1/me/marriage/accept", body)
+        parseMarriageInfo(json.optJSONObject("marriage"))
+    }
+
+    suspend fun declineMarriage(userId: String) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("userId", userId.trim()).toString()
+        authedPost("/v1/me/marriage/decline", body)
+        Unit
+    }
+
+    suspend fun divorceMarriage() = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("confirm", "scheiden").toString()
+        authedPost("/v1/me/marriage/divorce", body)
+        Unit
+    }
+
+    fun weddingImageUrl(userId: String): String =
+        "${baseUrl()}/v1/users/${userId.trim().encodeURL()}/wedding/image"
+
+    suspend fun fetchWedding(userId: String): WeddingInfo? = withContext(Dispatchers.IO) {
+        runCatching {
+            val json = authedGet("/v1/users/${userId.trim().encodeURL()}/wedding")
+            val gb = json.optJSONArray("guestbook")
+            val entries = buildList {
+                if (gb != null) {
+                    for (i in 0 until gb.length()) {
+                        val e = gb.optJSONObject(i) ?: continue
+                        val id = e.optString("id").trim()
+                        if (id.isBlank()) continue
+                        add(
+                            GuestbookEntry(
+                                id = id,
+                                userId = e.optString("userId"),
+                                nickname = e.optString("nickname", "Jemand"),
+                                text = e.optString("text"),
+                                createdAt = e.optLong("createdAt", 0L)
+                            )
+                        )
+                    }
+                }
+            }
+            WeddingInfo(
+                marriage = parseMarriageInfo(json.optJSONObject("marriage")),
+                hasImage = json.optBoolean("hasImage", false),
+                guestbook = entries,
+                canDeleteComments = json.optBoolean("canDeleteComments", false)
+            )
+        }.getOrNull()
+    }
+
+    suspend fun postGuestbook(userId: String, text: String): GuestbookEntry? =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("text", text.trim().take(280)).toString()
+            val json = authedPost(
+                "/v1/users/${userId.trim().encodeURL()}/wedding/guestbook",
+                body
+            )
+            val e = json.optJSONObject("entry") ?: return@withContext null
+            GuestbookEntry(
+                id = e.optString("id"),
+                userId = e.optString("userId"),
+                nickname = e.optString("nickname", "Jemand"),
+                text = e.optString("text"),
+                createdAt = e.optLong("createdAt", 0L)
+            )
+        }
+
+    suspend fun deleteGuestbook(userId: String, entryId: String) = withContext(Dispatchers.IO) {
+        authedDelete(
+            "/v1/users/${userId.trim().encodeURL()}/wedding/guestbook/${entryId.trim().encodeURL()}"
+        )
+        Unit
+    }
+
+    suspend fun reportGuestbook(userId: String, entryId: String, reason: String) =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("reason", reason.trim().take(400)).toString()
+            authedPost(
+                "/v1/users/${userId.trim().encodeURL()}/wedding/guestbook/${entryId.trim().encodeURL()}/report",
+                body
+            )
+            Unit
+        }
 
     suspend fun sendFriendRequest(userId: String): String = withContext(Dispatchers.IO) {
         val uid = userId.trim()
@@ -2126,7 +2313,9 @@ object LuvApiClient {
             PetKraulResult(
                 petEmoji = body.optString("petEmoji", "🐣").ifBlank { "🐣" },
                 toCoins = body.optInt("toCoins", 0),
-                amount = body.optInt("amount", 1)
+                amount = body.optInt("amount", 1),
+                friendshipLevel = body.optInt("friendshipLevel", 0),
+                friendshipLevelBumped = body.optBoolean("friendshipLevelBumped", false)
             )
         }
     }
@@ -2415,6 +2604,17 @@ object LuvApiClient {
         }
     }
 
+    private fun authedDelete(path: String): JSONObject {
+        val request = authedRequestBuilder(path)
+            .delete()
+            .build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throwApiFailure(raw, response.code)
+            return if (raw.isBlank()) JSONObject() else JSONObject(raw)
+        }
+    }
+
     private fun executeRoom(request: Request): RoomSession {
         http.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
@@ -2461,6 +2661,7 @@ object LuvApiClient {
                 capacity = parsed.optInt("capacity", PeerPalette.FREE_LOBBY_START_CAPACITY),
                 isFree = parsed.optBoolean("isFree", false),
                 isRandom = parsed.optBoolean("isRandom", false),
+                isWedding = parsed.optBoolean("isWedding", false),
                 name = parsed.optString("name", "Lobby"),
                 hostNickname = parsed.optString("hostNickname", "Host"),
                 hostColorSide = parsed.optString("hostColorSide", "blue").ifBlank { "blue" },

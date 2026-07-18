@@ -170,6 +170,19 @@ fun ProfileCanvasScreen(
     var peerPetEmoji by remember { mutableStateOf("🐣") }
     var showPetKraul by remember { mutableStateOf(false) }
     var petKraulBusy by remember { mutableStateOf(false) }
+    var friendshipLevel by remember { mutableIntStateOf(0) }
+    var canProposeMarriage by remember { mutableStateOf(false) }
+    var canDivorce by remember { mutableStateOf(false) }
+    var spouseExtraName by remember { mutableStateOf<String?>(null) }
+    var engagedExtraName by remember { mutableStateOf<String?>(null) }
+    var showPreview by remember { mutableStateOf(false) }
+    var showMarryInfo by remember { mutableStateOf(false) }
+    var showDivorce by remember { mutableStateOf(false) }
+    var divorceTyped by remember { mutableStateOf("") }
+    var divorceStep2 by remember { mutableStateOf(false) }
+    var showUnfriendHold by remember { mutableStateOf(false) }
+    var unfriendHoldMs by remember { mutableIntStateOf(0) }
+    var showGuestbookFor by remember { mutableStateOf<String?>(null) }
     // Fremdprofil: kein Default-Flash — erst Loader, dann fertiges Layout
     var profileReady by remember(userId, editable) {
         mutableStateOf(editable)
@@ -221,6 +234,20 @@ fun ProfileCanvasScreen(
                 state = state.copy(companionEmoji = equipped)
             }
             displayCoins = AccountSession.account.value?.coins ?: myCoins
+            val myId = AccountSession.account.value?.id
+            if (!myId.isNullOrBlank()) {
+                runCatching { LuvApiClient.fetchUserProfileCanvas(myId) }.getOrNull()?.let { me ->
+                    spouseExtraName = me.spousePublic?.nickname
+                    engagedExtraName = me.fiancePublic?.nickname
+                }
+            } else {
+                runCatching { LuvApiClient.fetchFriends() }.getOrNull()?.myMarriage?.let { m ->
+                    when (m.status) {
+                        "married" -> spouseExtraName = m.partnerNickname
+                        "engaged", "wedding" -> engagedExtraName = m.partnerNickname
+                    }
+                }
+            }
             profileReady = true
         } else if (!userId.isNullOrBlank()) {
             val remote = LuvApiClient.fetchUserProfileCanvas(userId)
@@ -233,6 +260,11 @@ fun ProfileCanvasScreen(
                 canTipGlass = remote.canTipGlass
                 glassTipsRemaining = remote.glassTipsRemaining
                 peerPetEmoji = remote.petEmoji.ifBlank { remote.state.companionEmoji.ifBlank { "🐣" } }
+                friendshipLevel = remote.friendshipLevel
+                canProposeMarriage = remote.canProposeMarriage
+                canDivorce = remote.canDivorce
+                spouseExtraName = remote.spousePublic?.nickname
+                engagedExtraName = remote.fiancePublic?.nickname
             } else {
                 loadedNick = nickname
                 state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname)).normalized(nickname)
@@ -242,6 +274,9 @@ fun ProfileCanvasScreen(
                 canTipGlass = false
                 glassTipsRemaining = 0
                 peerPetEmoji = "🐣"
+                friendshipLevel = 0
+                canProposeMarriage = false
+                canDivorce = false
             }
             savedSnapshot = state.snapshotKey()
             val minMs = 1100L
@@ -397,6 +432,44 @@ fun ProfileCanvasScreen(
         patchLayout(state.layout + el)
         selectedId = el.id
         editElId = el.id
+        showChest = false
+    }
+
+    fun placeSpouse() {
+        if (!editable) return
+        val nick = spouseExtraName ?: return
+        val existing = state.layout.firstOrNull { it.type == ProfileElType.Spouse }
+        if (existing != null) {
+            selectedId = existing.id
+            showChest = false
+            return
+        }
+        val el = ProfileCatalog.newSpouse(nick)
+        patchLayout(
+            state.layout.filterNot {
+                it.type == ProfileElType.Spouse || it.type == ProfileElType.Engaged
+            } + el
+        )
+        selectedId = el.id
+        showChest = false
+    }
+
+    fun placeEngaged() {
+        if (!editable) return
+        val nick = engagedExtraName ?: return
+        val existing = state.layout.firstOrNull { it.type == ProfileElType.Engaged }
+        if (existing != null) {
+            selectedId = existing.id
+            showChest = false
+            return
+        }
+        val el = ProfileCatalog.newEngaged(nick)
+        patchLayout(
+            state.layout.filterNot {
+                it.type == ProfileElType.Spouse || it.type == ProfileElType.Engaged
+            } + el
+        )
+        selectedId = el.id
         showChest = false
     }
 
@@ -584,6 +657,11 @@ fun ProfileCanvasScreen(
                         { startPetKraul() }
                     } else {
                         null
+                    },
+                    onOpenSpouse = if (!editable && !userId.isNullOrBlank()) {
+                        { showGuestbookFor = userId }
+                    } else {
+                        null
                     }
                 )
                 tipPopIds.forEach { popId ->
@@ -684,6 +762,17 @@ fun ProfileCanvasScreen(
                         fontSize = 16.sp
                     )
                 }
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    "Profil ansehen",
+                    color = AccentRose,
+                    fontFamily = DisplayFont,
+                    fontSize = 15.sp,
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .clickable { showPreview = true }
+                        .padding(8.dp)
+                )
                 Spacer(modifier = Modifier.height(12.dp))
             } else {
                 if (state.bio.isNotBlank()) {
@@ -843,8 +932,270 @@ fun ProfileCanvasScreen(
                             fontSize = 16.sp
                         )
                     }
+                    if (friendStatus == "friends") {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Freundschaftslevel $friendshipLevel / 100",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 13.sp,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    if (canProposeMarriage) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .clip(RoundedCornerShape(24.dp))
+                                .background(Color(0xFFFFD54F).copy(0.28f))
+                                .border(1.dp, Color(0xFFFFD54F).copy(0.7f), RoundedCornerShape(24.dp))
+                                .clickable { showMarryInfo = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("💍  Heiraten", color = Color(0xFF5A4030), fontFamily = DisplayFont)
+                        }
+                    }
+                    if (canDivorce) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            "Scheiden lassen",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 13.sp,
+                            modifier = Modifier
+                                .align(Alignment.CenterHorizontally)
+                                .clickable {
+                                    divorceTyped = ""
+                                    divorceStep2 = false
+                                    showDivorce = true
+                                }
+                                .padding(6.dp)
+                        )
+                    }
+                    if (friendStatus == "friends" && !canDivorce) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Freundschaft beenden (halten)",
+                            color = TextMuted.copy(0.85f),
+                            fontFamily = BodyFont,
+                            fontSize = 12.sp,
+                            modifier = Modifier
+                                .align(Alignment.CenterHorizontally)
+                                .pointerInput(userId) {
+                                    detectTapGestures(
+                                        onPress = {
+                                            showUnfriendHold = true
+                                            unfriendHoldMs = 0
+                                            val start = SystemClock.elapsedRealtime()
+                                            var completed = false
+                                            try {
+                                                while (true) {
+                                                    val held = (SystemClock.elapsedRealtime() - start).toInt()
+                                                    unfriendHoldMs = held.coerceAtMost(5000)
+                                                    if (held >= 5000) {
+                                                        completed = true
+                                                        break
+                                                    }
+                                                    delay(50)
+                                                }
+                                            } finally {
+                                                showUnfriendHold = false
+                                                unfriendHoldMs = 0
+                                            }
+                                            if (completed) {
+                                                val uid = userId ?: return@detectTapGestures
+                                                scope.launch {
+                                                    runCatching { LuvApiClient.removeFriend(uid) }
+                                                        .onSuccess {
+                                                            friendStatus = "none"
+                                                            friendshipLevel = 0
+                                                            Toast.makeText(
+                                                                context,
+                                                                "Freundschaft beendet",
+                                                                Toast.LENGTH_SHORT
+                                                            ).show()
+                                                        }
+                                                        .onFailure {
+                                                            Toast.makeText(
+                                                                context,
+                                                                it.message ?: "Fehler",
+                                                                Toast.LENGTH_SHORT
+                                                            ).show()
+                                                        }
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
+                                .padding(6.dp)
+                        )
+                        if (showUnfriendHold) {
+                            Text(
+                                "Noch ${(5000 - unfriendHoldMs).coerceAtLeast(0) / 1000 + 1}s halten…",
+                                color = AccentRose,
+                                fontFamily = BodyFont,
+                                fontSize = 12.sp,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
                 }
             }
+        }
+
+        if (showMarryInfo) {
+            AlertDialog(
+                onDismissRequest = { showMarryInfo = false },
+                title = { Text("Heiraten", fontFamily = DisplayFont) },
+                text = {
+                    Text(
+                        "Ihr habt Freundschaftslevel 100. Nach Annahme seid ihr 7 Tage verlobt, " +
+                            "danach öffnet sich eine gemeinsame Hochzeitsleinwand (7 Tage). " +
+                            "Danach seid ihr verheiratet — mit Ehepartner-Extra, Gästebuch und dem Ehering-Begleiter.",
+                        fontFamily = BodyFont,
+                        color = TextMuted
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val uid = userId ?: return@TextButton
+                        showMarryInfo = false
+                        scope.launch {
+                            runCatching { LuvApiClient.proposeMarriage(uid) }
+                                .onSuccess {
+                                    canProposeMarriage = false
+                                    Toast.makeText(context, "Antrag gesendet 💍", Toast.LENGTH_SHORT).show()
+                                }
+                                .onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        it.message ?: "Antrag fehlgeschlagen",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                        }
+                    }) { Text("Antrag senden", color = AccentRose) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showMarryInfo = false }) {
+                        Text("Abbrechen", color = TextMuted)
+                    }
+                }
+            )
+        }
+
+        if (showDivorce) {
+            AlertDialog(
+                onDismissRequest = { showDivorce = false },
+                title = { Text("Scheidung", fontFamily = DisplayFont) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (!divorceStep2) {
+                            Text(
+                                "Tippe „scheiden“ zur Bestätigung. Ehepartner-Extra, Hochzeitsbild und Ehering entfallen.",
+                                fontFamily = BodyFont,
+                                color = TextMuted
+                            )
+                            BasicTextField(
+                                value = divorceTyped,
+                                onValueChange = { divorceTyped = it },
+                                textStyle = TextStyle(color = TextPrimary, fontFamily = BodyFont),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(BgSoft, RoundedCornerShape(12.dp))
+                                    .padding(12.dp)
+                            )
+                        } else {
+                            Text(
+                                "Wirklich scheiden lassen? Das kann nicht rückgängig gemacht werden.",
+                                fontFamily = BodyFont,
+                                color = TextMuted
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (!divorceStep2) {
+                            if (divorceTyped.trim().equals("scheiden", ignoreCase = true)) {
+                                divorceStep2 = true
+                            } else {
+                                Toast.makeText(context, "Bitte „scheiden“ eingeben", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            showDivorce = false
+                            scope.launch {
+                                runCatching { LuvApiClient.divorceMarriage() }
+                                    .onSuccess {
+                                        canDivorce = false
+                                        spouseExtraName = null
+                                        Toast.makeText(context, "Geschieden", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .onFailure {
+                                        Toast.makeText(
+                                            context,
+                                            it.message ?: "Fehler",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                            }
+                        }
+                    }) {
+                        Text(if (divorceStep2) "Ja, scheiden" else "Weiter", color = AccentRose)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDivorce = false }) {
+                        Text("Abbrechen", color = TextMuted)
+                    }
+                }
+            )
+        }
+
+        if (showPreview) {
+            val myId = account?.id
+            Dialog(
+                onDismissRequest = { showPreview = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(0.55f))
+                        .clickable { showPreview = false }
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(0.92f)
+                            .align(Alignment.Center)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(BgDeep)
+                            .clickable(enabled = false) {}
+                    ) {
+                        if (!myId.isNullOrBlank()) {
+                            ProfileCanvasScreen(
+                                nickname = loadedNick,
+                                colorIndex = colorIndex,
+                                editable = false,
+                                userId = myId,
+                                onClose = { showPreview = false }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (showGuestbookFor != null) {
+            WeddingGuestbookDialog(
+                profileUserId = showGuestbookFor!!,
+                onDismiss = { showGuestbookFor = null }
+            )
         }
 
         if (showPetKraul) {
@@ -880,11 +1231,17 @@ fun ProfileCanvasScreen(
                 currentCompanion = state.companionEmoji,
                 hasGlass = state.layout.any { it.type == ProfileElType.Glass },
                 hasBio = state.layout.any { it.type == ProfileElType.Bio },
+                spouseName = spouseExtraName,
+                engagedName = engagedExtraName,
+                hasSpouse = state.layout.any { it.type == ProfileElType.Spouse },
+                hasEngaged = state.layout.any { it.type == ProfileElType.Engaged },
                 onTheme = { setTheme(it) },
                 onSticker = { placeSticker(it) },
                 onCompanion = { placeCompanion(it) },
                 onGlass = { placeGlass() },
                 onBio = { placeBio() },
+                onSpouse = { placeSpouse() },
+                onEngaged = { placeEngaged() },
                 selectedTab = chestTab,
                 onTabChange = { chestTab = it },
                 onOpenMarketplace = {
@@ -1333,7 +1690,8 @@ private fun ProfileCanvasBoard(
     onOpenChest: () -> Unit,
     onEdit: (String) -> Unit,
     onTipGlass: (() -> Unit)? = null,
-    onPetKraul: (() -> Unit)? = null
+    onPetKraul: (() -> Unit)? = null,
+    onOpenSpouse: (() -> Unit)? = null
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -1418,7 +1776,8 @@ private fun ProfileCanvasBoard(
                     onTipGlass = if (el.type == ProfileElType.Glass) onTipGlass else null,
                     onPetKraul = if (el.type == ProfileElType.Avatar || el.type == ProfileElType.Pet) {
                         onPetKraul
-                    } else null
+                    } else null,
+                    onOpenSpouse = if (el.type == ProfileElType.Spouse) onOpenSpouse else null
                 )
             }
         }
@@ -1461,7 +1820,8 @@ private fun ProfileElementView(
     onRemove: () -> Unit,
     onEdit: () -> Unit,
     onTipGlass: (() -> Unit)? = null,
-    onPetKraul: (() -> Unit)? = null
+    onPetKraul: (() -> Unit)? = null,
+    onOpenSpouse: (() -> Unit)? = null
 ) {
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
@@ -1570,12 +1930,14 @@ private fun ProfileElementView(
                 enabled = editable ||
                     (el.type == ProfileElType.Glass && onTipGlass != null) ||
                     ((el.type == ProfileElType.Pet || el.type == ProfileElType.Avatar) &&
-                        onPetKraul != null)
+                        onPetKraul != null) ||
+                    (el.type == ProfileElType.Spouse && onOpenSpouse != null)
             ) {
                 if (editable) onSelectLatest.value()
                 else when (el.type) {
                     ProfileElType.Glass -> onTipGlass?.invoke()
                     ProfileElType.Pet, ProfileElType.Avatar -> onPetKraul?.invoke()
+                    ProfileElType.Spouse -> onOpenSpouse?.invoke()
                     else -> Unit
                 }
             }
@@ -1803,6 +2165,32 @@ private fun ElementContent(
                 Text("Coins", color = color.copy(0.85f), fontFamily = BodyFont, fontSize = 9.sp)
             }
         }
+        ProfileElType.Spouse -> {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("💍", fontSize = 26.sp)
+                Text(
+                    el.text ?: "Ehepartner",
+                    color = Color(0xFFFFD54F),
+                    fontFamily = font,
+                    fontSize = sizeSp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        ProfileElType.Engaged -> {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("💝", fontSize = 26.sp)
+                Text(
+                    el.text ?: "Verlobte:r",
+                    color = AccentRose,
+                    fontFamily = font,
+                    fontSize = sizeSp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
         ProfileElType.Sticker -> Text(el.emoji ?: "✨", fontSize = 34.sp)
         ProfileElType.Text -> Text(
             el.text ?: "",
@@ -1967,4 +2355,115 @@ private fun ProfileEditSheet(
             }
         }
     }
+}
+
+@Composable
+private fun WeddingGuestbookDialog(
+    profileUserId: String,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var wedding by remember { mutableStateOf<LuvApiClient.WeddingInfo?>(null) }
+    var draft by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    LaunchedEffect(profileUserId) {
+        wedding = LuvApiClient.fetchWedding(profileUserId)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Hochzeits-Gästebuch", fontFamily = DisplayFont) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(360.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (wedding?.hasImage == true) {
+                    Text(
+                        "Gemeinsames Hochzeitsbild verfügbar.",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp
+                    )
+                }
+                wedding?.guestbook.orEmpty().forEach { entry ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(BgSoft)
+                            .padding(10.dp)
+                    ) {
+                        Text(entry.nickname, color = TextPrimary, fontFamily = DisplayFont, fontSize = 14.sp)
+                        Text(entry.text, color = TextMuted, fontFamily = BodyFont, fontSize = 13.sp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (wedding?.canDeleteComments == true) {
+                                TextButton(onClick = {
+                                    scope.launch {
+                                        runCatching {
+                                            LuvApiClient.deleteGuestbook(profileUserId, entry.id)
+                                        }.onSuccess {
+                                            wedding = LuvApiClient.fetchWedding(profileUserId)
+                                        }
+                                    }
+                                }) { Text("Löschen", color = AccentRose, fontSize = 12.sp) }
+                            } else {
+                                TextButton(onClick = {
+                                    scope.launch {
+                                        runCatching {
+                                            LuvApiClient.reportGuestbook(
+                                                profileUserId,
+                                                entry.id,
+                                                "Gästebuch-Meldung"
+                                            )
+                                        }.onSuccess {
+                                            Toast.makeText(context, "Gemeldet", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }) { Text("Melden", color = TextMuted, fontSize = 12.sp) }
+                            }
+                        }
+                    }
+                }
+                BasicTextField(
+                    value = draft,
+                    onValueChange = { draft = it.take(280) },
+                    textStyle = TextStyle(color = TextPrimary, fontFamily = BodyFont),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(BgSoft, RoundedCornerShape(12.dp))
+                        .padding(12.dp)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !busy && draft.isNotBlank(),
+                onClick = {
+                    busy = true
+                    scope.launch {
+                        runCatching { LuvApiClient.postGuestbook(profileUserId, draft) }
+                            .onSuccess {
+                                draft = ""
+                                wedding = LuvApiClient.fetchWedding(profileUserId)
+                            }
+                            .onFailure {
+                                Toast.makeText(
+                                    context,
+                                    it.message ?: "Fehler",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        busy = false
+                    }
+                }
+            ) { Text("Eintrag schreiben", color = AccentRose) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Schließen", color = TextMuted) }
+        }
+    )
 }

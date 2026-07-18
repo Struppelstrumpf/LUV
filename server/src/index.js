@@ -17,6 +17,7 @@ const { pickShareLine } = require("./share_lines");
 const ach = require("./achievements");
 const market = require("./market");
 const lootbox = require("./lootbox");
+const marriage = require("./marriage");
 const {
   STICKER_SHOP_PRICES,
   isKnownSticker,
@@ -488,7 +489,13 @@ const STARTER_EMOJIS = ["👍", "❌", "❤️", "😂", "😱", "😡", "😭"]
 function isKnownInventoryItem(kind, itemId) {
   const id = String(itemId || "").trim();
   if (!id) return false;
-  if (kind === "pets") return id === DEFAULT_PET || PET_SHOP_PRICES[id] != null;
+  if (kind === "pets") {
+    return (
+      id === DEFAULT_PET ||
+      id === marriage.MARRIAGE_PET ||
+      PET_SHOP_PRICES[id] != null
+    );
+  }
   if (kind === "themes") return id === "meadow" || THEME_SHOP_PRICES[id] != null;
   if (kind === "stickers") return isKnownSticker(id);
   if (kind === "emojis") {
@@ -553,11 +560,32 @@ function clampProfileToInventory(user, profile) {
   let companionEmoji =
     String(profile.companionEmoji || DEFAULT_PET).trim().slice(0, 8) || DEFAULT_PET;
   if (!inv.pets.includes(companionEmoji)) companionEmoji = DEFAULT_PET;
+  const myM = marriage.findMarriageForUser(getDb(), user.id);
+  const canSpouse = myM && myM.status === "married";
+  const canEngaged =
+    myM && (myM.status === "engaged" || myM.status === "wedding");
+  const partnerNick = canSpouse || canEngaged
+    ? (() => {
+        const pid = marriage.partnerIdOf(myM, user.id);
+        const p = pid ? getDb().users?.[pid] : null;
+        return p ? String(p.nickname || "").trim().slice(0, 18) : "";
+      })()
+    : "";
   // Sticker-Bestand: syncStickersOnProfileSave (Inventar = freier Stock, nicht auf der Leinwand)
   const layout = Array.isArray(profile.layout)
     ? profile.layout.filter((el) => {
-        if (!el || el.type !== "sticker") return true;
+        if (!el) return false;
+        const t = String(el.type || "").toLowerCase();
+        if (t === "spouse") return Boolean(canSpouse);
+        if (t === "engaged") return Boolean(canEngaged);
+        if (t !== "sticker") return true;
         return Boolean(String(el.emoji || el.text || "").trim());
+      }).map((el) => {
+        const t = String(el.type || "").toLowerCase();
+        if ((t === "spouse" || t === "engaged") && partnerNick) {
+          return { ...el, text: partnerNick, emoji: t === "spouse" ? "💍" : "💝" };
+        }
+        return el;
       })
     : [];
   return { ...profile, themeId, companionEmoji, layout };
@@ -843,6 +871,7 @@ function ensureFriends(user) {
   if (!Array.isArray(f.incoming)) f.incoming = [];
   if (!Array.isArray(f.outgoing)) f.outgoing = [];
   if (!Array.isArray(f.petKraulTargets)) f.petKraulTargets = [];
+  marriage.ensureFriendLevels(f);
   f.list = f.list.map((id) => String(id || "").trim()).filter(Boolean);
   f.incoming = f.incoming.map((id) => String(id || "").trim()).filter(Boolean);
   f.outgoing = f.outgoing.map((id) => String(id || "").trim()).filter(Boolean);
@@ -850,14 +879,240 @@ function ensureFriends(user) {
   return f;
 }
 
-function friendPublicCard(user) {
+function friendPublicCard(user, viewer) {
   if (!user) return null;
   ensureCoinBuckets(user);
+  const level = viewer ? marriage.getLevel(viewer, user.id) : 0;
+  const m =
+    viewer != null
+      ? marriage.findMarriageBetween(getDb(), viewer.id, user.id)
+      : null;
+  const isSpouse = Boolean(m && m.status === "married");
+  const isFiance = Boolean(
+    m && (m.status === "engaged" || m.status === "wedding")
+  );
   return {
     userId: user.id,
     nickname: String(user.nickname || "Jemand").trim().slice(0, 18) || "Jemand",
     petEmoji: userPetEmoji(user),
+    friendshipLevel: level,
+    isSpouse,
+    isFiance,
+    marriage: viewer
+      ? marriage.publicMarriage(m, viewer.id, getDb().users)
+      : null,
   };
+}
+
+const WEDDING_DIR = path.join(DATA_DIR, "weddings");
+
+function ensureWeddingDir() {
+  fs.mkdirSync(WEDDING_DIR, { recursive: true });
+}
+
+function sortFriendsSpouseFirst(cards) {
+  return [...cards].sort((a, b) => {
+    if (a.isSpouse && !b.isSpouse) return -1;
+    if (!a.isSpouse && b.isSpouse) return 1;
+    if (a.isFiance && !b.isFiance) return -1;
+    if (!a.isFiance && b.isFiance) return 1;
+    return 0;
+  });
+}
+
+function trackFriendshipLevelAch(user, level) {
+  ach.setMetricAtLeast(user, "friendship_level_max", level, todayKey(), (uid, d, r, ref) =>
+    applyLedger(uid, d, r, ref)
+  );
+  if (level >= 10) trackAch(user, "friendship_lvl_10", 1);
+  if (level >= 25) trackAch(user, "friendship_lvl_25", 1);
+  if (level >= 50) trackAch(user, "friendship_lvl_50", 1);
+  if (level >= 75) trackAch(user, "friendship_lvl_75", 1);
+  if (level >= 100) trackAch(user, "friendship_lvl_100", 1);
+}
+
+function createWeddingLobby(userA, userB, marriageRec) {
+  let code = randomCode();
+  while (rooms.has(code) || getDb().rooms?.[code]) code = randomCode();
+  const token = randomToken().slice(0, 32);
+  const hostColorSide = normalizeHostColorSide(userA.colorSide || "blue");
+  const hostIdx = hostColorIndex(hostColorSide);
+  const guestIdx = oppositeHostColor(hostIdx);
+  const now = Date.now();
+  const room = {
+    token,
+    createdAt: now,
+    lastActiveAt: now,
+    sockets: new Map(),
+    clearProposal: null,
+    game: null,
+    gameTimer: null,
+    hostUserId: userA.id,
+    name: "Hochzeit",
+    hostNickname: userA.nickname || "Host",
+    isFree: true,
+    isRandom: false,
+    isWedding: true,
+    capacity: 2,
+    hostColorSide,
+    colorByUserId: { [userA.id]: hostIdx, [userB.id]: guestIdx },
+    peakPeers: 2,
+    lastCanvasAt: 0,
+    memberUserIds: [userA.id, userB.id],
+    joinAnnouncedUserIds: [userA.id, userB.id],
+    publicShare: { day: "", count: 0, nextAt: 0 },
+    publicProposal: null,
+    strokes: [],
+    stickers: [],
+    marriageId: marriageRec.id,
+  };
+  rooms.set(code, room);
+  const meta = {
+    createdAt: now,
+    isFree: true,
+    isRandom: false,
+    isWedding: true,
+    name: "Hochzeit",
+    capacity: 2,
+    token,
+    hostColorSide,
+    colorByUserId: room.colorByUserId,
+    lastCanvasAt: 0,
+  };
+  ensureHostedRooms(userA);
+  ensureHostedRooms(userB);
+  userA.hostedRooms[code] = { ...meta };
+  // Beide sehen die Lobby unter „eigene“ — Partner als Co-Host-Eintrag
+  userB.hostedRooms[code] = { ...meta, coHost: true };
+  forgetJoinedLobby(userA, code);
+  forgetJoinedLobby(userB, code);
+  marriageRec.weddingLobbyCode = code;
+  marriageRec.weddingStartedAt = now;
+  marriageRec.weddingEndsAt = now + marriage.WEDDING_LOBBY_MS;
+  marriageRec.status = "wedding";
+  persistRooms();
+  return code;
+}
+
+function dissolveWeddingLobby(code) {
+  if (!code) return;
+  const room = rooms.get(code) || null;
+  const saved = getDb().rooms?.[code];
+  const members = room?.memberUserIds || saved?.memberUserIds || [];
+  const db = getDb();
+  for (const uid of members) {
+    const u = db.users?.[uid];
+    if (u) {
+      releaseHostedRoom(code, uid);
+      forgetJoinedLobby(u, code);
+      if (u.hostedRooms?.[code]) delete u.hostedRooms[code];
+    }
+  }
+  if (room) {
+    for (const sock of [...(room.sockets?.values?.() || [])]) {
+      try {
+        sock.close(4001, "wedding_ended");
+      } catch {
+        /* ignore */
+      }
+    }
+    rooms.delete(code);
+  }
+  if (db.rooms?.[code]) delete db.rooms[code];
+  persistRooms();
+}
+
+function finalizeWeddingMarriage(m) {
+  if (!m || m.status !== "wedding") return false;
+  const db = getDb();
+  const a = db.users?.[m.a];
+  const b = db.users?.[m.b];
+  const code = m.weddingLobbyCode;
+  // Letztes Snapshot der Lobby als Hochzeitsbild übernehmen
+  if (code) {
+    const snap = path.join(SNAPSHOT_DIR, `${code}.png`);
+    if (fs.existsSync(snap)) {
+      ensureWeddingDir();
+      const destName = `${m.id || marriage.pairKey(m.a, m.b)}.png`;
+      const dest = path.join(WEDDING_DIR, destName);
+      try {
+        fs.copyFileSync(snap, dest);
+        m.weddingImageFile = destName;
+      } catch (e) {
+        console.error("wedding image copy failed", e);
+      }
+    }
+    dissolveWeddingLobby(code);
+  }
+  m.status = "married";
+  m.marriedAt = Date.now();
+  m.weddingLobbyCode = null;
+  if (!Array.isArray(m.guestbook)) m.guestbook = [];
+  if (a) {
+    marriage.grantMarriageItem(a);
+    trackAch(a, "married", 1);
+  }
+  if (b) {
+    marriage.grantMarriageItem(b);
+    trackAch(b, "married", 1);
+  }
+  return true;
+}
+
+function startEngagement(m) {
+  const now = Date.now();
+  m.status = "engaged";
+  m.engagedAt = now;
+  m.engageReadyAt = now + marriage.ENGAGE_WAIT_MS;
+}
+
+function tickMarriages() {
+  const db = getDb();
+  const all = marriage.ensureMarriages(db);
+  const now = Date.now();
+  let dirty = false;
+  for (const m of Object.values(all)) {
+    if (!m) continue;
+    if (m.status === "engaged" && now >= (Number(m.engageReadyAt) || 0)) {
+      const a = db.users?.[m.a];
+      const b = db.users?.[m.b];
+      if (a && b) {
+        createWeddingLobby(a, b, m);
+        trackAch(a, "wedding_started", 1);
+        trackAch(b, "wedding_started", 1);
+        dirty = true;
+      }
+    } else if (m.status === "wedding" && now >= (Number(m.weddingEndsAt) || 0)) {
+      if (finalizeWeddingMarriage(m)) dirty = true;
+    }
+  }
+  if (dirty) scheduleSave();
+}
+
+function endMarriageRecord(m, reason) {
+  if (!m) return;
+  const db = getDb();
+  const a = db.users?.[m.a];
+  const b = db.users?.[m.b];
+  if (m.status === "wedding" && m.weddingLobbyCode) {
+    dissolveWeddingLobby(m.weddingLobbyCode);
+  }
+  if (a) {
+    marriage.clearMarriageItem(a);
+    marriage.stripSpouseFromProfile(a);
+  }
+  if (b) {
+    marriage.clearMarriageItem(b);
+    marriage.stripSpouseFromProfile(b);
+  }
+  const key = m.id || marriage.pairKey(m.a, m.b);
+  delete marriage.ensureMarriages(db)[key];
+  // Auch unter pairKey löschen falls id anders
+  delete marriage.ensureMarriages(db)[marriage.pairKey(m.a, m.b)];
+  if (reason === "divorce") {
+    if (a) trackAch(a, "divorces", 1);
+    if (b) trackAch(b, "divorces", 1);
+  }
 }
 
 function friendRelation(me, otherId) {
@@ -903,6 +1158,7 @@ function serializeRoom(code, room) {
     hostNickname: room.hostNickname || "Host",
     isFree: Boolean(room.isFree),
     isRandom: Boolean(room.isRandom),
+    isWedding: Boolean(room.isWedding),
     capacity: roomCapacity(room),
     hostColorSide: normalizeHostColorSide(room.hostColorSide),
     colorByUserId:
@@ -917,6 +1173,7 @@ function serializeRoom(code, room) {
     joinAnnouncedUserIds: Array.isArray(room.joinAnnouncedUserIds)
       ? room.joinAnnouncedUserIds.filter((id) => typeof id === "string")
       : [],
+    marriageId: room.marriageId || null,
     publicShare:
       room.publicShare && typeof room.publicShare === "object"
         ? {
@@ -976,6 +1233,7 @@ function restoreRoomsFromDisk() {
       hostNickname: String(data.hostNickname || "Host").slice(0, 18),
       isFree: Boolean(data.isFree),
       isRandom: Boolean(data.isRandom),
+      isWedding: Boolean(data.isWedding),
       capacity: Math.min(
         MAX_PEERS,
         Math.max(
@@ -998,6 +1256,7 @@ function restoreRoomsFromDisk() {
         : Array.isArray(data.memberUserIds)
           ? data.memberUserIds.filter((id) => typeof id === "string")
           : [],
+      marriageId: data.marriageId || null,
       publicShare:
         data.publicShare && typeof data.publicShare === "object"
           ? {
@@ -1588,6 +1847,7 @@ function hydrateRoom(code, data, tokenOverride) {
     hostNickname: String(data.hostNickname || "Host").slice(0, 18),
     isFree: Boolean(data.isFree),
     isRandom: Boolean(data.isRandom),
+    isWedding: Boolean(data.isWedding),
     capacity: Math.min(
       MAX_PEERS,
       Math.max(
@@ -1610,6 +1870,7 @@ function hydrateRoom(code, data, tokenOverride) {
       : Array.isArray(data.memberUserIds)
         ? data.memberUserIds.filter((id) => typeof id === "string")
         : [],
+    marriageId: data.marriageId || null,
     publicShare:
       data.publicShare && typeof data.publicShare === "object"
         ? {
@@ -1651,6 +1912,7 @@ function rememberJoinedLobby(user, code, room) {
     capacity: roomCapacity(room),
     isFree: Boolean(room.isFree),
     isRandom: Boolean(room.isRandom),
+    isWedding: Boolean(room.isWedding),
     hostColorSide: normalizeHostColorSide(room.hostColorSide),
     hostNickname: String(room.hostNickname || "Host").slice(0, 18),
     joinedAt: Date.now(),
@@ -1719,6 +1981,7 @@ function publicJoinedLobbies(user) {
     ),
     isFree: Boolean(meta?.isFree),
     isRandom: Boolean(meta?.isRandom),
+    isWedding: Boolean(meta?.isWedding),
     lastCanvasAt: Number(rooms.get(code)?.lastCanvasAt || meta?.lastCanvasAt || 0),
     hostColorSide: normalizeHostColorSide(meta?.hostColorSide),
     invite: `${PUBLIC_JOIN_BASE}/${code}`,
@@ -2067,6 +2330,7 @@ function publicRoom(room, code) {
     maxPeers: MAX_PEERS,
     isFree: Boolean(room.isFree),
     isRandom: Boolean(room.isRandom),
+    isWedding: Boolean(room.isWedding),
     hostColorSide: normalizeHostColorSide(room.hostColorSide),
     peakPeers: peak,
     coupleMode: peak <= 2,
@@ -3017,6 +3281,7 @@ function publicHostedLobbies(user) {
     ),
     isFree: Boolean(meta?.isFree),
     isRandom: Boolean(meta?.isRandom),
+    isWedding: Boolean(meta?.isWedding),
     lastCanvasAt: Number(
       rooms.get(code)?.lastCanvasAt ||
         meta?.lastCanvasAt ||
@@ -4400,6 +4665,13 @@ function resolvePublicShare(room, code) {
 
 setInterval(cleanupRooms, 60_000).unref();
 setInterval(() => {
+  try {
+    tickMarriages();
+  } catch (e) {
+    console.error("tickMarriages", e);
+  }
+}, 60_000).unref();
+setInterval(() => {
   sweepExpiredMarketListings();
 }, 5 * 60_000).unref();
 setInterval(() => {
@@ -4817,6 +5089,8 @@ function sanitizeProfileCanvas(raw) {
     "pet",
     "sticker",
     "text",
+    "spouse",
+    "engaged",
   ]);
   for (const el of layoutIn.slice(0, 48)) {
     if (!el || typeof el !== "object") continue;
@@ -4982,6 +5256,14 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   const isSelf = uid === ctx.user.id;
   const areFriends = !isSelf && friendRelation(ctx.user, uid) === "friends";
   const tipRecv = glassTipRecvState(user);
+  const bond = marriage.findMarriageBetween(db, ctx.user.id, uid);
+  const theirMarriage = marriage.findMarriageForUser(db, uid);
+  const friendshipLevel = areFriends || isSelf ? marriage.getLevel(ctx.user, uid) : 0;
+  const canPropose =
+    areFriends &&
+    friendshipLevel >= 100 &&
+    !marriage.findMarriageForUser(db, ctx.user.id) &&
+    !theirMarriage;
   return res.json({
     nickname: user.nickname || "Jemand",
     userId: user.id,
@@ -4994,6 +5276,43 @@ app.get("/v1/users/:userId/profile", (req, res) => {
     glassTipsReceived: tipRecv.received,
     glassTipDailyMax: GLASS_TIP_DAILY_MAX,
     canTipGlass: !isSelf && tipRecv.remaining > 0,
+    friendshipLevel,
+    canProposeMarriage: canPropose,
+    canDivorce: Boolean(bond && bond.status === "married"),
+    marriage: marriage.publicMarriage(
+      isSelf ? theirMarriage : bond || theirMarriage,
+      ctx.user.id,
+      db.users
+    ),
+    spousePublic: theirMarriage && theirMarriage.status === "married"
+      ? (() => {
+          const pid = marriage.partnerIdOf(theirMarriage, uid);
+          const p = pid ? db.users?.[pid] : null;
+          return p
+            ? {
+                userId: p.id,
+                nickname: String(p.nickname || "").trim().slice(0, 18),
+                petEmoji: userPetEmoji(p),
+              }
+            : null;
+        })()
+      : null,
+    fiancePublic:
+      theirMarriage &&
+      (theirMarriage.status === "engaged" || theirMarriage.status === "wedding")
+        ? (() => {
+            const pid = marriage.partnerIdOf(theirMarriage, uid);
+            const p = pid ? db.users?.[pid] : null;
+            return p
+              ? {
+                  userId: p.id,
+                  nickname: String(p.nickname || "").trim().slice(0, 18),
+                  petEmoji: userPetEmoji(p),
+                  status: theirMarriage.status,
+                }
+              : null;
+          })()
+        : null,
   });
 });
 
@@ -5001,18 +5320,48 @@ app.get("/v1/users/:userId/profile", (req, res) => {
 app.get("/v1/me/friends", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
+  try {
+    tickMarriages();
+  } catch {
+    /* ignore */
+  }
   const db = getDb();
   const f = ensureFriends(ctx.user);
   // Verwaiste IDs bereinigen
   f.list = f.list.filter((id) => db.users?.[id]);
   f.incoming = f.incoming.filter((id) => db.users?.[id]);
   f.outgoing = f.outgoing.filter((id) => db.users?.[id]);
+  const myMarriage = marriage.findMarriageForUser(db, ctx.user.id);
+  const pendingProposals = [];
+  const allM = marriage.ensureMarriages(db);
+  for (const m of Object.values(allM)) {
+    if (!m || m.status !== "proposed") continue;
+    if (m.a !== ctx.user.id && m.b !== ctx.user.id) continue;
+    if (m.proposedBy === ctx.user.id) continue;
+    const fromId = m.proposedBy;
+    const from = db.users?.[fromId];
+    if (from) {
+      pendingProposals.push({
+        ...friendPublicCard(from, ctx.user),
+        marriage: marriage.publicMarriage(m, ctx.user.id, db.users),
+      });
+    }
+  }
   scheduleSave();
+  const friendCards = sortFriendsSpouseFirst(
+    f.list.map((id) => friendPublicCard(db.users[id], ctx.user)).filter(Boolean)
+  );
   return res.json({
     ok: true,
-    friends: f.list.map((id) => friendPublicCard(db.users[id])).filter(Boolean),
-    incoming: f.incoming.map((id) => friendPublicCard(db.users[id])).filter(Boolean),
-    outgoing: f.outgoing.map((id) => friendPublicCard(db.users[id])).filter(Boolean),
+    friends: friendCards,
+    incoming: f.incoming
+      .map((id) => friendPublicCard(db.users[id], ctx.user))
+      .filter(Boolean),
+    outgoing: f.outgoing
+      .map((id) => friendPublicCard(db.users[id], ctx.user))
+      .filter(Boolean),
+    marriageProposals: pendingProposals,
+    myMarriage: marriage.publicMarriage(myMarriage, ctx.user.id, db.users),
   });
 });
 
@@ -5075,7 +5424,7 @@ app.post("/v1/me/friends/accept", (req, res) => {
     applyLedger(uid, d, r, ref)
   );
   scheduleSave();
-  return res.json({ ok: true, friend: friendPublicCard(other) });
+  return res.json({ ok: true, friend: friendPublicCard(other, ctx.user) });
 });
 
 app.post("/v1/me/friends/decline", (req, res) => {
@@ -5101,6 +5450,19 @@ app.post("/v1/me/friends/remove", (req, res) => {
   const otherId = String(req.body?.userId || "").trim();
   if (!otherId) return res.status(400).json({ error: "invalid_user" });
   const db = getDb();
+  const bond = marriage.findMarriageBetween(db, ctx.user.id, otherId);
+  if (bond && marriage.isBusyStatus(bond.status) && bond.status !== "proposed") {
+    return res.status(400).json({
+      error: "married_or_engaged",
+      message:
+        bond.status === "married"
+          ? "Erst scheiden, dann Freundschaft beenden."
+          : "Während Verlobung/Hochzeit kann die Freundschaft nicht beendet werden.",
+    });
+  }
+  if (bond && bond.status === "proposed") {
+    endMarriageRecord(bond, "cancel");
+  }
   const mine = ensureFriends(ctx.user);
   mine.list = mine.list.filter((id) => id !== otherId);
   mine.outgoing = mine.outgoing.filter((id) => id !== otherId);
@@ -5111,6 +5473,7 @@ app.post("/v1/me/friends/remove", (req, res) => {
     theirs.list = theirs.list.filter((id) => id !== ctx.user.id);
     theirs.outgoing = theirs.outgoing.filter((id) => id !== ctx.user.id);
     theirs.incoming = theirs.incoming.filter((id) => id !== ctx.user.id);
+    marriage.resetLevelBoth(ctx.user, other);
   }
   scheduleSave();
   return res.json({ ok: true });
@@ -5135,9 +5498,11 @@ app.put("/v1/me/friends/order", (req, res) => {
   scheduleSave();
   return res.json({
     ok: true,
-    friends: next
-      .map((id) => friendPublicCard(getDb().users?.[id]))
-      .filter(Boolean),
+    friends: sortFriendsSpouseFirst(
+      next
+        .map((id) => friendPublicCard(getDb().users?.[id], ctx.user))
+        .filter(Boolean)
+    ),
   });
 });
 
@@ -5183,6 +5548,11 @@ app.post("/v1/users/:userId/pet-kraul", (req, res) => {
   target.petKraulRecvCount = (target.petKraulRecvCount || 0) + 1;
   markPetKraul(ctx.user, toId);
   trackAch(ctx.user, "krauls", 1);
+  const levelBump = marriage.bumpLevelFromKraul(ctx.user, target, day);
+  if (levelBump.bumped) {
+    trackFriendshipLevelAch(ctx.user, levelBump.level);
+    trackFriendshipLevelAch(target, levelBump.level);
+  }
   const kraulSet = new Set(
     Array.isArray(ctx.user.friends?.petKraulTargets)
       ? ctx.user.friends.petKraulTargets
@@ -5199,7 +5569,239 @@ app.post("/v1/users/:userId/pet-kraul", (req, res) => {
     toCoins: target.coins || 0,
     amount: 1,
     canPetKraul: false,
+    friendshipLevel: levelBump.level,
+    friendshipLevelBumped: Boolean(levelBump.bumped),
   });
+});
+
+/** Heiratsantrag stellen (Freundschaftslevel 100). */
+app.post("/v1/users/:userId/marry/propose", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const toId = String(req.params.userId || "").trim();
+  if (!toId || toId === ctx.user.id) {
+    return res.status(400).json({ error: "invalid_user" });
+  }
+  const db = getDb();
+  const target = db.users?.[toId];
+  if (!target) return res.status(404).json({ error: "not_found" });
+  if (friendRelation(ctx.user, toId) !== "friends") {
+    return res.status(403).json({ error: "friends_only", message: "Nur Freunde heiraten." });
+  }
+  if (marriage.getLevel(ctx.user, toId) < 100) {
+    return res.status(400).json({
+      error: "level_low",
+      message: "Freundschaftslevel 100 nötig.",
+    });
+  }
+  if (marriage.findMarriageForUser(db, ctx.user.id)) {
+    return res.status(400).json({
+      error: "already_busy",
+      message: "Du bist bereits verlobt oder verheiratet.",
+    });
+  }
+  if (marriage.findMarriageForUser(db, toId)) {
+    return res.status(400).json({
+      error: "partner_busy",
+      message: "Diese Person ist bereits verlobt oder verheiratet.",
+    });
+  }
+  const key = marriage.pairKey(ctx.user.id, toId);
+  const all = marriage.ensureMarriages(db);
+  all[key] = {
+    id: key,
+    a: ctx.user.id < toId ? ctx.user.id : toId,
+    b: ctx.user.id < toId ? toId : ctx.user.id,
+    status: "proposed",
+    proposedBy: ctx.user.id,
+    proposedAt: Date.now(),
+    guestbook: [],
+  };
+  trackAch(ctx.user, "marriage_proposals", 1);
+  scheduleSave();
+  return res.json({
+    ok: true,
+    marriage: marriage.publicMarriage(all[key], ctx.user.id, db.users),
+  });
+});
+
+app.post("/v1/me/marriage/accept", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const fromId = String(req.body?.userId || "").trim();
+  if (!fromId) return res.status(400).json({ error: "invalid_user" });
+  const db = getDb();
+  const m = marriage.findMarriageBetween(db, ctx.user.id, fromId);
+  if (!m || m.status !== "proposed" || m.proposedBy !== fromId) {
+    return res.status(400).json({ error: "no_proposal", message: "Keine offene Anfrage." });
+  }
+  startEngagement(m);
+  trackAch(ctx.user, "engagements", 1);
+  const proposer = db.users?.[fromId];
+  if (proposer) trackAch(proposer, "engagements", 1);
+  scheduleSave();
+  return res.json({
+    ok: true,
+    marriage: marriage.publicMarriage(m, ctx.user.id, db.users),
+  });
+});
+
+app.post("/v1/me/marriage/decline", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const fromId = String(req.body?.userId || "").trim();
+  if (!fromId) return res.status(400).json({ error: "invalid_user" });
+  const db = getDb();
+  const m = marriage.findMarriageBetween(db, ctx.user.id, fromId);
+  if (!m || m.status !== "proposed") {
+    return res.status(400).json({ error: "no_proposal" });
+  }
+  if (m.proposedBy !== fromId && m.proposedBy !== ctx.user.id) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  endMarriageRecord(m, "cancel");
+  scheduleSave();
+  return res.json({ ok: true });
+});
+
+app.post("/v1/me/marriage/divorce", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const confirm = String(req.body?.confirm || "").trim().toLowerCase();
+  if (confirm !== "scheiden") {
+    return res.status(400).json({
+      error: "confirm_required",
+      message: 'Bitte „scheiden“ zur Bestätigung eingeben.',
+    });
+  }
+  const db = getDb();
+  const m = marriage.findMarriageForUser(db, ctx.user.id);
+  if (!m || m.status !== "married") {
+    return res.status(400).json({
+      error: "not_married",
+      message: "Du bist nicht verheiratet.",
+    });
+  }
+  endMarriageRecord(m, "divorce");
+  scheduleSave();
+  return res.json({ ok: true });
+});
+
+app.get("/v1/users/:userId/wedding", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const db = getDb();
+  const m = marriage.findMarriageForUser(db, uid);
+  if (!m || m.status !== "married") {
+    return res.status(404).json({ error: "not_married" });
+  }
+  const canDelete =
+    m.a === ctx.user.id ||
+    m.b === ctx.user.id ||
+    hasStaffPerm(ctx.user, "reports.act");
+  return res.json({
+    ok: true,
+    marriage: marriage.publicMarriage(m, ctx.user.id, db.users),
+    hasImage: Boolean(m.weddingImageFile),
+    guestbook: (m.guestbook || []).map((g) => ({
+      id: g.id,
+      userId: g.userId,
+      nickname: g.nickname,
+      text: g.text,
+      createdAt: g.createdAt,
+    })),
+    canDeleteComments: canDelete,
+  });
+});
+
+app.get("/v1/users/:userId/wedding/image", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const m = marriage.findMarriageForUser(getDb(), uid);
+  if (!m?.weddingImageFile) return res.status(404).end();
+  const filePath = path.join(WEDDING_DIR, path.basename(m.weddingImageFile));
+  if (!fs.existsSync(filePath)) return res.status(404).end();
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "private, max-age=300");
+  return fs.createReadStream(filePath).pipe(res);
+});
+
+app.post("/v1/users/:userId/wedding/guestbook", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  if (!rateLimit(`gb:${ctx.user.id}`, 10, 60_000)) {
+    return res.status(429).json({ error: "rate_limited" });
+  }
+  const uid = String(req.params.userId || "").trim();
+  const text = String(req.body?.text || "").trim().slice(0, 280);
+  if (!text) return res.status(400).json({ error: "empty" });
+  const db = getDb();
+  const m = marriage.findMarriageForUser(db, uid);
+  if (!m || m.status !== "married") {
+    return res.status(404).json({ error: "not_married" });
+  }
+  if (!Array.isArray(m.guestbook)) m.guestbook = [];
+  if (m.guestbook.length >= 200) {
+    return res.status(400).json({ error: "full", message: "Gästebuch ist voll." });
+  }
+  const entry = {
+    id: newId("gb"),
+    userId: ctx.user.id,
+    nickname: String(ctx.user.nickname || "Jemand").trim().slice(0, 18),
+    text,
+    createdAt: Date.now(),
+  };
+  m.guestbook.push(entry);
+  trackAch(ctx.user, "guestbook_writes", 1);
+  scheduleSave();
+  return res.json({ ok: true, entry });
+});
+
+app.delete("/v1/users/:userId/wedding/guestbook/:entryId", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const entryId = String(req.params.entryId || "").trim();
+  const db = getDb();
+  const m = marriage.findMarriageForUser(db, uid);
+  if (!m) return res.status(404).json({ error: "not_found" });
+  const isCouple = m.a === ctx.user.id || m.b === ctx.user.id;
+  if (!isCouple && !hasStaffPerm(ctx.user, "reports.act")) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  m.guestbook = (m.guestbook || []).filter((g) => g.id !== entryId);
+  scheduleSave();
+  return res.json({ ok: true });
+});
+
+app.post("/v1/users/:userId/wedding/guestbook/:entryId/report", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const entryId = String(req.params.entryId || "").trim();
+  const reason = String(req.body?.reason || "").trim().slice(0, 400);
+  const db = getDb();
+  const m = marriage.findMarriageForUser(db, uid);
+  const entry = (m?.guestbook || []).find((g) => g.id === entryId);
+  if (!entry) return res.status(404).json({ error: "not_found" });
+  if (!db.guestbookReports) db.guestbookReports = [];
+  db.guestbookReports.push({
+    id: newId("gbr"),
+    marriageId: m.id,
+    entryId,
+    entryUserId: entry.userId,
+    entryText: entry.text,
+    reportedBy: ctx.user.id,
+    reason,
+    createdAt: Date.now(),
+  });
+  if (db.guestbookReports.length > 500) {
+    db.guestbookReports = db.guestbookReports.slice(-500);
+  }
+  scheduleSave();
+  return res.json({ ok: true });
 });
 
 /** Empfangenes Münzglas-Tageslimit (pro Profil, alle Spender, 0:00 Berlin). */
@@ -7231,6 +7833,12 @@ app.post("/v1/rooms/:code/slots", (req, res) => {
     }
   }
   if (!room) return res.status(404).json({ error: "room_not_found" });
+  if (room.isWedding) {
+    return res.status(403).json({
+      error: "wedding_locked",
+      message: "Zur Hochzeitsleinwand kann niemand eingeladen werden.",
+    });
+  }
   // Jedes Mitglied darf Plätze freischalten (nicht nur der Host)
   const capacity = roomCapacity(room);
   if (capacity >= MAX_PEERS) {
@@ -7288,6 +7896,12 @@ app.post("/v1/rooms/:code/leave", (req, res) => {
       room = hydrateRoom(code, saved);
       rooms.set(code, room);
     }
+  }
+  if (room?.isWedding || getDb().rooms?.[code]?.isWedding) {
+    return res.status(403).json({
+      error: "wedding_locked",
+      message: "Die Hochzeitsleinwand kann nicht verlassen werden.",
+    });
   }
   if (!room) {
     releaseHostedRoom(code, ctx.user.id);
@@ -7617,6 +8231,12 @@ app.post("/v1/rooms/:code/join", (req, res) => {
   const isKnownMember =
     (Array.isArray(room.memberUserIds) && room.memberUserIds.includes(ctx.user.id)) ||
     room.hostUserId === ctx.user.id;
+  if (room.isWedding && !isKnownMember) {
+    return res.status(403).json({
+      error: "wedding_locked",
+      message: "Nur das Brautpaar darf die Hochzeitsleinwand betreten.",
+    });
+  }
   if (!alreadyHere && uniqueConnectedCount(room) >= capacity) {
     if (isKnownMember) {
       room.capacity = Math.min(MAX_PEERS, Math.max(capacity, uniqueConnectedCount(room) + 1));
@@ -7647,6 +8267,7 @@ app.post("/v1/rooms/:code/join", (req, res) => {
     hostUserId: room.hostUserId || null,
     isFree: Boolean(room.isFree),
     isRandom: Boolean(room.isRandom),
+    isWedding: Boolean(room.isWedding),
     hostColorSide: normalizeHostColorSide(room.hostColorSide),
     suggestedColorIndex,
     members: roster.map((m) => m.nickname),

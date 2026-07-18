@@ -128,6 +128,8 @@ data class Lobby(
     val isFree: Boolean = false,
     /** Zufalls-Matchmaking-Lobby (blau, keine Einladungen). */
     val isRandom: Boolean = false,
+    /** Hochzeitsleinwand — kein Verlassen, keine Einladungen. */
+    val isWedding: Boolean = false,
     val hostNickname: String = "",
     val hostColorSide: String = "blue",
     /** Höchste jemals gesehene Peer-Zahl — für Paar-Modus. */

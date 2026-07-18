@@ -2178,7 +2178,8 @@ class LockDrawActivity : ComponentActivity() {
                     ProfileCanvasScreen(
                         nickname = peer.nickname.trim().ifBlank { "Jemand" },
                         colorIndex = peer.colorIndex,
-                        editable = isMe,
+                        // Eigenes Avatar in der Lobby = Ansicht wie für andere (kein Bearbeiten)
+                        editable = false,
                         userId = resolvedUserId,
                         onClose = { dismissProfile() },
                         onReport = if (!isMe) {

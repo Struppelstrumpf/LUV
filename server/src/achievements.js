@@ -36,6 +36,18 @@ const ACHIEVEMENTS = [
   { id: "soc_streak_30", title: "Unzertrennlich", desc: "30 Tage Daily-Streak.", category: "sozial", metric: "daily_streak", target: 30, coins: 0, rewardItem: itemReward("themes", "stars", "✨", "Sterne"), coinsFallback: 3 },
   { id: "soc_daily_done", title: "Pflicht erfüllt", desc: "Schließe Daily-Aufgaben einmal ab.", category: "sozial", metric: "dailies_completed", target: 1, coins: 1 },
 
+  // —— Freundschaftslevel / Ehe ——
+  { id: "fs_lvl_10", title: "Auf dem Weg", desc: "Erreiche Freundschaftslevel 10 mit jemandem.", category: "sozial", metric: "friendship_lvl_10", target: 1, coins: 1 },
+  { id: "fs_lvl_25", title: "Gute Freunde", desc: "Erreiche Freundschaftslevel 25.", category: "sozial", metric: "friendship_lvl_25", target: 1, coins: 1 },
+  { id: "fs_lvl_50", title: "Herzensfreund", desc: "Erreiche Freundschaftslevel 50.", category: "sozial", metric: "friendship_lvl_50", target: 1, coins: 2 },
+  { id: "fs_lvl_75", title: "Unzertrennlich?", desc: "Erreiche Freundschaftslevel 75.", category: "sozial", metric: "friendship_lvl_75", target: 1, coins: 2 },
+  { id: "fs_lvl_100", title: "Seelenverwandt", desc: "Erreiche Freundschaftslevel 100.", category: "sozial", metric: "friendship_lvl_100", target: 1, coins: 0, rewardItem: itemReward("emojis", "💞", "💞", "Zwei Herzen"), coinsFallback: 3 },
+  { id: "fs_propose", title: "Willst du?", desc: "Stelle einen Heiratsantrag.", category: "sozial", metric: "marriage_proposals", target: 1, coins: 2 },
+  { id: "fs_engaged", title: "Verlobt", desc: "Werde verlobt.", category: "sozial", metric: "engagements", target: 1, coins: 2 },
+  { id: "fs_wedding", title: "Trausaal", desc: "Beginne die Hochzeitsleinwand.", category: "sozial", metric: "wedding_started", target: 1, coins: 2 },
+  { id: "fs_married", title: "Für immer", desc: "Heirate jemanden.", category: "sozial", metric: "married", target: 1, coins: 0, rewardItem: itemReward("stickers", "💒", "💒", "Kapelle-Sticker"), coinsFallback: 3 },
+  { id: "fs_guestbook", title: "Gästebuch", desc: "Schreibe einen Gästebucheintrag.", category: "sozial", metric: "guestbook_writes", target: 1, coins: 1 },
+
   // —— Begleiter / Kraulen (15) ——
   { id: "pet_kraul_1", title: "Erstes Streicheln", desc: "Kraul einen Begleiter.", category: "begleiter", metric: "krauls", target: 1, coins: 1 },
   { id: "pet_kraul_5", title: "Zärtlich", desc: "Kraul 5× Begleiter.", category: "begleiter", metric: "krauls", target: 5, coins: 1 },
