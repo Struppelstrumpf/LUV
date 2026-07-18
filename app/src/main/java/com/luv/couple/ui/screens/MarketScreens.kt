@@ -620,13 +620,15 @@ fun EmojiBarEditorDialog(
     var owned by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var showAdd by remember { mutableStateOf(false) }
 
-    var dragIndex by remember { mutableIntStateOf(-1) }
+    // Drag: Liste bleibt während des Ziehens stabil — erst am Ende umsortieren
+    var dragFrom by remember { mutableIntStateOf(-1) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
     var overTrash by remember { mutableStateOf(false) }
 
-    val slotDp = 54.dp
+    val slotDp = 52.dp
     val gapDp = 8.dp
-    val trashDp = 68.dp
+    val trashDp = 64.dp
+    val listTrashGapDp = 14.dp
     val slotPx = with(density) { slotDp.toPx() }
     val gapPx = with(density) { gapDp.toPx() }
     val stride = slotPx + gapPx
@@ -641,6 +643,12 @@ fun EmojiBarEditorDialog(
         if (clean.isEmpty()) return
         bar = clean
         scope.launch { prefs.setEmojiBar(clean) }
+    }
+
+    fun targetIndex(): Int {
+        if (dragFrom < 0 || bar.isEmpty()) return 0
+        val center = dragFrom * stride + dragOffsetY + slotPx / 2f
+        return (center / stride).roundToInt().coerceIn(0, bar.lastIndex)
     }
 
     Dialog(
@@ -691,77 +699,62 @@ fun EmojiBarEditorDialog(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
 
-                val listHeight = slotDp * bar.size.coerceAtLeast(1) +
-                    gapDp * (bar.size - 1).coerceAtLeast(0) +
-                    gapDp + trashDp
+                val emojiStackH = slotDp * bar.size.coerceAtLeast(1) +
+                    gapDp * (bar.size - 1).coerceAtLeast(0)
+                val to = if (dragFrom >= 0) targetIndex() else -1
+                val trashHot = overTrash && dragFrom >= 0
+                val trashScale by animateFloatAsState(
+                    targetValue = if (trashHot) 1.05f else 1f,
+                    animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                    label = "trashScale"
+                )
 
-                Box(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(listHeight)
                         .background(Color.White.copy(0.04f), RoundedCornerShape(22.dp))
                         .border(1.dp, Color.White.copy(0.06f), RoundedCornerShape(22.dp))
-                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                        .padding(horizontal = 14.dp, vertical = 14.dp)
                 ) {
-                    val trashHot = overTrash && dragIndex >= 0
-                    val trashScale by animateFloatAsState(
-                        targetValue = if (trashHot) 1.06f else 1f,
-                        animationSpec = spring(stiffness = Spring.StiffnessMedium),
-                        label = "trashScale"
-                    )
                     Box(
                         modifier = Modifier
-                            .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .height(trashDp)
-                            .graphicsLayer {
-                                scaleX = trashScale
-                                scaleY = trashScale
-                            }
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(
-                                if (trashHot) AccentRose.copy(0.28f)
-                                else Color.White.copy(0.05f)
-                            )
-                            .border(
-                                1.dp,
-                                if (trashHot) AccentRose.copy(0.7f) else Color.White.copy(0.08f),
-                                RoundedCornerShape(18.dp)
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("🗑", fontSize = if (trashHot) 26.sp else 22.sp)
-                            Text(
-                                if (trashHot) "Loslassen zum Entfernen" else "Mülleimer",
-                                color = if (trashHot) AccentRose else TextMuted,
-                                fontFamily = BodyFont,
-                                fontSize = 11.sp
-                            )
-                        }
-                    }
-
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.TopCenter),
-                        verticalArrangement = Arrangement.spacedBy(gapDp)
+                            .height(emojiStackH)
                     ) {
                         bar.forEachIndexed { index, emoji ->
-                            val dragging = dragIndex == index
+                            val dragging = dragFrom == index
+                            val shiftSlots = when {
+                                dragFrom < 0 || dragging || overTrash -> 0
+                                dragFrom < index && to >= index -> -1
+                                dragFrom > index && to <= index -> 1
+                                else -> 0
+                            }
+                            val shiftY by animateFloatAsState(
+                                targetValue = shiftSlots * stride,
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                    stiffness = Spring.StiffnessMediumLow
+                                ),
+                                label = "slotShift$index"
+                            )
                             Box(
                                 modifier = Modifier
-                                    .zIndex(if (dragging) 8f else 1f)
+                                    .zIndex(if (dragging) 12f else 1f)
                                     .graphicsLayer {
-                                        translationY = if (dragging) dragOffsetY else 0f
-                                        scaleX = if (dragging) 1.1f else 1f
-                                        scaleY = if (dragging) 1.1f else 1f
-                                        alpha = if (dragging && overTrash) 0.4f else 1f
+                                        translationY = index * stride +
+                                            if (dragging) dragOffsetY else shiftY
+                                        scaleX = if (dragging) 1.08f else 1f
+                                        scaleY = if (dragging) 1.08f else 1f
+                                        alpha = when {
+                                            dragging && overTrash -> 0.35f
+                                            dragging -> 1f
+                                            else -> 1f
+                                        }
                                     }
                                     .fillMaxWidth()
                                     .height(slotDp)
                                     .shadow(
-                                        if (dragging) 16.dp else 0.dp,
+                                        if (dragging) 14.dp else 0.dp,
                                         RoundedCornerShape(16.dp),
                                         clip = false
                                     )
@@ -776,23 +769,28 @@ fun EmojiBarEditorDialog(
                                         else Color.White.copy(0.08f),
                                         RoundedCornerShape(16.dp)
                                     )
-                                    .pointerInput(emoji, index, bar.size) {
+                                    .pointerInput(emoji) {
                                         detectDragGestures(
                                             onDragStart = {
-                                                dragIndex = index
+                                                val from = bar.indexOf(emoji)
+                                                if (from < 0) return@detectDragGestures
+                                                dragFrom = from
                                                 dragOffsetY = 0f
                                                 overTrash = false
-                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                haptics.performHapticFeedback(
+                                                    HapticFeedbackType.LongPress
+                                                )
                                             },
                                             onDragEnd = {
-                                                val from = dragIndex
+                                                val from = dragFrom
                                                 val trash = overTrash
-                                                dragIndex = -1
+                                                val dest = targetIndex()
+                                                dragFrom = -1
                                                 dragOffsetY = 0f
                                                 overTrash = false
                                                 if (from < 0) return@detectDragGestures
-                                                if (trash) {
-                                                    if (bar.size > 1) {
+                                                when {
+                                                    trash && bar.size > 1 -> {
                                                         haptics.performHapticFeedback(
                                                             HapticFeedbackType.LongPress
                                                         )
@@ -800,44 +798,35 @@ fun EmojiBarEditorDialog(
                                                             bar.filterIndexed { i, _ -> i != from }
                                                         )
                                                     }
-                                                } else {
-                                                    persist(bar)
+                                                    dest != from -> {
+                                                        val next = bar.toMutableList()
+                                                        val item = next.removeAt(from)
+                                                        next.add(dest, item)
+                                                        persist(next)
+                                                        haptics.performHapticFeedback(
+                                                            HapticFeedbackType.TextHandleMove
+                                                        )
+                                                    }
+                                                    else -> Unit
                                                 }
                                             },
                                             onDragCancel = {
-                                                dragIndex = -1
+                                                dragFrom = -1
                                                 dragOffsetY = 0f
                                                 overTrash = false
                                             },
                                             onDrag = { change, dragAmount ->
                                                 change.consume()
-                                                if (dragIndex < 0) return@detectDragGestures
+                                                if (dragFrom < 0) return@detectDragGestures
                                                 dragOffsetY += dragAmount.y
-                                                val trashTop =
-                                                    bar.size * stride - gapPx + gapPx
+                                                // Unterhalb der letzten Slot-Mitte → Mülleimer
+                                                val listBottom = bar.size * stride - gapPx
                                                 val finger =
-                                                    dragIndex * stride + dragOffsetY + slotPx / 2f
-                                                val nowOver = finger >= trashTop
+                                                    dragFrom * stride + dragOffsetY + slotPx / 2f
+                                                val nowOver = finger > listBottom + gapPx * 0.5f
                                                 if (nowOver != overTrash) {
                                                     overTrash = nowOver
                                                     if (nowOver) {
-                                                        haptics.performHapticFeedback(
-                                                            HapticFeedbackType.TextHandleMove
-                                                        )
-                                                    }
-                                                }
-                                                if (!nowOver && bar.size > 1) {
-                                                    val delta =
-                                                        (dragOffsetY / stride).roundToInt()
-                                                    val to = (dragIndex + delta)
-                                                        .coerceIn(0, bar.lastIndex)
-                                                    if (to != dragIndex) {
-                                                        val next = bar.toMutableList()
-                                                        val item = next.removeAt(dragIndex)
-                                                        next.add(to, item)
-                                                        bar = next
-                                                        dragOffsetY -= (to - dragIndex) * stride
-                                                        dragIndex = to
                                                         haptics.performHapticFeedback(
                                                             HapticFeedbackType.TextHandleMove
                                                         )
@@ -850,6 +839,40 @@ fun EmojiBarEditorDialog(
                             ) {
                                 Text(emoji, fontSize = 30.sp)
                             }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(listTrashGapDp))
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(trashDp)
+                            .graphicsLayer {
+                                scaleX = trashScale
+                                scaleY = trashScale
+                            }
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(
+                                if (trashHot) AccentRose.copy(0.28f)
+                                else Color.White.copy(0.05f)
+                            )
+                            .border(
+                                1.dp,
+                                if (trashHot) AccentRose.copy(0.7f)
+                                else Color.White.copy(0.08f),
+                                RoundedCornerShape(18.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("🗑", fontSize = if (trashHot) 26.sp else 22.sp)
+                            Text(
+                                if (trashHot) "Loslassen zum Entfernen" else "Mülleimer",
+                                color = if (trashHot) AccentRose else TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 11.sp
+                            )
                         }
                     }
                 }
