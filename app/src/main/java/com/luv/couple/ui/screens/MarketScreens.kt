@@ -165,7 +165,7 @@ private fun MarketHub(
                         .weight(1f)
                         .fillMaxWidth(),
                     title = "Itemshop",
-                    subtitle = "Emojis, Pets & mehr",
+                    subtitle = "Emojis, Begleiter & mehr",
                     brush = Brush.linearGradient(listOf(Color(0xFF3A2438), Color(0xFF241828))),
                     onClick = onOpenItemShop
                 )
@@ -488,7 +488,7 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("Ausstattung", "Pets", "Emojis").forEachIndexed { index, label ->
+            listOf("Ausstattung", "Begleiter", "Emojis").forEachIndexed { index, label ->
                 val active = tab == index
                 Box(
                     modifier = Modifier
@@ -513,7 +513,7 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
         Spacer(modifier = Modifier.height(12.dp))
         when (tab) {
             0 -> EmptyMarketCard("Ausstattung", "Bald: Outfits & Leinwand-Schmuck für Coins.")
-            1 -> EmptyMarketCard("Pets", "Bald: kleine Begleiter auf eurer Leinwand.")
+            1 -> EmptyMarketCard("Begleiter", "Bald: kleine Begleiter auf eurer Leinwand.")
             else -> {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 88.dp),
@@ -590,7 +590,7 @@ fun InventoryScreen(onOpenEmojiEditor: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf("Ausstattung", "Pets", "Emojis").forEachIndexed { index, label ->
+                listOf("Ausstattung", "Begleiter", "Emojis").forEachIndexed { index, label ->
                     val active = tab == index
                     Box(
                         modifier = Modifier
@@ -613,7 +613,7 @@ fun InventoryScreen(onOpenEmojiEditor: () -> Unit) {
             Spacer(modifier = Modifier.height(12.dp))
             when (tab) {
                 0 -> EmptyMarketCard("Noch leer", "Ausstattung aus dem Itemshop landet hier.")
-                1 -> EmptyMarketCard("Noch leer", "Pets aus dem Itemshop landen hier.")
+                1 -> EmptyMarketCard("Noch leer", "Begleiter aus dem Itemshop landen hier.")
                 else -> {
                     if (owned.isEmpty()) {
                         EmptyMarketCard("Noch keine Emojis", "Im Itemshop findest du welche.")

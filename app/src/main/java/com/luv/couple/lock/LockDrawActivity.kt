@@ -1939,6 +1939,19 @@ class LockDrawActivity : ComponentActivity() {
             root.removeView(host)
             profileHost = null
         }
+        val resolvedUserId = when {
+            isMe -> null
+            !peer.userId.isNullOrBlank() -> peer.userId
+            else -> {
+                val id = lobbyId
+                if (id.isNullOrBlank()) null
+                else PairSessionState.peers(id).value.values
+                    .firstOrNull {
+                        !it.userId.isNullOrBlank() &&
+                            it.nickname.equals(peer.nickname, ignoreCase = true)
+                    }?.userId
+            }
+        }
         val compose = ComposeView(this).apply {
             setContent {
                 LuvTheme {
@@ -1946,7 +1959,7 @@ class LockDrawActivity : ComponentActivity() {
                         nickname = peer.nickname.trim().ifBlank { "Jemand" },
                         colorIndex = peer.colorIndex,
                         editable = isMe,
-                        userId = if (isMe) null else peer.userId,
+                        userId = resolvedUserId,
                         onClose = { dismissProfile() },
                         onReport = if (!isMe) {
                             {

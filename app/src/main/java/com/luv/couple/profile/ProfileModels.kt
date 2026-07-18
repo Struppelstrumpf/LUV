@@ -91,42 +91,37 @@ data class ProfileState(
     val companionEmoji: String = "💕",
     val layout: List<ProfileLayoutEl> = emptyList()
 ) {
+    /**
+     * Merge nur Avatar/Name-Defaults. Optionale Elemente (Sticker, Glas, Begleiter)
+     * bleiben erhalten — Positionen werden nicht zurückgesetzt.
+     */
     fun normalized(nickname: String): ProfileState {
-        val core = ProfileCatalog.defaultLayout(nickname, statusEmoji, bio, companionEmoji)
+        val defaults = ProfileCatalog.defaultLayout(nickname)
         val byType = layout.associateBy { it.type }
-        val mergedCore = core.map { def ->
+        val core = defaults.map { def ->
             val saved = byType[def.type]
             if (saved == null) def
             else saved.copy(
                 id = def.id,
                 type = def.type,
-                text = when (def.type) {
-                    ProfileElType.Name -> nickname
-                    ProfileElType.Status -> statusEmoji
-                    ProfileElType.Bio -> bio
-                    ProfileElType.Pet -> companionEmoji
-                    else -> saved.text ?: def.text
-                },
-                emoji = when (def.type) {
-                    ProfileElType.Status -> statusEmoji
-                    ProfileElType.Pet -> companionEmoji
-                    ProfileElType.Avatar -> saved.emoji ?: def.emoji
-                    else -> saved.emoji ?: def.emoji
-                },
-                visible = when (def.type) {
-                    ProfileElType.Bio -> true
-                    else -> saved.visible
-                }
+                text = if (def.type == ProfileElType.Name) nickname else (saved.text ?: def.text),
+                emoji = if (def.type == ProfileElType.Avatar) saved.emoji else saved.emoji,
+                // x/y/scale/rotation/flipX/visible/color/font* bleiben von saved
             )
         }
-        val decor = layout.filter {
-            it.type == ProfileElType.Sticker || it.type == ProfileElType.Text
-        }.take(ProfileCatalog.MAX_DECOR)
+        val extras = layout.filter { el ->
+            when (el.type) {
+                ProfileElType.Avatar, ProfileElType.Name -> false
+                // Stimmung & Freitext bewusst entfernt
+                ProfileElType.Status, ProfileElType.Text, ProfileElType.Bio -> false
+                ProfileElType.Sticker, ProfileElType.Glass, ProfileElType.Pet -> true
+            }
+        }.take(ProfileCatalog.MAX_DECOR + 4)
+        val pet = extras.firstOrNull { it.type == ProfileElType.Pet }
         return copy(
-            statusEmoji = statusEmoji.ifBlank { "😊" },
-            companionEmoji = companionEmoji.ifBlank { "💕" },
+            companionEmoji = (pet?.emoji ?: companionEmoji).ifBlank { "💕" },
             bio = bio.take(ProfileCatalog.MAX_BIO),
-            layout = mergedCore + decor
+            layout = core + extras
         )
     }
 
@@ -140,20 +135,10 @@ object ProfileCatalog {
     const val DECOR_Y_MIN = 52f
     const val MAX_DECOR_Z = 85
 
-    val CORE_HIDE_TYPES = setOf(
-        ProfileElType.Avatar,
-        ProfileElType.Name,
-        ProfileElType.Status,
-        ProfileElType.Glass,
-        ProfileElType.Pet
-    )
-
     val EDITABLE_TYPES = setOf(
         ProfileElType.Avatar,
         ProfileElType.Name,
-        ProfileElType.Glass,
-        ProfileElType.Text,
-        ProfileElType.Bio
+        ProfileElType.Glass
     )
 
     val TEXT_COLORS: List<String> = listOf(
@@ -162,7 +147,8 @@ object ProfileCatalog {
     )
 
     val THEMES: List<ProfileTheme> = listOf(
-        ProfileTheme("meadow", "Wiese", "🌿", 0xFF64B5F6, 0xFFBBDEFB, 0xFF7CB342, 0xFF33691E),
+        // Standard wie Referenzbild: hellblauer Himmel, dunkles Wiesengrün
+        ProfileTheme("meadow", "Wiese", "🌿", 0xFF7EB8D8, 0xFFB8D4E8, 0xFF2F5D2E, 0xFF2F5D2E),
         ProfileTheme("forest", "Wald", "🌲", 0xFF81C784, 0xFFC8E6C9, 0xFF2E7D32, 0xFF1B5E20),
         ProfileTheme("sunset", "Abendrot", "🌅", 0xFFFF8F00, 0xFFFFE0B2, 0xFFBF360C, 0xFF6D4C41),
         ProfileTheme("night", "Nacht", "🌙", 0xFF1A237E, 0xFF3949AB, 0xFF263238, 0xFF102027, "stars"),
@@ -215,33 +201,36 @@ object ProfileCatalog {
     fun theme(id: String): ProfileTheme =
         THEMES.firstOrNull { it.id == id } ?: THEMES.first()
 
-    fun defaultLayout(
-        nickname: String,
-        status: String = "😊",
-        bio: String = "",
-        companion: String = "💕"
-    ): List<ProfileLayoutEl> = listOf(
-        ProfileLayoutEl("el-avatar", ProfileElType.Avatar, 22f, 24f, 1f, -4f, z = 20),
+    /** Nur Avatar + Name darunter — wie Referenzbild. */
+    fun defaultLayout(nickname: String): List<ProfileLayoutEl> = listOf(
+        ProfileLayoutEl("el-avatar", ProfileElType.Avatar, 18f, 20f, 1f, 0f, z = 20),
         ProfileLayoutEl(
-            "el-name", ProfileElType.Name, 48f, 20f, 1f, -8f,
-            z = 21, text = nickname, color = "#FFFFFF", fontSize = 18f, fontFamily = ProfileFont.Playful
-        ),
-        ProfileLayoutEl(
-            "el-status", ProfileElType.Status, 72f, 26f, 1f, 0f,
-            z = 22, text = status, emoji = status
-        ),
-        ProfileLayoutEl(
-            "el-pet", ProfileElType.Pet, 78f, 70f, 0.9f, 0f,
-            z = 8, emoji = companion, text = companion
-        ),
-        ProfileLayoutEl(
-            "el-glass", ProfileElType.Glass, 20f, 74f, 0.95f, 0f,
-            z = 9, color = "#FFFFFF", fontSize = 11f, fontFamily = ProfileFont.Cozy
-        ),
-        ProfileLayoutEl(
-            "el-bio", ProfileElType.Bio, 50f, 88f, 1f, 0f,
-            z = 13, text = bio, color = "#FFFFFF", fontSize = 12f, fontFamily = ProfileFont.Cozy
+            "el-name", ProfileElType.Name, 18f, 36f, 1f, 0f,
+            z = 21, text = nickname, color = "#FFFFFF", fontSize = 18f, fontFamily = ProfileFont.Classic
         )
+    )
+
+    fun newCompanion(emoji: String): ProfileLayoutEl = ProfileLayoutEl(
+        id = "el-pet",
+        type = ProfileElType.Pet,
+        x = 78f,
+        y = 70f,
+        scale = 0.9f,
+        z = 8,
+        emoji = emoji.take(8),
+        text = emoji.take(8)
+    )
+
+    fun newGlass(): ProfileLayoutEl = ProfileLayoutEl(
+        id = "el-glass",
+        type = ProfileElType.Glass,
+        x = 20f,
+        y = 74f,
+        scale = 0.95f,
+        z = 9,
+        color = "#FFFFFF",
+        fontSize = 11f,
+        fontFamily = ProfileFont.Cozy
     )
 
     fun newSticker(emoji: String, layout: List<ProfileLayoutEl>): ProfileLayoutEl {

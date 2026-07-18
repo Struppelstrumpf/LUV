@@ -26,10 +26,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -84,7 +86,6 @@ import com.luv.couple.profile.ProfileCatalog
 import com.luv.couple.profile.ProfileElType
 import com.luv.couple.profile.ProfileFont
 import com.luv.couple.profile.ProfileLayoutEl
-import com.luv.couple.profile.ProfileMood
 import com.luv.couple.profile.ProfileState
 import com.luv.couple.profile.ProfileTheme
 import com.luv.couple.ui.theme.AccentRose
@@ -100,6 +101,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -132,8 +134,8 @@ fun ProfileCanvasScreen(
     var ownedStickers by remember { mutableStateOf<Set<String>>(ProfileCatalog.FREE_STICKERS.toSet()) }
     var confirmDiscard by remember { mutableStateOf(false) }
 
-    LaunchedEffect(userId, editable) {
-        if (editable || userId.isNullOrBlank()) {
+    LaunchedEffect(userId, editable, nickname) {
+        if (editable) {
             val local = withContext(Dispatchers.IO) {
                 ProfileCatalog.decode(prefs.profileCanvasJson(), nickname)
             }
@@ -152,7 +154,7 @@ fun ProfileCanvasScreen(
                 runCatching { prefs.ownedEmojis() }.getOrDefault(emptyMap())
             }
             ownedStickers = (ProfileCatalog.FREE_STICKERS + owned.keys).toSet()
-        } else {
+        } else if (!userId.isNullOrBlank()) {
             val remote = LuvApiClient.fetchUserProfileCanvas(userId)
             if (remote != null) {
                 loadedNick = remote.first
@@ -162,22 +164,21 @@ fun ProfileCanvasScreen(
                 state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname)).normalized(nickname)
             }
             savedSnapshot = state.snapshotKey()
+        } else {
+            // Keine User-ID → kein Fremdprofil ladbar
+            loadedNick = nickname
+            state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname)).normalized(nickname)
+            savedSnapshot = state.snapshotKey()
         }
     }
 
-    fun updateLayout(next: List<ProfileLayoutEl>) {
-        state = state.copy(layout = next).normalized(loadedNick)
+    /** Layout-Patch ohne Normalize — verhindert Zurücksetzen anderer Elemente. */
+    fun patchLayout(next: List<ProfileLayoutEl>) {
+        state = state.copy(layout = next)
     }
 
     fun updateEl(updated: ProfileLayoutEl) {
-        updateLayout(state.layout.map { if (it.id == updated.id) updated else it })
-    }
-
-    fun setMood(mood: ProfileMood) {
-        if (!editable) return
-        state = state.copy(statusEmoji = mood.emoji).normalized(loadedNick)
-        selectedId = "el-status"
-        showChest = false
+        patchLayout(state.layout.map { if (it.id == updated.id) updated else it })
     }
 
     fun setTheme(theme: ProfileTheme) {
@@ -186,10 +187,39 @@ fun ProfileCanvasScreen(
         showChest = false
     }
 
-    fun setCompanion(emoji: String) {
+    fun placeCompanion(emoji: String) {
         if (!editable) return
-        state = state.copy(companionEmoji = emoji).normalized(loadedNick)
-        selectedId = "el-pet"
+        state = state.copy(companionEmoji = emoji)
+        val existing = state.layout.firstOrNull { it.type == ProfileElType.Pet }
+        if (existing != null) {
+            patchLayout(
+                state.layout.map {
+                    if (it.type == ProfileElType.Pet) {
+                        it.copy(emoji = emoji, text = emoji, visible = true)
+                    } else it
+                }
+            )
+            selectedId = existing.id
+        } else {
+            val el = ProfileCatalog.newCompanion(emoji)
+            patchLayout(state.layout + el)
+            selectedId = el.id
+        }
+        showChest = false
+    }
+
+    fun placeGlass() {
+        if (!editable) return
+        val existing = state.layout.firstOrNull { it.type == ProfileElType.Glass }
+        if (existing != null) {
+            selectedId = existing.id
+            showChest = false
+            return
+        }
+        val el = ProfileCatalog.newGlass()
+        patchLayout(state.layout + el)
+        selectedId = el.id
+        showChest = false
     }
 
     fun placeSticker(emoji: String) {
@@ -199,17 +229,8 @@ fun ProfileCanvasScreen(
             return
         }
         val el = ProfileCatalog.newSticker(emoji, state.layout)
-        updateLayout(state.layout + el)
+        patchLayout(state.layout + el)
         selectedId = el.id
-        showChest = false
-    }
-
-    fun placeText(color: String) {
-        if (!editable) return
-        val el = ProfileCatalog.newText(color, state.layout)
-        updateLayout(state.layout + el)
-        selectedId = el.id
-        editElId = el.id
         showChest = false
     }
 
@@ -317,7 +338,7 @@ fun ProfileCanvasScreen(
                 editable = editable,
                 selectedId = selectedId,
                 onSelect = { selectedId = it },
-                onLayoutChange = { updateLayout(it) },
+                onLayoutChange = { patchLayout(it) },
                 onOpenChest = { if (editable) showChest = true },
                 onEdit = { if (editable) editElId = it }
             )
@@ -340,7 +361,7 @@ fun ProfileCanvasScreen(
                 BasicTextField(
                     value = state.bio,
                     onValueChange = {
-                        state = state.copy(bio = it.take(ProfileCatalog.MAX_BIO)).normalized(loadedNick)
+                        state = state.copy(bio = it.take(ProfileCatalog.MAX_BIO))
                     },
                     textStyle = TextStyle(
                         color = TextPrimary,
@@ -406,13 +427,12 @@ fun ProfileCanvasScreen(
             ProfileChestDialog(
                 ownedStickers = ownedStickers.toList().sorted(),
                 currentThemeId = state.themeId,
-                currentMood = state.statusEmoji,
                 currentCompanion = state.companionEmoji,
+                hasGlass = state.layout.any { it.type == ProfileElType.Glass },
                 onTheme = { setTheme(it) },
-                onMood = { setMood(it) },
                 onSticker = { placeSticker(it) },
-                onTextColor = { placeText(it) },
-                onCompanion = { setCompanion(it) },
+                onCompanion = { placeCompanion(it) },
+                onGlass = { placeGlass() },
                 onOpenShop = {
                     showChest = false
                     if (onOpenShop != null) onOpenShop()
@@ -543,7 +563,7 @@ private fun ProfileCanvasBoard(
                 onSelect = {
                     if (!editable) return@ProfileElementView
                     onSelect(el.id)
-                    if (el.type == ProfileElType.Sticker || el.type == ProfileElType.Text) {
+                    if (el.type == ProfileElType.Sticker) {
                         val maxZ = state.layout.maxOfOrNull { it.z } ?: 20
                         onLayoutChange(
                             state.layout.map {
@@ -557,69 +577,16 @@ private fun ProfileCanvasBoard(
                     onLayoutChange(state.layout.map { if (it.id == updated.id) updated else it })
                 },
                 onRemove = {
-                    when {
-                        el.type == ProfileElType.Bio -> Unit
-                        el.type == ProfileElType.Sticker || el.type == ProfileElType.Text -> {
-                            onLayoutChange(state.layout.filterNot { it.id == el.id })
-                            onSelect(null)
-                        }
-                        el.type in ProfileCatalog.CORE_HIDE_TYPES -> {
-                            onLayoutChange(
-                                state.layout.map {
-                                    if (it.id == el.id) it.copy(visible = false) else it
-                                }
-                            )
-                            onSelect(null)
-                        }
+                    // Hart entfernen — wieder hinzufügen über die Truhe
+                    if (el.type == ProfileElType.Avatar || el.type == ProfileElType.Name) {
+                        // Kern bleibt, nur ausblenden nicht — Kern nicht löschen
+                        return@ProfileElementView
                     }
+                    onLayoutChange(state.layout.filterNot { it.id == el.id })
+                    onSelect(null)
                 },
                 onEdit = { onEdit(el.id) }
             )
-        }
-
-        // Versteckte Core-Elemente wiederherstellen
-        if (editable) {
-            val hidden = state.layout.filter { !it.visible && it.type in ProfileCatalog.CORE_HIDE_TYPES }
-            if (hidden.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(8.dp)
-                        .zIndex(180f)
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    hidden.forEach { el ->
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color.Black.copy(0.45f))
-                                .clickable {
-                                    onLayoutChange(
-                                        state.layout.map {
-                                            if (it.id == el.id) it.copy(visible = true) else it
-                                        }
-                                    )
-                                }
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                when (el.type) {
-                                    ProfileElType.Avatar -> "Avatar +"
-                                    ProfileElType.Name -> "Name +"
-                                    ProfileElType.Status -> "Stimmung +"
-                                    ProfileElType.Glass -> "Münzglas +"
-                                    ProfileElType.Pet -> "Begleiter +"
-                                    else -> "+"
-                                },
-                                color = Color.White,
-                                fontFamily = BodyFont,
-                                fontSize = 11.sp
-                            )
-                        }
-                    }
-                }
-            }
         }
 
         if (editable) {
@@ -708,10 +675,10 @@ private fun ProfileElementView(
     val baseSize = with(density) {
         when (el.type) {
             ProfileElType.Bio -> 120.dp.toPx()
-            ProfileElType.Name -> 110.dp.toPx()
+            ProfileElType.Name -> 96.dp.toPx()
             ProfileElType.Glass -> 72.dp.toPx()
             ProfileElType.Pet -> 64.dp.toPx()
-            ProfileElType.Avatar -> 58.dp.toPx()
+            ProfileElType.Avatar -> 56.dp.toPx()
             else -> 52.dp.toPx()
         }
     }
@@ -719,31 +686,42 @@ private fun ProfileElementView(
     val gap = with(density) { 5.dp.toPx() }
     val strokeW = with(density) { 2.dp.toPx() }
     val canEdit = el.type in ProfileCatalog.EDITABLE_TYPES
-    val canRemove = el.type != ProfileElType.Bio
+    val canRemove = el.type != ProfileElType.Avatar && el.type != ProfileElType.Name
     val invScale = 1f / dragEl.scale.coerceIn(0.35f, 2.5f)
 
     Box(
         modifier = Modifier
             .zIndex(el.z.toFloat() + if (selected) 50f else 0f)
-            .graphicsLayer {
-                val s = dragEl.scale
-                translationX = boardW * (dragEl.x / 100f) - baseSize / 2f
-                translationY = boardH * (dragEl.y / 100f) - baseSize / 2f
-                rotationZ = dragEl.rotation
-                scaleX = s * (if (dragEl.flipX) -1f else 1f)
-                scaleY = s
-                transformOrigin = TransformOrigin(0.5f, 0.5f)
+            // Position per Offset (wie nasebär %-Koordinaten), Drag außerhalb von Scale
+            .offset {
+                IntOffset(
+                    (boardW * (dragEl.x / 100f) - baseSize / 2f).roundToInt(),
+                    (boardH * (dragEl.y / 100f) - baseSize / 2f).roundToInt()
+                )
             }
             .size(with(density) { baseSize.toDp() })
             .then(
                 if (editable) {
                     Modifier.pointerInput(el.id, boardW, boardH) {
+                        // Origin-basiert wie nasebär — keine inkrementellen Drift-Fehler
+                        var origX = dragEl.x
+                        var origY = dragEl.y
+                        var accX = 0f
+                        var accY = 0f
                         detectDragGestures(
-                            onDragStart = { onSelect() },
+                            onDragStart = {
+                                onSelect()
+                                origX = dragEl.x
+                                origY = dragEl.y
+                                accX = 0f
+                                accY = 0f
+                            },
                             onDrag = { change, drag ->
                                 change.consume()
-                                val nx = dragEl.x + drag.x / boardW * 100f
-                                val ny = dragEl.y + drag.y / boardH * 100f
+                                accX += drag.x
+                                accY += drag.y
+                                val nx = origX + accX / boardW * 100f
+                                val ny = origY + accY / boardH * 100f
                                 val (cx, cy) = ProfileCatalog.clampPos(dragEl, nx, ny)
                                 val next = dragEl.copy(x = cx, y = cy)
                                 dragEl = next
@@ -753,6 +731,13 @@ private fun ProfileElementView(
                     }
                 } else Modifier
             )
+            .graphicsLayer {
+                val s = dragEl.scale
+                rotationZ = dragEl.rotation
+                scaleX = s * (if (dragEl.flipX) -1f else 1f)
+                scaleY = s
+                transformOrigin = TransformOrigin(0.5f, 0.5f)
+            }
             .clickable(enabled = editable) { onSelect() }
     ) {
         Box(
@@ -772,7 +757,10 @@ private fun ProfileElementView(
                         }
                     } else Modifier
                 ),
-            contentAlignment = Alignment.Center
+            contentAlignment = when (el.type) {
+                ProfileElType.Name -> Alignment.CenterStart
+                else -> Alignment.Center
+            }
         ) {
             ElementContent(dragEl, nickname, colorIndex, coins)
         }
@@ -910,12 +898,12 @@ private fun ElementContent(
                 if (face != null) {
                     Text(face, fontSize = 26.sp)
                 } else {
-                    Text(
-                        nickname.take(1).uppercase(),
-                        color = Color(0xFF1A1F2E),
-                        fontFamily = DisplayFont,
-                        fontSize = 22.sp
-                    )
+                        Text(
+                            nickname.take(1).uppercase(),
+                            color = Color(0xFF1A1F2E),
+                            fontFamily = FontFamily.Serif,
+                            fontSize = 22.sp
+                        )
                 }
             }
         }
@@ -925,7 +913,9 @@ private fun ElementContent(
             fontFamily = font,
             fontSize = sizeSp,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Start,
+            modifier = Modifier.fillMaxWidth()
         )
         ProfileElType.Status -> Text(el.emoji ?: el.text ?: "😊", fontSize = 30.sp)
         ProfileElType.Bio -> Text(
@@ -979,13 +969,12 @@ private fun ElementContent(
 private fun ProfileChestDialog(
     ownedStickers: List<String>,
     currentThemeId: String,
-    currentMood: String,
     currentCompanion: String,
+    hasGlass: Boolean,
     onTheme: (ProfileTheme) -> Unit,
-    onMood: (ProfileMood) -> Unit,
     onSticker: (String) -> Unit,
-    onTextColor: (String) -> Unit,
     onCompanion: (String) -> Unit,
+    onGlass: () -> Unit,
     onOpenShop: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1032,7 +1021,7 @@ private fun ProfileChestDialog(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                listOf("Hintergrund", "Stimmung", "Sticker", "Text", "Begleiter").forEachIndexed { i, label ->
+                listOf("Hintergrund", "Sticker", "Begleiter", "Münzglas").forEachIndexed { i, label ->
                     val on = tab == i
                     Box(
                         modifier = Modifier
@@ -1080,33 +1069,6 @@ private fun ProfileChestDialog(
                     }
                 }
                 1 -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(88.dp),
-                    modifier = Modifier.fillMaxWidth().height(300.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(ProfileCatalog.MOODS, key = { it.id }) { mood ->
-                        val on = mood.emoji == currentMood
-                        Column(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(if (on) AccentRose.copy(0.2f) else BgSoft)
-                                .border(
-                                    1.dp,
-                                    if (on) AccentRose.copy(0.65f) else Color.White.copy(0.08f),
-                                    RoundedCornerShape(14.dp)
-                                )
-                                .clickable { onMood(mood) }
-                                .padding(10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(mood.emoji, fontSize = 28.sp)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(mood.label, color = TextPrimary, fontFamily = BodyFont, fontSize = 11.sp, maxLines = 1)
-                        }
-                    }
-                }
-                2 -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(64.dp),
                     modifier = Modifier.fillMaxWidth().height(300.dp),
                     contentPadding = PaddingValues(4.dp),
@@ -1124,27 +1086,7 @@ private fun ProfileChestDialog(
                         ) { Text(emoji, fontSize = 28.sp) }
                     }
                 }
-                3 -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(64.dp),
-                    modifier = Modifier.fillMaxWidth().height(300.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(ProfileCatalog.TEXT_COLORS, key = { it }) { hex ->
-                        Box(
-                            modifier = Modifier
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(ProfileCatalog.parseColor(hex))
-                                .border(1.dp, Color.White.copy(0.2f), RoundedCornerShape(14.dp))
-                                .clickable { onTextColor(hex) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("Aa", color = if (hex == "#FFFFFF" || hex == "#FFD54F") Color.Black else Color.White, fontSize = 14.sp)
-                        }
-                    }
-                }
-                else -> LazyVerticalGrid(
+                2 -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(72.dp),
                     modifier = Modifier.fillMaxWidth().height(300.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1165,6 +1107,27 @@ private fun ProfileChestDialog(
                                 .clickable { onCompanion(emoji) },
                             contentAlignment = Alignment.Center
                         ) { Text(emoji, fontSize = 30.sp) }
+                    }
+                }
+                else -> Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (hasGlass) AccentRose.copy(0.18f) else BgSoft)
+                        .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(16.dp))
+                        .clickable(onClick = onGlass),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("🏺", fontSize = 40.sp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            if (hasGlass) "Münzglas ist auf der Leinwand" else "Münzglas platzieren",
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 16.sp
+                        )
                     }
                 }
             }
