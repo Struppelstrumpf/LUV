@@ -307,13 +307,10 @@ object ProfileCatalog {
         var halfY = (visual / 2f) / h * 100f
 
         if (el.type == ProfileElType.Name) {
-            // Name linksbündig im Kasten: Breite am Text schätzen, ganzer Name bleibt im Canvas
-            val label = nameText?.takeIf { it.isNotBlank() } ?: el.text.orEmpty()
+            // Name-Box ist breit; Schrift schrumpft im UI — Kasten bleibt im Canvas
             val fontPx = (el.fontSize ?: 18f) * s
-            val estimated = (label.length.coerceAtLeast(1) * fontPx * 0.62f)
-                .coerceIn(visual * 0.5f, w * 0.92f)
-            halfX = (estimated / 2f) / w * 100f
-            halfY = (fontPx * 0.75f) / h * 100f
+            halfX = (visual / 2f) / w * 100f
+            halfY = ((fontPx * 1.2f).coerceAtLeast(visual * 0.35f) / 2f) / h * 100f
         }
 
         // Minimale Margin, damit nichts komplett abgeschnitten wird

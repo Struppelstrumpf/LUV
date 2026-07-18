@@ -202,6 +202,8 @@ fun BrushStudioSheet(
                 onPick = { idx ->
                     color = idx
                     onColorPick(idx)
+                    // Farbe übernehmen und schließen — Fertig nur für Pinselstärke
+                    onDismiss()
                 }
             )
 

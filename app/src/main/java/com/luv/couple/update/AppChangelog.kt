@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.28",
+            listOf(
+                "Profil-Name immer vollständig (schrumpfende Schrift)",
+                "Pinsel: Farbe antippen schließt sofort — Fertig nur für Dicke",
+            )
+        ),
+        Entry(
             "1.9.27",
             listOf(
                 "Fremde Profile zeigen wieder das gespeicherte Layout (Server-Fix)",

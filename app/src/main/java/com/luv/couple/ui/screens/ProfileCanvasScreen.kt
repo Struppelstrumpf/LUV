@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,6 +33,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -728,16 +730,28 @@ private fun ProfileElementView(
     var dragEl by remember(el.id) { mutableStateOf(el) }
     LaunchedEffect(el) { dragEl = el }
     // Feste Basisgröße — Skalierung läuft über graphicsLayer, damit Emoji/Text mitwachsen
-    val baseSize = with(density) {
+    // Name: breiter Kasten bis zum rechten Rand, Schrift schrumpft bei langen Namen
+    val baseW = with(density) {
         when (el.type) {
             ProfileElType.Bio -> 120.dp.toPx()
-            ProfileElType.Name -> 96.dp.toPx()
+            ProfileElType.Name -> (boardW * 0.78f).coerceIn(120.dp.toPx(), boardW * 0.92f)
             ProfileElType.Glass -> 72.dp.toPx()
             ProfileElType.Pet -> 64.dp.toPx()
             ProfileElType.Avatar -> 56.dp.toPx()
             else -> 52.dp.toPx()
         }
     }
+    val baseH = with(density) {
+        when (el.type) {
+            ProfileElType.Bio -> 120.dp.toPx()
+            ProfileElType.Name -> 40.dp.toPx()
+            ProfileElType.Glass -> 72.dp.toPx()
+            ProfileElType.Pet -> 64.dp.toPx()
+            ProfileElType.Avatar -> 56.dp.toPx()
+            else -> 52.dp.toPx()
+        }
+    }
+    val baseSize = maxOf(baseW, baseH) // für clampPos / Handles
     val dash = with(density) { 8.dp.toPx() }
     val gap = with(density) { 5.dp.toPx() }
     val strokeW = with(density) { 2.dp.toPx() }
@@ -751,14 +765,15 @@ private fun ProfileElementView(
             // Position per Offset (wie nasebär %-Koordinaten), Drag außerhalb von Scale
             .offset {
                 IntOffset(
-                    (boardW * (dragEl.x / 100f) - baseSize / 2f).roundToInt(),
-                    (boardH * (dragEl.y / 100f) - baseSize / 2f).roundToInt()
+                    (boardW * (dragEl.x / 100f) - baseW / 2f).roundToInt(),
+                    (boardH * (dragEl.y / 100f) - baseH / 2f).roundToInt()
                 )
             }
-            .size(with(density) { baseSize.toDp() })
+            .width(with(density) { baseW.toDp() })
+            .height(with(density) { baseH.toDp() })
             .then(
                 if (editable) {
-                    Modifier.pointerInput(el.id, boardW, boardH) {
+                    Modifier.pointerInput(el.id, boardW, boardH, baseW) {
                         // Origin-basiert wie nasebär — keine inkrementellen Drift-Fehler
                         var origX = dragEl.x
                         var origY = dragEl.y
@@ -779,7 +794,7 @@ private fun ProfileElementView(
                                 val nx = origX + accX / boardW * 100f
                                 val ny = origY + accY / boardH * 100f
                                 val (cx, cy) = ProfileCatalog.clampPos(
-                                    dragEl, nx, ny, boardW, boardH, baseSize,
+                                    dragEl, nx, ny, boardW, boardH, baseW,
                                     nameText = nickname
                                 )
                                 val next = dragEl.copy(x = cx, y = cy)
@@ -947,6 +962,7 @@ private fun ElementContent(
         ProfileElType.Glass -> 11f
         else -> 14f
     }).sp
+    val textMeasurer = rememberTextMeasurer()
 
     when (el.type) {
         ProfileElType.Avatar -> {
@@ -972,17 +988,46 @@ private fun ElementContent(
                 }
             }
         }
-        ProfileElType.Name -> Text(
-            el.text ?: nickname,
-            color = color,
-            fontFamily = font,
-            fontSize = sizeSp,
-            maxLines = 1,
-            overflow = TextOverflow.Clip,
-            textAlign = TextAlign.Start,
-            softWrap = false,
-            modifier = Modifier.fillMaxWidth()
-        )
+        ProfileElType.Name -> {
+            val label = el.text ?: nickname
+            val maxSp = (el.fontSize ?: 18f).coerceIn(8f, 28f)
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                val maxW = constraints.maxWidth
+                val fittedSp = remember(label, maxW, maxSp, font) {
+                    var sp = maxSp
+                    while (sp > 8f) {
+                        val result = textMeasurer.measure(
+                            text = label,
+                            style = TextStyle(
+                                fontFamily = font,
+                                fontSize = sp.sp
+                            ),
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        if (result.size.width <= maxW) break
+                        sp -= 0.5f
+                    }
+                    sp
+                }
+                Text(
+                    label,
+                    color = color,
+                    fontFamily = font,
+                    fontSize = fittedSp.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip,
+                    textAlign = TextAlign.Start,
+                    softWrap = false,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
         ProfileElType.Status -> Text(el.emoji ?: el.text ?: "😊", fontSize = 30.sp)
         ProfileElType.Bio -> {
             val body = el.text.orEmpty()
