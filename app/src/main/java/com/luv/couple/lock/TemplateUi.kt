@@ -271,11 +271,28 @@ fun TemplateEditorSheet(
     onDismiss: () -> Unit
 ) {
     val parts = remember { mutableStateListOf<TemplateStrokePart>() }
+    val undoStack = remember { mutableStateListOf<List<TemplateStrokePart>>() }
     var colorIndex by remember { mutableIntStateOf(0) }
     var brushWidth by remember { mutableFloatStateOf(18f) }
+    var eraserOn by remember { mutableStateOf(false) }
     var currentPoints by remember { mutableStateOf<List<StrokePoint>>(emptyList()) }
     var saving by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    fun snapshotParts(): List<TemplateStrokePart> =
+        parts.map { it.copy(points = it.points.toList()) }
+
+    fun pushUndo() {
+        undoStack.add(snapshotParts())
+        while (undoStack.size > 40) undoStack.removeAt(0)
+    }
+
+    fun undoLast() {
+        if (undoStack.isEmpty()) return
+        val prev = undoStack.removeAt(undoStack.lastIndex)
+        parts.clear()
+        parts.addAll(prev)
+    }
 
     // Vollbild — kein Tippen am Rand schließt (Stift/Tablet). Nur ✕ oder Speichern.
     Column(
@@ -303,15 +320,13 @@ fun TemplateEditorSheet(
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
                     .background(Color.White.copy(0.08f))
-                    .clickable(enabled = parts.isNotEmpty()) {
-                        if (parts.isNotEmpty()) parts.removeAt(parts.lastIndex)
-                    }
+                    .clickable(enabled = undoStack.isNotEmpty()) { undoLast() }
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     "Rückgängig",
-                    color = if (parts.isEmpty()) TextMuted.copy(0.45f) else TextMuted,
+                    color = if (undoStack.isEmpty()) TextMuted.copy(0.45f) else TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 13.sp
                 )
@@ -361,11 +376,14 @@ fun TemplateEditorSheet(
                         .clip(CircleShape)
                         .background(c)
                         .border(
-                            if (colorIndex == i) 2.dp else 0.dp,
+                            if (!eraserOn && colorIndex == i) 2.dp else 0.dp,
                             Color.White,
                             CircleShape
                         )
-                        .clickable { colorIndex = i }
+                        .clickable {
+                            colorIndex = i
+                            eraserOn = false
+                        }
                 )
             }
         }
@@ -384,11 +402,14 @@ fun TemplateEditorSheet(
                         .clip(CircleShape)
                         .background(c)
                         .border(
-                            if (colorIndex == i) 2.dp else 0.dp,
+                            if (!eraserOn && colorIndex == i) 2.dp else 0.dp,
                             Color.White,
                             CircleShape
                         )
-                        .clickable { colorIndex = i }
+                        .clickable {
+                            colorIndex = i
+                            eraserOn = false
+                        }
                 )
             }
         }
@@ -398,8 +419,18 @@ fun TemplateEditorSheet(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(if (eraserOn) Color(0xFFFFD54F) else Color.White.copy(0.08f))
+                    .clickable { eraserOn = !eraserOn },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("🧽", fontSize = 20.sp)
+            }
             Text(
-                "Pinsel",
+                if (eraserOn) "Schwamm" else "Pinsel",
                 color = TextMuted,
                 fontFamily = BodyFont,
                 fontSize = 13.sp
@@ -410,8 +441,8 @@ fun TemplateEditorSheet(
                 valueRange = 6f..40f,
                 modifier = Modifier.weight(1f),
                 colors = SliderDefaults.colors(
-                    thumbColor = Accent,
-                    activeTrackColor = Accent,
+                    thumbColor = if (eraserOn) Color(0xFFFFD54F) else Accent,
+                    activeTrackColor = if (eraserOn) Color(0xFFFFD54F) else Accent,
                     inactiveTrackColor = Color.White.copy(0.12f)
                 )
             )
@@ -436,7 +467,7 @@ fun TemplateEditorSheet(
             Canvas(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(colorIndex, brushWidth, parts.size) {
+                    .pointerInput(colorIndex, brushWidth, eraserOn) {
                         detectDragGestures(
                             onDragStart = { offset ->
                                 val nx = (offset.x / size.width).coerceIn(0f, 1f)
@@ -450,16 +481,27 @@ fun TemplateEditorSheet(
                                 currentPoints = currentPoints + StrokePoint(nx, ny)
                             },
                             onDragEnd = {
-                                if (currentPoints.size >= 2) {
+                                val brush = currentPoints
+                                currentPoints = emptyList()
+                                if (brush.size < 2) return@detectDragGestures
+                                if (eraserOn) {
+                                    val radius = 0.018f + (brushWidth / 1100f).coerceIn(0.01f, 0.045f)
+                                    val next = eraseTemplateParts(parts.toList(), brush, radius)
+                                    if (next != parts.toList()) {
+                                        pushUndo()
+                                        parts.clear()
+                                        parts.addAll(next)
+                                    }
+                                } else {
+                                    pushUndo()
                                     parts.add(
                                         TemplateStrokePart(
-                                            points = currentPoints.toList(),
+                                            points = brush.toList(),
                                             width = brushWidth,
                                             colorIndex = colorIndex
                                         )
                                     )
                                 }
-                                currentPoints = emptyList()
                             },
                             onDragCancel = { currentPoints = emptyList() }
                         )
@@ -487,14 +529,112 @@ fun TemplateEditorSheet(
                 }
                 parts.forEach { drawPart(it) }
                 if (currentPoints.size >= 2) {
-                    drawPart(
-                        TemplateStrokePart(currentPoints, brushWidth, colorIndex),
-                        alpha = 0.9f
-                    )
+                    if (eraserOn) {
+                        val path = Path()
+                        currentPoints.forEachIndexed { idx, p ->
+                            val x = p.x * size.width
+                            val y = p.y * size.height
+                            if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                        }
+                        drawPath(
+                            path,
+                            color = Color.White.copy(alpha = 0.35f),
+                            style = Stroke(
+                                width = (brushWidth / 1000f) * short * 1.6f,
+                                cap = StrokeCap.Round,
+                                join = StrokeJoin.Round
+                            )
+                        )
+                    } else {
+                        drawPart(
+                            TemplateStrokePart(currentPoints, brushWidth, colorIndex),
+                            alpha = 0.9f
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+/** Radiert Stellen entlang des Pinselpfads — teilt Striche statt alles zu löschen. */
+private fun eraseTemplateParts(
+    parts: List<TemplateStrokePart>,
+    brush: List<StrokePoint>,
+    radius: Float
+): List<TemplateStrokePart> {
+    if (brush.isEmpty()) return parts
+    val out = mutableListOf<TemplateStrokePart>()
+    for (part in parts) {
+        val strokeRadius = radius + (part.width / 1100f).coerceIn(0.008f, 0.03f)
+        val fragments = splitTemplateStrokeAwayFromBrush(part.points, brush, strokeRadius)
+        for (frag in fragments) {
+            if (frag.size < 2) continue
+            out.add(part.copy(points = frag))
+        }
+    }
+    return out
+}
+
+private fun splitTemplateStrokeAwayFromBrush(
+    points: List<StrokePoint>,
+    brush: List<StrokePoint>,
+    radius: Float
+): List<List<StrokePoint>> {
+    if (points.isEmpty()) return emptyList()
+    val r2 = radius * radius
+    val keep = BooleanArray(points.size) { i ->
+        val p = points[i]
+        brush.none { b ->
+            val dx = p.x - b.x
+            val dy = p.y - b.y
+            dx * dx + dy * dy <= r2
+        }
+    }
+    val breakAfter = BooleanArray(points.size)
+    for (i in 0 until points.lastIndex) {
+        if (!keep[i] || !keep[i + 1]) continue
+        val a = points[i]
+        val b = points[i + 1]
+        if (brush.any { distPointToSegment2(it, a, b) <= r2 }) {
+            breakAfter[i] = true
+        }
+    }
+    val fragments = mutableListOf<List<StrokePoint>>()
+    var current = mutableListOf<StrokePoint>()
+    for (i in points.indices) {
+        if (keep[i]) {
+            current.add(points[i])
+            if (breakAfter[i]) {
+                if (current.isNotEmpty()) {
+                    fragments.add(current.toList())
+                    current = mutableListOf()
+                }
+            }
+        } else if (current.isNotEmpty()) {
+            fragments.add(current.toList())
+            current = mutableListOf()
+        }
+    }
+    if (current.isNotEmpty()) fragments.add(current.toList())
+    return fragments.filter { it.isNotEmpty() }
+}
+
+private fun distPointToSegment2(p: StrokePoint, a: StrokePoint, b: StrokePoint): Float {
+    val abx = b.x - a.x
+    val aby = b.y - a.y
+    val len2 = abx * abx + aby * aby
+    if (len2 <= 1e-12f) {
+        val dx = p.x - a.x
+        val dy = p.y - a.y
+        return dx * dx + dy * dy
+    }
+    val t = (((p.x - a.x) * abx + (p.y - a.y) * aby) / len2).coerceIn(0f, 1f)
+    val cx = a.x + abx * t
+    val cy = a.y + aby * t
+    val dx = p.x - cx
+    val dy = p.y - cy
+    return dx * dx + dy * dy
 }
 
 @Composable
