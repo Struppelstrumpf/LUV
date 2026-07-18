@@ -2,7 +2,13 @@ package com.luv.couple.ui.screens
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -53,9 +59,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -842,7 +854,13 @@ private fun LobbyCard(
         )
     }
 
-    Column(
+    val cardShape = RoundedCornerShape(22.dp)
+    val baseBorder = when {
+        dragging -> accent.copy(alpha = 0.7f)
+        active -> accent.copy(alpha = 0.55f)
+        else -> accent.copy(alpha = 0.85f)
+    }
+    Box(
         modifier = Modifier
             .zIndex(if (dragging) 8f else 0f)
             .graphicsLayer {
@@ -851,132 +869,192 @@ private fun LobbyCard(
                 scaleY = if (dragging) 1.02f else 1f
                 alpha = if (dragging) 0.96f else 1f
             }
-            .shadow(
-                if (dragging) 16.dp else 0.dp,
-                RoundedCornerShape(22.dp),
-                clip = false
-            )
-            .fillMaxWidth()
-            .onSizeChanged { onHeight(it.height) }
-            .clip(RoundedCornerShape(22.dp))
-            .background(BgSoft)
-            .border(
-                width = when {
-                    hasNewDraw -> 3.5.dp
-                    dragging || active -> 1.5.dp
-                    else -> 1.dp
-                },
-                color = when {
-                    hasNewDraw -> accent.copy(alpha = 0.95f)
-                    dragging -> accent.copy(alpha = 0.7f)
-                    active -> accent.copy(alpha = 0.55f)
-                    else -> Color.White.copy(alpha = 0.06f)
-                },
-                shape = RoundedCornerShape(22.dp)
-            )
             .then(
-                if (hasNewDraw) {
-                    Modifier.shadow(
-                        18.dp,
-                        RoundedCornerShape(22.dp),
-                        ambientColor = accent.copy(alpha = 0.65f),
-                        spotColor = accent.copy(alpha = 0.55f)
-                    )
+                if (dragging) {
+                    Modifier.shadow(16.dp, cardShape, clip = false)
                 } else {
                     Modifier
                 }
             )
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .fillMaxWidth()
+            .onSizeChanged { onHeight(it.height) }
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(cardShape)
+                .background(BgSoft)
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                AutoShrinkLobbyName(
-                    name = if (lobby.isRandom) "🎲 Random" else lobby.name,
-                    modifier = if (reorderEnabled) {
-                        Modifier.pointerInput(lobby.id) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = { onNameDragStart() },
-                                onDragEnd = onNameDragEnd,
-                                onDragCancel = onNameDragCancel,
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    onNameDrag(dragAmount.y)
-                                }
-                            )
-                        }
-                    } else {
-                        Modifier
-                    }
-                )
-                Text(
-                    text = when {
-                        lobby.isRandom -> "Zufalls-Lobby · max. 5"
-                        lobby.role == Role.HOST -> "Von dir erstellt"
-                        else -> "Beigetreten"
-                    },
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    softWrap = false,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = if (proximityOn) "🔔" else "🔕",
-                    fontSize = 18.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .clickable { showProximityDialog = true }
-                        .padding(horizontal = 4.dp, vertical = 2.dp),
-                    color = if (proximityOn) accent else TextMuted
-                )
-                // Immer anzeigen — sonst flackert „Verbunden“ bei kurzen Reconnects weg
-                StatusChip(rememberStickyConnectionState(state))
+                Column(modifier = Modifier.weight(1f)) {
+                    AutoShrinkLobbyName(
+                        name = if (lobby.isRandom) "🎲 Random" else lobby.name,
+                        modifier = if (reorderEnabled) {
+                            Modifier.pointerInput(lobby.id) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = { onNameDragStart() },
+                                    onDragEnd = onNameDragEnd,
+                                    onDragCancel = onNameDragCancel,
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        onNameDrag(dragAmount.y)
+                                    }
+                                )
+                            }
+                        } else {
+                            Modifier
+                        }
+                    )
+                    Text(
+                        text = when {
+                            lobby.isRandom -> "Zufalls-Lobby · max. 5"
+                            lobby.role == Role.HOST -> "Von dir erstellt"
+                            else -> "Beigetreten"
+                        },
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (proximityOn) "🔔" else "🔕",
+                        fontSize = 18.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .clickable { showProximityDialog = true }
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        color = if (proximityOn) accent else TextMuted
+                    )
+                    StatusChip(rememberStickyConnectionState(state))
+                }
             }
-        }
-        if (
-            (state == ConnectionState.RECONNECTING && (reconnect?.attempt ?: 0) >= 2) ||
-            (state == ConnectionState.CONNECTING && (reconnect?.attempt ?: 0) >= 2) ||
-            (reconnect?.waiting == true && (reconnect.attempt >= 2))
-        ) {
-            ReconnectBanner(reconnect = reconnect, accent = accent, onReconnect = onReconnect)
-        }
-        PrimaryButton("Leinwand öffnen", accent, onOpen)
-        if (!lobby.isRandom) {
-            SeatGrid(
-                capacity = capacity,
-                maxPeers = PeerPalette.MAX_PEERS,
-                occupied = occupied,
-                nicknames = nicknames,
-                accent = accent,
-                canManage = true,
-                onInvite = onInviteSeat,
-                onBuy = onBuySeat
+            if (
+                (state == ConnectionState.RECONNECTING && (reconnect?.attempt ?: 0) >= 2) ||
+                (state == ConnectionState.CONNECTING && (reconnect?.attempt ?: 0) >= 2) ||
+                (reconnect?.waiting == true && (reconnect.attempt >= 2))
+            ) {
+                ReconnectBanner(reconnect = reconnect, accent = accent, onReconnect = onReconnect)
+            }
+            PrimaryButton("Leinwand öffnen", accent, onOpen)
+            if (!lobby.isRandom) {
+                SeatGrid(
+                    capacity = capacity,
+                    maxPeers = PeerPalette.MAX_PEERS,
+                    occupied = occupied,
+                    nicknames = nicknames,
+                    accent = accent,
+                    canManage = true,
+                    onInvite = onInviteSeat,
+                    onBuy = onBuySeat
+                )
+            }
+            if (lobby.role == Role.HOST && !lobby.isRandom) {
+                PrimaryButton("Umbenennen", Color.Transparent, onRename, bordered = true)
+            }
+            Text(
+                "Verlassen",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .align(Alignment.End)
+                    .clickable(onClick = { confirmLeave = true })
+                    .padding(4.dp)
             )
         }
-        if (lobby.role == Role.HOST && !lobby.isRandom) {
-            PrimaryButton("Umbenennen", BgDeep, onRename, bordered = true)
-        }
-        Text(
-            "Verlassen",
-            color = TextMuted,
-            fontFamily = BodyFont,
-            fontSize = 13.sp,
-            modifier = Modifier
-                .align(Alignment.End)
-                .clickable(onClick = { confirmLeave = true })
-                .padding(4.dp)
+        // Pinke Basislinie + bei neuer Zeichnung weißer, glühender Laufstreifen
+        LobbyCardActivityBorder(
+            accent = baseBorder,
+            active = hasNewDraw,
+            corner = 22.dp,
+            modifier = Modifier.matchParentSize()
         )
+    }
+}
+
+@Composable
+private fun LobbyCardActivityBorder(
+    accent: Color,
+    active: Boolean,
+    corner: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier
+) {
+    val infinite = rememberInfiniteTransition(label = "lobbyGlow")
+    val phase by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2600, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "lobbyGlowPhase"
+    )
+    Canvas(modifier = modifier) {
+        val inset = 1.dp.toPx()
+        val cornerPx = corner.toPx()
+        val path = Path().apply {
+            addRoundRect(
+                RoundRect(
+                    left = inset,
+                    top = inset,
+                    right = size.width - inset,
+                    bottom = size.height - inset,
+                    cornerRadius = CornerRadius(cornerPx, cornerPx)
+                )
+            )
+        }
+        // Dünne farbige Basis (wie bisher)
+        drawPath(
+            path = path,
+            color = accent,
+            style = Stroke(width = 1.dp.toPx(), cap = StrokeCap.Round)
+        )
+        if (!active) return@Canvas
+
+        val measure = PathMeasure().apply { setPath(path, forceClosed = false) }
+        val len = measure.length
+        if (len <= 1f) return@Canvas
+
+        val head = phase * len
+        val trailLen = len * 0.5f
+        val steps = 56
+        val maxStroke = 5.dp.toPx() // ~5× der dünnen Linie
+        for (i in 0 until steps) {
+            val t = i / steps.toFloat()
+            val tNext = (i + 1) / steps.toFloat()
+            val d0 = (head - t * trailLen + len * 8f) % len
+            val d1 = (head - tNext * trailLen + len * 8f) % len
+            if (d1 >= d0) continue // Wrap-Segment überspringen
+            val seg = Path()
+            if (!measure.getSegment(d1, d0, seg, startWithMoveTo = true)) continue
+            val fade = (1f - t).coerceIn(0f, 1f)
+            val stroke = maxStroke * (0.22f + 0.78f * fade)
+            // Äußerer Glow
+            drawPath(
+                path = seg,
+                color = Color.White.copy(alpha = 0.22f * fade),
+                style = Stroke(width = stroke * 2.4f, cap = StrokeCap.Round)
+            )
+            // Kernstreifen
+            drawPath(
+                path = seg,
+                color = Color.White.copy(alpha = 0.55f + 0.45f * fade),
+                style = Stroke(width = stroke, cap = StrokeCap.Round)
+            )
+        }
     }
 }
 
@@ -1038,11 +1116,11 @@ private fun SeatGrid(
     val openSeats = capacity.coerceIn(1, maxPeers.coerceIn(2, PeerPalette.MAX_PEERS))
     val showBuySlot = canManage && openSeats < maxPeers.coerceIn(2, PeerPalette.MAX_PEERS)
     val seats = openSeats + if (showBuySlot) 1 else 0
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         for (rowStart in 0 until seats step 5) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 for (i in rowStart until minOf(rowStart + 5, seats)) {
                     val isBuyTile = showBuySlot && i == openSeats
@@ -1088,16 +1166,15 @@ private fun SeatTile(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
+    // Kein flächiger Grau-Block: nur leichte Accent-Füllung bei belegten Plätzen
     val bg = when {
-        filled -> accent.copy(alpha = 0.28f)
-        buySlot -> accent.copy(alpha = 0.10f)
-        unlocked -> accent.copy(alpha = 0.08f)
+        filled -> accent.copy(alpha = 0.22f)
         else -> Color.Transparent
     }
     val border = when {
-        filled -> accent.copy(alpha = 0.55f)
-        buySlot -> accent.copy(alpha = 0.35f)
-        unlocked -> Color.White.copy(alpha = 0.16f)
+        filled -> accent.copy(alpha = 0.5f)
+        buySlot -> accent.copy(alpha = 0.4f)
+        unlocked -> Color.White.copy(alpha = 0.14f)
         else -> Color.Transparent
     }
     Box(
@@ -1155,7 +1232,7 @@ private fun ReconnectBanner(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF121722))
+            .background(accent.copy(alpha = 0.08f * pulse.value))
             .border(1.dp, accent.copy(alpha = 0.35f * pulse.value), RoundedCornerShape(16.dp))
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
