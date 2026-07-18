@@ -1112,14 +1112,19 @@ private fun LootboxTab(
     val haptics = LocalHapticFeedback.current
     val prefs = LuvApp.instance.prefs
     val confirmBuy by prefs.lootboxConfirmBuyFlow.collectAsStateWithLifecycle(initialValue = true)
+    var queue by remember { mutableStateOf<List<com.luv.couple.net.LootboxResult>>(emptyList()) }
+    var activePendingId by remember { mutableStateOf<String?>(null) }
     var tapsLeft by remember { mutableIntStateOf(0) }
-    var pendingReward by remember { mutableStateOf<com.luv.couple.net.LootboxResult?>(null) }
+    var revealedReward by remember { mutableStateOf<com.luv.couple.net.LootboxResult?>(null) }
     var phase by remember { mutableStateOf("idle") } // idle | tapping | reveal
     var shake by remember { mutableFloatStateOf(0f) }
     var flash by remember { mutableFloatStateOf(0f) }
     var showConfirmBuy by remember { mutableStateOf(false) }
+    var buyQty by remember { mutableIntStateOf(1) }
     val shakeAnim by animateFloatAsState(shake, label = "lootShake")
     val flashAnim by animateFloatAsState(flash, label = "lootFlash")
+    val maxAffordable = (coins / ShopCatalog.LOOTBOX_PRICE_COINS).coerceAtLeast(0)
+    val price = ShopCatalog.LOOTBOX_PRICE_COINS
 
     fun kindLabel(kind: String): String = when (kind) {
         "themes" -> "Hintergrund"
@@ -1137,23 +1142,37 @@ private fun LootboxTab(
         else -> result.emoji.ifBlank { result.label }
     }
 
-    fun startLootboxPurchase() {
+    fun beginOpening(next: com.luv.couple.net.LootboxResult, rest: List<com.luv.couple.net.LootboxResult>) {
+        activePendingId = next.pendingId
+        queue = rest
+        tapsLeft = ShopCatalog.LOOTBOX_TAP_COUNT
+        phase = "tapping"
+        revealedReward = null
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+    }
+
+    fun startLootboxPurchase(quantity: Int) {
         if (!economyUnlocked) {
             onRequireGoogle()
             return
         }
-        if (coins < ShopCatalog.LOOTBOX_PRICE_COINS) {
+        val qty = quantity.coerceAtLeast(1)
+        if (coins < price * qty) {
             Toast.makeText(context, "Nicht genug Coins", Toast.LENGTH_SHORT).show()
             return
         }
         onBusy("lootbox")
         scope.launch {
-            runCatching { LuvApiClient.buyLootbox() }
+            runCatching { LuvApiClient.buyLootbox(qty) }
                 .onSuccess { result ->
-                    pendingReward = result
-                    tapsLeft = ShopCatalog.LOOTBOX_TAP_COUNT
-                    phase = "tapping"
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onRefresh()
+                    val all = result.pending.ifEmpty { result.purchased }
+                    val first = all.firstOrNull()
+                    if (first == null) {
+                        Toast.makeText(context, "Kauf fehlgeschlagen", Toast.LENGTH_SHORT).show()
+                    } else {
+                        beginOpening(first, all.drop(1))
+                    }
                 }
                 .onFailure {
                     Toast.makeText(
@@ -1166,7 +1185,85 @@ private fun LootboxTab(
         }
     }
 
+    fun finishTapsAndOpen() {
+        val id = activePendingId
+        if (id.isNullOrBlank()) {
+            phase = "idle"
+            return
+        }
+        onBusy("lootbox-open")
+        scope.launch {
+            shake = 1f
+            kotlinx.coroutines.delay(80)
+            shake = -1f
+            kotlinx.coroutines.delay(80)
+            shake = 1f
+            kotlinx.coroutines.delay(80)
+            shake = 0f
+            flash = 1f
+            runCatching { LuvApiClient.openLootbox(id) }
+                .onSuccess { reward ->
+                    revealedReward = reward
+                    phase = "reveal"
+                    activePendingId = null
+                    onRefresh()
+                }
+                .onFailure {
+                    Toast.makeText(
+                        context,
+                        it.message ?: "Öffnen fehlgeschlagen",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    // Pending bleibt serverseitig — Queue neu laden
+                    runCatching { LuvApiClient.pendingLootboxes() }
+                        .onSuccess { list ->
+                            queue = list
+                            val first = list.firstOrNull()
+                            if (first != null) beginOpening(first, list.drop(1))
+                            else phase = "idle"
+                        }
+                        .onFailure { phase = "idle" }
+                }
+            kotlinx.coroutines.delay(220)
+            flash = 0f
+            onBusy(null)
+        }
+    }
+
+    fun afterRevealDismiss() {
+        revealedReward = null
+        val next = queue.firstOrNull()
+        if (next != null) {
+            beginOpening(next, queue.drop(1))
+        } else {
+            phase = "idle"
+            tapsLeft = 0
+            activePendingId = null
+            scope.launch {
+                runCatching { LuvApiClient.pendingLootboxes() }
+                    .onSuccess { list ->
+                        if (list.isNotEmpty()) {
+                            beginOpening(list.first(), list.drop(1))
+                        }
+                    }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (!economyUnlocked) return@LaunchedEffect
+        runCatching { LuvApiClient.pendingLootboxes() }
+            .onSuccess { list ->
+                if (list.isNotEmpty() && phase == "idle") {
+                    beginOpening(list.first(), list.drop(1))
+                }
+            }
+    }
+
     if (showConfirmBuy) {
+        val cappedMax = maxAffordable.coerceAtLeast(1)
+        val qty = buyQty.coerceIn(1, cappedMax)
+        val total = qty * price
         AlertDialog(
             onDismissRequest = { if (!busy) showConfirmBuy = false },
             containerColor = BgSoft,
@@ -1174,24 +1271,61 @@ private fun LootboxTab(
                 Text("Lootbox kaufen?", fontFamily = DisplayFont, color = TextPrimary)
             },
             text = {
-                Text(
-                    "Für ${ShopCatalog.LOOTBOX_PRICE_COINS} Coins öffnen? " +
-                        "Der Inhalt ist zufällig und nicht erstattungsfähig.",
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 14.sp
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "Zufälliger Inhalt, nicht erstattungsfähig. " +
+                            "Gekaufte Boxen bleiben gespeichert, bis du sie öffnest.",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 14.sp
+                    )
+                    Text(
+                        "Menge",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 15.sp
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        TextButton(
+                            onClick = { buyQty = (buyQty - 1).coerceAtLeast(1) },
+                            enabled = qty > 1 && !busy
+                        ) {
+                            Text("−", color = TextPrimary, fontSize = 22.sp)
+                        }
+                        Text(
+                            "$qty",
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 22.sp
+                        )
+                        TextButton(
+                            onClick = { buyQty = (buyQty + 1).coerceAtMost(cappedMax) },
+                            enabled = qty < cappedMax && !busy
+                        ) {
+                            Text("+", color = TextPrimary, fontSize = 22.sp)
+                        }
+                    }
+                    Text(
+                        "$total Coins · max. $cappedMax (dein Guthaben)",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp
+                    )
+                }
             },
             confirmButton = {
                 TextButton(
-                    enabled = !busy,
+                    enabled = !busy && maxAffordable >= 1,
                     onClick = {
                         showConfirmBuy = false
-                        startLootboxPurchase()
+                        startLootboxPurchase(qty)
                     }
                 ) {
                     Text(
-                        "Kaufen · ${ShopCatalog.LOOTBOX_PRICE_COINS} Coins",
+                        "Kaufen · $total Coins",
                         color = AccentRose,
                         fontFamily = DisplayFont
                     )
@@ -1230,11 +1364,20 @@ private fun LootboxTab(
                     fontSize = 28.sp
                 )
                 Text(
-                    "${ShopCatalog.LOOTBOX_PRICE_COINS} Coins",
+                    "$price Coins",
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 15.sp
                 )
+                val waiting = queue.size + if (phase == "tapping" || phase == "reveal") 1 else 0
+                if (waiting > 1 || (waiting == 1 && phase != "idle")) {
+                    Text(
+                        if (phase == "idle") "$waiting ungeöffnet" else "Noch $waiting Boxen",
+                        color = MaleBlue,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp
+                    )
+                }
                 Box(
                     modifier = Modifier
                         .size(168.dp)
@@ -1251,37 +1394,25 @@ private fun LootboxTab(
                                     if (!economyUnlocked) {
                                         onRequireGoogle()
                                     } else if (confirmBuy) {
-                                        if (coins < ShopCatalog.LOOTBOX_PRICE_COINS) {
+                                        if (coins < price) {
                                             Toast.makeText(
                                                 context,
                                                 "Nicht genug Coins",
                                                 Toast.LENGTH_SHORT
                                             ).show()
                                         } else {
+                                            buyQty = 1
                                             showConfirmBuy = true
                                         }
                                     } else {
-                                        startLootboxPurchase()
+                                        startLootboxPurchase(1)
                                     }
                                 }
                                 "tapping" -> {
                                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     tapsLeft = (tapsLeft - 1).coerceAtLeast(0)
                                     if (tapsLeft == 0) {
-                                        phase = "reveal"
-                                        scope.launch {
-                                            shake = 1f
-                                            kotlinx.coroutines.delay(80)
-                                            shake = -1f
-                                            kotlinx.coroutines.delay(80)
-                                            shake = 1f
-                                            kotlinx.coroutines.delay(80)
-                                            shake = 0f
-                                            flash = 1f
-                                            kotlinx.coroutines.delay(220)
-                                            flash = 0f
-                                            onRefresh()
-                                        }
+                                        finishTapsAndOpen()
                                     }
                                 }
                             }
@@ -1294,7 +1425,7 @@ private fun LootboxTab(
                     when (phase) {
                         "tapping" -> "Noch $tapsLeft× tippen"
                         "reveal" -> "Geöffnet!"
-                        else -> "Tippen zum Öffnen · ${ShopCatalog.LOOTBOX_PRICE_COINS} Coins"
+                        else -> "Tippen zum Öffnen · $price Coins"
                     },
                     color = TextPrimary,
                     fontFamily = DisplayFont,
@@ -1321,7 +1452,7 @@ private fun LootboxTab(
                         )
                         Text(
                             if (confirmBuy) {
-                                "Vor dem Kauf nachfragen"
+                                "Vor dem Kauf nachfragen · Menge wählbar"
                             } else {
                                 "Direkt mit Tippen kaufen"
                             },
@@ -1344,9 +1475,9 @@ private fun LootboxTab(
                     )
                 }
                 Text(
-                    "Zufallsinhalt aus dem Itemshop. Chance steigt mit günstigeren Items; " +
-                        "teure Items sind seltener. Sehr teure Items sind extrem selten. " +
-                        "Coins für Lootboxen sind nicht erstattungsfähig. Details in den AGB.",
+                    "Meist etwas um $price Coins Wert; teure und sehr günstige Items sind seltener. " +
+                        "Gekaufte Lootboxen bleiben gespeichert, bis du sie öffnest. " +
+                        "Nicht erstattungsfähig — Details in den AGB.",
                     color = TextMuted.copy(alpha = 0.85f),
                     fontFamily = BodyFont,
                     fontSize = 11.sp,
@@ -1364,13 +1495,9 @@ private fun LootboxTab(
         }
     }
 
-    pendingReward?.takeIf { phase == "reveal" }?.let { reward ->
+    revealedReward?.takeIf { phase == "reveal" }?.let { reward ->
         AlertDialog(
-            onDismissRequest = {
-                pendingReward = null
-                phase = "idle"
-                tapsLeft = 0
-            },
+            onDismissRequest = { afterRevealDismiss() },
             containerColor = BgSoft,
             title = {
                 Text("Lootbox geöffnet", fontFamily = DisplayFont, color = TextPrimary)
@@ -1401,15 +1528,23 @@ private fun LootboxTab(
                         fontFamily = BodyFont,
                         fontSize = 13.sp
                     )
+                    if (queue.isNotEmpty()) {
+                        Text(
+                            "Noch ${queue.size} ungeöffnet",
+                            color = MaleBlue,
+                            fontFamily = BodyFont,
+                            fontSize = 13.sp
+                        )
+                    }
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    pendingReward = null
-                    phase = "idle"
-                    tapsLeft = 0
-                }) {
-                    Text("Ins Inventar", color = AccentRose, fontFamily = DisplayFont)
+                TextButton(onClick = { afterRevealDismiss() }) {
+                    Text(
+                        if (queue.isNotEmpty()) "Weiter" else "Ins Inventar",
+                        color = AccentRose,
+                        fontFamily = DisplayFont
+                    )
                 }
             }
         )

@@ -25,7 +25,7 @@ object PeerPalette {
     const val MAX_PEERS = 10
     const val MAX_LOBBIES = 10
     const val MAX_LOBBY_NAME_LENGTH = 16
-    const val LOBBY_CREATE_COST = 5
+    const val LOBBY_CREATE_COST = 4
     const val SLOT_COST = 5
     const val GAME_COST = 1
     const val FREE_LOBBY_START_CAPACITY = 2

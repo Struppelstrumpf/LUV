@@ -41,6 +41,15 @@ data class LootboxResult(
     val label: String,
     val shopPrice: Int,
     val chancePercent: Double,
+    val coins: Int,
+    val pendingId: String = ""
+)
+
+data class LootboxPurchaseResult(
+    val purchased: List<LootboxResult>,
+    val pending: List<LootboxResult>,
+    val quantity: Int,
+    val total: Int,
     val coins: Int
 )
 
@@ -2468,15 +2477,7 @@ object LuvApiClient {
         executeRoom(request)
     }
 
-    suspend fun buyLootbox(): LootboxResult = withContext(Dispatchers.IO) {
-        val json = authedPost("/v1/shop/lootbox", JSONObject().toString())
-        json.optJSONObject("user")?.let { userJson ->
-            AccountSession.setAccount(AccountInfo.fromApi(userJson))
-        }
-        val item = json.optJSONObject("item")
-            ?: throw LuvApiException("Keine Lootbox-Belohnung erhalten")
-        val userCoins = json.optJSONObject("user")?.optInt("coins", -1)?.takeIf { it >= 0 }
-            ?: AccountSession.account.value?.coins ?: 0
+    private fun parseLootboxItem(item: JSONObject, coins: Int, pendingId: String = ""): LootboxResult =
         LootboxResult(
             kind = item.optString("kind"),
             itemId = item.optString("itemId"),
@@ -2484,8 +2485,69 @@ object LuvApiClient {
             label = item.optString("label").ifBlank { item.optString("itemId") },
             shopPrice = item.optInt("shopPrice", 0),
             chancePercent = item.optDouble("chancePercent", 0.0),
+            coins = coins,
+            pendingId = pendingId.ifBlank { item.optString("id") }
+        )
+
+    private fun parseLootboxList(arr: org.json.JSONArray?, coins: Int): List<LootboxResult> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                add(parseLootboxItem(o, coins, o.optString("id")))
+            }
+        }
+    }
+
+    /** Kauf: Coins abziehen, Belohnungen als pending (noch nicht im Inventar). */
+    suspend fun buyLootbox(quantity: Int = 1): LootboxPurchaseResult = withContext(Dispatchers.IO) {
+        val qty = quantity.coerceIn(1, 50)
+        val json = authedPost(
+            "/v1/shop/lootbox",
+            JSONObject().put("quantity", qty).toString()
+        )
+        json.optJSONObject("user")?.let { userJson ->
+            AccountSession.setAccount(AccountInfo.fromApi(userJson))
+        }
+        val userCoins = json.optJSONObject("user")?.optInt("coins", -1)?.takeIf { it >= 0 }
+            ?: AccountSession.account.value?.coins ?: 0
+        val purchased = parseLootboxList(json.optJSONArray("purchased"), userCoins)
+        if (purchased.isEmpty()) {
+            throw LuvApiException("Keine Lootbox-Belohnung erhalten")
+        }
+        LootboxPurchaseResult(
+            purchased = purchased,
+            pending = parseLootboxList(json.optJSONArray("pending"), userCoins),
+            quantity = json.optInt("quantity", purchased.size),
+            total = json.optInt("total", purchased.size * 10),
             coins = userCoins
         )
+    }
+
+    suspend fun pendingLootboxes(): List<LootboxResult> = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/shop/lootbox/pending")
+        json.optJSONObject("user")?.let { userJson ->
+            AccountSession.setAccount(AccountInfo.fromApi(userJson))
+        }
+        val userCoins = json.optJSONObject("user")?.optInt("coins", -1)?.takeIf { it >= 0 }
+            ?: AccountSession.account.value?.coins ?: 0
+        parseLootboxList(json.optJSONArray("pending"), userCoins)
+    }
+
+    /** Pending öffnen → Item ins Inventar. */
+    suspend fun openLootbox(pendingId: String): LootboxResult = withContext(Dispatchers.IO) {
+        val json = authedPost(
+            "/v1/shop/lootbox/open",
+            JSONObject().put("id", pendingId).toString()
+        )
+        json.optJSONObject("user")?.let { userJson ->
+            AccountSession.setAccount(AccountInfo.fromApi(userJson))
+        }
+        val item = json.optJSONObject("item")
+            ?: throw LuvApiException("Lootbox konnte nicht geöffnet werden")
+        val userCoins = json.optJSONObject("user")?.optInt("coins", -1)?.takeIf { it >= 0 }
+            ?: AccountSession.account.value?.coins ?: 0
+        parseLootboxItem(item, userCoins, pendingId)
     }
 
     private fun parseMemberList(json: JSONObject): List<RosterMember> {

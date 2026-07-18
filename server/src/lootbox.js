@@ -1,26 +1,28 @@
 /**
  * Lootbox: Bucket-Gewichte.
- * ~30% Items um 10 Coins (±1); billiger/teurer seltener; Extrem ~0,1%.
+ * ~75% Items um ~10 Coins (8–12); je weiter weg vom Sweet-Spot, desto seltener.
+ * Extrem teuer möglich, aber sehr selten — billige Nieten seltener als teure Jackpots? Nein:
+ * Extrem teuer (ultra) seltener als cheap (1–4), cheap seltener als mid.
  */
 
 function bucketOf(price) {
   const p = Math.max(1, Number(price) || 1);
-  if (p >= 9 && p <= 11) return "sweet";
-  if (p >= 6 && p <= 8) return "midLow";
-  if (p >= 12 && p <= 20) return "midHigh";
-  if (p <= 5) return "cheap";
-  if (p >= 80) return "ultra";
-  return "expensive"; // 21–79
+  if (p >= 8 && p <= 12) return "sweet";
+  if (p >= 5 && p <= 7) return "midLow";
+  if (p >= 13 && p <= 25) return "midHigh";
+  if (p <= 4) return "cheap";
+  if (p >= 100) return "ultra";
+  return "expensive"; // 26–99
 }
 
 /** Ziel-Masse je Bucket (Summe 1.0). */
 const BUCKET_MASS = {
-  sweet: 0.3,
-  midLow: 0.16,
-  midHigh: 0.22,
-  cheap: 0.08,
-  expensive: 0.239,
-  ultra: 0.001,
+  sweet: 0.75, // ~10 Coins
+  midLow: 0.07,
+  midHigh: 0.1,
+  cheap: 0.04, // 1–4: Niete möglich, aber nicht häufig
+  expensive: 0.035, // 26–99
+  ultra: 0.005, // 100+: selten, aber bei vielen Käufen drin
 };
 
 function buildPool({
@@ -105,7 +107,6 @@ function pickFromPool(pool) {
 }
 
 function weightForPrice(price) {
-  // Nur Debug/Tests — echte Gewichte kommen aus Bucket-Verteilung
   const b = bucketOf(price);
   return BUCKET_MASS[b] ?? 0.05;
 }

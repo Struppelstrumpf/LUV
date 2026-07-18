@@ -111,16 +111,18 @@ const PUBLIC_SHOP_REDIRECT =
 const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || "").trim();
 const WEB_DIR = String(process.env.WEB_DIR || "/opt/luv-web").trim();
 
-const DAILY_COINS = 10;
+const DAILY_COINS = 12;
 /** Max. Coins, die ein Profil pro Tag (0:00 Europe/Berlin) ins Münzglas bekommen kann (alle Spender zusammen). */
 const GLASS_TIP_DAILY_MAX = 10;
-const STARTING_COINS = 15;
+const STARTING_COINS = 25;
 const FREE_SESSIONS_PER_DAY = 5;
 const SESSION_COST = 1;
 const CLEAR_COST = 1;
 const GAME_COST = 1;
-const LOBBY_CREATE_COST = 5;
+const LOBBY_CREATE_COST = 4;
 const SLOT_COST = 5;
+const LOOTBOX_PRICE = 10;
+const LOOTBOX_MAX_QTY = 50;
 const WORDS_DE = require("./words_de");
 const Games = require("./games");
 const MAX_LOBBIES = 10;
@@ -147,12 +149,12 @@ const PACKS = {
     oncePerUserAndIp: true,
     expiresAt: INTRO_EXPIRES_AT,
   },
-  pack_50: { id: "pack_50", coins: 50, amountEur: "2.99", label: "Handvoll Coins" },
-  pack_150: { id: "pack_150", coins: 150, amountEur: "6.99", label: "Beutel voll Coins" },
-  pack_400: { id: "pack_400", coins: 400, amountEur: "14.99", label: "Schatztruhe" },
-  pack_900: { id: "pack_900", coins: 900, amountEur: "29.99", label: "Münzhaufen" },
-  pack_2000: { id: "pack_2000", coins: 2000, amountEur: "49.99", label: "Goldschatz" },
-  pack_5000: { id: "pack_5000", coins: 5000, amountEur: "99.99", label: "Schatzkammer" },
+  pack_50: { id: "pack_50", coins: 60, amountEur: "2.99", label: "Handvoll Coins" },
+  pack_150: { id: "pack_150", coins: 175, amountEur: "6.99", label: "Beutel voll Coins" },
+  pack_400: { id: "pack_400", coins: 450, amountEur: "14.99", label: "Schatztruhe" },
+  pack_900: { id: "pack_900", coins: 1000, amountEur: "29.99", label: "Münzhaufen" },
+  pack_2000: { id: "pack_2000", coins: 2200, amountEur: "49.99", label: "Goldschatz" },
+  pack_5000: { id: "pack_5000", coins: 5600, amountEur: "99.99", label: "Schatzkammer" },
 };
 
 /** Faire Coin-Preise für Itemshop-Emojis (Client-Katalog muss passen). */
@@ -2514,7 +2516,44 @@ function publicUser(user) {
     canClaimDaily: false,
     dailyGrantedJustNow: Boolean(dailyGrantedJustNow),
     googleLinked: Boolean(user.googleSub),
+    pendingLootboxes: pendingLootboxPublic(user).length,
   };
+}
+
+function ensurePendingLootboxes(user) {
+  if (!Array.isArray(user.pendingLootboxes)) user.pendingLootboxes = [];
+  return user.pendingLootboxes;
+}
+
+function pendingLootboxPublic(user) {
+  return ensurePendingLootboxes(user).map((p) => ({
+    id: p.id,
+    kind: p.kind,
+    itemId: p.itemId,
+    emoji: p.emoji,
+    label: p.label,
+    shopPrice: p.shopPrice,
+    chancePercent: p.chancePercent,
+    purchasedAt: p.purchasedAt || 0,
+  }));
+}
+
+function buildLootboxPoolForUser(user) {
+  ensureInventory(user);
+  const pool = lootbox.buildPool({
+    emojiPrices: EMOJI_SHOP_PRICES,
+    themePrices: THEME_SHOP_PRICES,
+    petPrices: PET_SHOP_PRICES,
+    stickerPrices: STICKER_SHOP_PRICES,
+    isKnown: isKnownInventoryItem,
+    defaultPet: DEFAULT_PET,
+    starterEmojis: STARTER_EMOJIS,
+  });
+  const filtered = pool.filter((x) => {
+    if (x.kind === "emojis" || x.kind === "stickers") return true;
+    return !market.userOwnsItem(user, ensureInventory, x.kind, x.itemId);
+  });
+  return filtered.length ? filtered : pool;
 }
 
 function applyLedger(userId, delta, reason, refId) {
@@ -6788,49 +6827,118 @@ app.post("/v1/rooms/random-match", (req, res) => {
   }
 });
 
+/**
+ * Lootbox kaufen: Coins abziehen, Belohnung als pending speichern (noch nicht im Inventar).
+ * So bleibt der Kauf erhalten, auch wenn der Shop geschlossen wird.
+ * Body: { quantity?: number } — max. so viele wie man sich leisten kann / LOOTBOX_MAX_QTY.
+ */
 app.post("/v1/shop/lootbox", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
-  const LOOTBOX_PRICE = 10;
-  if (!requireCoins(ctx, LOOTBOX_PRICE, res)) return;
-  const pool = lootbox.buildPool({
-    emojiPrices: EMOJI_SHOP_PRICES,
-    themePrices: THEME_SHOP_PRICES,
-    petPrices: PET_SHOP_PRICES,
-    stickerPrices: STICKER_SHOP_PRICES,
-    isKnown: isKnownInventoryItem,
-    defaultPet: DEFAULT_PET,
-    starterEmojis: STARTER_EMOJIS,
-  });
-  ensureInventory(ctx.user);
-  // Themes/Begleiter: lieber noch nicht besessen; Emojis/Sticker stapeln
-  const filtered = pool.filter((x) => {
-    if (x.kind === "emojis" || x.kind === "stickers") return true;
-    return !market.userOwnsItem(ctx.user, ensureInventory, x.kind, x.itemId);
-  });
-  const usePool = filtered.length ? filtered : pool;
-  const pick = lootbox.pickFromPool(usePool);
-  if (!pick) {
+  const qtyRaw = Number(req.body?.quantity);
+  const quantity = Math.max(1, Math.min(LOOTBOX_MAX_QTY, Number.isFinite(qtyRaw) ? Math.floor(qtyRaw) : 1));
+  const total = quantity * LOOTBOX_PRICE;
+  if (!requireCoins(ctx, total, res)) return;
+  const usePool = buildLootboxPoolForUser(ctx.user);
+  if (!usePool.length) {
     return res.status(500).json({ error: "empty_pool", message: "Keine Items verfügbar." });
   }
-  if (!applyLedger(ctx.user.id, -LOOTBOX_PRICE, "lootbox", `${pick.kind}:${pick.itemId}`)) {
-    return res.status(402).json({ error: "no_coins", message: "Nicht genug Coins." });
-  }
-  safeGiveItem(ctx.user, pick.kind, pick.itemId);
-  bumpShopPurchase(pick.kind, pick.itemId);
-  trackAch(ctx.user, "coins_spent", LOOTBOX_PRICE);
-  flushSave();
-  return res.json({
-    ok: true,
-    price: LOOTBOX_PRICE,
-    item: {
+  const pending = ensurePendingLootboxes(ctx.user);
+  const created = [];
+  for (let i = 0; i < quantity; i++) {
+    const pick = lootbox.pickFromPool(usePool);
+    if (!pick) break;
+    const entry = {
+      id: newId("lb"),
       kind: pick.kind,
       itemId: pick.itemId,
       emoji: pick.emoji,
       label: pick.label,
       shopPrice: pick.shopPrice,
       chancePercent: pick.chancePercent,
+      purchasedAt: Date.now(),
+    };
+    pending.push(entry);
+    created.push(entry);
+  }
+  if (!created.length) {
+    return res.status(500).json({ error: "empty_pool", message: "Keine Items verfügbar." });
+  }
+  const charged = created.length * LOOTBOX_PRICE;
+  if (!applyLedger(ctx.user.id, -charged, "lootbox", `qty:${created.length}`)) {
+    // Rollback pending entries if ledger fails
+    for (const e of created) {
+      const idx = pending.findIndex((p) => p.id === e.id);
+      if (idx >= 0) pending.splice(idx, 1);
+    }
+    return res.status(402).json({ error: "no_coins", message: "Nicht genug Coins." });
+  }
+  trackAch(ctx.user, "coins_spent", charged);
+  flushSave();
+  return res.json({
+    ok: true,
+    price: LOOTBOX_PRICE,
+    quantity: created.length,
+    total: charged,
+    pending: pendingLootboxPublic(ctx.user),
+    purchased: created.map((e) => ({
+      id: e.id,
+      kind: e.kind,
+      itemId: e.itemId,
+      emoji: e.emoji,
+      label: e.label,
+      shopPrice: e.shopPrice,
+      chancePercent: e.chancePercent,
+    })),
+    user: publicUser(ctx.user),
+  });
+});
+
+/** Ungeöffnete Lootboxen (nach Kauf, vor Tippen/Öffnen). */
+app.get("/v1/shop/lootbox/pending", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  return res.json({
+    ok: true,
+    pending: pendingLootboxPublic(ctx.user),
+    price: LOOTBOX_PRICE,
+    user: publicUser(ctx.user),
+  });
+});
+
+/**
+ * Eine pending Lootbox öffnen → Item ins Inventar.
+ * Body: { id?: string } — ohne id die älteste.
+ */
+app.post("/v1/shop/lootbox/open", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const pending = ensurePendingLootboxes(ctx.user);
+  if (!pending.length) {
+    return res.status(404).json({
+      error: "none_pending",
+      message: "Keine ungeöffnete Lootbox.",
+    });
+  }
+  const wantId = String(req.body?.id || "").trim();
+  let idx = wantId ? pending.findIndex((p) => p.id === wantId) : 0;
+  if (idx < 0) idx = 0;
+  const entry = pending[idx];
+  pending.splice(idx, 1);
+  safeGiveItem(ctx.user, entry.kind, entry.itemId);
+  bumpShopPurchase(entry.kind, entry.itemId);
+  flushSave();
+  return res.json({
+    ok: true,
+    item: {
+      kind: entry.kind,
+      itemId: entry.itemId,
+      emoji: entry.emoji,
+      label: entry.label,
+      shopPrice: entry.shopPrice,
+      chancePercent: entry.chancePercent,
     },
+    pending: pendingLootboxPublic(ctx.user),
     user: publicUser(ctx.user),
   });
 });

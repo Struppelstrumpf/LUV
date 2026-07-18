@@ -1,9 +1,9 @@
 /**
  * Erfolge, Daily-Aufgaben, Day-Streak.
- * Belohnung 1–3 Coins (Tageslimit 25) — seltene Erfolge können stattdessen ein Item geben.
+ * Belohnung 1–3 Coins (Tageslimit 12) — seltene Erfolge können stattdessen ein Item geben.
  */
 
-const ACHIEVEMENT_DAILY_CAP = 25;
+const ACHIEVEMENT_DAILY_CAP = 12;
 
 /** Item-Belohnung (statt Coins). kind: pets|themes|stickers|emojis */
 function itemReward(kind, itemId, emoji, label) {
