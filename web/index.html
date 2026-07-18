@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>LUV — Nähe, die mitgeht</title>
-  <meta name="description" content="Mit LUV seid ihr einfach verbunden: Herzen und kleine Zeichen live auf dem Sperrbildschirm — für Partner:in und Familie, egal wo ihr seid." />
+  <meta name="description" content="LUV verbindet euch live: gemeinsam zeichnen auf dem Sperrbildschirm, Lobbys, Profil, Freunde und sogar heiraten — für Partner:in und Familie." />
   <meta name="theme-color" content="#0B0E14" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -18,54 +18,172 @@
     <div class="grain"></div>
   </div>
 
-  <main class="stage">
-    <header class="brand-block">
-      <p class="live-users" aria-live="polite">
-        <span class="live-dot" aria-hidden="true"></span>
-        <span class="live-count" id="liveCount">42.147</span>
-        <span class="live-label">gerade füreinander da</span>
-      </p>
-      <p class="brand" aria-label="LUV"><span class="c-l">L</span><span class="c-u">U</span><span class="c-v">V</span></p>
-      <h1 class="headline">Weil Nähe<br />kein Ort braucht.</h1>
-      <p class="lede">Mit LUV teilt ihr denselben Sperrbildschirm — Herzen, Kritzeleien, das kleine „ich denk an dich“. Live mit Partner:in oder Familie. Einfach verbunden.</p>
-      <div class="cta-row">
-        <a class="download" href="https://reineke.pro/downloads/luv/LUV.apk" download="LUV.apk">
-          <span class="download-label">Jetzt verbunden bleiben</span>
-          <span class="download-meta">Android · kostenlos · für euch</span>
-        </a>
-      </div>
-    </header>
+  <section class="hero" id="top">
+    <div class="hero-inner">
+      <header class="brand-block">
+        <p class="live-users" aria-live="polite">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span class="live-count" id="liveCount">12.847</span>
+          <span class="live-label">gerade füreinander da</span>
+        </p>
+        <p class="brand" aria-label="LUV"><span class="c-l">L</span><span class="c-u">U</span><span class="c-v">V</span></p>
+        <h1 class="headline">Zwei Screens.<br />Ein gemeinsames Gefühl.</h1>
+        <p class="lede">Ein Herz auf dem Sperrbildschirm sagt manchmal mehr als hundert Nachrichten. Zeichnet live, bleibt nah — egal wo ihr seid.</p>
+        <div class="cta-row">
+          <a class="download" href="https://reineke.pro/downloads/luv/LUV.apk" download="LUV.apk">
+            <span class="download-label">Jetzt verbunden bleiben</span>
+            <span class="download-meta">Android · kostenlos · für euch</span>
+          </a>
+        </div>
+      </header>
 
-    <section class="phones" aria-label="Live-Demo zweier Sperrbildschirme">
-      <div class="phone phone-him" data-side="him">
-        <div class="phone-bezel">
-          <div class="phone-notch"></div>
-          <div class="screen screen-blue">
-            <canvas class="draw" width="280" height="420" aria-hidden="true"></canvas>
-            <div class="hand" aria-hidden="true">
-              <svg viewBox="0 0 64 64" fill="none">
-                <path d="M28 10c2-1 5 1 5 4v18l8-6c2-1 5 0 5 3 0 1-1 2-2 3l-9 7v13c0 3-2 5-5 5h-2c-3 0-5-2-5-5V22c0-2 1-4 3-4l2-8z" fill="currentColor" opacity=".92"/>
-              </svg>
+      <div class="phones" aria-label="Live-Demo zweier Sperrbildschirme">
+        <div class="phone phone-him" data-side="him">
+          <div class="phone-bezel">
+            <div class="phone-notch"></div>
+            <div class="screen screen-blue">
+              <canvas class="draw" width="280" height="420" aria-hidden="true"></canvas>
+              <div class="hand" aria-hidden="true">
+                <svg viewBox="0 0 64 64" fill="none">
+                  <path d="M28 10c2-1 5 1 5 4v18l8-6c2-1 5 0 5 3 0 1-1 2-2 3l-9 7v13c0 3-2 5-5 5h-2c-3 0-5-2-5-5V22c0-2 1-4 3-4l2-8z" fill="currentColor" opacity=".92"/>
+                </svg>
+              </div>
             </div>
           </div>
+          <span class="phone-caption">Du</span>
         </div>
-        <span class="phone-caption">Du</span>
-      </div>
 
-      <div class="sync-pulse" aria-hidden="true">
-        <span></span><span></span><span></span>
-      </div>
+        <div class="sync-pulse" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
 
-      <div class="phone phone-her" data-side="her">
-        <div class="phone-bezel">
-          <div class="phone-notch"></div>
-          <div class="screen screen-magenta">
-            <canvas class="draw" width="280" height="420" aria-hidden="true"></canvas>
-            <div class="spark" aria-hidden="true"></div>
+        <div class="phone phone-her" data-side="her">
+          <div class="phone-bezel">
+            <div class="phone-notch"></div>
+            <div class="screen screen-magenta">
+              <canvas class="draw" width="280" height="420" aria-hidden="true"></canvas>
+              <div class="spark" aria-hidden="true"></div>
+            </div>
+          </div>
+          <span class="phone-caption">Dein Herz</span>
+        </div>
+      </div>
+    </div>
+
+    <a class="scroll-cue" href="#entdecken" id="scrollCue">
+      <span class="scroll-cue-label">So funktioniert’s</span>
+      <span class="scroll-cue-arrow" aria-hidden="true"></span>
+    </a>
+  </section>
+
+  <main class="explore" id="entdecken">
+    <header class="explore-head">
+      <p class="explore-kicker">Ein Blick hinein</p>
+      <h2 class="explore-title">Wie LUV sich anfühlt</h2>
+      <p class="explore-lede">Nicht noch eine Chat-App. Ein gemeinsamer Ort — leise, bunt, nur für euch.</p>
+    </header>
+
+    <section class="flow" aria-label="So funktioniert LUV">
+      <article class="flow-step">
+        <div class="flow-visual" aria-hidden="true">
+          <div class="mock mock-lock">
+            <div class="mock-status">12:48</div>
+            <div class="mock-heart"></div>
+            <div class="mock-stroke"></div>
           </div>
         </div>
-        <span class="phone-caption">Dein Herz</span>
-      </div>
+        <div class="flow-copy">
+          <span class="flow-num">01</span>
+          <h3>Zeichnen auf dem Sperrbildschirm</h3>
+          <p>Öffne das Handy — und da ist schon ein Strich von der Person, die dir fehlt. Live, ohne App zu öffnen, ohne lange Tippen.</p>
+        </div>
+      </article>
+
+      <article class="flow-step flow-step-flip">
+        <div class="flow-visual" aria-hidden="true">
+          <div class="mock mock-lobbies">
+            <div class="mock-tile t1"><span>Meine Leinwand</span></div>
+            <div class="mock-tile t2"><span>Unsre Nest</span></div>
+            <div class="mock-tile t3"><span>Random</span></div>
+          </div>
+        </div>
+        <div class="flow-copy">
+          <span class="flow-num">02</span>
+          <h3>Lobbys &amp; gemeinsame Räume</h3>
+          <p>Eigene Leinwände anlegen, jemanden per Code einladen, Momente speichern. Bis zu zehn Personen — oder einfach zu zweit.</p>
+        </div>
+      </article>
+
+      <article class="flow-step">
+        <div class="flow-visual" aria-hidden="true">
+          <div class="mock mock-social">
+            <div class="mock-avatar a1">🐣</div>
+            <div class="mock-bar"><i style="width:72%"></i></div>
+            <div class="mock-avatar a2">💍</div>
+            <div class="mock-ring"></div>
+          </div>
+        </div>
+        <div class="flow-copy">
+          <span class="flow-num">03</span>
+          <h3>Freunde, Level &amp; heiraten</h3>
+          <p>Begleiter kraulen, Freundschaft wachsen lassen. Bei Level&nbsp;100 könnt ihr gratis heiraten — dann 7&nbsp;Tage Verlobung, 7&nbsp;Tage Hochzeitsleinwand, dann Ehe.</p>
+        </div>
+      </article>
+    </section>
+
+    <section class="features" aria-label="Funktionen">
+      <h2 class="features-title">Was alles drin ist</h2>
+      <ul class="feature-grid">
+        <li>
+          <span class="f-ico" aria-hidden="true">✏️</span>
+          <strong>Live-Zeichnen</strong>
+          <span>Gemeinsam in Echtzeit auf einer Leinwand.</span>
+        </li>
+        <li>
+          <span class="f-ico" aria-hidden="true">🔒</span>
+          <strong>Sperrbildschirm</strong>
+          <span>Nähe, die ankommt — schon vor dem Entsperren.</span>
+        </li>
+        <li>
+          <span class="f-ico" aria-hidden="true">🖼️</span>
+          <strong>Galerie</strong>
+          <span>Momente speichern und später wieder anschauen.</span>
+        </li>
+        <li>
+          <span class="f-ico" aria-hidden="true">👤</span>
+          <strong>Profil-Leinwand</strong>
+          <span>Sticker, Begleiter, Bio — euer Platz im Netz.</span>
+        </li>
+        <li>
+          <span class="f-ico" aria-hidden="true">💝</span>
+          <strong>Sozial</strong>
+          <span>Freunde, Anfragen, Freundschaftslevel bis 100.</span>
+        </li>
+        <li>
+          <span class="f-ico" aria-hidden="true">💒</span>
+          <strong>Hochzeit</strong>
+          <span>Hochzeitsleinwand, Gästebuch, Ehering.</span>
+        </li>
+        <li>
+          <span class="f-ico" aria-hidden="true">🛒</span>
+          <strong>Shop &amp; Markt</strong>
+          <span>Items, Lootboxen, Handel untereinander.</span>
+        </li>
+        <li>
+          <span class="f-ico" aria-hidden="true">☁️</span>
+          <strong>Google speichern</strong>
+          <span>Gerätewechsel — eure Welt bleibt bei euch.</span>
+        </li>
+      </ul>
+    </section>
+
+    <section class="closing">
+      <p class="closing-brand" aria-label="LUV"><span class="c-l">L</span><span class="c-u">U</span><span class="c-v">V</span></p>
+      <p class="closing-line">Für Herzen, die denselben Bildschirm teilen wollen.</p>
+      <a class="download download-lg" href="https://reineke.pro/downloads/luv/LUV.apk" download="LUV.apk">
+        <span class="download-label">LUV laden</span>
+        <span class="download-meta">Android · kostenlos</span>
+      </a>
     </section>
   </main>
 

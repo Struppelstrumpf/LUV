@@ -3,22 +3,22 @@
   const impressumDialog = document.getElementById("impressumDialog");
   openImpressum?.addEventListener("click", () => impressumDialog?.showModal());
 
-  // Fake „live“ Nutzerzähler — ruhig (~100/min), selten abrupte Wellen, nie gerade
+  // Fake „live“ Nutzerzähler — ruhig im Bereich ~10–15k
   (function liveUsersHook() {
     const el = document.getElementById("liveCount");
     if (!el) return;
 
-    const HARD_MIN = 35011;
-    const HARD_MAX = 51987;
+    const HARD_MIN = 10011;
+    const HARD_MAX = 14987;
 
-    // Zielniveau ~42.000 über den Tag (Lokalzeit) — nie glatte Tausender
+    // Zielniveau ~12.5k über den Tag (Lokalzeit) — nie glatte Tausender
     const HOUR_TARGET = [
-      37147, 36283, 35871, 35193, 36427, 38111, // 0–5 Nacht
-      40247, 42111, 43893, // 6–8 Morgen
-      45117, 46447, 47113, 46007, 44773, // 9–13
-      45441, 46773, 48119, // 14–16
-      49887, 51221, 50117, 47773, 45889, // 17–21 Abend
-      42883, 39997, // 22–23
+      10847, 10483, 10271, 10093, 10627, 11111, // 0–5 Nacht
+      11847, 12411, 12993, // 6–8 Morgen
+      13217, 13647, 13813, 13407, 12973, // 9–13
+      13141, 13573, 13919, // 14–16
+      14287, 14621, 14317, 13673, 12889, // 17–21 Abend
+      12183, 11497, // 22–23
     ];
 
     const rand = (a, b) => a + Math.random() * (b - a);
@@ -65,9 +65,9 @@
       // Sehr leichte Drift zum Tagesziel (kein hektisches Nachziehen)
       delta += (target - value) * 0.0008;
 
-      // Seltene abrupte Sprünge (alle paar Minuten)
+      // Seltene abrupte Sprünge (alle paar Minuten) — kleiner Maßstab
       if (now - lastJumpAt > 90000 && Math.random() < 0.04) {
-        delta += pick([-1, 1]) * rand(55, 160);
+        delta += pick([-1, 1]) * rand(18, 55);
         lastJumpAt = now;
         waveRemaining = 0;
       }
@@ -76,7 +76,7 @@
       if (waveRemaining <= 0 && now - lastJumpAt > 120000 && Math.random() < 0.025) {
         const dir = pick([-1, 1]);
         const ticks = (rand(80, 180)) | 0; // bei ~1.3s ≈ 2–4 min
-        const total = rand(70, 220);
+        const total = rand(25, 80);
         waveStep = (dir * total) / ticks;
         waveRemaining = ticks;
         lastJumpAt = now;
@@ -101,12 +101,21 @@
     setTimeout(tick, rand(600, 1200));
   })();
 
+  document.getElementById("scrollCue")?.addEventListener("click", (e) => {
+    const target = document.getElementById("entdecken");
+    if (!target) return;
+    e.preventDefault();
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
   const leftPhone = document.querySelector(".phone-him");
   const rightPhone = document.querySelector(".phone-her");
+  if (!leftPhone || !rightPhone) return;
   const leftCanvas = leftPhone.querySelector("canvas.draw");
   const rightCanvas = rightPhone.querySelector("canvas.draw");
   const hand = leftPhone.querySelector(".hand");
   const spark = rightPhone.querySelector(".spark");
+  if (!leftCanvas || !rightCanvas || !hand || !spark) return;
 
   const leftCtx = leftCanvas.getContext("2d");
   const rightCtx = rightCanvas.getContext("2d");
