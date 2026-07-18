@@ -186,7 +186,8 @@ data class StaffUserCard(
     val petEmoji: String,
     val permissions: Map<String, Boolean> = emptyMap(),
     val modSince: Long? = null,
-    val marriage: LuvApiClient.MarriageInfo? = null
+    val marriage: LuvApiClient.MarriageInfo? = null,
+    val marriageCooldownLabel: String? = null
 )
 
 data class StaffPermGroup(
@@ -868,7 +869,8 @@ object LuvApiClient {
             petEmoji = o.optString("petEmoji", "🐣").ifBlank { "🐣" },
             permissions = perms,
             modSince = o.optLong("modSince").takeIf { it > 0L },
-            marriage = parseMarriageInfo(o.optJSONObject("marriage"))
+            marriage = parseMarriageInfo(o.optJSONObject("marriage")),
+            marriageCooldownLabel = o.optString("marriageCooldownLabel").takeIf { it.isNotBlank() }
         )
     }
 
@@ -1365,6 +1367,11 @@ object LuvApiClient {
         val glassTipsRemaining: Int = 10,
         val friendshipLevel: Int = 0,
         val canProposeMarriage: Boolean = false,
+        val proposeUnlockCost: Int = 0,
+        val marriageCooldownRemainingMs: Long = 0L,
+        val marriageCooldownSkipCost: Int = 0,
+        val marriageCooldownLabel: String? = null,
+        val partnerMarriageCooldownLabel: String? = null,
         val canDivorce: Boolean = false,
         val marriage: MarriageInfo? = null,
         val spousePublic: PartnerPublic? = null,
@@ -1395,6 +1402,13 @@ object LuvApiClient {
                     glassTipsRemaining = json.optInt("glassTipsRemaining", 10),
                     friendshipLevel = json.optInt("friendshipLevel", 0),
                     canProposeMarriage = json.optBoolean("canProposeMarriage", false),
+                    proposeUnlockCost = json.optInt("proposeUnlockCost", 0),
+                    marriageCooldownRemainingMs = json.optLong("marriageCooldownRemainingMs", 0L),
+                    marriageCooldownSkipCost = json.optInt("marriageCooldownSkipCost", 0),
+                    marriageCooldownLabel = json.optString("marriageCooldownLabel")
+                        .takeIf { it.isNotBlank() },
+                    partnerMarriageCooldownLabel = json.optString("partnerMarriageCooldownLabel")
+                        .takeIf { it.isNotBlank() },
                     canDivorce = json.optBoolean("canDivorce", false),
                     marriage = parseMarriageInfo(json.optJSONObject("marriage")),
                     spousePublic = parsePartnerPublic(json.optJSONObject("spousePublic")),
@@ -1425,7 +1439,10 @@ object LuvApiClient {
         val incoming: List<FriendCard>,
         val outgoing: List<FriendCard>,
         val marriageProposals: List<FriendCard> = emptyList(),
-        val myMarriage: MarriageInfo? = null
+        val myMarriage: MarriageInfo? = null,
+        val marriageCooldownRemainingMs: Long = 0L,
+        val marriageCooldownSkipCost: Int = 0,
+        val marriageCooldownLabel: String? = null
     )
 
     data class PetKraulResult(
@@ -1517,13 +1534,27 @@ object LuvApiClient {
             incoming = parseFriendCards(json.optJSONArray("incoming")),
             outgoing = parseFriendCards(json.optJSONArray("outgoing")),
             marriageProposals = parseFriendCards(json.optJSONArray("marriageProposals")),
-            myMarriage = parseMarriageInfo(json.optJSONObject("myMarriage"))
+            myMarriage = parseMarriageInfo(json.optJSONObject("myMarriage")),
+            marriageCooldownRemainingMs = json.optLong("marriageCooldownRemainingMs", 0L),
+            marriageCooldownSkipCost = json.optInt("marriageCooldownSkipCost", 0),
+            marriageCooldownLabel = json.optString("marriageCooldownLabel").takeIf { it.isNotBlank() }
         )
     }
 
-    suspend fun proposeMarriage(userId: String): MarriageInfo? = withContext(Dispatchers.IO) {
-        val json = authedPost("/v1/users/${userId.trim().encodeURL()}/marry/propose", "{}")
+    suspend fun proposeMarriage(
+        userId: String,
+        unlockWithCoins: Boolean = true
+    ): MarriageInfo? = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("unlockWithCoins", unlockWithCoins).toString()
+        val json = authedPost("/v1/users/${userId.trim().encodeURL()}/marry/propose", body)
+        json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
         parseMarriageInfo(json.optJSONObject("marriage"))
+    }
+
+    suspend fun skipMarriageCooldown(): Int = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/me/marriage/skip-cooldown", "{}")
+        json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
+        json.optInt("cost", 0)
     }
 
     suspend fun acceptMarriage(userId: String): MarriageInfo? = withContext(Dispatchers.IO) {

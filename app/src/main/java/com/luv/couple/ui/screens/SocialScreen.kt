@@ -165,7 +165,10 @@ private fun FriendsPanel(
     var outgoing by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
     var marriageProposals by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
     var myMarriage by remember { mutableStateOf<LuvApiClient.MarriageInfo?>(null) }
+    var divorceCooldownLabel by remember { mutableStateOf<String?>(null) }
+    var divorceCooldownSkipCost by remember { mutableIntStateOf(0) }
     var showSkipWait by remember { mutableStateOf(false) }
+    var cooldownBusy by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
     var busyId by remember { mutableStateOf<String?>(null) }
     var dragId by remember { mutableStateOf<String?>(null) }
@@ -185,6 +188,8 @@ private fun FriendsPanel(
                     outgoing = it.outgoing
                     marriageProposals = it.marriageProposals
                     myMarriage = it.myMarriage
+                    divorceCooldownLabel = it.marriageCooldownLabel
+                    divorceCooldownSkipCost = it.marriageCooldownSkipCost
                     com.luv.couple.net.NotificationBadges.setFriendIncoming(
                         it.incoming.size + it.marriageProposals.size
                     )
@@ -248,6 +253,67 @@ private fun FriendsPanel(
             contentAlignment = Alignment.Center
         ) {
             Text("+", color = Color.White, fontFamily = DisplayFont, fontSize = 28.sp)
+        }
+
+        if (!divorceCooldownLabel.isNullOrBlank() && myMarriage == null) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(BgSoft)
+                    .border(1.dp, TextMuted.copy(0.25f), RoundedCornerShape(18.dp))
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Scheidungs-Wartezeit",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 16.sp
+                )
+                Text(
+                    "Noch $divorceCooldownLabel, bis du wieder heiraten kannst.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp
+                )
+                if (divorceCooldownSkipCost > 0) {
+                    Text(
+                        if (cooldownBusy) "…"
+                        else "Wartezeit überspringen · $divorceCooldownSkipCost Coins",
+                        color = AccentRose,
+                        fontFamily = DisplayFont,
+                        fontSize = 14.sp,
+                        modifier = Modifier
+                            .clickable(enabled = !cooldownBusy) {
+                                cooldownBusy = true
+                                scope.launch {
+                                    runCatching { LuvApiClient.skipMarriageCooldown() }
+                                        .onSuccess { cost ->
+                                            divorceCooldownLabel = null
+                                            divorceCooldownSkipCost = 0
+                                            Toast.makeText(
+                                                context,
+                                                if (cost > 0) "Cooldown beendet (−$cost Coins)"
+                                                else "Cooldown beendet",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                            reload()
+                                        }
+                                        .onFailure {
+                                            Toast.makeText(
+                                                context,
+                                                it.message ?: "Fehler",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    cooldownBusy = false
+                                }
+                            }
+                            .padding(vertical = 4.dp)
+                    )
+                }
+            }
         }
 
         val waitM = myMarriage

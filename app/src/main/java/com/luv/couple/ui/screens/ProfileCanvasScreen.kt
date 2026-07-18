@@ -172,6 +172,10 @@ fun ProfileCanvasScreen(
     var petKraulBusy by remember { mutableStateOf(false) }
     var friendshipLevel by remember { mutableIntStateOf(0) }
     var canProposeMarriage by remember { mutableStateOf(false) }
+    var proposeUnlockCost by remember { mutableIntStateOf(0) }
+    var marriageCooldownLabel by remember { mutableStateOf<String?>(null) }
+    var marriageCooldownSkipCost by remember { mutableIntStateOf(0) }
+    var partnerCooldownLabel by remember { mutableStateOf<String?>(null) }
     var canDivorce by remember { mutableStateOf(false) }
     var spouseExtraName by remember { mutableStateOf<String?>(null) }
     var engagedExtraName by remember { mutableStateOf<String?>(null) }
@@ -262,6 +266,10 @@ fun ProfileCanvasScreen(
                 peerPetEmoji = remote.petEmoji.ifBlank { remote.state.companionEmoji.ifBlank { "🐣" } }
                 friendshipLevel = remote.friendshipLevel
                 canProposeMarriage = remote.canProposeMarriage
+                proposeUnlockCost = remote.proposeUnlockCost
+                marriageCooldownLabel = remote.marriageCooldownLabel
+                marriageCooldownSkipCost = remote.marriageCooldownSkipCost
+                partnerCooldownLabel = remote.partnerMarriageCooldownLabel
                 canDivorce = remote.canDivorce
                 spouseExtraName = remote.spousePublic?.nickname
                 engagedExtraName = remote.fiancePublic?.nickname
@@ -276,6 +284,10 @@ fun ProfileCanvasScreen(
                 peerPetEmoji = "🐣"
                 friendshipLevel = 0
                 canProposeMarriage = false
+                proposeUnlockCost = 0
+                marriageCooldownLabel = null
+                marriageCooldownSkipCost = 0
+                partnerCooldownLabel = null
                 canDivorce = false
             }
             savedSnapshot = state.snapshotKey()
@@ -945,6 +957,7 @@ fun ProfileCanvasScreen(
                     }
                     if (canProposeMarriage) {
                         Spacer(modifier = Modifier.height(10.dp))
+                        val totalHint = proposeUnlockCost + marriageCooldownSkipCost
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -955,8 +968,23 @@ fun ProfileCanvasScreen(
                                 .clickable { showMarryInfo = true },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("💍  Heiraten", color = Color(0xFF5A4030), fontFamily = DisplayFont)
+                            Text(
+                                if (totalHint > 0) "💍  Heiraten · ab $totalHint Coins"
+                                else "💍  Heiraten",
+                                color = Color(0xFF5A4030),
+                                fontFamily = DisplayFont
+                            )
                         }
+                    } else if (friendStatus == "friends" && !partnerCooldownLabel.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Partner hat noch Scheidungs-Wartezeit (${partnerCooldownLabel})",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 12.sp,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center
+                        )
                     }
                     if (canDivorce) {
                         Spacer(modifier = Modifier.height(10.dp))
@@ -1048,37 +1076,98 @@ fun ProfileCanvasScreen(
         }
 
         if (showMarryInfo) {
+            val unlock = proposeUnlockCost
+            val cool = marriageCooldownSkipCost
+            val total = unlock + cool
+            val coins = AccountSession.account.value?.coins ?: displayCoins
             AlertDialog(
                 onDismissRequest = { showMarryInfo = false },
                 title = { Text("Heiraten", fontFamily = DisplayFont) },
                 text = {
-                    Text(
-                        "Ihr habt Freundschaftslevel 100. Nach Annahme seid ihr 7 Tage verlobt, " +
-                            "danach öffnet sich eine gemeinsame Hochzeitsleinwand (7 Tage). " +
-                            "Danach seid ihr verheiratet — mit Ehepartner-Extra, Gästebuch und dem Ehering-Begleiter.",
-                        fontFamily = BodyFont,
-                        color = TextMuted
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Nach Annahme: 7 Tage verlobt, dann 7 Tage Hochzeitsleinwand. " +
+                                "Danach Ehepartner-Extra, Gästebuch und Ehering. Nur eine Ehe gleichzeitig.",
+                            fontFamily = BodyFont,
+                            color = TextMuted
+                        )
+                        Text(
+                            "Freundschaftslevel $friendshipLevel / 100",
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 14.sp
+                        )
+                        if (unlock > 0) {
+                            Text(
+                                "Unter Level 100: $unlock Coins Freischaltung",
+                                color = Color(0xFFFFD54F),
+                                fontFamily = BodyFont,
+                                fontSize = 13.sp
+                            )
+                        } else {
+                            Text(
+                                "Level 100 — Antrag kostenlos",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 13.sp
+                            )
+                        }
+                        if (cool > 0) {
+                            Text(
+                                "Deine Scheidungs-Wartezeit (${marriageCooldownLabel ?: "…"}): +$cool Coins",
+                                color = AccentRose,
+                                fontFamily = BodyFont,
+                                fontSize = 13.sp
+                            )
+                        }
+                        if (total > 0) {
+                            Text(
+                                "Gesamt $total Coins · du hast $coins",
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
                 },
                 confirmButton = {
-                    TextButton(onClick = {
-                        val uid = userId ?: return@TextButton
-                        showMarryInfo = false
-                        scope.launch {
-                            runCatching { LuvApiClient.proposeMarriage(uid) }
-                                .onSuccess {
-                                    canProposeMarriage = false
-                                    Toast.makeText(context, "Antrag gesendet 💍", Toast.LENGTH_SHORT).show()
+                    TextButton(
+                        enabled = total <= 0 || coins >= total,
+                        onClick = {
+                            val uid = userId ?: return@TextButton
+                            showMarryInfo = false
+                            scope.launch {
+                                runCatching {
+                                    LuvApiClient.proposeMarriage(uid, unlockWithCoins = unlock > 0)
                                 }
-                                .onFailure {
-                                    Toast.makeText(
-                                        context,
-                                        it.message ?: "Antrag fehlgeschlagen",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
+                                    .onSuccess {
+                                        canProposeMarriage = false
+                                        proposeUnlockCost = 0
+                                        marriageCooldownSkipCost = 0
+                                        marriageCooldownLabel = null
+                                        displayCoins = AccountSession.account.value?.coins ?: displayCoins
+                                        Toast.makeText(
+                                            context,
+                                            if (total > 0) "Antrag gesendet (−$total Coins) 💍"
+                                            else "Antrag gesendet 💍",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                    .onFailure {
+                                        Toast.makeText(
+                                            context,
+                                            it.message ?: "Antrag fehlgeschlagen",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                            }
                         }
-                    }) { Text("Antrag senden", color = AccentRose) }
+                    ) {
+                        Text(
+                            if (total > 0) "Antrag senden · $total Coins" else "Antrag senden",
+                            color = AccentRose
+                        )
+                    }
                 },
                 dismissButton = {
                     TextButton(onClick = { showMarryInfo = false }) {
@@ -1096,7 +1185,9 @@ fun ProfileCanvasScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (!divorceStep2) {
                             Text(
-                                "Tippe „scheiden“ zur Bestätigung. Ehepartner-Extra, Hochzeitsbild und Ehering entfallen.",
+                                "Tippe „scheiden“ zur Bestätigung. Partner muss nicht zustimmen. " +
+                                    "Ehepartner-Extra, Hochzeitsbild und Ehering entfallen. " +
+                                    "Danach 7 Tage Wartezeit (oder Coins), bevor wieder geheiratet werden kann.",
                                 fontFamily = BodyFont,
                                 color = TextMuted
                             )

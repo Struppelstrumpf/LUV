@@ -1150,8 +1150,14 @@ function endMarriageRecord(m, reason) {
   // Auch unter pairKey löschen falls id anders
   delete marriage.ensureMarriages(db)[marriage.pairKey(m.a, m.b)];
   if (reason === "divorce") {
-    if (a) trackAch(a, "divorces", 1);
-    if (b) trackAch(b, "divorces", 1);
+    if (a) {
+      marriage.setDivorceCooldown(a);
+      trackAch(a, "divorces", 1);
+    }
+    if (b) {
+      marriage.setDivorceCooldown(b);
+      trackAch(b, "divorces", 1);
+    }
   }
 }
 
@@ -3685,6 +3691,11 @@ function staffUserCard(user) {
     permissions: user.role === "mod" ? staffPermissions(user) : undefined,
     modSince: user.modSince || null,
     marriage: marriage.publicMarriage(m, user.id, db.users),
+    marriageCooldownRemainingMs: marriage.cooldownRemainingMs(user),
+    marriageCooldownLabel: (() => {
+      const rem = marriage.cooldownRemainingMs(user);
+      return rem > 0 ? marriage.formatRemaining(rem) : null;
+    })(),
   };
 }
 
@@ -5318,12 +5329,18 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   const tipRecv = glassTipRecvState(user);
   const bond = marriage.findMarriageBetween(db, ctx.user.id, uid);
   const theirMarriage = marriage.findMarriageForUser(db, uid);
+  const myMarriageBusy = marriage.findMarriageForUser(db, ctx.user.id);
   const friendshipLevel = areFriends || isSelf ? marriage.getLevel(ctx.user, uid) : 0;
-  const canPropose =
-    areFriends &&
-    friendshipLevel >= 100 &&
-    !marriage.findMarriageForUser(db, ctx.user.id) &&
-    !theirMarriage;
+  const myCooldownMs = marriage.cooldownRemainingMs(ctx.user);
+  const theirCooldownMs = marriage.cooldownRemainingMs(user);
+  const proposeUnlockCost = marriage.proposeUnlockCost(friendshipLevel);
+  const myCooldownSkipCost = marriage.skipWaitCost(
+    myCooldownMs,
+    marriage.DIVORCE_COOLDOWN_MS
+  );
+  const slotsFree = !myMarriageBusy && !theirMarriage;
+  const canProposeMarriage =
+    areFriends && slotsFree && theirCooldownMs <= 0;
   return res.json({
     nickname: user.nickname || "Jemand",
     userId: user.id,
@@ -5337,7 +5354,15 @@ app.get("/v1/users/:userId/profile", (req, res) => {
     glassTipDailyMax: GLASS_TIP_DAILY_MAX,
     canTipGlass: !isSelf && tipRecv.remaining > 0,
     friendshipLevel,
-    canProposeMarriage: canPropose,
+    canProposeMarriage,
+    proposeUnlockCost,
+    proposeFreeAtLevel100: friendshipLevel >= 100,
+    marriageCooldownRemainingMs: myCooldownMs,
+    marriageCooldownSkipCost: myCooldownSkipCost,
+    marriageCooldownLabel: myCooldownMs > 0 ? marriage.formatRemaining(myCooldownMs) : null,
+    partnerMarriageCooldownRemainingMs: theirCooldownMs,
+    partnerMarriageCooldownLabel:
+      theirCooldownMs > 0 ? marriage.formatRemaining(theirCooldownMs) : null,
     canDivorce: Boolean(bond && bond.status === "married"),
     marriage: marriage.publicMarriage(
       isSelf ? theirMarriage : bond || theirMarriage,
@@ -5411,6 +5436,7 @@ app.get("/v1/me/friends", (req, res) => {
   const friendCards = sortFriendsSpouseFirst(
     f.list.map((id) => friendPublicCard(db.users[id], ctx.user)).filter(Boolean)
   );
+  const myCd = marriage.cooldownRemainingMs(ctx.user);
   return res.json({
     ok: true,
     friends: friendCards,
@@ -5422,6 +5448,9 @@ app.get("/v1/me/friends", (req, res) => {
       .filter(Boolean),
     marriageProposals: pendingProposals,
     myMarriage: marriage.publicMarriage(myMarriage, ctx.user.id, db.users),
+    marriageCooldownRemainingMs: myCd,
+    marriageCooldownSkipCost: marriage.skipWaitCost(myCd, marriage.DIVORCE_COOLDOWN_MS),
+    marriageCooldownLabel: myCd > 0 ? marriage.formatRemaining(myCd) : null,
   });
 });
 
@@ -5634,7 +5663,11 @@ app.post("/v1/users/:userId/pet-kraul", (req, res) => {
   });
 });
 
-/** Heiratsantrag stellen (Freundschaftslevel 100). */
+/**
+ * Heiratsantrag — kostenlos ab Freundschaftslevel 100,
+ * darunter mit Coins (unlockWithCoins). Nach Scheidung 7-Tage-Cooldown
+ * (eigene mit Coins überspringbar).
+ */
 app.post("/v1/users/:userId/marry/propose", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
@@ -5648,12 +5681,6 @@ app.post("/v1/users/:userId/marry/propose", (req, res) => {
   if (friendRelation(ctx.user, toId) !== "friends") {
     return res.status(403).json({ error: "friends_only", message: "Nur Freunde heiraten." });
   }
-  if (marriage.getLevel(ctx.user, toId) < 100) {
-    return res.status(400).json({
-      error: "level_low",
-      message: "Freundschaftslevel 100 nötig.",
-    });
-  }
   if (marriage.findMarriageForUser(db, ctx.user.id)) {
     return res.status(400).json({
       error: "already_busy",
@@ -5665,6 +5692,39 @@ app.post("/v1/users/:userId/marry/propose", (req, res) => {
       error: "partner_busy",
       message: "Diese Person ist bereits verlobt oder verheiratet.",
     });
+  }
+  const theirCd = marriage.cooldownRemainingMs(target);
+  if (theirCd > 0) {
+    return res.status(400).json({
+      error: "partner_cooldown",
+      message: `Diese Person hat noch Scheidungs-Wartezeit (${marriage.formatRemaining(theirCd)}).`,
+      remainingMs: theirCd,
+    });
+  }
+  const level = marriage.getLevel(ctx.user, toId);
+  const unlockCost = marriage.proposeUnlockCost(level);
+  const myCd = marriage.cooldownRemainingMs(ctx.user);
+  const cooldownCost = marriage.skipWaitCost(myCd, marriage.DIVORCE_COOLDOWN_MS);
+  const payUnlock = Boolean(req.body?.unlockWithCoins ?? req.body?.pay);
+  let charged = 0;
+  if (unlockCost > 0 && !payUnlock) {
+    return res.status(400).json({
+      error: "level_low",
+      message: `Freundschaftslevel 100 oder ${unlockCost} Coins nötig.`,
+      proposeUnlockCost: unlockCost,
+      friendshipLevel: level,
+    });
+  }
+  const total = (unlockCost > 0 && payUnlock ? unlockCost : 0) + cooldownCost;
+  if (total > 0) {
+    ensureCoinBuckets(ctx.user);
+    if (!requireCoins(ctx, total, res)) return;
+    if (!applyLedger(ctx.user.id, -total, "marriage_propose_fees", `${unlockCost}:${cooldownCost}`)) {
+      return res.status(402).json({ error: "no_coins", message: "Nicht genug Coins." });
+    }
+    trackAch(ctx.user, "coins_spent", total);
+    charged = total;
+    if (cooldownCost > 0) marriage.clearDivorceCooldown(ctx.user);
   }
   const key = marriage.pairKey(ctx.user.id, toId);
   const all = marriage.ensureMarriages(db);
@@ -5681,7 +5741,11 @@ app.post("/v1/users/:userId/marry/propose", (req, res) => {
   scheduleSave();
   return res.json({
     ok: true,
+    charged,
+    unlockCost: unlockCost > 0 && payUnlock ? unlockCost : 0,
+    cooldownCost,
     marriage: marriage.publicMarriage(all[key], ctx.user.id, db.users),
+    user: publicUser(ctx.user),
   });
 });
 
@@ -5745,6 +5809,38 @@ app.post("/v1/me/marriage/divorce", (req, res) => {
   endMarriageRecord(m, "divorce");
   scheduleSave();
   return res.json({ ok: true });
+});
+
+/** Scheidungs-Cooldown (7 Tage) mit Coins überspringen. */
+app.post("/v1/me/marriage/skip-cooldown", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const rem = marriage.cooldownRemainingMs(ctx.user);
+  if (rem <= 0) {
+    marriage.clearDivorceCooldown(ctx.user);
+    scheduleSave();
+    return res.json({
+      ok: true,
+      free: true,
+      user: publicUser(ctx.user),
+      marriageCooldownRemainingMs: 0,
+    });
+  }
+  const cost = marriage.skipWaitCost(rem, marriage.DIVORCE_COOLDOWN_MS);
+  ensureCoinBuckets(ctx.user);
+  if (!requireCoins(ctx, cost, res)) return;
+  if (!applyLedger(ctx.user.id, -cost, "marriage_skip_cooldown", String(rem))) {
+    return res.status(402).json({ error: "no_coins", message: "Nicht genug Coins." });
+  }
+  trackAch(ctx.user, "coins_spent", cost);
+  marriage.clearDivorceCooldown(ctx.user);
+  scheduleSave();
+  return res.json({
+    ok: true,
+    cost,
+    user: publicUser(ctx.user),
+    marriageCooldownRemainingMs: 0,
+  });
 });
 
 /** Wartezeit (Verlobung oder Hochzeitsleinwand) mit Coins überspringen. */

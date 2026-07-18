@@ -5,11 +5,14 @@
 
 const ENGAGE_WAIT_MS = 7 * 24 * 60 * 60 * 1000;
 const WEDDING_LOBBY_MS = 7 * 24 * 60 * 60 * 1000;
+const DIVORCE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 /** Einzigartiges Ehe-Item (Pet) — nicht im Shop, fällt bei Scheidung weg */
 const MARRIAGE_PET = "💍";
 const MARRIAGE_PET_LABEL = "Ehering";
 /** Volle 7-Tage-Wartezeit überspringen (Coins) */
 const SKIP_WAIT_FULL_COST = 28;
+/** Heirat ohne Level 100 — volle Kosten bei Level 0 */
+const PROPOSE_UNLOCK_FULL_COST = 40;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Coins proportional zur Restzeit (mind. 4, max. SKIP_WAIT_FULL_COST). */
@@ -18,6 +21,28 @@ function skipWaitCost(remainingMs, fullMs = ENGAGE_WAIT_MS) {
   if (rem <= 0) return 0;
   const frac = Math.min(1, rem / Math.max(1, fullMs));
   return Math.max(4, Math.min(SKIP_WAIT_FULL_COST, Math.ceil(frac * SKIP_WAIT_FULL_COST)));
+}
+
+/** Coins um unter Level 100 zu heiraten (0 bei Level 100). */
+function proposeUnlockCost(level) {
+  const lv = Math.max(0, Math.min(100, Math.floor(Number(level) || 0)));
+  if (lv >= 100) return 0;
+  return Math.max(8, Math.ceil(((100 - lv) / 100) * PROPOSE_UNLOCK_FULL_COST));
+}
+
+function cooldownRemainingMs(user) {
+  if (!user) return 0;
+  return Math.max(0, (Number(user.marriageCooldownUntil) || 0) - Date.now());
+}
+
+function setDivorceCooldown(user) {
+  if (!user) return;
+  user.marriageCooldownUntil = Date.now() + DIVORCE_COOLDOWN_MS;
+}
+
+function clearDivorceCooldown(user) {
+  if (!user) return;
+  user.marriageCooldownUntil = 0;
 }
 
 function formatRemaining(ms) {
@@ -203,11 +228,17 @@ function grantMarriageItem(user) {
 module.exports = {
   ENGAGE_WAIT_MS,
   WEDDING_LOBBY_MS,
+  DIVORCE_COOLDOWN_MS,
   MARRIAGE_PET,
   MARRIAGE_PET_LABEL,
   SKIP_WAIT_FULL_COST,
+  PROPOSE_UNLOCK_FULL_COST,
   DAY_MS,
   skipWaitCost,
+  proposeUnlockCost,
+  cooldownRemainingMs,
+  setDivorceCooldown,
+  clearDivorceCooldown,
   formatRemaining,
   pairKey,
   ensureMarriages,

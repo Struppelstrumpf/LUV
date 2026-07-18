@@ -727,10 +727,10 @@ fun AdminHubScreen(
                                             }
                                         }
                                     }
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Text("Hochzeit / Wartezeit", fontFamily = DisplayFont, color = TextPrimary, fontSize = 16.sp)
                                     u.marriage?.let { m ->
                                         if (m.status == "engaged" || m.status == "wedding" || m.status == "married" || m.status == "proposed") {
-                                            Spacer(modifier = Modifier.height(10.dp))
-                                            Text("Hochzeit / Wartezeit", fontFamily = DisplayFont, color = TextPrimary, fontSize = 16.sp)
                                             Text(
                                                 when (m.status) {
                                                     "proposed" -> "Antrag offen · von ${m.proposedBy ?: "?"}"
@@ -743,6 +743,27 @@ fun AdminHubScreen(
                                                 fontFamily = BodyFont,
                                                 fontSize = 13.sp
                                             )
+                                        }
+                                    }
+                                    // Scheidungs-Cooldown steht in der Staff-Card nur als Text wenn API sie liefert — Placeholder via remarriage note
+                                    if (u.marriage == null || u.marriage?.status !in setOf("engaged", "wedding", "married", "proposed")) {
+                                        Text(
+                                            "Keine aktive Ehe/Verlobung",
+                                            color = TextMuted,
+                                            fontFamily = BodyFont,
+                                            fontSize = 13.sp
+                                        )
+                                    }
+                                    u.marriageCooldownLabel?.let { cd ->
+                                        Text(
+                                            "Scheidungs-Cooldown: noch $cd",
+                                            color = AccentRose,
+                                            fontFamily = BodyFont,
+                                            fontSize = 13.sp
+                                        )
+                                    }
+                                    u.marriage?.let { m ->
+                                        if (m.status == "engaged" || m.status == "wedding") {
                                             if (can("gm.editCoins") && (m.status == "engaged" || m.status == "wedding")) {
                                                 Spacer(modifier = Modifier.height(6.dp))
                                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
