@@ -1,10 +1,14 @@
 package com.luv.couple.ui.screens
 
 import android.widget.Toast
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -29,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,17 +42,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.LuvApp
 import com.luv.couple.net.AccountSession
@@ -62,6 +75,7 @@ import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 enum class MarketPanel { Hub, Marketplace, ItemShop, CoinShop }
 
@@ -600,112 +614,290 @@ fun EmojiBarEditorDialog(
 ) {
     val prefs = LuvApp.instance.prefs
     val scope = rememberCoroutineScope()
-    var bar by remember { mutableStateOf(ShopCatalog.DEFAULT_BAR) }
+    val haptics = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    var bar by remember { mutableStateOf(ShopCatalog.DEFAULT_BAR.take(ShopCatalog.MAX_BAR)) }
     var owned by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var showAdd by remember { mutableStateOf(false) }
 
+    var dragIndex by remember { mutableIntStateOf(-1) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    var overTrash by remember { mutableStateOf(false) }
+
+    val slotDp = 54.dp
+    val gapDp = 8.dp
+    val trashDp = 68.dp
+    val slotPx = with(density) { slotDp.toPx() }
+    val gapPx = with(density) { gapDp.toPx() }
+    val stride = slotPx + gapPx
+
     LaunchedEffect(Unit) {
-        bar = prefs.emojiBar()
+        bar = prefs.emojiBar().take(ShopCatalog.MAX_BAR)
         owned = prefs.ownedEmojis()
     }
 
     fun persist(next: List<String>) {
-        bar = next
-        scope.launch { prefs.setEmojiBar(next) }
+        val clean = next.filter { it.isNotBlank() }.distinct().take(ShopCatalog.MAX_BAR)
+        if (clean.isEmpty()) return
+        bar = clean
+        scope.launch { prefs.setEmojiBar(clean) }
     }
 
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Column(
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .background(BgDeep)
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .fillMaxSize()
+                .background(Color.Black.copy(0.55f))
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center
         ) {
-            Text("Reaktionsleiste", color = TextPrimary, fontFamily = DisplayFont, fontSize = 22.sp)
-            Text(
-                "Reihenfolge ändern, entfernen oder eigene Emojis hinzufügen.",
-                color = TextMuted,
-                fontFamily = BodyFont,
-                fontSize = 13.sp
-            )
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(BgSoft)
-                    .padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                    .padding(horizontal = 22.dp)
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xFF1A2030), BgDeep)
+                        )
+                    )
+                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(28.dp))
+                    .padding(horizontal = 20.dp, vertical = 22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                bar.forEachIndexed { index, emoji ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(emoji, fontSize = 28.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
-                        Text(
-                            "↑",
-                            color = if (index == 0) TextMuted else TextPrimary,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable(enabled = index > 0) {
-                                    val next = bar.toMutableList()
-                                    next[index] = next[index - 1].also { next[index - 1] = next[index] }
-                                    persist(next)
-                                }
-                                .padding(8.dp)
-                        )
-                        Text(
-                            "↓",
-                            color = if (index >= bar.lastIndex) TextMuted else TextPrimary,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable(enabled = index < bar.lastIndex) {
-                                    val next = bar.toMutableList()
-                                    next[index] = next[index + 1].also { next[index + 1] = next[index] }
-                                    persist(next)
-                                }
-                                .padding(8.dp)
-                        )
-                        Text(
-                            "✕",
-                            color = AccentRose,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable(enabled = bar.size > 1) {
-                                    persist(bar.filterIndexed { i, _ -> i != index })
-                                }
-                                .padding(8.dp)
-                        )
-                    }
-                }
+                Text(
+                    "Reaktionsleiste",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 26.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Ziehen zum Sortieren · in den Mülleimer zum Entfernen",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "${bar.size} / ${ShopCatalog.MAX_BAR}",
+                    color = AccentRose.copy(0.9f),
+                    fontFamily = DisplayFont,
+                    fontSize = 13.sp
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                val listHeight = slotDp * bar.size.coerceAtLeast(1) +
+                    gapDp * (bar.size - 1).coerceAtLeast(0) +
+                    gapDp + trashDp
+
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
+                        .fillMaxWidth()
+                        .height(listHeight)
+                        .background(Color.White.copy(0.04f), RoundedCornerShape(22.dp))
+                        .border(1.dp, Color.White.copy(0.06f), RoundedCornerShape(22.dp))
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                ) {
+                    val trashHot = overTrash && dragIndex >= 0
+                    val trashScale by animateFloatAsState(
+                        targetValue = if (trashHot) 1.06f else 1f,
+                        animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                        label = "trashScale"
+                    )
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(trashDp)
+                            .graphicsLayer {
+                                scaleX = trashScale
+                                scaleY = trashScale
+                            }
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(
+                                if (trashHot) AccentRose.copy(0.28f)
+                                else Color.White.copy(0.05f)
+                            )
+                            .border(
+                                1.dp,
+                                if (trashHot) AccentRose.copy(0.7f) else Color.White.copy(0.08f),
+                                RoundedCornerShape(18.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("🗑", fontSize = if (trashHot) 26.sp else 22.sp)
+                            Text(
+                                if (trashHot) "Loslassen zum Entfernen" else "Mülleimer",
+                                color = if (trashHot) AccentRose else TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.TopCenter),
+                        verticalArrangement = Arrangement.spacedBy(gapDp)
+                    ) {
+                        bar.forEachIndexed { index, emoji ->
+                            val dragging = dragIndex == index
+                            Box(
+                                modifier = Modifier
+                                    .zIndex(if (dragging) 8f else 1f)
+                                    .graphicsLayer {
+                                        translationY = if (dragging) dragOffsetY else 0f
+                                        scaleX = if (dragging) 1.1f else 1f
+                                        scaleY = if (dragging) 1.1f else 1f
+                                        alpha = if (dragging && overTrash) 0.4f else 1f
+                                    }
+                                    .fillMaxWidth()
+                                    .height(slotDp)
+                                    .shadow(
+                                        if (dragging) 16.dp else 0.dp,
+                                        RoundedCornerShape(16.dp),
+                                        clip = false
+                                    )
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(
+                                        if (dragging) Color(0xFF2A3348)
+                                        else Color.White.copy(0.07f)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (dragging) AccentRose.copy(0.5f)
+                                        else Color.White.copy(0.08f),
+                                        RoundedCornerShape(16.dp)
+                                    )
+                                    .pointerInput(emoji, index, bar.size) {
+                                        detectDragGestures(
+                                            onDragStart = {
+                                                dragIndex = index
+                                                dragOffsetY = 0f
+                                                overTrash = false
+                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            },
+                                            onDragEnd = {
+                                                val from = dragIndex
+                                                val trash = overTrash
+                                                dragIndex = -1
+                                                dragOffsetY = 0f
+                                                overTrash = false
+                                                if (from < 0) return@detectDragGestures
+                                                if (trash) {
+                                                    if (bar.size > 1) {
+                                                        haptics.performHapticFeedback(
+                                                            HapticFeedbackType.LongPress
+                                                        )
+                                                        persist(
+                                                            bar.filterIndexed { i, _ -> i != from }
+                                                        )
+                                                    }
+                                                } else {
+                                                    persist(bar)
+                                                }
+                                            },
+                                            onDragCancel = {
+                                                dragIndex = -1
+                                                dragOffsetY = 0f
+                                                overTrash = false
+                                            },
+                                            onDrag = { change, dragAmount ->
+                                                change.consume()
+                                                if (dragIndex < 0) return@detectDragGestures
+                                                dragOffsetY += dragAmount.y
+                                                val trashTop =
+                                                    bar.size * stride - gapPx + gapPx
+                                                val finger =
+                                                    dragIndex * stride + dragOffsetY + slotPx / 2f
+                                                val nowOver = finger >= trashTop
+                                                if (nowOver != overTrash) {
+                                                    overTrash = nowOver
+                                                    if (nowOver) {
+                                                        haptics.performHapticFeedback(
+                                                            HapticFeedbackType.TextHandleMove
+                                                        )
+                                                    }
+                                                }
+                                                if (!nowOver && bar.size > 1) {
+                                                    val delta =
+                                                        (dragOffsetY / stride).roundToInt()
+                                                    val to = (dragIndex + delta)
+                                                        .coerceIn(0, bar.lastIndex)
+                                                    if (to != dragIndex) {
+                                                        val next = bar.toMutableList()
+                                                        val item = next.removeAt(dragIndex)
+                                                        next.add(to, item)
+                                                        bar = next
+                                                        dragOffsetY -= (to - dragIndex) * stride
+                                                        dragIndex = to
+                                                        haptics.performHapticFeedback(
+                                                            HapticFeedbackType.TextHandleMove
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(emoji, fontSize = 30.sp)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                val canAdd = bar.size < ShopCatalog.MAX_BAR
+                Box(
+                    modifier = Modifier
+                        .size(58.dp)
+                        .shadow(8.dp, CircleShape, clip = false)
                         .clip(CircleShape)
-                        .background(AccentRose.copy(0.25f))
-                        .clickable { showAdd = true },
+                        .background(
+                            if (canAdd) AccentRose.copy(0.9f)
+                            else Color.White.copy(0.08f)
+                        )
+                        .clickable(enabled = canAdd) { showAdd = true },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("+", color = TextPrimary, fontFamily = DisplayFont, fontSize = 24.sp)
+                    Text(
+                        "+",
+                        color = if (canAdd) Color.White else TextMuted,
+                        fontFamily = DisplayFont,
+                        fontSize = 30.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    if (canAdd) "Emoji hinzufügen" else "Leiste voll (max. ${ShopCatalog.MAX_BAR})",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 12.sp
+                )
+
+                Spacer(modifier = Modifier.height(18.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(AccentRose.copy(0.2f))
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Fertig", color = AccentRose, fontFamily = DisplayFont, fontSize = 17.sp)
                 }
             }
-            Text(
-                "Fertig",
-                color = AccentRose,
-                fontFamily = DisplayFont,
-                modifier = Modifier
-                    .align(Alignment.End)
-                    .clickable(onClick = onDismiss)
-                    .padding(8.dp)
-            )
         }
     }
 
@@ -715,27 +907,38 @@ fun EmojiBarEditorDialog(
             title = "Emoji hinzufügen",
             onDismiss = { showAdd = false }
         ) {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(56.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(220.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(available) { emoji ->
-                    Box(
-                        modifier = Modifier
-                            .aspectRatio(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(BgSoft)
-                            .clickable {
-                                if (bar.size < 12) persist(bar + emoji)
-                                showAdd = false
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(emoji, fontSize = 26.sp)
+            if (available.isEmpty()) {
+                Text(
+                    "Keine weiteren Emojis im Inventar.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp
+                )
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(56.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(available) { emoji ->
+                        Box(
+                            modifier = Modifier
+                                .aspectRatio(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(BgSoft)
+                                .clickable {
+                                    if (bar.size < ShopCatalog.MAX_BAR) {
+                                        persist(bar + emoji)
+                                    }
+                                    showAdd = false
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(emoji, fontSize = 26.sp)
+                        }
                     }
                 }
             }

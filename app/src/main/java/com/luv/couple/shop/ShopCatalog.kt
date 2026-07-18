@@ -4,6 +4,7 @@ import com.luv.couple.R
 import com.luv.couple.net.ShopPack
 
 object ShopCatalog {
+    const val MAX_BAR = 8
     val DEFAULT_BAR: List<String> = listOf("👍", "❌", "❤️", "😂", "😱", "😡", "😭")
 
     /** Alle kaufbaren Emojis mit fairem Coin-Preis. */

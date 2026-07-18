@@ -468,7 +468,8 @@ class PrefsRepository(private val context: Context) {
     }
 
     suspend fun setEmojiBar(emojis: List<String>) {
-        val clean = emojis.map { it.trim() }.filter { it.isNotBlank() }.take(12)
+        val max = com.luv.couple.shop.ShopCatalog.MAX_BAR
+        val clean = emojis.map { it.trim() }.filter { it.isNotBlank() }.distinct().take(max)
         context.dataStore.edit { prefs ->
             prefs[emojiBarKey] = JSONArray(clean).toString()
         }
@@ -715,15 +716,16 @@ class PrefsRepository(private val context: Context) {
         }
 
         fun parseEmojiBar(raw: String?): List<String> {
-            if (raw.isNullOrBlank()) return com.luv.couple.shop.ShopCatalog.DEFAULT_BAR
+            val max = com.luv.couple.shop.ShopCatalog.MAX_BAR
+            if (raw.isNullOrBlank()) return com.luv.couple.shop.ShopCatalog.DEFAULT_BAR.take(max)
             return runCatching {
                 val arr = JSONArray(raw)
                 buildList {
                     for (i in 0 until arr.length()) {
                         arr.optString(i).trim().takeIf { it.isNotBlank() }?.let { add(it) }
                     }
-                }.ifEmpty { com.luv.couple.shop.ShopCatalog.DEFAULT_BAR }
-            }.getOrDefault(com.luv.couple.shop.ShopCatalog.DEFAULT_BAR)
+                }.distinct().take(max).ifEmpty { com.luv.couple.shop.ShopCatalog.DEFAULT_BAR.take(max) }
+            }.getOrDefault(com.luv.couple.shop.ShopCatalog.DEFAULT_BAR.take(max))
         }
 
         fun parseOwnedEmojis(raw: String?): Map<String, Int> {
