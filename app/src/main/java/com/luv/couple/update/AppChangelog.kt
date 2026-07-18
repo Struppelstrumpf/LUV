@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.22",
+            listOf(
+                "Pinsel-Menü: „Fertig“ auf Pixel/Samsung nicht mehr unter der Gesture-Leiste",
+            )
+        ),
+        Entry(
             "1.9.21",
             listOf(
                 "Pinsel-Menü: „Fertig“ sitzt sicher über der System-/Gesture-Leiste",

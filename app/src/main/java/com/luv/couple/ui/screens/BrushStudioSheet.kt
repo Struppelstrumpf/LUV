@@ -16,13 +16,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.mandatorySystemGestures
+import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.systemGestures
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -30,6 +35,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -57,8 +63,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
@@ -72,6 +76,11 @@ import kotlin.math.roundToInt
 private const val BrushMin = 6f
 private const val BrushMax = 40f
 
+/**
+ * Vollflächiges Overlay (kein Dialog-Fenster) — damit Insets der Lock-Activity
+ * greifen und „Fertig“ auf Pixel/Samsung über der Gesture-Leiste bleibt.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun BrushStudioSheet(
     selectedColor: Int,
@@ -87,166 +96,163 @@ fun BrushStudioSheet(
     }
     val strokeColor = Color(PeerPalette.strokeColor(color))
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            // System legt Inhalt über Nav/Gesture-Leiste — zuverlässiger als manuelle Insets im Immersive-Lock
-            decorFitsSystemWindows = true
-        )
+    // Immersive Lock blendet Nav-Bars aus → Insets oft 0. IgnoringVisibility + Gestures erzwingen Abstand.
+    val bottomSafe = WindowInsets.navigationBarsIgnoringVisibility
+        .union(WindowInsets.mandatorySystemGestures)
+        .union(WindowInsets.systemGestures)
+        .only(WindowInsetsSides.Bottom)
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.52f))
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onDismiss
+            )
+            .windowInsetsPadding(bottomSafe)
+            // Extra Puffer für Geräte, die Gestures unterschätzen (Pixel 10 / Samsung)
+            .padding(bottom = 28.dp),
+        contentAlignment = Alignment.BottomCenter
     ) {
-        BoxWithConstraints(
+        val shortScreen = maxHeight < 640.dp
+        val veryShort = maxHeight < 560.dp
+        val sidePad = when {
+            maxWidth < 340.dp -> 10.dp
+            maxWidth < 400.dp -> 14.dp
+            else -> 20.dp
+        }
+        val cols = when {
+            maxWidth < 340.dp -> 4
+            maxWidth < 420.dp -> 5
+            else -> 6
+        }
+        val previewH = when {
+            veryShort -> 56.dp
+            shortScreen -> 68.dp
+            maxHeight < 740.dp -> 88.dp
+            else -> 104.dp
+        }
+        val titleSize = if (veryShort) 22.sp else 26.sp
+        val innerPadV = if (veryShort) 10.dp else 14.dp
+        val doneH = if (veryShort) 44.dp else 48.dp
+        val sheetMaxH = maxHeight * (if (veryShort) 0.90f else if (shortScreen) 0.86f else 0.82f)
+        val headerBlock = if (veryShort) 72.dp else 96.dp
+        val footerBlock = doneH + 24.dp
+        val scrollMaxH = (sheetMaxH - headerBlock - footerBlock).coerceAtLeast(120.dp)
+
+        Column(
             modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.52f))
+                .fillMaxWidth()
+                .widthIn(max = 440.dp)
+                .heightIn(max = sheetMaxH)
+                .padding(horizontal = sidePad)
+                .shadow(28.dp, RoundedCornerShape(28.dp), clip = false)
+                .clip(RoundedCornerShape(28.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color(0xFF1C2433),
+                            BgDeep,
+                            Color(0xFF12161E)
+                        )
+                    )
+                )
+                .border(1.dp, Color.White.copy(0.10f), RoundedCornerShape(28.dp))
                 .clickable(
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() },
-                    onClick = onDismiss
+                    onClick = {}
                 )
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(bottom = 12.dp),
-            contentAlignment = Alignment.BottomCenter
+                .padding(horizontal = 18.dp, vertical = innerPadV),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            val shortScreen = maxHeight < 640.dp
-            val veryShort = maxHeight < 560.dp
-            val sidePad = when {
-                maxWidth < 340.dp -> 10.dp
-                maxWidth < 400.dp -> 14.dp
-                else -> 20.dp
+            Box(
+                modifier = Modifier
+                    .width(40.dp)
+                    .height(4.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(0.22f))
+            )
+            Spacer(modifier = Modifier.height(if (veryShort) 8.dp else 12.dp))
+            Text(
+                "Pinsel",
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = titleSize
+            )
+            if (!veryShort) {
+                Text(
+                    "Farbe wählen · Dicke einstellen",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 10.dp)
+                )
+            } else {
+                Spacer(modifier = Modifier.height(8.dp))
             }
-            val cols = when {
-                maxWidth < 340.dp -> 4
-                maxWidth < 420.dp -> 5
-                else -> 6
-            }
-            val previewH = when {
-                veryShort -> 56.dp
-                shortScreen -> 68.dp
-                maxHeight < 740.dp -> 88.dp
-                else -> 104.dp
-            }
-            val titleSize = if (veryShort) 22.sp else 26.sp
-            val innerPadV = if (veryShort) 10.dp else 14.dp
-            val doneH = if (veryShort) 44.dp else 48.dp
-            // Sheet nur so hoch wie nötig, hart begrenzt — „Fertig“ ist Fußzeile, nicht im Scroll
-            val sheetMaxH = maxHeight * (if (veryShort) 0.92f else if (shortScreen) 0.88f else 0.84f)
-            val headerBlock = if (veryShort) 72.dp else 96.dp
-            val footerBlock = doneH + 20.dp
-            val scrollMaxH = (sheetMaxH - headerBlock - footerBlock).coerceAtLeast(140.dp)
 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 440.dp)
-                    .heightIn(max = sheetMaxH)
-                    .padding(horizontal = sidePad)
-                    .shadow(28.dp, RoundedCornerShape(28.dp), clip = false)
-                    .clip(RoundedCornerShape(28.dp))
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                Color(0xFF1C2433),
-                                BgDeep,
-                                Color(0xFF12161E)
-                            )
-                        )
-                    )
-                    .border(1.dp, Color.White.copy(0.10f), RoundedCornerShape(28.dp))
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() },
-                        onClick = {}
-                    )
-                    .padding(horizontal = 18.dp, vertical = innerPadV),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .heightIn(max = scrollMaxH)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(if (veryShort) 10.dp else 14.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .width(40.dp)
-                        .height(4.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(0.22f))
+                BrushPreviewCard(
+                    color = strokeColor,
+                    brushWidth = width,
+                    height = previewH
                 )
-                Spacer(modifier = Modifier.height(if (veryShort) 8.dp else 12.dp))
-                Text(
-                    "Pinsel",
-                    color = TextPrimary,
-                    fontFamily = DisplayFont,
-                    fontSize = titleSize
+
+                SectionLabel("Farbe")
+                ColorSwatchGrid(
+                    selected = color,
+                    taken = takenColors,
+                    columns = cols,
+                    onPick = { idx ->
+                        color = idx
+                        onColorPick(idx)
+                    }
                 )
-                if (!veryShort) {
-                    Text(
-                        "Farbe wählen · Dicke einstellen",
-                        color = TextMuted,
-                        fontFamily = BodyFont,
-                        fontSize = 13.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 2.dp, bottom = 10.dp)
-                    )
-                } else {
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
 
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = scrollMaxH)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(if (veryShort) 10.dp else 14.dp)
-                ) {
-                    BrushPreviewCard(
-                        color = strokeColor,
-                        brushWidth = width,
-                        height = previewH
-                    )
+                SectionLabel("Dicke")
+                ThicknessControl(
+                    width = width,
+                    color = strokeColor,
+                    compact = veryShort,
+                    onChange = {
+                        width = it
+                        onBrushWidthChange(it)
+                    }
+                )
 
-                    SectionLabel("Farbe")
-                    ColorSwatchGrid(
-                        selected = color,
-                        taken = takenColors,
-                        columns = cols,
-                        onPick = { idx ->
-                            color = idx
-                            onColorPick(idx)
-                        }
-                    )
+                Spacer(modifier = Modifier.height(4.dp))
+            }
 
-                    SectionLabel("Dicke")
-                    ThicknessControl(
-                        width = width,
-                        color = strokeColor,
-                        compact = veryShort,
-                        onChange = {
-                            width = it
-                            onBrushWidthChange(it)
-                        }
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-                }
-
-                Spacer(modifier = Modifier.height(if (veryShort) 8.dp else 12.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(doneH)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(AccentRose.copy(0.92f), Color(0xFFFF8FA3))
-                            )
+            Spacer(modifier = Modifier.height(if (veryShort) 8.dp else 12.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(doneH)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(AccentRose.copy(0.92f), Color(0xFFFF8FA3))
                         )
-                        .clickable(onClick = onDismiss),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "Fertig",
-                        color = Color.White,
-                        fontFamily = DisplayFont,
-                        fontSize = if (veryShort) 16.sp else 17.sp
                     )
-                }
+                    .clickable(onClick = onDismiss),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "Fertig",
+                    color = Color.White,
+                    fontFamily = DisplayFont,
+                    fontSize = if (veryShort) 16.sp else 17.sp
+                )
             }
         }
     }
