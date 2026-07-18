@@ -4196,50 +4196,87 @@ app.get("/v1/admin/users/search", (req, res) => {
   return res.json({ ok: true, users: list });
 });
 
+function findUserForStaffQuery(qRaw) {
+  const q = String(qRaw || "")
+    .trim()
+    .toLowerCase();
+  if (!q || q.length < 2) return null;
+  const users = Object.values(getDb().users || {}).filter(Boolean);
+  const exact = users.find((u) => {
+    const nick = String(u.nickname || "").toLowerCase();
+    const email = String(u.googleEmail || "").toLowerCase();
+    return nick === q || email === q || String(u.id || "").toLowerCase() === q;
+  });
+  if (exact) return exact;
+  // Teiltreffer nur bei eindeutigem Ergebnis (sonst falscher Admin-Match)
+  const partial = users.filter((u) => {
+    const nick = String(u.nickname || "").toLowerCase();
+    const email = String(u.googleEmail || "").toLowerCase();
+    return (nick.length >= 2 && nick.includes(q)) || (email.length >= 2 && email.includes(q));
+  });
+  return partial.length === 1 ? partial[0] : null;
+}
+
 app.post("/v1/admin/moderators/invite", (req, res) => {
   const ctx = requireAdmin(req, res);
   if (!ctx) return;
-  const q = String(req.body?.query || req.body?.nickname || "")
-    .trim()
-    .toLowerCase();
-  if (!q) return res.status(400).json({ error: "invalid_query" });
-  const db = getDb();
-  const target =
-    Object.values(db.users || {}).find((u) => {
-      const nick = String(u.nickname || "").toLowerCase();
-      const email = String(u.googleEmail || "").toLowerCase();
-      return nick === q || email === q || u.id === q;
-    }) ||
-    Object.values(db.users || {}).find((u) => {
-      const nick = String(u.nickname || "").toLowerCase();
-      const email = String(u.googleEmail || "").toLowerCase();
-      return nick.includes(q) || email.includes(q);
+  const q = String(req.body?.query || req.body?.nickname || "").trim();
+  if (q.length < 2) {
+    return res.status(400).json({
+      error: "invalid_query",
+      message: "Bitte Spitzname oder E-Mail eingeben.",
     });
-  if (!target) return res.status(404).json({ error: "not_found" });
-  ensureStaffFields(target);
-  if (target.role === "admin" || SUPER_ADMIN_EMAILS.has(String(target.googleEmail || "").toLowerCase())) {
-    return res.status(400).json({ error: "is_admin", message: "Admins brauchen keine Mod-Rolle." });
   }
+  const target = findUserForStaffQuery(q);
+  if (!target) {
+    return res.status(404).json({
+      error: "not_found",
+      message: "Kein eindeutiger Nutzer gefunden. Bitte exakten Spitznamen oder E-Mail nutzen.",
+    });
+  }
+  ensureStaffFields(target);
+  if (
+    target.role === "admin" ||
+    SUPER_ADMIN_EMAILS.has(String(target.googleEmail || "").toLowerCase())
+  ) {
+    return res.status(400).json({
+      error: "is_admin",
+      message: "Admins brauchen keine Moderator-Rolle.",
+    });
+  }
+  const already = target.role === "mod";
   target.role = "mod";
-  target.modPermissions = { ...DEFAULT_MOD_PERMISSIONS };
+  if (!target.modPermissions || typeof target.modPermissions !== "object") {
+    target.modPermissions = { ...DEFAULT_MOD_PERMISSIONS };
+  }
   target.modSince = target.modSince || Date.now();
   scheduleSave();
-  return res.json({ ok: true, moderator: staffUserCard(target) });
+  return res.json({
+    ok: true,
+    already,
+    moderator: staffUserCard(target),
+  });
 });
 
-app.put("/v1/admin/moderators/:userId/permissions", (req, res) => {
+function applyModeratorPermissions(req, res) {
   const ctx = requireAdmin(req, res);
   if (!ctx) return;
   const uid = String(req.params.userId || "").trim();
   const target = getDb().users?.[uid];
-  if (!target) return res.status(404).json({ error: "not_found" });
+  if (!target) {
+    return res.status(404).json({ error: "not_found", message: "Moderator nicht gefunden." });
+  }
   ensureStaffFields(target);
   if (target.role !== "mod") {
-    return res.status(400).json({ error: "not_mod" });
+    return res.status(400).json({
+      error: "not_mod",
+      message: "Dieser Nutzer ist kein Moderator — zuerst einladen.",
+    });
   }
-  const raw = req.body?.permissions && typeof req.body.permissions === "object"
-    ? req.body.permissions
-    : {};
+  const raw =
+    req.body?.permissions && typeof req.body.permissions === "object"
+      ? req.body.permissions
+      : {};
   const next = {};
   for (const id of ALL_MOD_PERMISSION_IDS) {
     next[id] = Boolean(raw[id]);
@@ -4247,7 +4284,10 @@ app.put("/v1/admin/moderators/:userId/permissions", (req, res) => {
   target.modPermissions = next;
   scheduleSave();
   return res.json({ ok: true, moderator: staffUserCard(target) });
-});
+}
+
+app.put("/v1/admin/moderators/:userId/permissions", applyModeratorPermissions);
+app.post("/v1/admin/moderators/:userId/permissions", applyModeratorPermissions);
 
 app.post("/v1/admin/moderators/:userId/remove", (req, res) => {
   const ctx = requireAdmin(req, res);
@@ -4289,7 +4329,13 @@ app.post("/v1/admin/users/:userId/nickname", (req, res) => {
   const nick = String(req.body?.nickname || "")
     .trim()
     .slice(0, 18);
-  if (!assertNicknameAvailable(nick, uid, res)) return;
+  if (nick.length < 2) {
+    return res.status(400).json({
+      error: "bad_nick",
+      message: "Spitzname zu kurz.",
+    });
+  }
+  // Admin darf umbenennen; Doppel-Namen werden manuell bereinigt
   target.nickname = nick;
   scheduleSave();
   return res.json({ ok: true, user: staffUserCard(target) });

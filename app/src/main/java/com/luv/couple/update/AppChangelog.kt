@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.51",
+            listOf(
+                "Admin: Moderator einladen/Rechte — verständliche Fehler statt API 400",
+            )
+        ),
+        Entry(
             "1.9.50",
             listOf(
                 "Spitzname nur einmal wählbar — mit Bestätigung im Tutorial",

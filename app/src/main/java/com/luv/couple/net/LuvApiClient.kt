@@ -777,10 +777,9 @@ object LuvApiClient {
         val po = JSONObject()
         permissions.forEach { (k, v) -> po.put(k, v) }
         val body = JSONObject().put("permissions", po).toString()
-        val json = authedPut(
-            "/v1/admin/moderators/${userId.trim().encodeURL()}/permissions",
-            body
-        )
+        val path = "/v1/admin/moderators/${userId.trim().encodeURL()}/permissions"
+        // POST — PUT kann je nach Proxy scheitern
+        val json = authedPost(path, body)
         parseStaffUserCard(json.optJSONObject("moderator"))
             ?: throw LuvApiException("Rechte speichern fehlgeschlagen")
     }
@@ -1349,11 +1348,38 @@ object LuvApiClient {
         return b
     }
 
+    private fun throwApiFailure(raw: String, code: Int): Nothing {
+        val json = runCatching { JSONObject(raw) }.getOrNull()
+        val err = json?.optString("error")?.takeIf { it.isNotBlank() }
+        val serverMsg = json?.optString("message")?.takeIf { it.isNotBlank() }
+        val mapped = when (err) {
+            "invalid_query" -> "Bitte Spitzname oder E-Mail eingeben."
+            "is_admin" -> "Admins brauchen keine Moderator-Rolle."
+            "not_mod" -> "Dieser Nutzer ist (noch) kein Moderator."
+            "not_found" -> "Nicht gefunden."
+            "forbidden" -> serverMsg ?: "Keine Berechtigung."
+            "unauthorized" -> "Bitte neu anmelden."
+            "bad_delta" -> "Ungültiger Coin-Betrag."
+            "cannot_ban_admin" -> "Admins können nicht gesperrt werden."
+            "cannot_delete_admin" -> "Admins können nicht gelöscht werden."
+            "self_delete" -> "Eigenes Konto hier nicht löschen."
+            "empty" -> serverMsg ?: "Eingabe zu kurz."
+            "bad_nick" -> "Spitzname ungültig."
+            "nickname_taken" -> "Spitzname schon vergeben."
+            "nickname_locked" -> "Spitzname kann nicht geändert werden."
+            else -> null
+        }
+        throw LuvApiException(
+            message = mapped ?: serverMsg ?: "API-Fehler ($code)",
+            error = err
+        )
+    }
+
     private fun authedGet(path: String): JSONObject {
         val request = authedRequestBuilder(path).get().build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) throw LuvApiException("API-Fehler (${response.code})")
+            if (!response.isSuccessful) throwApiFailure(raw, response.code)
             return JSONObject(raw)
         }
     }
@@ -1364,7 +1390,7 @@ object LuvApiClient {
             .build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) throw LuvApiException("API-Fehler (${response.code})")
+            if (!response.isSuccessful) throwApiFailure(raw, response.code)
             return JSONObject(raw)
         }
     }
@@ -1375,7 +1401,7 @@ object LuvApiClient {
             .build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) throw LuvApiException("API-Fehler (${response.code})")
+            if (!response.isSuccessful) throwApiFailure(raw, response.code)
             return JSONObject(raw)
         }
     }
@@ -1386,7 +1412,7 @@ object LuvApiClient {
             .build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) throw LuvApiException("API-Fehler (${response.code})")
+            if (!response.isSuccessful) throwApiFailure(raw, response.code)
             return JSONObject(raw)
         }
     }
