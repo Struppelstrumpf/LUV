@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.luv.couple.data.PeerPalette
+import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgSoft
@@ -61,6 +62,71 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun SocialScreen(
+    onOpenFriendProfile: (userId: String, nickname: String) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var tab by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(Unit) {
+        runCatching { LuvApiClient.pingAchievement("social_opens") }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(top = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf("Freunde", "Erfolge").forEachIndexed { index, label ->
+                val active = tab == index
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (active) AccentRose.copy(0.28f) else BgSoft)
+                        .clickable { tab = index }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        label,
+                        color = TextPrimary,
+                        fontFamily = if (active) DisplayFont else BodyFont,
+                        fontSize = 14.sp
+                    )
+                }
+            }
+        }
+        when (tab) {
+            0 -> FriendsPanel(onOpenFriendProfile = onOpenFriendProfile)
+            else -> MenuBackdrop(includeNavigationBars = false) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 20.dp)
+                        .padding(top = 14.dp, bottom = 8.dp)
+                ) {
+                    AchievementsPanel(
+                        modifier = Modifier.fillMaxSize(),
+                        onCoinsGranted = { amount ->
+                            if (amount > 0) {
+                                scope.launch {
+                                    runCatching { LuvApiClient.me() }
+                                        .onSuccess { AccountSession.setAccount(it) }
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FriendsPanel(
     onOpenFriendProfile: (userId: String, nickname: String) -> Unit
 ) {
     val context = LocalContext.current

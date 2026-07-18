@@ -809,6 +809,7 @@ fun LuvAppNav() {
                         if (replaying) {
                             // Replay: Zeichnung verwerfen, keine Lobby speichern
                             prefs.setTutorialDone(true)
+                            runCatching { LuvApiClient.pingAchievement("tutorial_done") }
                             tutorialReplay = false
                             joinError = null
                             navController.popBackStack()
@@ -837,6 +838,7 @@ fun LuvAppNav() {
                             }
                             if (ok) {
                                 prefs.setTutorialDone(true)
+                                runCatching { LuvApiClient.pingAchievement("tutorial_done") }
                                 runCatching { LuvApiClient.claimDaily() }
                                 refreshAccount()
                                 // Erstlauf: Skizze als normale Host-Lobby im Hauptmenü

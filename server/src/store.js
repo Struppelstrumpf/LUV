@@ -16,6 +16,8 @@ const DEFAULT = {
   canvasMemories: {},
   publicCanvases: {},
   liveNotice: null,
+  marketListings: {},
+  marketMeta: { priceHistory: {} },
 };
 
 function ensureDir() {
@@ -48,6 +50,14 @@ function load() {
           : {},
       liveNotice:
         raw.liveNotice && typeof raw.liveNotice === "object" ? raw.liveNotice : null,
+      marketListings:
+        raw.marketListings && typeof raw.marketListings === "object"
+          ? raw.marketListings
+          : {},
+      marketMeta:
+        raw.marketMeta && typeof raw.marketMeta === "object"
+          ? raw.marketMeta
+          : { priceHistory: {} },
     };
   } catch {
     return structuredClone(DEFAULT);

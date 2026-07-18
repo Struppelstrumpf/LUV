@@ -127,6 +127,10 @@ fun GalleryScreen(
 
     LaunchedEffect(refreshKey) { reload() }
 
+    LaunchedEffect(Unit) {
+        runCatching { LuvApiClient.pingAchievement("gallery_opens") }
+    }
+
     fun toggleSelect(id: String) {
         selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
         if (selectedIds.isEmpty()) selecting = false

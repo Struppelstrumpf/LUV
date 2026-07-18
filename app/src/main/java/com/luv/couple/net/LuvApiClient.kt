@@ -1262,6 +1262,442 @@ object LuvApiClient {
             parseFriendCards(json.optJSONArray("friends"))
         }
 
+    data class AchievementDailyTask(
+        val id: String,
+        val title: String,
+        val target: Int,
+        val progress: Int,
+        val done: Boolean
+    )
+
+    data class AchievementDaily(
+        val date: String,
+        val completed: Boolean,
+        val tasks: List<AchievementDailyTask>
+    )
+
+    data class AchievementItem(
+        val id: String,
+        val title: String,
+        val desc: String,
+        val category: String,
+        val target: Int,
+        val progress: Int,
+        val coins: Int,
+        val unlocked: Boolean,
+        val unlockedAt: Long?
+    )
+
+    data class AchievementsState(
+        val streak: Int,
+        val coinsEarnedToday: Int,
+        val coinsCapToday: Int,
+        val coinsRemainingToday: Int,
+        val daily: AchievementDaily,
+        val achievements: List<AchievementItem>,
+        val unlockedCount: Int,
+        val totalCount: Int
+    )
+
+    data class AchievementPingResult(
+        val coinsGranted: Int,
+        val dailyJustCompleted: Boolean,
+        val streak: Int,
+        val unlocked: List<AchievementItem>,
+        val state: AchievementsState,
+        val user: AccountInfo?
+    )
+
+    data class MarketCategory(
+        val id: String,
+        val label: String,
+        val emoji: String
+    )
+
+    data class MarketItem(
+        val listingId: String,
+        val kind: String,
+        val itemId: String,
+        val label: String,
+        val emoji: String,
+        val category: String,
+        val priceCoins: Int,
+        val allowTrade: Boolean,
+        val trend: String,
+        val stock: Int,
+        val offerCount: Int,
+        val isMine: Boolean,
+        val ownedByViewer: Boolean,
+        val sellerNickname: String
+    )
+
+    data class MarketListing(
+        val id: String,
+        val kind: String,
+        val itemId: String,
+        val label: String,
+        val emoji: String,
+        val category: String,
+        val priceCoins: Int,
+        val allowTrade: Boolean,
+        val tradeWantKind: String?,
+        val tradeWantItemId: String?,
+        val tradeWantLabel: String?,
+        val isPrivate: Boolean,
+        val targetUserId: String?,
+        val sellerId: String,
+        val sellerNickname: String,
+        val createdAt: Long,
+        val stock: Int,
+        val offerCount: Int,
+        val trend: String,
+        val isMine: Boolean,
+        val ownedByViewer: Boolean
+    )
+
+    data class MarketBrowseResult(
+        val categories: List<MarketCategory>,
+        val items: List<MarketItem>,
+        val count: Int,
+        val mode: String
+    )
+
+    private fun parseAchievementsState(json: JSONObject): AchievementsState {
+        val dailyJson = json.optJSONObject("daily") ?: JSONObject()
+        val tasks = buildList {
+            val arr = dailyJson.optJSONArray("tasks")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val t = arr.optJSONObject(i) ?: continue
+                    add(
+                        AchievementDailyTask(
+                            id = t.optString("id"),
+                            title = t.optString("title"),
+                            target = t.optInt("target", 1),
+                            progress = t.optInt("progress", 0),
+                            done = t.optBoolean("done", false)
+                        )
+                    )
+                }
+            }
+        }
+        val achievements = buildList {
+            val arr = json.optJSONArray("achievements")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val a = arr.optJSONObject(i) ?: continue
+                    add(parseAchievementItem(a))
+                }
+            }
+        }
+        return AchievementsState(
+            streak = json.optInt("streak", 0),
+            coinsEarnedToday = json.optInt("coinsEarnedToday", 0),
+            coinsCapToday = json.optInt("coinsCapToday", 25),
+            coinsRemainingToday = json.optInt("coinsRemainingToday", 0),
+            daily = AchievementDaily(
+                date = dailyJson.optString("date"),
+                completed = dailyJson.optBoolean("completed", false),
+                tasks = tasks
+            ),
+            achievements = achievements,
+            unlockedCount = json.optInt("unlockedCount", 0),
+            totalCount = json.optInt("totalCount", achievements.size)
+        )
+    }
+
+    private fun parseAchievementItem(o: JSONObject): AchievementItem =
+        AchievementItem(
+            id = o.optString("id"),
+            title = o.optString("title"),
+            desc = o.optString("desc"),
+            category = o.optString("category"),
+            target = o.optInt("target", 1),
+            progress = o.optInt("progress", 0),
+            coins = o.optInt("coins", 0),
+            unlocked = o.optBoolean("unlocked", false),
+            unlockedAt = o.optLong("unlockedAt").takeIf { it > 0L }
+        )
+
+    private fun parseMarketListing(o: JSONObject): MarketListing? {
+        val id = o.optString("id").ifBlank { o.optString("listingId") }
+        if (id.isBlank()) return null
+        return MarketListing(
+            id = id,
+            kind = o.optString("kind"),
+            itemId = o.optString("itemId"),
+            label = o.optString("label"),
+            emoji = o.optString("emoji"),
+            category = o.optString("category"),
+            priceCoins = o.optInt("priceCoins", 0),
+            allowTrade = o.optBoolean("allowTrade", false),
+            tradeWantKind = o.optString("tradeWantKind").takeIf { it.isNotBlank() },
+            tradeWantItemId = o.optString("tradeWantItemId").takeIf { it.isNotBlank() },
+            tradeWantLabel = o.optString("tradeWantLabel").takeIf { it.isNotBlank() },
+            isPrivate = o.optBoolean("private", false),
+            targetUserId = o.optString("targetUserId").takeIf { it.isNotBlank() },
+            sellerId = o.optString("sellerId"),
+            sellerNickname = o.optString("sellerNickname", "Jemand"),
+            createdAt = o.optLong("createdAt", 0L),
+            stock = o.optInt("stock", o.optInt("offerCount", 1)),
+            offerCount = o.optInt("offerCount", o.optInt("stock", 1)),
+            trend = o.optString("trend", "="),
+            isMine = o.optBoolean("isMine", false),
+            ownedByViewer = o.optBoolean("ownedByViewer", false)
+        )
+    }
+
+    private fun parseMarketItem(o: JSONObject): MarketItem? {
+        val listingId = o.optString("listingId").ifBlank { o.optString("id") }
+        if (listingId.isBlank()) return null
+        return MarketItem(
+            listingId = listingId,
+            kind = o.optString("kind"),
+            itemId = o.optString("itemId"),
+            label = o.optString("label"),
+            emoji = o.optString("emoji"),
+            category = o.optString("category"),
+            priceCoins = o.optInt("priceCoins", 0),
+            allowTrade = o.optBoolean("allowTrade", false),
+            trend = o.optString("trend", "="),
+            stock = o.optInt("stock", o.optInt("offerCount", 1)),
+            offerCount = o.optInt("offerCount", o.optInt("stock", 1)),
+            isMine = o.optBoolean("isMine", false),
+            ownedByViewer = o.optBoolean("ownedByViewer", false),
+            sellerNickname = o.optString("sellerNickname", "Jemand")
+        )
+    }
+
+    suspend fun fetchAchievements(): AchievementsState = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/me/achievements")
+        parseAchievementsState(json)
+    }
+
+    suspend fun pingAchievement(metric: String, amount: Int = 1): AchievementPingResult =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject()
+                .put("metric", metric.trim().take(40))
+                .put("amount", amount.coerceIn(1, 50))
+                .toString()
+            val json = authedPost("/v1/me/achievements/ping", body)
+            json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
+            val unlocked = buildList {
+                val arr = json.optJSONArray("unlocked")
+                if (arr != null) {
+                    for (i in 0 until arr.length()) {
+                        val u = arr.optJSONObject(i) ?: continue
+                        add(parseAchievementItem(u))
+                    }
+                }
+            }
+            AchievementPingResult(
+                coinsGranted = json.optInt("coinsGranted", 0),
+                dailyJustCompleted = json.optBoolean("dailyJustCompleted", false),
+                streak = json.optInt("streak", 0),
+                unlocked = unlocked,
+                state = json.optJSONObject("state")?.let { parseAchievementsState(it) }
+                    ?: parseAchievementsState(json),
+                user = json.optJSONObject("user")?.let { AccountInfo.fromApi(it) }
+            )
+        }
+
+    suspend fun fetchMarket(
+        mode: String = "market",
+        category: String = "all",
+        query: String = ""
+    ): MarketBrowseResult = withContext(Dispatchers.IO) {
+        val m = if (mode == "private") "private" else "market"
+        val cat = category.trim().ifBlank { "all" }.encodeURL()
+        val q = query.trim().take(40).encodeURL()
+        val path = buildString {
+            append("/v1/market?mode=$m&category=$cat")
+            if (q.isNotBlank()) append("&q=$q")
+        }
+        val json = authedGet(path)
+        val categories = buildList {
+            val arr = json.optJSONArray("categories")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val c = arr.optJSONObject(i) ?: continue
+                    add(
+                        MarketCategory(
+                            id = c.optString("id"),
+                            label = c.optString("label"),
+                            emoji = c.optString("emoji", "📦")
+                        )
+                    )
+                }
+            }
+        }
+        val items = buildList {
+            val arr = json.optJSONArray("items")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    parseMarketItem(arr.optJSONObject(i) ?: continue)?.let { add(it) }
+                }
+            }
+        }
+        MarketBrowseResult(
+            categories = categories.ifEmpty {
+                listOf(
+                    MarketCategory("all", "Alle Artikel", "📦"),
+                    MarketCategory("pets", "Begleiter", "🐣"),
+                    MarketCategory("stickers", "Sticker", "🎀"),
+                    MarketCategory("themes", "Profil", "🖼️"),
+                    MarketCategory("emojis", "Reaktionen", "😊")
+                )
+            },
+            items = items,
+            count = json.optInt("count", items.size),
+            mode = json.optString("mode", m)
+        )
+    }
+
+    suspend fun fetchMyMarketListings(): List<MarketListing> = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/market/mine")
+        buildList {
+            val arr = json.optJSONArray("listings")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    parseMarketListing(arr.optJSONObject(i) ?: continue)?.let { add(it) }
+                }
+            }
+        }
+    }
+
+    suspend fun listMarketItem(
+        kind: String,
+        itemId: String,
+        priceCoins: Int,
+        allowTrade: Boolean,
+        isPrivate: Boolean = false,
+        targetUserId: String? = null,
+        tradeWantKind: String? = null,
+        tradeWantItemId: String? = null,
+        tradeWantLabel: String? = null
+    ): Pair<MarketListing, AccountInfo> = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("kind", kind)
+            .put("itemId", itemId.trim().take(24))
+            .put("priceCoins", priceCoins.coerceIn(0, 500))
+            .put("allowTrade", allowTrade)
+            .put("private", isPrivate)
+        if (isPrivate && !targetUserId.isNullOrBlank()) {
+            body.put("targetUserId", targetUserId.trim())
+        }
+        if (allowTrade) {
+            tradeWantKind?.takeIf { it.isNotBlank() }?.let { body.put("tradeWantKind", it) }
+            tradeWantItemId?.takeIf { it.isNotBlank() }?.let { body.put("tradeWantItemId", it) }
+            tradeWantLabel?.takeIf { it.isNotBlank() }?.let {
+                body.put("tradeWantLabel", it.take(40))
+            }
+        }
+        val request = authedRequestBuilder("/v1/market/list")
+            .post(body.toString().toRequestBody(jsonMedia))
+            .build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            val json = runCatching { JSONObject(raw) }.getOrNull()
+            if (!response.isSuccessful) {
+                throw LuvApiException(
+                    message = when (json?.optString("error")) {
+                        "not_owned" -> "Artikel nicht im Inventar."
+                        "not_sellable" -> "Diesen Artikel kannst du nicht anbieten."
+                        "bad_price" -> "Preis mind. 1 Coin oder Tausch aktivieren."
+                        "need_target" -> "Privates Angebot braucht einen Empfänger."
+                        "self" -> "Nicht an dich selbst."
+                        "bad_kind" -> "Ungültige Kategorie."
+                        else -> json?.optString("message")?.takeIf { it.isNotBlank() }
+                            ?: "Angebot fehlgeschlagen."
+                    },
+                    error = json?.optString("error")
+                )
+            }
+            val parsed = json ?: throw LuvApiException("Ungültige Server-Antwort")
+            val listing = parseMarketListing(parsed.optJSONObject("listing"))
+                ?: throw LuvApiException("Ungültige Server-Antwort")
+            val user = AccountInfo.fromApi(parsed.getJSONObject("user"))
+            AccountSession.setAccount(user)
+            listing to user
+        }
+    }
+
+    suspend fun cancelMarketListing(listingId: String): AccountInfo = withContext(Dispatchers.IO) {
+        val id = listingId.trim().encodeURL()
+        val json = authedPost("/v1/market/$id/cancel", "{}")
+        val user = AccountInfo.fromApi(json.getJSONObject("user"))
+        AccountSession.setAccount(user)
+        user
+    }
+
+    suspend fun buyMarketListing(listingId: String): AccountInfo = withContext(Dispatchers.IO) {
+        val id = listingId.trim().encodeURL()
+        val request = authedRequestBuilder("/v1/market/$id/buy")
+            .post(emptyBody)
+            .build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            val json = runCatching { JSONObject(raw) }.getOrNull()
+            if (!response.isSuccessful) {
+                throw LuvApiException(
+                    message = when (json?.optString("error")) {
+                        "no_coins" -> "Nicht genug Coins."
+                        "self" -> "Eigenes Angebot."
+                        "trade_only" -> "Nur Tausch — wähle Tausch."
+                        "not_found" -> "Angebot nicht mehr da."
+                        "forbidden" -> "Kein Zugriff auf dieses Angebot."
+                        else -> json?.optString("message")?.takeIf { it.isNotBlank() }
+                            ?: "Kauf fehlgeschlagen."
+                    },
+                    error = json?.optString("error")
+                )
+            }
+            val parsed = json ?: throw LuvApiException("Ungültige Server-Antwort")
+            val user = AccountInfo.fromApi(parsed.getJSONObject("user"))
+            AccountSession.setAccount(user)
+            user
+        }
+    }
+
+    suspend fun tradeMarketListing(
+        listingId: String,
+        kind: String,
+        itemId: String
+    ): AccountInfo = withContext(Dispatchers.IO) {
+        val id = listingId.trim().encodeURL()
+        val body = JSONObject()
+            .put("kind", kind)
+            .put("itemId", itemId.trim().take(24))
+            .toString()
+        val request = authedRequestBuilder("/v1/market/$id/trade")
+            .post(body.toRequestBody(jsonMedia))
+            .build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            val json = runCatching { JSONObject(raw) }.getOrNull()
+            if (!response.isSuccessful) {
+                throw LuvApiException(
+                    message = when (json?.optString("error")) {
+                        "not_owned" -> "Dein Tauschartikel fehlt."
+                        "wrong_offer" -> json.optString("message").takeIf { it.isNotBlank() }
+                            ?: "Falscher Tauschartikel."
+                        "not_found" -> "Kein Tausch-Angebot."
+                        "self" -> "Eigenes Angebot."
+                        "forbidden" -> "Kein Zugriff."
+                        "not_sellable" -> "Artikel nicht tauschbar."
+                        else -> json?.optString("message")?.takeIf { it.isNotBlank() }
+                            ?: "Tausch fehlgeschlagen."
+                    },
+                    error = json?.optString("error")
+                )
+            }
+            val parsed = json ?: throw LuvApiException("Ungültige Server-Antwort")
+            val user = AccountInfo.fromApi(parsed.getJSONObject("user"))
+            AccountSession.setAccount(user)
+            user
+        }
+    }
+
     suspend fun petKraul(userId: String): PetKraulResult = withContext(Dispatchers.IO) {
         val uid = userId.trim()
         val request = authedRequestBuilder("/v1/users/${uid.encodeURL()}/pet-kraul")

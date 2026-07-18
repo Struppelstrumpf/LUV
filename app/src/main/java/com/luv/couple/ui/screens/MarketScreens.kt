@@ -151,10 +151,7 @@ fun MarketScreen(
             title = "Marktplatz",
             onBack = { backFromPanel() }
         ) {
-            EmptyMarketCard(
-                title = "Bald hier",
-                body = "Der Marktplatz öffnet sich später — tauschen, entdecken, staunen."
-            )
+            PlayerMarketScreen(onClose = { backFromPanel() })
         }
         MarketPanel.ItemShop -> MarketExpandShell(
             title = "Itemshop",

@@ -13,6 +13,8 @@ const {
   DATA_DIR,
 } = require("./store");
 const { pickShareLine } = require("./share_lines");
+const ach = require("./achievements");
+const market = require("./market");
 
 const PORT = Number(process.env.PORT || 8080);
 const ROOM_TTL_MS = Number(process.env.ROOM_TTL_MS || 24 * 60 * 60 * 1000);
@@ -2032,6 +2034,34 @@ function applyLedger(userId, delta, reason, refId) {
   if (db.ledger.length > 5000) db.ledger.splice(0, db.ledger.length - 5000);
   scheduleSave();
   return user;
+}
+
+/** Erfolgs-/Daily-Fortschritt — Coins über applyLedger, Cap 25/Tag. */
+function trackAch(user, metric, amount = 1) {
+  if (!user || !metric) return null;
+  try {
+    return ach.bumpMetric(user, metric, amount, todayKey(), (uid, delta, reason, ref) => {
+      applyLedger(uid, delta, reason, ref);
+    });
+  } catch (err) {
+    console.warn("trackAch", err?.message || err);
+    return null;
+  }
+}
+
+function syncAchInventoryMetrics(user) {
+  if (!user) return;
+  const ledger = (uid, d, r, ref) => applyLedger(uid, d, r, ref);
+  const day = todayKey();
+  const inv = ensureInventory(user);
+  ach.setMetricAtLeast(user, "pets_owned", (inv.pets || []).length, day, ledger);
+  ach.setMetricAtLeast(user, "friends", (ensureFriends(user).list || []).length, day, ledger);
+  if ((inv.pets || []).includes("🦉")) ach.setMetricAtLeast(user, "pet_owl", 1, day, ledger);
+  if ((inv.pets || []).includes("🐯")) ach.setMetricAtLeast(user, "pet_tiger", 1, day, ledger);
+  if (user.googleSub) ach.setMetricAtLeast(user, "google_linked", 1, day, ledger);
+  if (user.nickname && String(user.nickname).toLowerCase() !== "luv") {
+    ach.setMetricAtLeast(user, "nickname_set", 1, day, ledger);
+  }
 }
 
 function createSession(userId) {
@@ -4078,6 +4108,7 @@ app.post("/v1/users/:userId/friend-request", (req, res) => {
   }
   mine.outgoing.push(toId);
   if (!theirs.incoming.includes(ctx.user.id)) theirs.incoming.push(ctx.user.id);
+  trackAch(ctx.user, "friend_requests_sent", 1);
   scheduleSave();
   return res.json({ ok: true, friendStatus: "outgoing" });
 });
@@ -4099,6 +4130,13 @@ app.post("/v1/me/friends/accept", (req, res) => {
   theirs.outgoing = theirs.outgoing.filter((id) => id !== ctx.user.id);
   if (!mine.list.includes(fromId)) mine.list.push(fromId);
   if (!theirs.list.includes(ctx.user.id)) theirs.list.push(ctx.user.id);
+  trackAch(ctx.user, "friend_accepts", 1);
+  ach.setMetricAtLeast(ctx.user, "friends", mine.list.length, todayKey(), (uid, d, r, ref) =>
+    applyLedger(uid, d, r, ref)
+  );
+  ach.setMetricAtLeast(other, "friends", theirs.list.length, todayKey(), (uid, d, r, ref) =>
+    applyLedger(uid, d, r, ref)
+  );
   scheduleSave();
   return res.json({ ok: true, friend: friendPublicCard(other) });
 });
@@ -4156,6 +4194,7 @@ app.put("/v1/me/friends/order", (req, res) => {
     if (!next.includes(id)) next.push(id);
   }
   f.list = next;
+  trackAch(ctx.user, "friend_reorders", 1);
   scheduleSave();
   return res.json({
     ok: true,
@@ -4206,6 +4245,15 @@ app.post("/v1/users/:userId/pet-kraul", (req, res) => {
   applyLedger(toId, 1, "pet_kraul_recv", ctx.user.id);
   target.petKraulRecvCount = (target.petKraulRecvCount || 0) + 1;
   markPetKraul(ctx.user, toId);
+  trackAch(ctx.user, "krauls", 1);
+  const kraulSet = new Set(
+    Array.isArray(ctx.user.friends?.petKraulTargets)
+      ? ctx.user.friends.petKraulTargets
+      : []
+  );
+  ach.setMetricAtLeast(ctx.user, "kraul_unique", kraulSet.size, todayKey(), (uid, d, r, ref) =>
+    applyLedger(uid, d, r, ref)
+  );
   scheduleSave();
   const petEmoji = userPetEmoji(target);
   return res.json({
@@ -4278,6 +4326,8 @@ app.post("/v1/me/daily-claim", (req, res) => {
   if (!ctx) return;
   // Automatisch — kein manueller Claim mehr; Endpoint bleibt für alte Clients
   const claimed = ensureDailyGrant(ctx.user);
+  if (claimed) trackAch(ctx.user, "daily_claims", 1);
+  scheduleSave();
   return res.json({
     user: publicUser(ctx.user),
     claimed,
@@ -4878,8 +4928,13 @@ app.post("/v1/shop/buy-pet", (req, res) => {
     return res.json({ ok: true, emoji, alreadyOwned: true, user: publicUser(ctx.user) });
   }
   if (price > 0 && !requireCoins(ctx, price, res)) return;
-  if (price > 0) applyLedger(ctx.user.id, -price, "buy_pet", emoji);
+  if (price > 0) {
+    applyLedger(ctx.user.id, -price, "buy_pet", emoji);
+    trackAch(ctx.user, "coins_spent", price);
+  }
   inv.pets.push(emoji);
+  trackAch(ctx.user, "pets_bought", 1);
+  syncAchInventoryMetrics(ctx.user);
   scheduleSave();
   return res.json({ ok: true, emoji, price, user: publicUser(ctx.user) });
 });
@@ -4893,6 +4948,7 @@ app.post("/v1/me/equip-pet", (req, res) => {
     return res.status(400).json({ error: "not_owned" });
   }
   inv.equippedPet = emoji;
+  trackAch(ctx.user, "pet_equips", 1);
   // Profil-Begleiter mitziehen
   if (!ctx.user.profileCanvas || typeof ctx.user.profileCanvas !== "object") {
     ctx.user.profileCanvas = {};
@@ -4930,6 +4986,310 @@ app.get("/v1/me/inventory", (req, res) => {
     pets: inv.pets,
     equippedPet: inv.equippedPet || DEFAULT_PET,
   });
+});
+
+/** —— Erfolge / Daily / Streak —— */
+app.get("/v1/me/achievements", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  syncAchInventoryMetrics(ctx.user);
+  const a = ach.ensureDaily(ctx.user, todayKey());
+  if (a.progress._activeDayMarked !== todayKey()) {
+    a.progress._activeDayMarked = todayKey();
+    trackAch(ctx.user, "active_days", 1);
+  }
+  scheduleSave();
+  return res.json({ ok: true, ...ach.publicAchievementsState(ctx.user, todayKey()) });
+});
+
+app.post("/v1/me/achievements/ping", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const metric = String(req.body?.metric || "").trim().slice(0, 40);
+  const amount = Math.min(50, Math.max(1, Number(req.body?.amount) || 1));
+  const allowed = new Set([
+    "profile_views",
+    "gallery_opens",
+    "market_opens",
+    "social_opens",
+    "moments_saved",
+    "moments_shared",
+    "lobby_opens",
+    "reactions_sent",
+    "profile_saves",
+    "quiet_hours_set",
+    "emoji_bar_edits",
+    "tutorial_done",
+    "tutorial_draw",
+    "memories_opened",
+    "undos",
+    "recolors",
+    "games_plays",
+    "publishes",
+    "clear_proposes",
+    "clear_votes",
+    "lobby_renames",
+    "lobby_leaves",
+    "invites_sent",
+    "tips_given",
+    "tips_received",
+  ]);
+  if (!allowed.has(metric)) {
+    return res.status(400).json({ error: "bad_metric" });
+  }
+  const result = trackAch(ctx.user, metric, amount);
+  scheduleSave();
+  return res.json({
+    ok: true,
+    unlocked: result?.unlocked || [],
+    coinsGranted: result?.coinsGranted || 0,
+    dailyJustCompleted: Boolean(result?.dailyJustCompleted),
+    streak: result?.streak || 0,
+    state: ach.publicAchievementsState(ctx.user, todayKey()),
+    user: publicUser(ctx.user),
+  });
+});
+
+/** —— Spieler-Marktplatz (Nasebär-Stil) —— */
+function marketItemMeta(kind, itemId) {
+  const id = String(itemId || "").trim();
+  if (kind === "pets") {
+    return { category: "pets", emoji: id, label: id, sellable: id !== DEFAULT_PET && PET_SHOP_PRICES[id] != null };
+  }
+  if (kind === "themes") {
+    const labels = {
+      meadow: "Wiese", forest: "Wald", sunset: "Abendrot", night: "Nacht", snow: "Schnee",
+      blossom: "Blüte", ocean: "Meer", rain: "Regen", autumn: "Herbst", stars: "Sterne",
+      cabin: "Hütte", lake: "See", lavender: "Lavendel", hearth: "Kamin",
+    };
+    return {
+      category: "themes",
+      emoji: "🖼️",
+      label: labels[id] || id,
+      sellable: id !== "meadow" && THEME_SHOP_PRICES[id] != null,
+    };
+  }
+  if (kind === "stickers") {
+    return { category: "stickers", emoji: id, label: id, sellable: STICKER_SHOP_PRICES[id] != null };
+  }
+  if (kind === "emojis") {
+    return { category: "emojis", emoji: id, label: id, sellable: true };
+  }
+  return null;
+}
+
+app.get("/v1/market", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  trackAch(ctx.user, "market_opens", 1);
+  const mode = String(req.query.mode || "market") === "private" ? "private" : "market";
+  const category = String(req.query.category || "all").trim() || "all";
+  const q = String(req.query.q || "").trim().slice(0, 40);
+  const data = market.aggregateMarket(getDb(), ctx.user.id, { category, q, mode });
+  scheduleSave();
+  return res.json({ ok: true, ...data });
+});
+
+app.get("/v1/market/mine", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const listings = market.ensureMarket(getDb());
+  const mine = Object.values(listings)
+    .filter((e) => e && e.sellerId === ctx.user.id && e.status === "open")
+    .map((e) => market.listingPublic(e, ctx.user.id, getDb()))
+    .filter(Boolean)
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return res.json({ ok: true, listings: mine, count: mine.length });
+});
+
+app.post("/v1/market/list", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const kind = String(req.body?.kind || "").trim();
+  const itemId = String(req.body?.itemId || "").trim().slice(0, 24);
+  const priceCoins = Math.max(0, Math.min(500, Math.floor(Number(req.body?.priceCoins) || 0)));
+  const allowTrade = Boolean(req.body?.allowTrade);
+  const isPrivate = Boolean(req.body?.private);
+  const targetUserId = String(req.body?.targetUserId || "").trim() || null;
+  if (!["pets", "themes", "stickers", "emojis"].includes(kind)) {
+    return res.status(400).json({ error: "bad_kind", message: "Ungültige Kategorie." });
+  }
+  if (!allowTrade && priceCoins < 1) {
+    return res.status(400).json({ error: "bad_price", message: "Preis mind. 1 Coin oder Tausch aktivieren." });
+  }
+  if (isPrivate && !targetUserId) {
+    return res.status(400).json({ error: "need_target", message: "Privates Angebot braucht einen Empfänger." });
+  }
+  if (isPrivate && targetUserId === ctx.user.id) {
+    return res.status(400).json({ error: "self", message: "Nicht an dich selbst." });
+  }
+  const meta = marketItemMeta(kind, itemId);
+  if (!meta?.sellable) {
+    return res.status(400).json({ error: "not_sellable", message: "Diesen Artikel kannst du nicht anbieten." });
+  }
+  if (!market.userOwnsItem(ctx.user, ensureInventory, kind, itemId)) {
+    return res.status(400).json({ error: "not_owned", message: "Artikel nicht im Inventar." });
+  }
+  // Item aus Inventar nehmen (Reservierung)
+  if (!market.takeItemFromUser(ctx.user, ensureInventory, kind, itemId)) {
+    return res.status(400).json({ error: "not_owned", message: "Artikel nicht verfügbar." });
+  }
+  const listings = market.ensureMarket(getDb());
+  const id = market.newListingId();
+  const entry = {
+    id,
+    kind,
+    itemId,
+    label: meta.label,
+    emoji: meta.emoji,
+    category: meta.category,
+    priceCoins,
+    allowTrade,
+    tradeWantKind: allowTrade ? String(req.body?.tradeWantKind || "").trim() || null : null,
+    tradeWantItemId: allowTrade ? String(req.body?.tradeWantItemId || "").trim() || null : null,
+    tradeWantLabel: allowTrade ? String(req.body?.tradeWantLabel || "").trim().slice(0, 40) || null : null,
+    private: isPrivate,
+    targetUserId: isPrivate ? targetUserId : null,
+    sellerId: ctx.user.id,
+    sellerNickname: String(ctx.user.nickname || "Jemand").slice(0, 18),
+    status: "open",
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 14 * 24 * 60 * 60 * 1000,
+  };
+  listings[id] = entry;
+  market.recordPrice(getDb(), kind, itemId, priceCoins);
+  trackAch(ctx.user, "market_listed", 1);
+  if (isPrivate) trackAch(ctx.user, "market_private", 1);
+  syncAchInventoryMetrics(ctx.user);
+  scheduleSave();
+  return res.status(201).json({
+    ok: true,
+    listing: market.listingPublic(entry, ctx.user.id, getDb()),
+    user: publicUser(ctx.user),
+  });
+});
+
+app.post("/v1/market/:id/cancel", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "").trim();
+  const listings = market.ensureMarket(getDb());
+  const entry = listings[id];
+  if (!entry || entry.status !== "open") {
+    return res.status(404).json({ error: "not_found" });
+  }
+  if (entry.sellerId !== ctx.user.id) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  market.giveItemToUser(ctx.user, ensureInventory, entry.kind, entry.itemId);
+  entry.status = "cancelled";
+  syncAchInventoryMetrics(ctx.user);
+  scheduleSave();
+  return res.json({ ok: true, user: publicUser(ctx.user) });
+});
+
+app.post("/v1/market/:id/buy", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "").trim();
+  const listings = market.ensureMarket(getDb());
+  const entry = listings[id];
+  if (!entry || entry.status !== "open") {
+    return res.status(404).json({ error: "not_found", message: "Angebot weg." });
+  }
+  if (entry.sellerId === ctx.user.id) {
+    return res.status(400).json({ error: "self", message: "Eigenes Angebot." });
+  }
+  if (entry.private && entry.targetUserId !== ctx.user.id) {
+    return res.status(403).json({ error: "forbidden", message: "Privates Angebot." });
+  }
+  if (entry.allowTrade && entry.priceCoins <= 0) {
+    return res.status(400).json({ error: "trade_only", message: "Nur Tausch — nutze /trade." });
+  }
+  const price = Math.max(1, Number(entry.priceCoins) || 0);
+  ensureDailyGrant(ctx.user);
+  if ((ctx.user.coins || 0) < price) {
+    return res.status(402).json({ error: "no_coins", message: "Nicht genug Coins." });
+  }
+  const seller = getDb().users?.[entry.sellerId];
+  if (!seller) {
+    entry.status = "cancelled";
+    scheduleSave();
+    return res.status(404).json({ error: "seller_gone" });
+  }
+  applyLedger(ctx.user.id, -price, "market_buy", id);
+  applyLedger(seller.id, price, "market_sell", id);
+  market.giveItemToUser(ctx.user, ensureInventory, entry.kind, entry.itemId);
+  entry.status = "sold";
+  entry.buyerId = ctx.user.id;
+  entry.soldAt = Date.now();
+  market.recordPrice(getDb(), entry.kind, entry.itemId, price);
+  trackAch(ctx.user, "market_bought", 1);
+  trackAch(ctx.user, "coins_spent", price);
+  trackAch(seller, "market_sold", 1);
+  syncAchInventoryMetrics(ctx.user);
+  syncAchInventoryMetrics(seller);
+  scheduleSave();
+  return res.json({
+    ok: true,
+    user: publicUser(ctx.user),
+    listing: market.listingPublic(entry, ctx.user.id, getDb()),
+  });
+});
+
+app.post("/v1/market/:id/trade", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "").trim();
+  const offerKind = String(req.body?.kind || "").trim();
+  const offerItemId = String(req.body?.itemId || "").trim().slice(0, 24);
+  const listings = market.ensureMarket(getDb());
+  const entry = listings[id];
+  if (!entry || entry.status !== "open" || !entry.allowTrade) {
+    return res.status(404).json({ error: "not_found", message: "Kein Tausch-Angebot." });
+  }
+  if (entry.sellerId === ctx.user.id) {
+    return res.status(400).json({ error: "self" });
+  }
+  if (entry.private && entry.targetUserId !== ctx.user.id) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  if (entry.tradeWantKind && entry.tradeWantItemId) {
+    if (offerKind !== entry.tradeWantKind || offerItemId !== entry.tradeWantItemId) {
+      return res.status(400).json({
+        error: "wrong_offer",
+        message: `Gesucht: ${entry.tradeWantLabel || entry.tradeWantItemId}`,
+      });
+    }
+  }
+  const meta = marketItemMeta(offerKind, offerItemId);
+  if (!meta?.sellable) {
+    return res.status(400).json({ error: "not_sellable" });
+  }
+  if (!market.takeItemFromUser(ctx.user, ensureInventory, offerKind, offerItemId)) {
+    return res.status(400).json({ error: "not_owned", message: "Dein Tauschartikel fehlt." });
+  }
+  const seller = getDb().users?.[entry.sellerId];
+  if (!seller) {
+    market.giveItemToUser(ctx.user, ensureInventory, offerKind, offerItemId);
+    entry.status = "cancelled";
+    scheduleSave();
+    return res.status(404).json({ error: "seller_gone" });
+  }
+  // Buyer bekommt Listing-Item, Seller bekommt Offer-Item
+  market.giveItemToUser(ctx.user, ensureInventory, entry.kind, entry.itemId);
+  market.giveItemToUser(seller, ensureInventory, offerKind, offerItemId);
+  entry.status = "traded";
+  entry.buyerId = ctx.user.id;
+  entry.tradedAt = Date.now();
+  entry.tradeReceivedKind = offerKind;
+  entry.tradeReceivedItemId = offerItemId;
+  trackAch(ctx.user, "market_trades", 1);
+  trackAch(seller, "market_trades", 1);
+  syncAchInventoryMetrics(ctx.user);
+  syncAchInventoryMetrics(seller);
+  scheduleSave();
+  return res.json({ ok: true, user: publicUser(ctx.user) });
 });
 
 app.post("/v1/shop/checkout", async (req, res) => {
@@ -5127,6 +5487,14 @@ app.post("/v1/rooms", (req, res) => {
     colorByUserId: { [ctx.user.id]: hostIdx },
   };
   persistRooms();
+  trackAch(ctx.user, "lobbies_created", 1);
+  if (isFree) trackAch(ctx.user, "free_lobbies", 1);
+  else trackAch(ctx.user, "paid_lobbies", 1);
+  if (charged > 0) trackAch(ctx.user, "coins_spent", charged);
+  const hostedN = Object.keys(ctx.user.hostedRooms || {}).length;
+  ach.setMetricAtLeast(ctx.user, "lobbies_active", hostedN, todayKey(), (uid, d, r, ref) =>
+    applyLedger(uid, d, r, ref)
+  );
   scheduleSave();
   res.status(201).json({
     token,
@@ -7101,10 +7469,11 @@ wss.on("connection", (socket, req) => {
     }
 
     if (type === "stroke") {
+      let drawResult = null;
       // Economy gate when authenticated
       if (user) {
-        const result = consumeDrawSession(user, code);
-        if (!result.ok) {
+        drawResult = consumeDrawSession(user, code);
+        if (!drawResult.ok) {
           socket.send(
             JSON.stringify({
               type: "economy_block",
@@ -7114,11 +7483,11 @@ wss.on("connection", (socket, req) => {
           );
           return;
         }
-        if (result.charged || result.free) {
+        if (drawResult.charged || drawResult.free) {
           socket.send(
             JSON.stringify({
               type: "economy_ok",
-              charged: Boolean(result.charged),
+              charged: Boolean(drawResult.charged),
               user: publicUser(user),
             })
           );
@@ -7138,6 +7507,17 @@ wss.on("connection", (socket, req) => {
       if (!stored) return;
       appendRoomStroke(room, code, stored);
       touchCanvasActivity(room, room.sockets.size);
+      if (user) {
+        trackAch(user, "strokes", 1);
+        if (stored.emoji) trackAch(user, "stickers_placed", 1);
+        if (drawResult && (drawResult.free || drawResult.charged) && !drawResult.already) {
+          trackAch(user, "draw_sessions", 1);
+        }
+        const peers = uniqueConnectedCount(room);
+        if (peers >= 2) trackAch(user, "draw_with_peers", 1);
+        if (peers >= 4) trackAch(user, "draw_group4", 1);
+        ach.setMetricAtLeast(user, "lobby_peak", room.peakPeers || peers, todayKey(), null);
+      }
       // Relayed payload aus normalisiertem Stroke (stabile History)
       const relayPayload = {
         type: "stroke",

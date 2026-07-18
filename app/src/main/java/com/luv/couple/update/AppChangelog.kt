@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.59",
+            listOf(
+                "Sozial: 100 Erfolge, Daily-Aufgaben und Day-Streak",
+                "Marktplatz: Handel mit anderen Spielern (Angebote, Kauf, Tausch)",
+            )
+        ),
+        Entry(
             "1.9.58",
             listOf(
                 "Zeichnen in der Lobby: alle sehen die Striche zuverlässig live",
