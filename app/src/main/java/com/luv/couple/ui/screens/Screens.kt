@@ -92,6 +92,7 @@ import com.luv.couple.ui.theme.LuvWordmark
 import com.luv.couple.ui.theme.FemalePurple
 import com.luv.couple.ui.theme.MaleBlue
 import com.luv.couple.ui.theme.TextMuted
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.luv.couple.ui.theme.TextPrimary
 
@@ -805,9 +806,8 @@ private fun LobbyCard(
                         .padding(horizontal = 4.dp, vertical = 2.dp),
                     color = if (proximityOn) accent else TextMuted
                 )
-                if (state == ConnectionState.CONNECTED || state == ConnectionState.HOSTING) {
-                    StatusChip(state)
-                }
+                // Immer anzeigen — sonst flackert „Verbunden“ bei kurzen Reconnects weg
+                StatusChip(rememberStickyConnectionState(state))
             }
         }
         if (
@@ -1693,6 +1693,40 @@ internal fun SettingsToggleRow(
             )
         )
     }
+}
+
+/**
+ * Kurze Verbindungs-Blips (Mobilfunk/Doze) nicht sofort als Offline zeigen —
+ * sonst verschwindet „Verbunden“ im Takt weg/da/weg/da.
+ */
+@Composable
+private fun rememberStickyConnectionState(state: ConnectionState): ConnectionState {
+    var displayed by remember { mutableStateOf(state) }
+    LaunchedEffect(state) {
+        when (state) {
+            ConnectionState.CONNECTED, ConnectionState.HOSTING -> {
+                displayed = state
+            }
+            ConnectionState.CONNECTING, ConnectionState.RECONNECTING -> {
+                val keep =
+                    displayed == ConnectionState.CONNECTED ||
+                        displayed == ConnectionState.HOSTING
+                if (keep) {
+                    delay(2_800)
+                    // Nur wechseln, wenn wir noch immer nicht verbunden sind
+                    // (LaunchedEffect cancel’t bei neuem CONNECTED vorher)
+                    displayed = state
+                } else {
+                    displayed = state
+                }
+            }
+            ConnectionState.IDLE -> {
+                delay(1_200)
+                displayed = state
+            }
+        }
+    }
+    return displayed
 }
 
 @Composable

@@ -245,8 +245,17 @@ class PairConnectionService : Service() {
             while (scope.isActive && session.running.get() && !session.lobbyGone) {
                 val lobby = session.lobby
                 session.forceReconnect.set(false)
-                updateLobbyState(lobby.id, ConnectionState.CONNECTING)
-                clearReconnect(lobby.id)
+                // Nach kurzer Trennung nicht hart auf CONNECTING springen (UI-Flackern)
+                val prev = _lobbyStates.value[lobby.id]
+                val softRetry =
+                    prev == ConnectionState.CONNECTED ||
+                        prev == ConnectionState.HOSTING ||
+                        prev == ConnectionState.RECONNECTING
+                updateLobbyState(
+                    lobby.id,
+                    if (softRetry) ConnectionState.RECONNECTING else ConnectionState.CONNECTING
+                )
+                if (!softRetry) clearReconnect(lobby.id)
                 ensureForeground()
 
                 val openedAt = System.currentTimeMillis()

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.43",
+            listOf(
+                "Lobby-Kacheln: „Verbunden“ flackert nicht mehr bei kurzen Netz-Blips",
+            )
+        ),
+        Entry(
             "1.9.42",
             listOf(
                 "Begleiter kraulen: 2 Sekunden streichen, Hand-Anzeige, dann +1 Coin",
