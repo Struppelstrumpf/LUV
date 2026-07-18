@@ -11,11 +11,13 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,13 +37,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.times
+import androidx.compose.ui.window.Dialog
 import com.luv.couple.net.AchievementsBadge
 import com.luv.couple.net.LuvApiClient
+import com.luv.couple.profile.ProfileThemeBackdrop
 import com.luv.couple.ui.rememberUiScale
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
@@ -72,6 +77,7 @@ fun AchievementsPanel(
     var loading by remember { mutableStateOf(true) }
     var expandedCategory by remember { mutableStateOf<String?>("sozial") }
     var busyId by remember { mutableStateOf<String?>(null) }
+    var previewItem by remember { mutableStateOf<LuvApiClient.AchievementRewardItem?>(null) }
 
     fun reload() {
         scope.launch {
@@ -92,7 +98,40 @@ fun AchievementsPanel(
         }
     }
 
+    fun claimAchievement(id: String) {
+        busyId = id
+        scope.launch {
+            runCatching { LuvApiClient.claimAchievementReward(id) }
+                .onSuccess { result ->
+                    state = result.state
+                    onCoinsGranted(result.coinsGranted)
+                    val msg = when {
+                        result.itemGranted != null ->
+                            "${result.itemGranted.emoji} ${result.itemGranted.label} erhalten"
+                        result.coinsGranted > 0 -> "+${result.coinsGranted} Coins abgeholt"
+                        else -> "Abgeholt"
+                    }
+                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                }
+                .onFailure {
+                    Toast.makeText(
+                        context,
+                        it.message ?: "Abholen fehlgeschlagen",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            busyId = null
+        }
+    }
+
     LaunchedEffect(Unit) { reload() }
+
+    previewItem?.let { item ->
+        AchievementItemPreviewDialog(
+            item = item,
+            onDismiss = { previewItem = null }
+        )
+    }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val ui = rememberUiScale()
@@ -161,29 +200,8 @@ fun AchievementsPanel(
                         item = item,
                         busy = busyId == item.id,
                         scale = ui.value,
-                        onClaim = {
-                            busyId = item.id
-                            scope.launch {
-                                runCatching { LuvApiClient.claimAchievementReward(item.id) }
-                                    .onSuccess { (coins, next) ->
-                                        state = next
-                                        onCoinsGranted(coins)
-                                        Toast.makeText(
-                                            context,
-                                            if (coins > 0) "+$coins Coins abgeholt" else "Abgeholt",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                    .onFailure {
-                                        Toast.makeText(
-                                            context,
-                                            it.message ?: "Abholen fehlgeschlagen",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                busyId = null
-                            }
-                        }
+                        onClaim = { claimAchievement(item.id) },
+                        onPreviewItem = { previewItem = it }
                     )
                 }
             }
@@ -211,29 +229,8 @@ fun AchievementsPanel(
                     },
                     items = items,
                     busyId = busyId,
-                    onClaim = { id ->
-                        busyId = id
-                        scope.launch {
-                            runCatching { LuvApiClient.claimAchievementReward(id) }
-                                .onSuccess { (coins, next) ->
-                                    state = next
-                                    onCoinsGranted(coins)
-                                    Toast.makeText(
-                                        context,
-                                        if (coins > 0) "+$coins Coins abgeholt" else "Abgeholt",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                                .onFailure {
-                                    Toast.makeText(
-                                        context,
-                                        it.message ?: "Abholen fehlgeschlagen",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            busyId = null
-                        }
-                    }
+                    onClaim = { claimAchievement(it) },
+                    onPreviewItem = { previewItem = it }
                 )
             }
 
@@ -493,7 +490,8 @@ private fun CategorySection(
     onToggle: () -> Unit,
     items: List<LuvApiClient.AchievementItem>,
     busyId: String?,
-    onClaim: (String) -> Unit
+    onClaim: (String) -> Unit,
+    onPreviewItem: (LuvApiClient.AchievementRewardItem) -> Unit
 ) {
     fun s(v: Dp) = v * scale
     fun ts(v: TextUnit) = (v.value * scale).sp
@@ -545,7 +543,8 @@ private fun CategorySection(
                         item = item,
                         busy = busyId == item.id,
                         scale = scale,
-                        onClaim = { onClaim(item.id) }
+                        onClaim = { onClaim(item.id) },
+                        onPreviewItem = onPreviewItem
                     )
                 }
             }
@@ -558,12 +557,14 @@ private fun AchievementRow(
     item: LuvApiClient.AchievementItem,
     busy: Boolean,
     scale: Float,
-    onClaim: () -> Unit
+    onClaim: () -> Unit,
+    onPreviewItem: (LuvApiClient.AchievementRewardItem) -> Unit
 ) {
     fun s(v: Dp) = v * scale
     fun ts(v: TextUnit) = (v.value * scale).sp
     val progress = if (item.target <= 0) 1f
     else (item.progress.toFloat() / item.target).coerceIn(0f, 1f)
+    val reward = item.rewardItem
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -639,13 +640,27 @@ private fun AchievementRow(
                 }
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    "${item.coins}🪙",
-                    color = AccentRose,
-                    fontFamily = DisplayFont,
-                    fontSize = ts(12.sp),
-                    softWrap = false
-                )
+                if (reward != null) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(s(10.dp)))
+                            .background(AccentRose.copy(0.16f))
+                            .border(1.dp, AccentRose.copy(0.35f), RoundedCornerShape(s(10.dp)))
+                            .clickable { onPreviewItem(reward) }
+                            .padding(horizontal = s(8.dp), vertical = s(4.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(reward.emoji, fontSize = ts(18.sp))
+                    }
+                } else {
+                    Text(
+                        "${item.coins}🪙",
+                        color = AccentRose,
+                        fontFamily = DisplayFont,
+                        fontSize = ts(12.sp),
+                        softWrap = false
+                    )
+                }
                 when {
                     item.claimed -> Text(
                         "geholt",
@@ -674,11 +689,105 @@ private fun AchievementRow(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    if (busy) "…" else "Coins abholen",
+                    if (busy) "…"
+                    else if (reward != null) "Belohnung abholen"
+                    else "Coins abholen",
                     color = Color.White,
                     fontFamily = DisplayFont,
                     fontSize = ts(13.sp),
                     softWrap = false
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AchievementItemPreviewDialog(
+    item: LuvApiClient.AchievementRewardItem,
+    onDismiss: () -> Unit
+) {
+    val kindLabel = when (item.kind) {
+        "pets" -> "Begleiter"
+        "themes" -> "Hintergrund"
+        "stickers" -> "Sticker"
+        "emojis" -> "Reaktion"
+        else -> "Item"
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = 320.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(BgSoft)
+                .border(1.dp, AccentRose.copy(0.28f), RoundedCornerShape(22.dp))
+                .padding(18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                "Belohnung",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 12.sp
+            )
+            if (item.kind == "themes") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1.2f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(16.dp))
+                ) {
+                    ProfileThemeBackdrop(
+                        themeId = item.itemId,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Text(
+                        item.emoji,
+                        fontSize = 36.sp,
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(96.dp)
+                        .clip(CircleShape)
+                        .background(AccentRose.copy(0.14f))
+                        .border(1.dp, AccentRose.copy(0.35f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(item.emoji, fontSize = 44.sp)
+                }
+            }
+            Text(
+                item.label,
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 20.sp,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                kindLabel,
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 13.sp
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(AccentRose.copy(0.85f))
+                    .clickable(onClick = onDismiss)
+                    .padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "Schließen",
+                    color = Color.White,
+                    fontFamily = DisplayFont,
+                    fontSize = 14.sp
                 )
             }
         }

@@ -5490,7 +5490,9 @@ app.post("/v1/me/achievements/:id/claim", (req, res) => {
     ctx.user,
     req.params.id,
     todayKey(),
-    (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref)
+    (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref),
+    (user, kind, itemId) => safeGiveItem(user, kind, itemId),
+    (user, kind, itemId) => userAlreadyOwnsUnique(user, kind, itemId)
   );
   if (!result.ok) {
     return res.status(400).json({
@@ -5498,10 +5500,14 @@ app.post("/v1/me/achievements/:id/claim", (req, res) => {
       message: result.message,
     });
   }
+  if (result.itemGranted) {
+    syncAchInventoryMetrics(ctx.user);
+  }
   scheduleSave();
   return res.json({
     ok: true,
-    coinsGranted: result.coinsGranted,
+    coinsGranted: result.coinsGranted || 0,
+    itemGranted: result.itemGranted || null,
     achievementId: result.achievementId,
     state: ach.publicAchievementsState(ctx.user, todayKey()),
     user: publicUser(ctx.user),

@@ -223,10 +223,10 @@ class LockDrawActivity : ComponentActivity() {
             lifecycleScope.launch {
                 CanvasCapture.saveMoment(this@LockDrawActivity, lobbyId)
                     .onSuccess {
-                        Toast.makeText(this@LockDrawActivity, R.string.moment_saved, Toast.LENGTH_SHORT).show()
+                        flashStatus(getString(R.string.moment_saved))
                     }
                     .onFailure {
-                        Toast.makeText(this@LockDrawActivity, it.message ?: "Fehler", Toast.LENGTH_SHORT).show()
+                        flashStatus(it.message ?: "Fehler")
                     }
             }
         }
@@ -863,18 +863,10 @@ class LockDrawActivity : ComponentActivity() {
                                 runCatching { LuvApiClient.deleteDrawTemplate(tpl.id) }
                                     .onSuccess {
                                         templates = templates.filter { it.id != tpl.id }
-                                        Toast.makeText(
-                                            this@LockDrawActivity,
-                                            "Vorlage gelöscht",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
+                                        flashStatus("Vorlage gelöscht")
                                     }
                                     .onFailure {
-                                        Toast.makeText(
-                                            this@LockDrawActivity,
-                                            it.message ?: "Fehler",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
+                                        flashStatus(it.message ?: "Fehler")
                                     }
                             }
                         },
@@ -909,21 +901,13 @@ class LockDrawActivity : ComponentActivity() {
                             lifecycleScope.launch {
                                 runCatching { LuvApiClient.saveDrawTemplate(parts) }
                                     .onSuccess {
-                                        Toast.makeText(
-                                            this@LockDrawActivity,
-                                            "Vorlage gespeichert",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
+                                        flashStatus("Vorlage gespeichert")
                                         root.removeView(host)
                                         templateEditorHost = null
                                         openTemplatesBrowser()
                                     }
                                     .onFailure {
-                                        Toast.makeText(
-                                            this@LockDrawActivity,
-                                            it.message ?: "Speichern fehlgeschlagen",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
+                                        flashStatus(it.message ?: "Speichern fehlgeschlagen")
                                     }
                             }
                         },
@@ -968,7 +952,7 @@ class LockDrawActivity : ComponentActivity() {
                     lobbyId = lobbyId
                 )
                 dismissTemplatePlacement()
-                Toast.makeText(this@LockDrawActivity, "Vorlage platziert", Toast.LENGTH_SHORT).show()
+                flashStatus("Vorlage platziert")
             }
             onCancel = { dismissTemplatePlacement() }
         }
@@ -1202,25 +1186,24 @@ class LockDrawActivity : ComponentActivity() {
         // Spiele-Button entfernt — Vorlagen-Button bleibt unverändert
     }
 
+    /** Mittige, kurze Meldung — blockiert Zeichnen nicht, ~1 s sichtbar. */
     private fun flashStatus(text: String) {
-        // Nicht mehr auf der Leinwand (überdeckte Avatare/Dock).
-        statusView.removeCallbacks(statusHideRunnable)
-        statusView.visibility = View.GONE
-        statusView.alpha = 0f
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
-        // Kurze UI-Bestätigungen komplett weglassen
         when (trimmed) {
-            "Rückgängig",
-            "Leinwand leer",
-            "Abgelehnt",
             "Ja",
             "Nein",
-            "Kurze Abstimmung…",
-            "Richtig!" -> return
+            "Kurze Abstimmung…" -> return
         }
-        // Wichtige Hinweise nur oben am Banner
-        showBanner(missedBanner, trimmed, 2400)
+        statusView.removeCallbacks(statusHideRunnable)
+        statusView.text = trimmed
+        statusView.isClickable = false
+        statusView.isFocusable = false
+        statusView.visibility = View.VISIBLE
+        statusView.alpha = 0f
+        statusView.animate().cancel()
+        statusView.animate().alpha(1f).setDuration(120).start()
+        statusView.postDelayed(statusHideRunnable, 1000L)
     }
 
     private fun showReaction(emoji: String) {

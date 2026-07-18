@@ -1413,6 +1413,13 @@ object LuvApiClient {
         val tasks: List<AchievementDailyTask>
     )
 
+    data class AchievementRewardItem(
+        val kind: String,
+        val itemId: String,
+        val emoji: String,
+        val label: String
+    )
+
     data class AchievementItem(
         val id: String,
         val title: String,
@@ -1421,10 +1428,17 @@ object LuvApiClient {
         val target: Int,
         val progress: Int,
         val coins: Int,
+        val rewardItem: AchievementRewardItem? = null,
         val unlocked: Boolean,
         val unlockedAt: Long?,
         val claimed: Boolean = false,
         val claimable: Boolean = false
+    )
+
+    data class AchievementClaimResult(
+        val coinsGranted: Int,
+        val itemGranted: AchievementRewardItem?,
+        val state: AchievementsState
     )
 
     data class AchievementsState(
@@ -1561,6 +1575,19 @@ object LuvApiClient {
         )
     }
 
+    private fun parseAchievementRewardItem(o: JSONObject?): AchievementRewardItem? {
+        if (o == null) return null
+        val kind = o.optString("kind").trim()
+        val itemId = o.optString("itemId").trim()
+        if (kind.isBlank() || itemId.isBlank()) return null
+        return AchievementRewardItem(
+            kind = kind,
+            itemId = itemId,
+            emoji = o.optString("emoji").ifBlank { itemId },
+            label = o.optString("label").ifBlank { itemId }
+        )
+    }
+
     private fun parseAchievementItem(o: JSONObject): AchievementItem =
         AchievementItem(
             id = o.optString("id"),
@@ -1570,6 +1597,7 @@ object LuvApiClient {
             target = o.optInt("target", 1),
             progress = o.optInt("progress", 0),
             coins = o.optInt("coins", 0),
+            rewardItem = parseAchievementRewardItem(o.optJSONObject("rewardItem")),
             unlocked = o.optBoolean("unlocked", false),
             unlockedAt = o.optLong("unlockedAt").takeIf { it > 0L },
             claimed = o.optBoolean("claimed", false),
@@ -1633,18 +1661,19 @@ object LuvApiClient {
         parseAchievementsState(json).also { AchievementsBadge.updateFrom(it) }
     }
 
-    suspend fun claimAchievementReward(achievementId: String): Pair<Int, AchievementsState> =
+    suspend fun claimAchievementReward(achievementId: String): AchievementClaimResult =
         withContext(Dispatchers.IO) {
             val json = authedPost(
                 "/v1/me/achievements/${achievementId.trim().encodeURL()}/claim",
                 "{}"
             )
             val coins = json.optInt("coinsGranted", 0)
+            val item = parseAchievementRewardItem(json.optJSONObject("itemGranted"))
             val state = json.optJSONObject("state")?.let { parseAchievementsState(it) }
                 ?: fetchAchievements()
             AchievementsBadge.updateFrom(state)
             json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
-            coins to state
+            AchievementClaimResult(coins, item, state)
         }
 
     suspend fun claimDailyAchievementReward(): Pair<Int, AchievementsState> =

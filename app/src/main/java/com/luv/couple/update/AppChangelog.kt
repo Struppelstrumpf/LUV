@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.81",
+            listOf(
+                "Seltene Erfolge belohnen mit Items (anklickbare Vorschau)",
+                "Leinwand-Hinweise mittig, kurz und ohne Zeichnen zu blockieren",
+            )
+        ),
+        Entry(
             "1.9.80",
             listOf(
                 "Update-Hinweis auf der Leinwand wie im Hauptmenü lesbar",

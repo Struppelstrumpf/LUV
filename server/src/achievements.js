@@ -1,18 +1,25 @@
 /**
  * Erfolge, Daily-Aufgaben, Day-Streak.
- * Belohnung 1–3 Coins; max. 25 Coins/Tag aus Erfolgen (+ Daily-Abschluss).
+ * Belohnung 1–3 Coins (Tageslimit 25) — seltene Erfolge können stattdessen ein Item geben.
  */
 
 const ACHIEVEMENT_DAILY_CAP = 25;
 
-/** @type {{ id: string, title: string, desc: string, category: string, metric: string, target: number, coins: number }[]} */
+/** Item-Belohnung (statt Coins). kind: pets|themes|stickers|emojis */
+function itemReward(kind, itemId, emoji, label) {
+  return { kind, itemId, emoji: emoji || itemId, label: label || itemId };
+}
+
+/**
+ * @type {{ id: string, title: string, desc: string, category: string, metric: string, target: number, coins: number, rewardItem?: object, coinsFallback?: number }[]}
+ */
 const ACHIEVEMENTS = [
   // —— Sozial / Freunde (20) ——
   { id: "soc_first_friend", title: "Erster Freund", desc: "Füge jemanden als Freund hinzu.", category: "sozial", metric: "friends", target: 1, coins: 1 },
   { id: "soc_friends_3", title: "Kleiner Kreis", desc: "Habe 3 Freunde.", category: "sozial", metric: "friends", target: 3, coins: 1 },
   { id: "soc_friends_5", title: "Freundeskreis", desc: "Habe 5 Freunde.", category: "sozial", metric: "friends", target: 5, coins: 2 },
   { id: "soc_friends_10", title: "Beliebt", desc: "Habe 10 Freunde.", category: "sozial", metric: "friends", target: 10, coins: 2 },
-  { id: "soc_friends_20", title: "Netzwerk", desc: "Habe 20 Freunde.", category: "sozial", metric: "friends", target: 20, coins: 3 },
+  { id: "soc_friends_20", title: "Netzwerk", desc: "Habe 20 Freunde.", category: "sozial", metric: "friends", target: 20, coins: 0, rewardItem: itemReward("emojis", "👑", "👑", "Krone"), coinsFallback: 3 },
   { id: "soc_request_sent", title: "Hallo sagen", desc: "Sende eine Freundschaftsanfrage.", category: "sozial", metric: "friend_requests_sent", target: 1, coins: 1 },
   { id: "soc_request_5", title: "Gesellig", desc: "Sende 5 Anfragen.", category: "sozial", metric: "friend_requests_sent", target: 5, coins: 1 },
   { id: "soc_accept_1", title: "Willkommen", desc: "Nimm eine Anfrage an.", category: "sozial", metric: "friend_accepts", target: 1, coins: 1 },
@@ -26,7 +33,7 @@ const ACHIEVEMENTS = [
   { id: "soc_streak_3", title: "Dabei bleiben", desc: "3 Tage Daily-Streak.", category: "sozial", metric: "daily_streak", target: 3, coins: 2 },
   { id: "soc_streak_7", title: "Wochenrhythmus", desc: "7 Tage Daily-Streak.", category: "sozial", metric: "daily_streak", target: 7, coins: 2 },
   { id: "soc_streak_14", title: "Treu", desc: "14 Tage Daily-Streak.", category: "sozial", metric: "daily_streak", target: 14, coins: 3 },
-  { id: "soc_streak_30", title: "Unzertrennlich", desc: "30 Tage Daily-Streak.", category: "sozial", metric: "daily_streak", target: 30, coins: 3 },
+  { id: "soc_streak_30", title: "Unzertrennlich", desc: "30 Tage Daily-Streak.", category: "sozial", metric: "daily_streak", target: 30, coins: 0, rewardItem: itemReward("themes", "stars", "✨", "Sterne"), coinsFallback: 3 },
   { id: "soc_daily_done", title: "Pflicht erfüllt", desc: "Schließe Daily-Aufgaben einmal ab.", category: "sozial", metric: "dailies_completed", target: 1, coins: 1 },
 
   // —— Begleiter / Kraulen (15) ——
@@ -34,10 +41,10 @@ const ACHIEVEMENTS = [
   { id: "pet_kraul_5", title: "Zärtlich", desc: "Kraul 5× Begleiter.", category: "begleiter", metric: "krauls", target: 5, coins: 1 },
   { id: "pet_kraul_15", title: "Tierlieb", desc: "Kraul 15× Begleiter.", category: "begleiter", metric: "krauls", target: 15, coins: 2 },
   { id: "pet_kraul_40", title: "Best Friend", desc: "Kraul 40× Begleiter.", category: "begleiter", metric: "krauls", target: 40, coins: 2 },
-  { id: "pet_kraul_100", title: "Zoobesuch", desc: "Kraul 100× Begleiter.", category: "begleiter", metric: "krauls", target: 100, coins: 3 },
+  { id: "pet_kraul_100", title: "Zoobesuch", desc: "Kraul 100× Begleiter.", category: "begleiter", metric: "krauls", target: 100, coins: 0, rewardItem: itemReward("stickers", "🦔", "🦔", "Igel-Sticker"), coinsFallback: 3 },
   { id: "pet_own_2", title: "Zweites Tier", desc: "Besitze 2 Begleiter.", category: "begleiter", metric: "pets_owned", target: 2, coins: 1 },
   { id: "pet_own_5", title: "Menagerie", desc: "Besitze 5 Begleiter.", category: "begleiter", metric: "pets_owned", target: 5, coins: 2 },
-  { id: "pet_own_10", title: "Sammler", desc: "Besitze 10 Begleiter.", category: "begleiter", metric: "pets_owned", target: 10, coins: 2 },
+  { id: "pet_own_10", title: "Sammler", desc: "Besitze 10 Begleiter.", category: "begleiter", metric: "pets_owned", target: 10, coins: 0, rewardItem: itemReward("pets", "🦄", "🦄", "Einhorn"), coinsFallback: 3 },
   { id: "pet_equip", title: "Outfit gewechselt", desc: "Rüste einen Begleiter aus.", category: "begleiter", metric: "pet_equips", target: 1, coins: 1 },
   { id: "pet_equip_5", title: "Stilwechsel", desc: "Wechsle 5× den Begleiter.", category: "begleiter", metric: "pet_equips", target: 5, coins: 1 },
   { id: "pet_buy", title: "Tierkauf", desc: "Kaufe einen Begleiter im Shop.", category: "begleiter", metric: "pets_bought", target: 1, coins: 1 },
@@ -51,10 +58,10 @@ const ACHIEVEMENTS = [
   { id: "draw_5", title: "Warmgelaufen", desc: "Male an 5 Tagen/Sessions.", category: "malen", metric: "draw_sessions", target: 5, coins: 1 },
   { id: "draw_20", title: "Pinselheld", desc: "20 Mal-Sessions.", category: "malen", metric: "draw_sessions", target: 20, coins: 2 },
   { id: "draw_50", title: "Atelier", desc: "50 Mal-Sessions.", category: "malen", metric: "draw_sessions", target: 50, coins: 2 },
-  { id: "draw_100", title: "Meisterklasse", desc: "100 Mal-Sessions.", category: "malen", metric: "draw_sessions", target: 100, coins: 3 },
+  { id: "draw_100", title: "Meisterklasse", desc: "100 Mal-Sessions.", category: "malen", metric: "draw_sessions", target: 100, coins: 0, rewardItem: itemReward("themes", "hearth", "🔥", "Kamin"), coinsFallback: 3 },
   { id: "stroke_50", title: "Liniengewitter", desc: "Setze 50 Striche.", category: "malen", metric: "strokes", target: 50, coins: 1 },
   { id: "stroke_200", title: "Volles Blatt", desc: "Setze 200 Striche.", category: "malen", metric: "strokes", target: 200, coins: 2 },
-  { id: "stroke_1000", title: "Endlosband", desc: "Setze 1000 Striche.", category: "malen", metric: "strokes", target: 1000, coins: 3 },
+  { id: "stroke_1000", title: "Endlosband", desc: "Setze 1000 Striche.", category: "malen", metric: "strokes", target: 1000, coins: 0, rewardItem: itemReward("stickers", "🎨", "🎨", "Palette-Sticker"), coinsFallback: 3 },
   { id: "draw_duo", title: "Zu zweit", desc: "Male in einer Lobby mit mind. 2 Personen.", category: "malen", metric: "draw_with_peers", target: 1, coins: 1 },
   { id: "draw_group", title: "Familienbild", desc: "Male mit 4+ Personen in einer Lobby.", category: "malen", metric: "draw_group4", target: 1, coins: 2 },
   { id: "clear_vote", title: "Frischstart", desc: "Starte eine Lösch-Abstimmung.", category: "malen", metric: "clear_proposes", target: 1, coins: 1 },
@@ -62,12 +69,12 @@ const ACHIEVEMENTS = [
   { id: "moment_1", title: "Moment festgehalten", desc: "Speichere einen Moment.", category: "malen", metric: "moments_saved", target: 1, coins: 1 },
   { id: "moment_10", title: "Erinnerungskiste", desc: "Speichere 10 Momente.", category: "malen", metric: "moments_saved", target: 10, coins: 2 },
   { id: "publish_1", title: "Öffentlich", desc: "Veröffentliche ein Bild.", category: "malen", metric: "publishes", target: 1, coins: 1 },
-  { id: "publish_5", title: "Galerie-Star", desc: "Veröffentliche 5 Bilder.", category: "malen", metric: "publishes", target: 5, coins: 2 },
+  { id: "publish_5", title: "Galerie-Star", desc: "Veröffentliche 5 Bilder.", category: "malen", metric: "publishes", target: 5, coins: 0, rewardItem: itemReward("stickers", "💌", "💌", "Brief-Sticker"), coinsFallback: 2 },
   { id: "sticker_place", title: "Sticker-Spaß", desc: "Platziere 10 Sticker.", category: "malen", metric: "stickers_placed", target: 10, coins: 1 },
   { id: "tpl_create_1", title: "Erste Vorlage", desc: "Speichere eine Zeichen-Vorlage.", category: "malen", metric: "templates_created", target: 1, coins: 1 },
   { id: "tpl_create_5", title: "Vorlagen-Mappe", desc: "Speichere 5 Vorlagen.", category: "malen", metric: "templates_created", target: 5, coins: 2 },
   { id: "tpl_place_1", title: "Stempel", desc: "Platziere eine Vorlage auf der Leinwand.", category: "malen", metric: "templates_placed", target: 1, coins: 1 },
-  { id: "tpl_place_10", title: "Vorlagen-Meister", desc: "Platziere 10 Vorlagen.", category: "malen", metric: "templates_placed", target: 10, coins: 2 },
+  { id: "tpl_place_10", title: "Vorlagen-Meister", desc: "Platziere 10 Vorlagen.", category: "malen", metric: "templates_placed", target: 10, coins: 0, rewardItem: itemReward("stickers", "🪄", "🪄", "Zauberstab-Sticker"), coinsFallback: 2 },
   { id: "undo_10", title: "Oops", desc: "Nutze Undo 10×.", category: "malen", metric: "undos", target: 10, coins: 1 },
   { id: "color_change", title: "Farbenfroh", desc: "Wechsle 5× die Farbe.", category: "malen", metric: "recolors", target: 5, coins: 1 },
   { id: "game_play", title: "Spielrunde", desc: "Spiele ein Lobby-Spiel.", category: "malen", metric: "games_plays", target: 1, coins: 1 },
@@ -82,7 +89,7 @@ const ACHIEVEMENTS = [
   { id: "lobby_active_2", title: "Zwei Welten", desc: "Habe 2 Lobbys gleichzeitig.", category: "lobby", metric: "lobbies_active", target: 2, coins: 1 },
   { id: "lobby_active_5", title: "Volles Haus", desc: "Habe 5 Lobbys.", category: "lobby", metric: "lobbies_active", target: 5, coins: 2 },
   { id: "lobby_peak_4", title: "Vollbesetzt", desc: "Erreiche 4 Personen in einer Lobby.", category: "lobby", metric: "lobby_peak", target: 4, coins: 2 },
-  { id: "lobby_peak_8", title: "Party", desc: "Erreiche 8 Personen in einer Lobby.", category: "lobby", metric: "lobby_peak", target: 8, coins: 3 },
+  { id: "lobby_peak_8", title: "Party", desc: "Erreiche 8 Personen in einer Lobby.", category: "lobby", metric: "lobby_peak", target: 8, coins: 0, rewardItem: itemReward("emojis", "🎉", "🎉", "Party"), coinsFallback: 3 },
   { id: "lobby_free", title: "Gratisplatz", desc: "Erstelle eine Free-Lobby.", category: "lobby", metric: "free_lobbies", target: 1, coins: 1 },
   { id: "lobby_paid", title: "Premium-Raum", desc: "Erstelle eine bezahlte Lobby.", category: "lobby", metric: "paid_lobbies", target: 1, coins: 2 },
   { id: "lobby_leave", title: "Auf Wiedersehen", desc: "Verlasse eine Lobby bewusst.", category: "lobby", metric: "lobby_leaves", target: 1, coins: 1 },
@@ -95,7 +102,7 @@ const ACHIEVEMENTS = [
   { id: "mkt_buy", title: "Schnäppchen", desc: "Kaufe etwas auf dem Marktplatz.", category: "markt", metric: "market_bought", target: 1, coins: 1 },
   { id: "mkt_buy_5", title: "Einkaufsbummel", desc: "Kaufe 5 Markt-Artikel.", category: "markt", metric: "market_bought", target: 5, coins: 2 },
   { id: "mkt_sell", title: "Verkauf", desc: "Verkaufe etwas erfolgreich.", category: "markt", metric: "market_sold", target: 1, coins: 2 },
-  { id: "mkt_sell_5", title: "Geschäftstüchtig", desc: "Verkaufe 5 Artikel.", category: "markt", metric: "market_sold", target: 5, coins: 3 },
+  { id: "mkt_sell_5", title: "Geschäftstüchtig", desc: "Verkaufe 5 Artikel.", category: "markt", metric: "market_sold", target: 5, coins: 0, rewardItem: itemReward("themes", "lavender", "💜", "Lavendel"), coinsFallback: 3 },
   { id: "mkt_trade", title: "Tauschhandel", desc: "Schließe einen Tausch ab.", category: "markt", metric: "market_trades", target: 1, coins: 2 },
   { id: "mkt_private", title: "Privatdeal", desc: "Erstelle ein privates Angebot.", category: "markt", metric: "market_private", target: 1, coins: 1 },
   { id: "shop_emoji", title: "Reaktion neu", desc: "Kaufe ein Reaktions-Emoji.", category: "markt", metric: "emojis_bought", target: 1, coins: 1 },
@@ -118,8 +125,8 @@ const ACHIEVEMENTS = [
   { id: "gal_share", title: "Geteilt", desc: "Teile einen Moment.", category: "profil", metric: "moments_shared", target: 1, coins: 1 },
   { id: "ach_10", title: "Zehn Stück", desc: "Schalte 10 Erfolge frei.", category: "profil", metric: "achievements_unlocked", target: 10, coins: 2 },
   { id: "ach_25", title: "Viertel voll", desc: "Schalte 25 Erfolge frei.", category: "profil", metric: "achievements_unlocked", target: 25, coins: 2 },
-  { id: "ach_50", title: "Halbzeit", desc: "Schalte 50 Erfolge frei.", category: "profil", metric: "achievements_unlocked", target: 50, coins: 3 },
-  { id: "ach_75", title: "Fast alles", desc: "Schalte 75 Erfolge frei.", category: "profil", metric: "achievements_unlocked", target: 75, coins: 3 },
+  { id: "ach_50", title: "Halbzeit", desc: "Schalte 50 Erfolge frei.", category: "profil", metric: "achievements_unlocked", target: 50, coins: 0, rewardItem: itemReward("pets", "🐯", "🐯", "Tiger"), coinsFallback: 3 },
+  { id: "ach_75", title: "Fast alles", desc: "Schalte 75 Erfolge frei.", category: "profil", metric: "achievements_unlocked", target: 75, coins: 0, rewardItem: itemReward("themes", "ocean", "🌊", "Meer"), coinsFallback: 3 },
   { id: "login_google", title: "Verbunden", desc: "Verknüpfe Google.", category: "profil", metric: "google_linked", target: 1, coins: 1 },
   { id: "app_return", title: "Wieder da", desc: "Öffne die App an 5 verschiedenen Tagen.", category: "profil", metric: "active_days", target: 5, coins: 2 },
 ];
@@ -214,12 +221,25 @@ function remainingAchCoinsToday(user, dayKey) {
   return Math.max(0, ACHIEVEMENT_DAILY_CAP - (a.coinsEarnedToday || 0));
 }
 
+function publicRewardItem(def) {
+  const ri = def?.rewardItem;
+  if (!ri || !ri.kind || !ri.itemId) return null;
+  return {
+    kind: String(ri.kind),
+    itemId: String(ri.itemId),
+    emoji: String(ri.emoji || ri.itemId),
+    label: String(ri.label || ri.itemId),
+  };
+}
+
 function unlockAchievementEntry(a, def) {
   if (a.unlocked[def.id]) return false;
-  // Coins erst beim Abholen — einmalig pro Erfolg/Konto
+  // Belohnung erst beim Abholen — einmalig pro Erfolg/Konto
+  const reward = publicRewardItem(def);
   a.unlocked[def.id] = {
     at: Date.now(),
-    coins: def.coins,
+    coins: reward ? 0 : Number(def.coins) || 0,
+    rewardItem: reward,
     claimed: false,
   };
   return true;
@@ -293,9 +313,11 @@ function bumpMetric(user, metric, amount, dayKey, applyLedgerFn) {
 }
 
 /**
- * Einmalig Coins für einen freigeschalteten Erfolg abholen.
+ * Einmalig Belohnung (Coins oder Item) für einen freigeschalteten Erfolg abholen.
+ * @param {(user, kind, itemId) => boolean} [giveItemFn]
+ * @param {(user, kind, itemId) => boolean} [ownsUniqueFn] true wenn Pet/Theme schon im Besitz
  */
-function claimAchievement(user, achievementId, dayKey, applyLedgerFn) {
+function claimAchievement(user, achievementId, dayKey, applyLedgerFn, giveItemFn, ownsUniqueFn) {
   const a = ensureDaily(user, dayKey);
   const id = String(achievementId || "").trim();
   const def = ACHIEVEMENTS.find((d) => d.id === id);
@@ -305,35 +327,68 @@ function claimAchievement(user, achievementId, dayKey, applyLedgerFn) {
     return { ok: false, error: "locked", message: "Noch nicht freigeschaltet." };
   }
   if (entry.claimed) {
-    return { ok: false, error: "already_claimed", message: "Coins schon abgeholt." };
+    return { ok: false, error: "already_claimed", message: "Belohnung schon abgeholt." };
   }
-  const room = remainingAchCoinsToday(user, dayKey);
-  if (room <= 0) {
-    return {
-      ok: false,
-      error: "cap_reached",
-      message: "Tageslimit erreicht — hol die Coins morgen ab.",
-    };
+
+  const reward = publicRewardItem(def);
+  let grantItem = null;
+  let grantCoins = 0;
+
+  if (reward && typeof giveItemFn === "function") {
+    const uniqueOwned =
+      (reward.kind === "pets" || reward.kind === "themes") &&
+      typeof ownsUniqueFn === "function" &&
+      ownsUniqueFn(user, reward.kind, reward.itemId);
+    if (!uniqueOwned) {
+      if (giveItemFn(user, reward.kind, reward.itemId)) {
+        grantItem = reward;
+      } else {
+        grantCoins = Math.max(0, Number(def.coinsFallback) || Number(def.coins) || 0);
+      }
+    } else {
+      // Unique schon da → Coin-Fallback
+      grantCoins = Math.max(0, Number(def.coinsFallback) || 3);
+    }
+  } else {
+    grantCoins = Math.max(0, Number(def.coins) || 0);
   }
-  // Kein Teil-Claim: sonst gehen Rest-Coins des Erfolgs verloren
-  if (room < def.coins) {
-    return {
-      ok: false,
-      error: "cap_reached",
-      message: `Heute nur noch ${room} Coin(s) frei — hol „${def.title}“ (${def.coins}) morgen vollständig ab.`,
-    };
+
+  if (grantCoins > 0) {
+    const room = remainingAchCoinsToday(user, dayKey);
+    if (room <= 0) {
+      return {
+        ok: false,
+        error: "cap_reached",
+        message: "Tageslimit erreicht — hol die Belohnung morgen ab.",
+      };
+    }
+    if (room < grantCoins) {
+      return {
+        ok: false,
+        error: "cap_reached",
+        message: `Heute nur noch ${room} Coin(s) frei — hol „${def.title}“ (${grantCoins}) morgen vollständig ab.`,
+      };
+    }
   }
-  const grant = def.coins;
+
   entry.claimed = true;
   entry.claimedAt = Date.now();
-  entry.coins = grant;
-  if (applyLedgerFn) {
-    applyLedgerFn(user.id, grant, "achievement", id);
-    a.coinsEarnedToday += grant;
-    a.totalAchCoins += grant;
+  entry.coins = grantCoins;
+  entry.rewardItem = grantItem || reward || null;
+  entry.itemGranted = Boolean(grantItem);
+
+  if (grantCoins > 0 && applyLedgerFn) {
+    applyLedgerFn(user.id, grantCoins, "achievement", id);
+    a.coinsEarnedToday += grantCoins;
+    a.totalAchCoins += grantCoins;
   }
   a.progress.ach_coins_earned = a.totalAchCoins;
-  return { ok: true, coinsGranted: grant, achievementId: id };
+  return {
+    ok: true,
+    coinsGranted: grantCoins,
+    itemGranted: grantItem,
+    achievementId: id,
+  };
 }
 
 /**
@@ -387,6 +442,7 @@ function publicAchievementsState(user, dayKey) {
     const progress = Number(a.progress[def.metric]) || 0;
     const claimed = Boolean(u?.claimed);
     const claimable = Boolean(u) && !claimed;
+    const rewardItem = publicRewardItem(def);
     return {
       id: def.id,
       title: def.title,
@@ -394,7 +450,8 @@ function publicAchievementsState(user, dayKey) {
       category: def.category,
       target: def.target,
       progress: Math.min(progress, def.target),
-      coins: def.coins,
+      coins: rewardItem ? 0 : Number(def.coins) || 0,
+      rewardItem,
       unlocked: Boolean(u),
       unlockedAt: u?.at || null,
       claimed,
