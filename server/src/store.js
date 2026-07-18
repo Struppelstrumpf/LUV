@@ -37,8 +37,9 @@ function load() {
   }
   try {
     const raw = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-    // Bekannte Felder normalisieren — unbekannte Top-Level-Keys behalten
-    // (sonst gehen z. B. marriages bei jedem Restart verloren).
+    // WICHTIG: Immer ...raw behalten + marriages explizit laden.
+    // Früher Whitelist ohne marriages → jeder Deploy/Restart wischte Ehen weg
+    // (Hochzeitsbilder blieben als Dateien, Gästebuch war verloren).
     return {
       ...raw,
       users: raw.users || {},

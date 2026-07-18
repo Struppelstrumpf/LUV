@@ -9,18 +9,19 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,11 +29,14 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -51,12 +55,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -83,6 +94,7 @@ private enum class TutPage {
     Welcome,
     Nickname,
     Draw,
+    Vow,
     Invite
 }
 
@@ -100,9 +112,9 @@ fun TutorialFlow(
 ) {
     val pages = remember(replay) {
         if (replay) {
-            listOf(TutPage.Welcome, TutPage.Draw, TutPage.Invite)
+            listOf(TutPage.Welcome, TutPage.Draw, TutPage.Vow, TutPage.Invite)
         } else {
-            listOf(TutPage.Welcome, TutPage.Nickname, TutPage.Draw, TutPage.Invite)
+            listOf(TutPage.Welcome, TutPage.Nickname, TutPage.Draw, TutPage.Vow, TutPage.Invite)
         }
     }
     var index by remember { mutableIntStateOf(0) }
@@ -119,22 +131,31 @@ fun TutorialFlow(
 
     val breathe = rememberInfiniteTransition(label = "tutGlow")
     val glow by breathe.animateFloat(
-        initialValue = 0.22f,
-        targetValue = 0.42f,
+        initialValue = 0.18f,
+        targetValue = 0.48f,
         animationSpec = infiniteRepeatable(
-            animation = tween(3400, easing = FastOutSlowInEasing),
+            animation = tween(4200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "glow"
     )
     val heartPulse by breathe.animateFloat(
-        initialValue = 0.96f,
-        targetValue = 1.04f,
+        initialValue = 0.94f,
+        targetValue = 1.06f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2200, easing = FastOutSlowInEasing),
+            animation = tween(2600, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "heart"
+    )
+    val shimmer by breathe.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(5200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmer"
     )
 
     LaunchedEffect(googleSignedIn, replay) {
@@ -150,25 +171,24 @@ fun TutorialFlow(
             .background(
                 Brush.verticalGradient(
                     listOf(
-                        Color(0xFF10151C),
+                        Color(0xFF0A0E14),
                         BgDeep,
-                        Color(0xFF16101A)
+                        Color(0xFF141018)
                     )
                 )
             )
     ) {
-        // Atmosphäre — weiche Lichtflecken, kein flaches Flat
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            AccentRose.copy(alpha = glow * 0.55f),
+                            AccentRose.copy(alpha = glow * 0.42f),
                             Color.Transparent
                         ),
-                        center = androidx.compose.ui.geometry.Offset(0.15f, 0.08f),
-                        radius = 900f
+                        center = Offset(0.12f, 0.05f),
+                        radius = 1100f
                     )
                 )
         )
@@ -178,11 +198,25 @@ fun TutorialFlow(
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            MaleBlue.copy(alpha = glow * 0.35f),
+                            MaleBlue.copy(alpha = glow * 0.28f),
                             Color.Transparent
                         ),
-                        center = androidx.compose.ui.geometry.Offset(0.92f, 0.78f),
-                        radius = 780f
+                        center = Offset(0.95f, 0.82f),
+                        radius = 920f
+                    )
+                )
+        )
+        // Leichter Lichtstreifen
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .align(Alignment.TopCenter)
+                .padding(top = 120.dp)
+                .alpha(0.25f + shimmer * 0.35f)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(Color.Transparent, Color.White.copy(0.35f), Color.Transparent)
                     )
                 )
         )
@@ -192,19 +226,19 @@ fun TutorialFlow(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .padding(horizontal = 24.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+                .padding(horizontal = 22.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             TutorialProgress(index = index, total = pages.size)
 
             AnimatedContent(
                 targetState = page,
                 transitionSpec = {
-                    (fadeIn(tween(320)) + slideInHorizontally { it / 14 }) togetherWith
-                        (fadeOut(tween(220)) + slideOutHorizontally { -it / 18 })
+                    (fadeIn(tween(380)) + slideInVertically { it / 18 }) togetherWith
+                        (fadeOut(tween(240)) + slideOutVertically { -it / 22 })
                 },
                 label = "tut",
-                modifier = Modifier.weight(1f, fill = false)
+                modifier = Modifier.weight(1f)
             ) { p ->
                 when (p) {
                     TutPage.Welcome -> TutorialWelcome(
@@ -261,11 +295,12 @@ fun TutorialFlow(
                         },
                         replay = replay
                     )
+                    TutPage.Vow -> TutorialVowPane(shimmer = shimmer)
                     TutPage.Invite -> TutorialInvitePane(replay = replay)
                 }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!error.isNullOrBlank()) {
                     Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
                 }
@@ -278,11 +313,12 @@ fun TutorialFlow(
                         onClick = onGoogleSignIn
                     )
                     Text(
-                        "Nur ein Tippen — dann gehört dieser Platz dir.",
+                        "Damit Lobbys und Ehe geräteübergreifend bleiben.",
                         color = TextMuted,
                         fontFamily = BodyFont,
-                        fontSize = 13.sp,
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                        fontSize = 12.sp,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                        textAlign = TextAlign.Center
                     )
                 } else {
                     val needStroke = page == TutPage.Draw && tutorialStrokes.isEmpty() && !replay
@@ -312,24 +348,6 @@ fun TutorialFlow(
                             }
                         }
                     )
-                    if (page == TutPage.Draw && !replay) {
-                        Text(
-                            "Dein erstes Bild wird eine echte Lobby im Hauptmenü.",
-                            color = TextMuted.copy(alpha = 0.9f),
-                            fontFamily = BodyFont,
-                            fontSize = 12.sp,
-                            modifier = Modifier.align(Alignment.CenterHorizontally)
-                        )
-                    }
-                    if (page == TutPage.Draw && replay) {
-                        Text(
-                            "Nur zum Ausprobieren — wird nicht als Lobby gespeichert.",
-                            color = TextMuted.copy(alpha = 0.9f),
-                            fontFamily = BodyFont,
-                            fontSize = 12.sp,
-                            modifier = Modifier.align(Alignment.CenterHorizontally)
-                        )
-                    }
                 }
                 when {
                     index > 0 -> {
@@ -340,7 +358,7 @@ fun TutorialFlow(
                             modifier = Modifier
                                 .align(Alignment.CenterHorizontally)
                                 .clickable(enabled = !busy) { index -= 1 }
-                                .padding(8.dp)
+                                .padding(6.dp)
                         )
                     }
                     replay && onDismiss != null -> {
@@ -351,7 +369,7 @@ fun TutorialFlow(
                             modifier = Modifier
                                 .align(Alignment.CenterHorizontally)
                                 .clickable(enabled = !busy, onClick = onDismiss)
-                                .padding(8.dp)
+                                .padding(6.dp)
                         )
                     }
                 }
@@ -403,25 +421,25 @@ fun TutorialFlow(
 
 @Composable
 private fun TutorialProgress(index: Int, total: Int) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            LuvWordmark(fontSize = 22.sp, showHeart = true)
+            LuvWordmark(fontSize = 20.sp, showHeart = true)
             Text(
-                "${index + 1} / $total",
-                color = TextMuted,
+                "${index + 1} · $total",
+                color = TextMuted.copy(0.9f),
                 fontFamily = BodyFont,
-                fontSize = 13.sp
+                fontSize = 12.sp
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             repeat(total) { i ->
                 Box(
                     modifier = Modifier
-                        .height(3.dp)
+                        .height(2.5.dp)
                         .weight(1f)
                         .clip(RoundedCornerShape(99.dp))
                         .then(
@@ -432,7 +450,7 @@ private fun TutorialProgress(index: Int, total: Int) {
                                     )
                                 )
                             } else {
-                                Modifier.background(Color.White.copy(0.12f))
+                                Modifier.background(Color.White.copy(0.1f))
                             }
                         )
                 )
@@ -445,53 +463,54 @@ private fun TutorialProgress(index: Int, total: Int) {
 private fun TutorialWelcome(replay: Boolean, heartScale: Float) {
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 28.dp, bottom = 12.dp),
-        horizontalAlignment = Alignment.Start
+            .fillMaxSize()
+            .padding(top = 20.dp, bottom = 8.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             modifier = Modifier
-                .size(88.dp)
+                .size(108.dp)
                 .scale(heartScale)
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
-                        listOf(AccentRose.copy(0.35f), Color.Transparent)
+                        listOf(
+                            AccentRose.copy(0.4f),
+                            MaleBlue.copy(0.12f),
+                            Color.Transparent
+                        )
                     )
-                )
-                .border(1.dp, Color.White.copy(0.12f), CircleShape),
+                ),
             contentAlignment = Alignment.Center
         ) {
-            SketchedHeart(size = 42.dp, color = Color.White.copy(0.92f))
+            SketchedHeart(size = 52.dp, color = Color.White.copy(0.95f))
         }
         Spacer(modifier = Modifier.height(28.dp))
-        LuvWordmark(fontSize = 48.sp, showHeart = false)
-        Spacer(modifier = Modifier.height(14.dp))
+        LuvWordmark(fontSize = 56.sp, showHeart = false)
+        Spacer(modifier = Modifier.height(18.dp))
         Text(
-            if (replay) "Noch einmal kurz…" else "Schön, dass du da bist",
+            if (replay) "Willkommen zurück" else "Für euch beide",
             fontFamily = DisplayFont,
-            fontSize = 30.sp,
+            fontSize = 28.sp,
             color = TextPrimary,
-            lineHeight = 36.sp
+            textAlign = TextAlign.Center,
+            lineHeight = 34.sp
         )
         Spacer(modifier = Modifier.height(12.dp))
         Text(
             if (replay) {
-                "Ein paar Schritte, damit du dich wieder zurechtfindest — ganz ohne neue Lobby."
+                "Kurz die Leinwand, die Hochzeit und das Einladen — dann bist du wieder im Menü."
             } else {
-                "Eine gemeinsame Leinwand für zwei Herzen — oder bis zu zehn. Zeichne, speichere Momente, bleibt unter euch."
+                "Gemeinsam zeichnen. Momente behalten. Und wenn ihr wollt: heiraten."
             },
             fontFamily = BodyFont,
             color = TextMuted,
             fontSize = 16.sp,
-            lineHeight = 24.sp
+            lineHeight = 24.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 8.dp)
         )
-        Spacer(modifier = Modifier.height(22.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TutorialSoftChip("Live zeichnen", MaleBlue)
-            TutorialSoftChip("Galerie", AccentRose)
-            TutorialSoftChip("Zusammen", FemalePurple)
-        }
     }
 }
 
@@ -504,53 +523,52 @@ private fun TutorialNickname(
 ) {
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 24.dp, bottom = 8.dp)
+            .fillMaxSize()
+            .padding(top = 28.dp),
+        verticalArrangement = Arrangement.Center
     ) {
         Text(
-            "Wie heißt du hier?",
+            "Dein Name in LUV",
             fontFamily = DisplayFont,
-            fontSize = 28.sp,
+            fontSize = 30.sp,
             color = TextPrimary,
-            lineHeight = 34.sp
+            lineHeight = 36.sp
         )
         Spacer(modifier = Modifier.height(10.dp))
         Text(
-            "Dein Spitzname färbt deine Linien. Einmal gewählt — für immer deiner.",
+            "Er färbt deine Linien. Einmal gewählt — für immer.",
             fontFamily = BodyFont,
             color = TextMuted,
             fontSize = 15.sp,
             lineHeight = 22.sp
         )
-        Spacer(modifier = Modifier.height(28.dp))
+        Spacer(modifier = Modifier.height(36.dp))
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(56.dp)
+                    .size(64.dp)
                     .clip(CircleShape)
-                    .background(
-                        Brush.radialGradient(listOf(color, color.copy(0.55f)))
-                    )
-                    .border(2.dp, Color.White.copy(0.18f), CircleShape),
+                    .background(Brush.radialGradient(listOf(color, color.copy(0.5f))))
+                    .border(2.dp, Color.White.copy(0.2f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     nickname.trim().take(1).uppercase().ifBlank { "?" },
-                    color = Color(0xFF12161E),
+                    color = Color(0xFF10141C),
                     fontFamily = DisplayFont,
-                    fontSize = 22.sp
+                    fontSize = 26.sp
                 )
             }
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(BgSoft)
-                    .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(22.dp))
-                    .padding(horizontal = 18.dp, vertical = 18.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Color.White.copy(0.04f))
+                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(24.dp))
+                    .padding(horizontal = 20.dp, vertical = 20.dp)
             ) {
                 BasicTextField(
                     value = nickname,
@@ -561,16 +579,16 @@ private fun TutorialNickname(
                     textStyle = TextStyle(
                         color = TextPrimary,
                         fontFamily = BodyFont,
-                        fontSize = 18.sp
+                        fontSize = 20.sp
                     ),
                     cursorBrush = SolidColor(AccentRose),
                     decorationBox = { inner ->
                         if (nickname.isBlank()) {
                             Text(
-                                "z.B. Emrys",
-                                color = TextMuted,
+                                "z. B. Emrys",
+                                color = TextMuted.copy(0.7f),
                                 fontFamily = BodyFont,
-                                fontSize = 18.sp
+                                fontSize = 20.sp
                             )
                         }
                         inner()
@@ -593,94 +611,276 @@ private fun TutorialDrawPad(
     val density = LocalDensity.current
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp, bottom = 4.dp)
+            .fillMaxSize()
+            .padding(top = 4.dp)
     ) {
         Text(
-            if (replay) "Nochmal tippen & ziehen" else "Zeichne etwas Kleines",
+            if (replay) "Kurz zeichnen" else "Deine erste Leinwand",
             fontFamily = DisplayFont,
-            fontSize = 26.sp,
-            color = TextPrimary,
-            lineHeight = 32.sp
+            fontSize = 24.sp,
+            color = TextPrimary
         )
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
             if (replay) {
-                "Probier die Leinwand — danach bist du wieder im Menü."
+                "Nur zum Ausprobieren — wird nicht gespeichert."
             } else {
-                "Ein Herz, ein Hi, ein Strich. Danach wird daraus deine erste Lobby."
+                "Ein Strich reicht. Daraus wird deine erste Lobby."
             },
             fontFamily = BodyFont,
             color = TextMuted,
-            fontSize = 14.sp,
-            lineHeight = 20.sp
+            fontSize = 13.sp,
+            lineHeight = 18.sp
         )
-        Spacer(modifier = Modifier.height(14.dp))
-        Box(
+        Spacer(modifier = Modifier.height(12.dp))
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(0.92f)
-                .clip(RoundedCornerShape(28.dp))
-                .border(
-                    1.5.dp,
-                    Brush.linearGradient(listOf(MaleBlue.copy(0.45f), AccentRose.copy(0.55f), FemalePurple.copy(0.4f))),
-                    RoundedCornerShape(28.dp)
-                )
-                .background(Color(0xFF0C1218))
+                .weight(1f),
+            contentAlignment = Alignment.Center
         ) {
-            var drawView by remember { mutableStateOf<DrawingView?>(null) }
-            AndroidView(
-                factory = { ctx ->
-                    DrawingView(ctx).apply {
-                        myColorIndex = colorIndex
-                        myBrushWidth = with(density) { 18.dp.toPx() }
-                        canvasBackground = 0xFF0C1218.toInt()
-                        drawView = this
-                        onStrokeFinished = { pts ->
-                            val short = min(width, height).toFloat().coerceAtLeast(1f)
-                            onStroke(pts, myBrushWidth, short)
+            val side = min(maxWidth.value, maxHeight.value).dp
+            Box(
+                modifier = Modifier
+                    .size(side)
+                    .clip(RoundedCornerShape(26.dp))
+                    .border(
+                        1.5.dp,
+                        Brush.linearGradient(
+                            listOf(
+                                MaleBlue.copy(0.55f),
+                                AccentRose.copy(0.65f),
+                                FemalePurple.copy(0.45f)
+                            )
+                        ),
+                        RoundedCornerShape(26.dp)
+                    )
+                    .background(Color(0xFF0B1016))
+            ) {
+                var drawView by remember { mutableStateOf<DrawingView?>(null) }
+                AndroidView(
+                    factory = { ctx ->
+                        DrawingView(ctx).apply {
+                            myColorIndex = colorIndex
+                            myBrushWidth = with(density) { 18.dp.toPx() }
+                            canvasBackground = 0xFF0B1016.toInt()
+                            drawView = this
+                            onStrokeFinished = { pts ->
+                                val short = min(width, height).toFloat().coerceAtLeast(1f)
+                                onStroke(pts, myBrushWidth, short)
+                            }
+                            onDoubleTapUndo = onUndo
+                            onDotPlaced = { pt ->
+                                val short = min(width, height).toFloat().coerceAtLeast(1f)
+                                onDot(pt, myBrushWidth, short)
+                            }
                         }
-                        onDoubleTapUndo = onUndo
-                        onDotPlaced = { pt ->
-                            val short = min(width, height).toFloat().coerceAtLeast(1f)
-                            onDot(pt, myBrushWidth, short)
-                        }
-                    }
-                },
-                update = { view ->
-                    view.myColorIndex = colorIndex
-                    view.setStrokes(strokes, animateNew = false)
-                },
-                modifier = Modifier.fillMaxSize()
+                    },
+                    update = { view ->
+                        view.myColorIndex = colorIndex
+                        view.setStrokes(strokes, animateNew = false)
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+                DisposableEffect(Unit) {
+                    onDispose { drawView = null }
+                }
+                if (strokes.isEmpty()) {
+                    Text(
+                        "Tippen & ziehen",
+                        color = TextMuted.copy(0.65f),
+                        fontFamily = BodyFont,
+                        fontSize = 14.sp,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .alpha(0.9f)
+                    )
+                } else {
+                    Text(
+                        "Doppeltipp = rückgängig",
+                        color = TextMuted.copy(0.8f),
+                        fontFamily = BodyFont,
+                        fontSize = 11.sp,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 10.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color.Black.copy(0.4f))
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Ablauf Heirat + volle Hochzeitsleinwand-Vorschau (nicht zugeschnitten). */
+@Composable
+private fun TutorialVowPane(shimmer: Float) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(top = 6.dp, bottom = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            "Vom Freund zur Ehe",
+            fontFamily = DisplayFont,
+            fontSize = 26.sp,
+            color = TextPrimary,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            "Level 100 → Antrag gratis. Dann 7 Tage warten, 7 Tage malen — erst dann verheiratet. Überspringen kostet Coins.",
+            fontFamily = BodyFont,
+            color = TextMuted,
+            fontSize = 13.sp,
+            lineHeight = 19.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Volle quadratische Hochzeitsleinwand — Fit, kein Crop
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            val side = min(maxWidth.value, 340f).dp
+            Box(
+                modifier = Modifier
+                    .size(side)
+                    .clip(RoundedCornerShape(22.dp))
+                    .border(
+                        1.5.dp,
+                        Brush.linearGradient(
+                            listOf(
+                                Color(0xFFFFD54F).copy(0.75f),
+                                AccentRose.copy(0.55f),
+                                Color(0xFFFFF8E7).copy(0.25f)
+                            )
+                        ),
+                        RoundedCornerShape(22.dp)
+                    )
+            ) {
+                TutorialWeddingCanvasPreview(shimmer = shimmer)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+        TutorialTimelineStep("1", "Freundschaftslevel 100", "Heiratsanfrage kostenlos")
+        Spacer(modifier = Modifier.height(8.dp))
+        TutorialTimelineStep("2", "7 Tage Verlobung", "Danach öffnet die Hochzeitsleinwand")
+        Spacer(modifier = Modifier.height(8.dp))
+        TutorialTimelineStep("3", "7 Tage malen", "Gemeinsam — dann seid ihr verheiratet")
+    }
+}
+
+@Composable
+private fun TutorialWeddingCanvasPreview(shimmer: Float) {
+    val ink = Color(0xFF2A1F28)
+    val blush = Color(0xFFFFE4EC)
+    val gold = Color(0xFFFFD54F)
+    val rose = AccentRose
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val w = size.width
+        val h = size.height
+        // Gesamte Fläche sichtbar — Portrait/Square-Lobby
+        drawRect(
+            brush = Brush.verticalGradient(
+                listOf(
+                    Color(0xFFFFF8F2),
+                    blush,
+                    Color(0xFFFFF0F5)
+                )
             )
-            DisposableEffect(Unit) {
-                onDispose { drawView = null }
-            }
-            if (strokes.isEmpty()) {
-                Text(
-                    "Hier tippen & zeichnen",
-                    color = TextMuted.copy(0.7f),
-                    fontFamily = BodyFont,
-                    fontSize = 14.sp,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .alpha(0.85f)
+        )
+        // Weiches Licht
+        drawCircle(
+            brush = Brush.radialGradient(
+                listOf(gold.copy(0.22f + shimmer * 0.08f), Color.Transparent)
+            ),
+            radius = w * 0.42f,
+            center = Offset(w * 0.5f, h * 0.38f)
+        )
+        // Herz in der Mitte (vollständig im Frame)
+        val heart = Path().apply {
+            val cx = w * 0.5f
+            val cy = h * 0.42f
+            val s = min(w, h) * 0.22f
+            moveTo(cx, cy + s * 0.35f)
+            cubicTo(cx - s * 1.1f, cy - s * 0.15f, cx - s * 0.85f, cy - s * 0.95f, cx, cy - s * 0.45f)
+            cubicTo(cx + s * 0.85f, cy - s * 0.95f, cx + s * 1.1f, cy - s * 0.15f, cx, cy + s * 0.35f)
+            close()
+        }
+        drawPath(
+            heart,
+            brush = Brush.verticalGradient(listOf(rose.copy(0.85f), FemalePurple.copy(0.7f)))
+        )
+        drawPath(heart, color = gold.copy(0.55f), style = DrawStroke(width = 3.5f, cap = StrokeCap.Round))
+
+        // Zwei Ringe unten — komplett sichtbar
+        val r = min(w, h) * 0.07f
+        val yR = h * 0.72f
+        val x1 = w * 0.42f
+        val x2 = w * 0.58f
+        drawCircle(color = gold.copy(0.9f), radius = r, center = Offset(x1, yR), style = DrawStroke(5f))
+        drawCircle(color = rose.copy(0.9f), radius = r, center = Offset(x2, yR), style = DrawStroke(5f))
+
+        // Namen-Zeile
+        drawRoundRect(
+            color = ink.copy(0.08f),
+            topLeft = Offset(w * 0.18f, h * 0.84f),
+            size = Size(w * 0.64f, h * 0.07f),
+            cornerRadius = CornerRadius(20f, 20f)
+        )
+        // Dezente Randlinie der „Lobby“
+        drawRoundRect(
+            color = gold.copy(0.35f),
+            topLeft = Offset(w * 0.04f, h * 0.04f),
+            size = Size(w * 0.92f, h * 0.92f),
+            cornerRadius = CornerRadius(28f, 28f),
+            style = DrawStroke(width = 2.5f)
+        )
+    }
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Text(
+            "Hochzeitsleinwand",
+            color = Color(0xFF5A3040).copy(0.75f),
+            fontFamily = DisplayFont,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 14.dp)
+        )
+    }
+}
+
+@Composable
+private fun TutorialTimelineStep(num: String, title: String, body: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.linearGradient(listOf(Color(0xFFFFD54F).copy(0.35f), AccentRose.copy(0.3f)))
                 )
-            }
-            if (strokes.isNotEmpty()) {
-                Text(
-                    "Doppeltipp = rückgängig",
-                    color = TextMuted.copy(0.75f),
-                    fontFamily = BodyFont,
-                    fontSize = 11.sp,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 12.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color.Black.copy(0.35f))
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
-                )
-            }
+                .border(1.dp, Color(0xFFFFD54F).copy(0.45f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(num, color = TextPrimary, fontFamily = DisplayFont, fontSize = 13.sp)
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = TextPrimary, fontFamily = DisplayFont, fontSize = 15.sp)
+            Text(body, color = TextMuted, fontFamily = BodyFont, fontSize = 13.sp, lineHeight = 18.sp)
         }
     }
 }
@@ -689,26 +889,12 @@ private fun TutorialDrawPad(
 private fun TutorialInvitePane(replay: Boolean) {
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 28.dp, bottom = 8.dp)
+            .fillMaxSize()
+            .padding(top = 20.dp),
+        verticalArrangement = Arrangement.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(72.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .background(
-                    Brush.linearGradient(
-                        listOf(MaleBlue.copy(0.28f), FemalePurple.copy(0.28f))
-                    )
-                )
-                .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(22.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text("💌", fontSize = 30.sp)
-        }
-        Spacer(modifier = Modifier.height(22.dp))
         Text(
-            if (replay) "Und dann zusammen" else "Als Nächstes: jemanden einladen",
+            if (replay) "Zusammen bleiben" else "Jemanden einladen",
             fontFamily = DisplayFont,
             fontSize = 28.sp,
             color = TextPrimary,
@@ -717,62 +903,45 @@ private fun TutorialInvitePane(replay: Boolean) {
         Spacer(modifier = Modifier.height(12.dp))
         Text(
             if (replay) {
-                "Im Hauptmenü öffnest du Lobbys, speicherst Momente und lädst Freunde ein."
+                "Im Menü öffnest du Lobbys, speicherst Momente und lädst Freunde ein."
             } else {
-                "Deine Skizze liegt gleich als Lobby im Hauptmenü. Tippe darauf, um weiterzumalen — oder lade jemanden mit dem Code ein."
+                "Deine Skizze liegt gleich als Lobby im Hauptmenü. Tippe drauf — oder teile den Code."
             },
             fontFamily = BodyFont,
             color = TextMuted,
-            fontSize = 16.sp,
-            lineHeight = 24.sp
+            fontSize = 15.sp,
+            lineHeight = 23.sp
         )
-        Spacer(modifier = Modifier.height(20.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            TutorialFeatureRow("Lobby tippen", "Leinwand öffnen")
-            TutorialFeatureRow("Code teilen", "Zusammen zeichnen")
-            TutorialFeatureRow("Moment speichern", "In der Galerie behalten")
-        }
+        Spacer(modifier = Modifier.height(28.dp))
+        TutorialInviteLine("01", "Lobby öffnen", MaleBlue)
+        Spacer(modifier = Modifier.height(14.dp))
+        TutorialInviteLine("02", "Code teilen", AccentRose)
+        Spacer(modifier = Modifier.height(14.dp))
+        TutorialInviteLine("03", "Moment speichern", FemalePurple)
     }
 }
 
 @Composable
-private fun TutorialFeatureRow(title: String, subtitle: String) {
+private fun TutorialInviteLine(num: String, title: String, tint: Color) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(BgSoft.copy(alpha = 0.85f))
-            .border(1.dp, Color.White.copy(0.06f), RoundedCornerShape(16.dp))
-            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        Text(
+            num,
+            color = tint.copy(0.9f),
+            fontFamily = DisplayFont,
+            fontSize = 18.sp,
+            modifier = Modifier.width(36.dp)
+        )
         Box(
             modifier = Modifier
-                .size(10.dp)
-                .clip(CircleShape)
-                .background(AccentRose)
+                .height(1.dp)
+                .width(28.dp)
+                .background(tint.copy(0.45f))
         )
-        Column {
-            Text(title, color = TextPrimary, fontFamily = DisplayFont, fontSize = 15.sp)
-            Text(subtitle, color = TextMuted, fontFamily = BodyFont, fontSize = 13.sp)
-        }
+        Text(title, color = TextPrimary, fontFamily = DisplayFont, fontSize = 17.sp)
     }
-}
-
-@Composable
-private fun TutorialSoftChip(label: String, tint: Color) {
-    Text(
-        label,
-        color = TextPrimary,
-        fontFamily = DisplayFont,
-        fontSize = 12.sp,
-        modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(tint.copy(alpha = 0.18f))
-            .border(1.dp, tint.copy(alpha = 0.35f), RoundedCornerShape(999.dp))
-            .padding(horizontal = 12.dp, vertical = 7.dp)
-    )
 }
 
 @Composable
@@ -784,17 +953,17 @@ private fun TutorialPrimaryButton(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .height(54.dp)
+            .clip(RoundedCornerShape(18.dp))
             .then(
                 if (enabled) {
                     Modifier.background(
                         Brush.horizontalGradient(
-                            listOf(AccentRose, AccentRose.copy(0.88f), FemalePurple.copy(0.85f))
+                            listOf(AccentRose, AccentRose.copy(0.9f), FemalePurple.copy(0.82f))
                         )
                     )
                 } else {
-                    Modifier.background(AccentRose.copy(alpha = 0.32f))
+                    Modifier.background(AccentRose.copy(alpha = 0.28f))
                 }
             )
             .clickable(enabled = enabled, onClick = onClick),
@@ -804,7 +973,7 @@ private fun TutorialPrimaryButton(
             label,
             color = TextPrimary,
             fontFamily = DisplayFont,
-            fontSize = 18.sp
+            fontSize = 17.sp
         )
     }
 }

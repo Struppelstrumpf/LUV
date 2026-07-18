@@ -76,16 +76,18 @@ fun MarriageSkipWaitDialog(
     } else {
         marriage.weddingRemainingLabel ?: "…"
     }
-    val title = if (isEngage) "Verlobungszeit" else "Hochzeitsleinwand"
+    val title = if (isEngage) "7 Tage Verlobung" else "7 Tage Hochzeitsleinwand"
     val subtitle = if (isEngage) {
-        "Noch $label bis zur gemeinsamen Hochzeitsleinwand."
+        "Noch $label — dann öffnet sich eure gemeinsame Hochzeitsleinwand."
     } else {
-        "Noch $label, dann seid ihr verheiratet."
+        "Noch $label auf der Hochzeitsleinwand — erst danach seid ihr verheiratet."
     }
     val nextHint = if (isEngage) {
-        "Danach öffnet sich eure Hochzeitslobby — 7 Tage gemeinsam malen."
+        "Ablauf: 7 Tage warten → 7 Tage gemeinsam malen → Ehe. " +
+            "Überspringen kostet Coins (Antrag bei Level 100 war kostenlos)."
     } else {
-        "Danach seid ihr Ehepartner — mit Extra, Gästebuch und Ehering."
+        "Danach: Ehepartner mit Extra, Gästebuch und Ehering. " +
+            "Überspringen beendet die Malzeit früher — kostet Coins."
     }
     val canPay = coins >= cost
 

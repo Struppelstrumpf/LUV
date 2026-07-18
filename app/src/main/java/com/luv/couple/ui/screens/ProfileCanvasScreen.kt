@@ -992,8 +992,12 @@ fun ProfileCanvasScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                if (totalHint > 0) "💍  Heiraten · ab $totalHint Coins"
-                                else "💍  Heiraten",
+                                when {
+                                    friendshipLevel >= 100 && totalHint <= 0 ->
+                                        "💍  Heiraten · Level 100 gratis"
+                                    totalHint > 0 -> "💍  Heiraten · ab $totalHint Coins"
+                                    else -> "💍  Heiraten"
+                                },
                                 color = Color.White,
                                 fontFamily = DisplayFont
                             )
@@ -1083,15 +1087,25 @@ fun ProfileCanvasScreen(
             val total = unlock + cool
             val coins = AccountSession.account.value?.coins ?: displayCoins
             val costLine = buildString {
-                append("Level $friendshipLevel/100. ")
-                if (unlock > 0) append("Freischaltung $unlock Coins. ")
-                else append("Level 100 — Antrag kostenlos. ")
-                if (cool > 0) append("Scheidungs-Wartezeit +$cool Coins. ")
-                if (total > 0) append("Gesamt $total · du hast $coins. ")
-                append("Nach Annahme: 7 Tage verlobt, dann Hochzeitsleinwand.")
+                if (friendshipLevel >= 100) {
+                    append("Freundschaftslevel 100 — Heiratsanfrage kostenlos. ")
+                } else {
+                    append("Level $friendshipLevel/100. Unter 100 kostet die Freischaltung $unlock Coins. ")
+                }
+                if (cool > 0) append("Offene Scheidungs-Wartezeit: +$cool Coins. ")
+                if (total > 0) append("Jetzt $total Coins · du hast $coins. ")
+                append(
+                    "Nach Annahme: 7 Tage verlobt, bis die Hochzeitsleinwand öffnet. " +
+                        "Dann 7 Tage gemeinsam malen — erst danach seid ihr verheiratet. " +
+                        "Beide Wartezeiten könnt ihr mit Coins überspringen."
+                )
             }
             HoldSlideConfirmDialog(
-                title = if (total > 0) "Hochzeit anfragen · $total Coins" else "Hochzeit anfragen",
+                title = if (total > 0) {
+                    "Hochzeit anfragen · $total Coins"
+                } else {
+                    "Hochzeit anfragen · kostenlos"
+                },
                 body = costLine,
                 holdSeconds = 10,
                 accent = Color(0xFFFFD54F),
@@ -2619,10 +2633,13 @@ private fun WeddingOverviewCard(
             Text(b?.petEmoji ?: "💕", fontSize = 20.sp)
         }
 
+        val weddingAr = weddingBmp?.let { bmp ->
+            bmp.width.toFloat() / bmp.height.coerceAtLeast(1).toFloat()
+        } ?: 1f
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(1.35f)
+                .aspectRatio(weddingAr.coerceIn(0.72f, 1.35f))
                 .clip(RoundedCornerShape(18.dp))
                 .background(Color.White.copy(0.55f))
                 .border(1.dp, WeddingRose.copy(0.25f), RoundedCornerShape(18.dp)),
@@ -2634,7 +2651,7 @@ private fun WeddingOverviewCard(
                         bitmap = weddingBmp.asImageBitmap(),
                         contentDescription = "Hochzeitsleinwand",
                         modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
+                        contentScale = ContentScale.Fit
                     )
                 }
                 loading -> Text("Lade…", color = WeddingInk.copy(0.5f), fontFamily = BodyFont)

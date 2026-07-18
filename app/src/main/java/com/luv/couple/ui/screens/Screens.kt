@@ -928,7 +928,7 @@ private fun LobbyCard(
                     )
                     Text(
                         text = when {
-                            lobby.isWedding -> "Gemeinsame Hochzeitsleinwand · 7 Tage"
+                            lobby.isWedding -> "Hochzeitsleinwand · 7 Tage malen, dann Ehe"
                             lobby.isRandom -> "Zufalls-Lobby · max. 5"
                             lobby.role == Role.HOST -> "Von dir erstellt"
                             else -> "Beigetreten"

@@ -410,13 +410,17 @@ private fun FriendsPanel(
             ) {
                 Text(
                     if (waitM.status == "engaged") "💝 Verlobt mit ${waitM.partnerNickname ?: "…"}"
-                    else "💒 Hochzeit mit ${waitM.partnerNickname ?: "…"}",
+                    else "💒 Hochzeitsleinwand mit ${waitM.partnerNickname ?: "…"}",
                     color = TextPrimary,
                     fontFamily = DisplayFont,
                     fontSize = 16.sp
                 )
                 Text(
-                    "Noch $label",
+                    if (waitM.status == "engaged") {
+                        "Noch $label bis zur Hochzeitsleinwand (7 Tage Wartezeit)."
+                    } else {
+                        "Noch $label Malzeit — danach seid ihr verheiratet."
+                    },
                     color = Color(0xFFFFD54F),
                     fontFamily = BodyFont,
                     fontSize = 13.sp
