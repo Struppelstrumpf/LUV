@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.31",
+            listOf(
+                "Profil: Standard-Name wieder sichtbar auf der Leinwand",
+            )
+        ),
+        Entry(
             "1.9.30",
             listOf(
                 "Profil: Auswahl-Handles bleiben mittig auf den Ecken",

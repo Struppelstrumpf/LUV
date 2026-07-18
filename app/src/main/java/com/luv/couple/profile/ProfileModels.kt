@@ -106,7 +106,8 @@ data class ProfileState(
                 type = def.type,
                 text = if (def.type == ProfileElType.Name) nickname else (saved.text ?: def.text),
                 emoji = if (def.type == ProfileElType.Avatar) saved.emoji else saved.emoji,
-                // x/y/scale/rotation/flipX/visible/color/font* bleiben von saved
+                // Alter Default x=18 ließ die breite Name-Box links aus der Leinwand
+                x = if (def.type == ProfileElType.Name && saved.x < 40f) 50f else saved.x,
             )
         }
         val extras = layout.filter { el ->
@@ -205,8 +206,10 @@ object ProfileCatalog {
     /** Nur Avatar + Name darunter — wie Referenzbild. */
     fun defaultLayout(nickname: String): List<ProfileLayoutEl> = listOf(
         ProfileLayoutEl("el-avatar", ProfileElType.Avatar, 18f, 20f, 1f, 0f, z = 20),
+        // Name-Box ist ~78% breit (Mittelpunkt) — x≈50, damit der linksbündige Text
+        // unter dem Avatar startet und nicht links aus der Leinwand fällt
         ProfileLayoutEl(
-            "el-name", ProfileElType.Name, 18f, 36f, 1f, 0f,
+            "el-name", ProfileElType.Name, 50f, 36f, 1f, 0f,
             z = 21, text = nickname, color = "#FFFFFF", fontSize = 18f, fontFamily = ProfileFont.Classic
         )
     )
