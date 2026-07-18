@@ -1140,6 +1140,17 @@ class LockDrawActivity : ComponentActivity() {
             )
             elevation = 42f
             isClickable = true
+            // Immersive Lock: Gesture-/Systemleisten-Abstand am Overlay erzwingen
+            ViewCompat.setOnApplyWindowInsetsListener(this) { v, insets ->
+                val bars = insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() or
+                        WindowInsetsCompat.Type.displayCutout() or
+                        WindowInsetsCompat.Type.mandatorySystemGestures()
+                )
+                v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                insets
+            }
+            ViewCompat.requestApplyInsets(this)
         }
         val compose = ComposeView(this).apply {
             setContent {

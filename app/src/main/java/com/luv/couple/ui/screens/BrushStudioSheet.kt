@@ -17,12 +17,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -91,7 +91,8 @@ fun BrushStudioSheet(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
+            // System legt Inhalt über Nav/Gesture-Leiste — zuverlässiger als manuelle Insets im Immersive-Lock
+            decorFitsSystemWindows = true
         )
     ) {
         BoxWithConstraints(
@@ -103,17 +104,12 @@ fun BrushStudioSheet(
                     interactionSource = remember { MutableInteractionSource() },
                     onClick = onDismiss
                 )
-                .windowInsetsPadding(WindowInsets.navigationBars),
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(bottom = 12.dp),
             contentAlignment = Alignment.BottomCenter
         ) {
-            // Kleine/kurze Displays: mehr Anteil, damit „Fertig“ nie abgeschnitten wird
             val shortScreen = maxHeight < 640.dp
             val veryShort = maxHeight < 560.dp
-            val sheetFrac = when {
-                veryShort -> 0.94f
-                shortScreen -> 0.90f
-                else -> 0.86f
-            }
             val sidePad = when {
                 maxWidth < 340.dp -> 10.dp
                 maxWidth < 400.dp -> 14.dp
@@ -133,14 +129,18 @@ fun BrushStudioSheet(
             val titleSize = if (veryShort) 22.sp else 26.sp
             val innerPadV = if (veryShort) 10.dp else 14.dp
             val doneH = if (veryShort) 44.dp else 48.dp
+            // Sheet nur so hoch wie nötig, hart begrenzt — „Fertig“ ist Fußzeile, nicht im Scroll
+            val sheetMaxH = maxHeight * (if (veryShort) 0.92f else if (shortScreen) 0.88f else 0.84f)
+            val headerBlock = if (veryShort) 72.dp else 96.dp
+            val footerBlock = doneH + 20.dp
+            val scrollMaxH = (sheetMaxH - headerBlock - footerBlock).coerceAtLeast(140.dp)
 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 440.dp)
-                    .fillMaxHeight(sheetFrac)
+                    .heightIn(max = sheetMaxH)
                     .padding(horizontal = sidePad)
-                    .padding(bottom = 8.dp)
                     .shadow(28.dp, RoundedCornerShape(28.dp), clip = false)
                     .clip(RoundedCornerShape(28.dp))
                     .background(
@@ -161,7 +161,6 @@ fun BrushStudioSheet(
                     .padding(horizontal = 18.dp, vertical = innerPadV),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Fester Kopf
                 Box(
                     modifier = Modifier
                         .width(40.dp)
@@ -189,11 +188,10 @@ fun BrushStudioSheet(
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
-                // Scrollbarer Inhalt — nimmt nur den Platz ZWISCHEN Kopf und Fertig
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f, fill = true)
+                        .heightIn(max = scrollMaxH)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(if (veryShort) 10.dp else 14.dp)
                 ) {
@@ -228,7 +226,6 @@ fun BrushStudioSheet(
                     Spacer(modifier = Modifier.height(4.dp))
                 }
 
-                // „Fertig“ immer sichtbar unter dem Scroll-Bereich
                 Spacer(modifier = Modifier.height(if (veryShort) 8.dp else 12.dp))
                 Box(
                     modifier = Modifier
