@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.63",
+            listOf(
+                "Marktplatz: Angebot erstellen zeigt nur Items zum gewählten Tab",
+            )
+        ),
+        Entry(
             "1.9.62",
             listOf(
                 "Leinwand: kein kurzes Aufblinken mehr durch Sync/Reconnect",

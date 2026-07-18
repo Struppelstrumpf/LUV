@@ -494,6 +494,7 @@ fun PlayerMarketScreen(
         CreateListingDialog(
             inventory = inventoryPicks(),
             friends = friends,
+            categoryFilter = category,
             onDismiss = { showCreate = false },
             onCreated = {
                 showCreate = false
@@ -746,15 +747,32 @@ private fun MyListingRow(
     }
 }
 
+private val CreateInventoryTabs: List<Pair<String, String>> = listOf(
+    "pets" to "Begleiter",
+    "stickers" to "Sticker",
+    "themes" to "Profil",
+    "emojis" to "Reaktionen"
+)
+
 @Composable
 private fun CreateListingDialog(
     inventory: List<InventoryPick>,
     friends: List<LuvApiClient.FriendCard>,
+    categoryFilter: String,
     onDismiss: () -> Unit,
     onCreated: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val showInventarTabs = categoryFilter == "all" || categoryFilter.isBlank()
+    var inventarTab by remember {
+        mutableStateOf(
+            when (categoryFilter) {
+                "pets", "stickers", "themes", "emojis" -> categoryFilter
+                else -> "pets"
+            }
+        )
+    }
     var pick by remember { mutableStateOf<InventoryPick?>(null) }
     var priceText by remember { mutableStateOf("5") }
     var allowTrade by remember { mutableStateOf(false) }
@@ -762,6 +780,17 @@ private fun CreateListingDialog(
     var targetFriend by remember { mutableStateOf<LuvApiClient.FriendCard?>(null) }
     var tradeWant by remember { mutableStateOf<InventoryPick?>(null) }
     var busy by remember { mutableStateOf(false) }
+
+    val activeKind = if (showInventarTabs) inventarTab else categoryFilter
+    val sellInventory = remember(inventory, activeKind) {
+        inventory.filter { it.kind == activeKind }
+    }
+    LaunchedEffect(activeKind) {
+        if (pick != null && pick?.kind != activeKind) pick = null
+        if (tradeWant != null && tradeWant?.kind == pick?.kind && tradeWant?.itemId == pick?.itemId) {
+            tradeWant = null
+        }
+    }
 
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
@@ -777,11 +806,56 @@ private fun CreateListingDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Artikel aus Inventar", color = MarketBrownMuted, fontFamily = BodyFont, fontSize = 12.sp)
-                if (inventory.isEmpty()) {
-                    Text("Nichts Verkaufbares im Inventar.", color = MarketBrownMuted, fontFamily = BodyFont)
+                Text(
+                    if (showInventarTabs) {
+                        "Artikel aus Inventar"
+                    } else {
+                        "Nur ${categoryLabel(categoryFilter)} aus deinem Inventar"
+                    },
+                    color = MarketBrownMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 12.sp
+                )
+                if (showInventarTabs) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        CreateInventoryTabs.forEach { (id, label) ->
+                            val on = inventarTab == id
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (on) MarketGold.copy(0.2f) else MarketCard)
+                                    .clickable { inventarTab = id }
+                                    .padding(vertical = 8.dp, horizontal = 2.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    label,
+                                    color = MarketBrown,
+                                    fontFamily = if (on) DisplayFont else BodyFont,
+                                    fontSize = 10.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+                if (sellInventory.isEmpty()) {
+                    Text(
+                        if (inventory.isEmpty()) {
+                            "Nichts Verkaufbares im Inventar."
+                        } else {
+                            "Keine ${categoryLabel(activeKind)} im Inventar."
+                        },
+                        color = MarketBrownMuted,
+                        fontFamily = BodyFont
+                    )
                 } else {
-                    inventory.forEach { item ->
+                    sellInventory.forEach { item ->
                         val selected = pick?.kind == item.kind && pick?.itemId == item.itemId
                         Row(
                             modifier = Modifier
@@ -825,8 +899,12 @@ private fun CreateListingDialog(
                 }
                 if (allowTrade) {
                     Text("Gewünschter Tausch (optional)", color = MarketBrownMuted, fontFamily = BodyFont, fontSize = 12.sp)
-                    inventory.filter { it != pick }.forEach { item ->
-                        val selected = tradeWant == item
+                    // Tausch-Wunsch: gesamtes Inventar (nicht nur Verkaufs-Tab)
+                    inventory.filter {
+                        it.kind != pick?.kind || it.itemId != pick?.itemId
+                    }.forEach { item ->
+                        val selected =
+                            tradeWant?.kind == item.kind && tradeWant?.itemId == item.itemId
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
