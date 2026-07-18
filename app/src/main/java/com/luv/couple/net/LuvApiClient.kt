@@ -1582,7 +1582,9 @@ object LuvApiClient {
             myMarriage = parseMarriageInfo(json.optJSONObject("myMarriage")),
             marriageCooldownRemainingMs = json.optLong("marriageCooldownRemainingMs", 0L),
             marriageCooldownSkipCost = json.optInt("marriageCooldownSkipCost", 0),
-            marriageCooldownLabel = json.optString("marriageCooldownLabel").takeIf { it.isNotBlank() },
+            marriageCooldownLabel = json.optString("marriageCooldownLabel")
+                .takeIf { it.isNotBlank() && it != "null" && it != "0" }
+                ?.takeIf { json.optLong("marriageCooldownRemainingMs", 0L) > 0L },
             pendingFriendshipCoins = json.optInt("pendingFriendshipCoins", 0)
         )
     }

@@ -39,7 +39,13 @@ function cooldownRemainingMs(user) {
     if (Number(user.marriageCooldownUntil) || 0) user.marriageCooldownUntil = 0;
     return 0;
   }
-  return Math.max(0, (Number(user.marriageCooldownUntil) || 0) - Date.now());
+  const rem = Math.max(0, (Number(user.marriageCooldownUntil) || 0) - Date.now());
+  // Abgelaufen → Flags sofort löschen, damit nichts „null“/Ghost-UI triggert
+  if (rem <= 0) {
+    clearDivorceCooldown(user);
+    return 0;
+  }
+  return rem;
 }
 
 function setDivorceCooldown(user) {

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.9928",
+            listOf(
+                "Freunde: falsche „Scheidungs-Wartezeit“-Karte entfernt",
+            )
+        ),
+        Entry(
             "1.9.9927",
             listOf(
                 "Verheiratet: Herzen & Ringe regnen auf dem Profil",
