@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.17",
+            listOf(
+                "Profil: Vergrößern/Verkleinern skaliert jetzt Sticker und Inhalt mit",
+            )
+        ),
+        Entry(
             "1.9.16",
             listOf(
                 "Profil-Leinwand komplett: Truhe, Stimmung, Begleiter, Münzglas, Text",

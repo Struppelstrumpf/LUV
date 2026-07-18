@@ -704,6 +704,7 @@ private fun ProfileElementView(
     val density = LocalDensity.current
     var dragEl by remember(el.id) { mutableStateOf(el) }
     LaunchedEffect(el) { dragEl = el }
+    // Feste Basisgröße — Skalierung läuft über graphicsLayer, damit Emoji/Text mitwachsen
     val baseSize = with(density) {
         when (el.type) {
             ProfileElType.Bio -> 120.dp.toPx()
@@ -712,22 +713,25 @@ private fun ProfileElementView(
             ProfileElType.Pet -> 64.dp.toPx()
             ProfileElType.Avatar -> 58.dp.toPx()
             else -> 52.dp.toPx()
-        } * dragEl.scale
+        }
     }
     val dash = with(density) { 8.dp.toPx() }
     val gap = with(density) { 5.dp.toPx() }
     val strokeW = with(density) { 2.dp.toPx() }
     val canEdit = el.type in ProfileCatalog.EDITABLE_TYPES
     val canRemove = el.type != ProfileElType.Bio
+    val invScale = 1f / dragEl.scale.coerceIn(0.35f, 2.5f)
 
     Box(
         modifier = Modifier
             .zIndex(el.z.toFloat() + if (selected) 50f else 0f)
             .graphicsLayer {
+                val s = dragEl.scale
                 translationX = boardW * (dragEl.x / 100f) - baseSize / 2f
                 translationY = boardH * (dragEl.y / 100f) - baseSize / 2f
                 rotationZ = dragEl.rotation
-                scaleX = if (dragEl.flipX) -1f else 1f
+                scaleX = s * (if (dragEl.flipX) -1f else 1f)
+                scaleY = s
                 transformOrigin = TransformOrigin(0.5f, 0.5f)
             }
             .size(with(density) { baseSize.toDp() })
@@ -770,13 +774,21 @@ private fun ProfileElementView(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            ElementContent(el, nickname, colorIndex, coins)
+            ElementContent(dragEl, nickname, colorIndex, coins)
         }
 
         if (selected && editable) {
+            // Handles gegen Element-Scale gegenrechnen, damit sie bedienbar bleiben
+            val handleMod = Modifier.graphicsLayer {
+                scaleX = invScale * (if (dragEl.flipX) -1f else 1f)
+                scaleY = invScale
+                transformOrigin = TransformOrigin(0.5f, 0.5f)
+            }
+
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
+                    .then(handleMod)
                     .size(28.dp)
                     .clip(CircleShape)
                     .background(Color.White)
@@ -800,6 +812,7 @@ private fun ProfileElementView(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
+                        .then(handleMod)
                         .size(28.dp)
                         .clip(CircleShape)
                         .background(Color(0xFFE53935))
@@ -812,6 +825,7 @@ private fun ProfileElementView(
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
+                        .then(handleMod)
                         .size(28.dp)
                         .clip(CircleShape)
                         .background(MaleBlue)
@@ -822,6 +836,7 @@ private fun ProfileElementView(
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
+                        .then(handleMod)
                         .size(28.dp)
                         .clip(CircleShape)
                         .background(FemalePurple)
@@ -837,6 +852,7 @@ private fun ProfileElementView(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
+                    .then(handleMod)
                     .size(28.dp)
                     .clip(CircleShape)
                     .background(Color.White)
@@ -844,8 +860,10 @@ private fun ProfileElementView(
                     .pointerInput(el.id) {
                         detectDragGestures { change, drag ->
                             change.consume()
+                            // Gegen parent-scale: Drag-Delta optisch stabil halten
                             val next = dragEl.copy(
-                                scale = (dragEl.scale + drag.x * 0.008f).coerceIn(0.35f, 2.5f)
+                                scale = (dragEl.scale + drag.x * 0.008f * invScale)
+                                    .coerceIn(0.35f, 2.5f)
                             )
                             dragEl = next
                             onChange(next)
