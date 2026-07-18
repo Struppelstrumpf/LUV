@@ -55,6 +55,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -1353,50 +1354,65 @@ private fun ProfileCanvasBoard(
             )
         }
 
+        // Immer aktuelles Layout — verhindert, dass Drag-Gesten ein altes Layout
+        // (Default-Avatar) zurückschreiben und andere Elemente zurücksetzen.
+        val layoutLatest = rememberUpdatedState(state.layout)
+        val onLayoutChangeLatest = rememberUpdatedState(onLayoutChange)
+        val onSelectLatest = rememberUpdatedState(onSelect)
+
         val visible = state.layout.filter { it.visible }.sortedBy { it.z }
         visible.forEach { el ->
-            val selected = el.id == selectedId
-            ProfileElementView(
-                el = el,
-                nickname = nickname,
-                colorIndex = colorIndex,
-                coins = coins,
-                companionEmoji = state.companionEmoji,
-                selected = selected && editable,
-                boardW = boardW,
-                boardH = boardH,
-                editable = editable,
-                onSelect = {
-                    if (!editable) return@ProfileElementView
-                    onSelect(el.id)
-                    if (el.type == ProfileElType.Sticker) {
-                        val maxZ = state.layout.maxOfOrNull { it.z } ?: 20
-                        onLayoutChange(
-                            state.layout.map {
-                                if (it.id == el.id) it.copy(z = (maxZ + 1).coerceAtMost(ProfileCatalog.MAX_DECOR_Z))
-                                else it
-                            }
+            key(el.id) {
+                val selected = el.id == selectedId
+                ProfileElementView(
+                    el = el,
+                    nickname = nickname,
+                    colorIndex = colorIndex,
+                    coins = coins,
+                    companionEmoji = state.companionEmoji,
+                    selected = selected && editable,
+                    boardW = boardW,
+                    boardH = boardH,
+                    editable = editable,
+                    onSelect = {
+                        if (!editable) return@ProfileElementView
+                        onSelectLatest.value(el.id)
+                        if (el.type == ProfileElType.Sticker) {
+                            val cur = layoutLatest.value
+                            val maxZ = cur.maxOfOrNull { it.z } ?: 20
+                            onLayoutChangeLatest.value(
+                                cur.map {
+                                    if (it.id == el.id) {
+                                        it.copy(
+                                            z = (maxZ + 1).coerceAtMost(ProfileCatalog.MAX_DECOR_Z)
+                                        )
+                                    } else it
+                                }
+                            )
+                        }
+                    },
+                    onChange = { updated ->
+                        val cur = layoutLatest.value
+                        onLayoutChangeLatest.value(
+                            cur.map { if (it.id == updated.id) updated else it }
                         )
-                    }
-                },
-                onChange = { updated ->
-                    onLayoutChange(state.layout.map { if (it.id == updated.id) updated else it })
-                },
-                onRemove = {
-                    // Hart entfernen — wieder hinzufügen über die Truhe
-                    if (el.type == ProfileElType.Avatar || el.type == ProfileElType.Name) {
-                        // Kern bleibt, nur ausblenden nicht — Kern nicht löschen
-                        return@ProfileElementView
-                    }
-                    onLayoutChange(state.layout.filterNot { it.id == el.id })
-                    onSelect(null)
-                },
-                onEdit = { onEdit(el.id) },
-                onTipGlass = if (el.type == ProfileElType.Glass) onTipGlass else null,
-                onPetKraul = if (el.type == ProfileElType.Avatar || el.type == ProfileElType.Pet) {
-                    onPetKraul
-                } else null
-            )
+                    },
+                    onRemove = {
+                        if (el.type == ProfileElType.Avatar || el.type == ProfileElType.Name) {
+                            return@ProfileElementView
+                        }
+                        onLayoutChangeLatest.value(
+                            layoutLatest.value.filterNot { it.id == el.id }
+                        )
+                        onSelectLatest.value(null)
+                    },
+                    onEdit = { onEdit(el.id) },
+                    onTipGlass = if (el.type == ProfileElType.Glass) onTipGlass else null,
+                    onPetKraul = if (el.type == ProfileElType.Avatar || el.type == ProfileElType.Pet) {
+                        onPetKraul
+                    } else null
+                )
+            }
         }
 
         if (editable) {
@@ -1440,14 +1456,33 @@ private fun ProfileElementView(
     onPetKraul: (() -> Unit)? = null
 ) {
     val density = LocalDensity.current
+    val textMeasurer = rememberTextMeasurer()
     var dragEl by remember(el.id) { mutableStateOf(el) }
     LaunchedEffect(el) { dragEl = el }
-    // Feste Basisgröße — Skalierung läuft über graphicsLayer, damit Emoji/Text mitwachsen
-    // Name: breiter Kasten bis zum rechten Rand, Schrift schrumpft bei langen Namen
+    val onChangeLatest = rememberUpdatedState(onChange)
+    val onSelectLatest = rememberUpdatedState(onSelect)
+    val onRemoveLatest = rememberUpdatedState(onRemove)
+
+    val nameLabel = el.text?.takeIf { it.isNotBlank() } ?: nickname
+    val nameFont = when (el.fontFamily) {
+        ProfileFont.Playful -> DisplayFont
+        ProfileFont.Classic -> FontFamily.Serif
+        else -> BodyFont
+    }
+    val nameSp = (el.fontSize ?: 18f).coerceIn(8f, 28f)
+    // Name-Box nur so breit wie der Text (+ Padding), nicht 78 % der Leinwand
     val baseW = with(density) {
         when (el.type) {
             ProfileElType.Bio -> 120.dp.toPx()
-            ProfileElType.Name -> (boardW * 0.78f).coerceIn(120.dp.toPx(), boardW * 0.92f)
+            ProfileElType.Name -> {
+                val measured = textMeasurer.measure(
+                    text = nameLabel,
+                    style = TextStyle(fontFamily = nameFont, fontSize = nameSp.sp),
+                    maxLines = 1,
+                    softWrap = false
+                ).size.width.toFloat()
+                (measured + 20.dp.toPx()).coerceIn(48.dp.toPx(), boardW * 0.92f)
+            }
             ProfileElType.Glass -> 72.dp.toPx()
             ProfileElType.Pet -> 64.dp.toPx()
             ProfileElType.Avatar -> 56.dp.toPx()
@@ -1464,7 +1499,6 @@ private fun ProfileElementView(
             else -> 52.dp.toPx()
         }
     }
-    val baseSize = maxOf(baseW, baseH) // für clampPos / Handles
     val dash = with(density) { 8.dp.toPx() }
     val gap = with(density) { 5.dp.toPx() }
     val strokeW = with(density) { 2.dp.toPx() }
@@ -1487,14 +1521,13 @@ private fun ProfileElementView(
             .then(
                 if (editable) {
                     Modifier.pointerInput(el.id, boardW, boardH, baseW) {
-                        // Origin-basiert wie nasebär — keine inkrementellen Drift-Fehler
                         var origX = dragEl.x
                         var origY = dragEl.y
                         var accX = 0f
                         var accY = 0f
                         detectDragGestures(
                             onDragStart = {
-                                onSelect()
+                                onSelectLatest.value()
                                 origX = dragEl.x
                                 origY = dragEl.y
                                 accX = 0f
@@ -1512,7 +1545,7 @@ private fun ProfileElementView(
                                 )
                                 val next = dragEl.copy(x = cx, y = cy)
                                 dragEl = next
-                                onChange(next)
+                                onChangeLatest.value(next)
                             }
                         )
                     }
@@ -1531,7 +1564,7 @@ private fun ProfileElementView(
                     ((el.type == ProfileElType.Pet || el.type == ProfileElType.Avatar) &&
                         onPetKraul != null)
             ) {
-                if (editable) onSelect()
+                if (editable) onSelectLatest.value()
                 else when (el.type) {
                     ProfileElType.Glass -> onTipGlass?.invoke()
                     ProfileElType.Pet, ProfileElType.Avatar -> onPetKraul?.invoke()
@@ -1556,10 +1589,7 @@ private fun ProfileElementView(
                         }
                     } else Modifier
                 ),
-            contentAlignment = when (el.type) {
-                ProfileElType.Name -> Alignment.CenterStart
-                else -> Alignment.Center
-            }
+            contentAlignment = Alignment.Center
         ) {
             ElementContent(dragEl, nickname, colorIndex, coins, companionEmoji)
         }
@@ -1594,7 +1624,7 @@ private fun ProfileElementView(
                                 )
                             )
                             dragEl = next
-                            onChange(next)
+                            onChangeLatest.value(next)
                         }
                     },
                 contentAlignment = Alignment.Center
@@ -1609,7 +1639,7 @@ private fun ProfileElementView(
                         .size(28.dp)
                         .clip(CircleShape)
                         .background(Color(0xFFE53935))
-                        .clickable(onClick = onRemove),
+                        .clickable { onRemoveLatest.value() },
                     contentAlignment = Alignment.Center
                 ) { Text("✕", color = Color.White, fontSize = 13.sp) }
             }
@@ -1638,7 +1668,7 @@ private fun ProfileElementView(
                         .clickable {
                             val next = dragEl.copy(flipX = !dragEl.flipX)
                             dragEl = next
-                            onChange(next)
+                            onChangeLatest.value(next)
                         },
                     contentAlignment = Alignment.Center
                 ) { Text("⇄", color = Color.White, fontSize = 13.sp) }
@@ -1661,7 +1691,7 @@ private fun ProfileElementView(
                                     .coerceIn(0.35f, 2.5f)
                             )
                             dragEl = next
-                            onChange(next)
+                            onChangeLatest.value(next)
                         }
                     },
                 contentAlignment = Alignment.Center
@@ -1690,7 +1720,6 @@ private fun ElementContent(
         ProfileElType.Glass -> 11f
         else -> 14f
     }).sp
-    val textMeasurer = rememberTextMeasurer()
 
     when (el.type) {
         ProfileElType.Avatar -> {
@@ -1711,43 +1740,16 @@ private fun ElementContent(
         }
         ProfileElType.Name -> {
             val label = el.text ?: nickname
-            val maxSp = (el.fontSize ?: 18f).coerceIn(8f, 28f)
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight(),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                val maxW = constraints.maxWidth
-                val fittedSp = remember(label, maxW, maxSp, font) {
-                    var sp = maxSp
-                    while (sp > 8f) {
-                        val result = textMeasurer.measure(
-                            text = label,
-                            style = TextStyle(
-                                fontFamily = font,
-                                fontSize = sp.sp
-                            ),
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                        if (result.size.width <= maxW) break
-                        sp -= 0.5f
-                    }
-                    sp
-                }
-                Text(
-                    label,
-                    color = color,
-                    fontFamily = font,
-                    fontSize = fittedSp.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Clip,
-                    textAlign = TextAlign.Start,
-                    softWrap = false,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
+            Text(
+                label,
+                color = color,
+                fontFamily = font,
+                fontSize = sizeSp,
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+                textAlign = TextAlign.Center,
+                softWrap = false
+            )
         }
         ProfileElType.Status -> Text(el.emoji ?: el.text ?: "😊", fontSize = 30.sp)
         ProfileElType.Bio -> {

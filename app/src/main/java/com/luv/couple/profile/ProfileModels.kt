@@ -106,8 +106,17 @@ data class ProfileState(
                 type = def.type,
                 text = if (def.type == ProfileElType.Name) nickname else (saved.text ?: def.text),
                 emoji = if (def.type == ProfileElType.Avatar) saved.emoji else saved.emoji,
-                // Alter Default x=18 ließ die breite Name-Box links aus der Leinwand
-                x = if (def.type == ProfileElType.Name && saved.x < 40f) 50f else saved.x,
+                // Positionen aus dem gespeicherten Layout behalten
+                x = saved.x,
+                y = saved.y,
+                scale = saved.scale,
+                rotation = saved.rotation,
+                flipX = saved.flipX,
+                z = saved.z,
+                visible = saved.visible,
+                color = saved.color ?: def.color,
+                fontSize = saved.fontSize ?: def.fontSize,
+                fontFamily = saved.fontFamily ?: def.fontFamily
             )
         }
         val legacyPet = layout.firstOrNull { it.type == ProfileElType.Pet }
@@ -231,10 +240,8 @@ object ProfileCatalog {
     /** Nur Avatar + Name darunter — wie Referenzbild. */
     fun defaultLayout(nickname: String): List<ProfileLayoutEl> = listOf(
         ProfileLayoutEl("el-avatar", ProfileElType.Avatar, 18f, 20f, 1f, 0f, z = 20),
-        // Name-Box ist ~78% breit (Mittelpunkt) — x≈50, damit der linksbündige Text
-        // unter dem Avatar startet und nicht links aus der Leinwand fällt
         ProfileLayoutEl(
-            "el-name", ProfileElType.Name, 50f, 36f, 1f, 0f,
+            "el-name", ProfileElType.Name, 18f, 36f, 1f, 0f,
             z = 21, text = nickname, color = "#FFFFFF", fontSize = 18f, fontFamily = ProfileFont.Classic
         )
     )
@@ -335,9 +342,7 @@ object ProfileCatalog {
         var halfY = (visual / 2f) / h * 100f
 
         if (el.type == ProfileElType.Name) {
-            // Name-Box ist breit; Schrift schrumpft im UI — Kasten bleibt im Canvas
             val fontPx = (el.fontSize ?: 18f) * s
-            halfX = (visual / 2f) / w * 100f
             halfY = ((fontPx * 1.2f).coerceAtLeast(visual * 0.35f) / 2f) / h * 100f
         }
 

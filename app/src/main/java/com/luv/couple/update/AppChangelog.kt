@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.85",
+            listOf(
+                "Profil gestalten: Avatar, Name, Sticker und Glas unabhängig verschieben",
+                "Name-Box passt sich der Textbreite an",
+            )
+        ),
+        Entry(
             "1.9.84",
             listOf(
                 "Marktplatz: Angebot über Item wählen + Preis, ohne Tausch",
