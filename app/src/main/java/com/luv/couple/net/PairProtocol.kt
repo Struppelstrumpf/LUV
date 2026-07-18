@@ -2,6 +2,7 @@ package com.luv.couple.net
 
 import com.luv.couple.data.Stroke
 import com.luv.couple.data.StrokePoint
+import com.luv.couple.data.TemplateStrokePart
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -55,7 +56,7 @@ object PairProtocol {
                             .put("y", point.y.toDouble())
                     )
                 }
-                JSONObject()
+                val json = JSONObject()
                     .put("type", "stroke")
                     .put("id", message.stroke.id)
                     .put("width", message.stroke.width.toDouble())
@@ -66,6 +67,13 @@ object PairProtocol {
                     .put("emoji", message.stroke.emoji ?: JSONObject.NULL)
                     .put("colorLocked", message.stroke.colorLocked)
                     .put("points", points)
+                val parts = message.stroke.templateParts
+                if (!parts.isNullOrEmpty()) {
+                    json.put("templateParts", encodeTemplateParts(parts))
+                    json.put("templateScale", message.stroke.templateScale.toDouble())
+                    json.put("templateRotation", message.stroke.templateRotation.toDouble())
+                }
+                json
             }
             is PairMessage.UndoMsg -> JSONObject()
                 .put("type", "undo")
@@ -153,7 +161,11 @@ object PairProtocol {
                             authorId = json.optString("authorId").takeIf { it.isNotBlank() && it != "null" },
                             gender = json.optString("gender").takeIf { it.isNotBlank() && it != "null" },
                             emoji = json.optString("emoji").takeIf { it.isNotBlank() && it != "null" }?.take(8),
-                            colorLocked = json.optBoolean("colorLocked", false)
+                            colorLocked = json.optBoolean("colorLocked", false),
+                            templateParts = parseTemplateParts(json.optJSONArray("templateParts")),
+                            templateScale = json.optDouble("templateScale", 1.0).toFloat()
+                                .coerceIn(0.2f, 4f),
+                            templateRotation = json.optDouble("templateRotation", 0.0).toFloat()
                         )
                     )
                 }
@@ -210,5 +222,54 @@ object PairProtocol {
                 else -> null
             }
         }.getOrNull()
+    }
+
+    fun encodeTemplateParts(parts: List<TemplateStrokePart>): JSONArray {
+        val arr = JSONArray()
+        parts.take(48).forEach { part ->
+            val pts = JSONArray()
+            part.points.take(240).forEach { p ->
+                pts.put(JSONObject().put("x", p.x.toDouble()).put("y", p.y.toDouble()))
+            }
+            if (pts.length() >= 2) {
+                arr.put(
+                    JSONObject()
+                        .put("points", pts)
+                        .put("width", part.width.toDouble())
+                        .put("colorIndex", part.colorIndex)
+                )
+            }
+        }
+        return arr
+    }
+
+    fun parseTemplateParts(arr: JSONArray?): List<TemplateStrokePart>? {
+        if (arr == null || arr.length() == 0) return null
+        val out = buildList {
+            for (i in 0 until minOf(arr.length(), 48)) {
+                val o = arr.optJSONObject(i) ?: continue
+                val ptsJson = o.optJSONArray("points") ?: continue
+                val points = buildList {
+                    for (pi in 0 until minOf(ptsJson.length(), 240)) {
+                        val p = ptsJson.optJSONObject(pi) ?: continue
+                        add(
+                            StrokePoint(
+                                x = p.optDouble("x", 0.0).toFloat().coerceIn(0f, 1f),
+                                y = p.optDouble("y", 0.0).toFloat().coerceIn(0f, 1f)
+                            )
+                        )
+                    }
+                }
+                if (points.size < 2) continue
+                add(
+                    TemplateStrokePart(
+                        points = points,
+                        width = o.optDouble("width", 18.0).toFloat().coerceIn(3f, 48f),
+                        colorIndex = o.optInt("colorIndex", 0).coerceIn(0, 31)
+                    )
+                )
+            }
+        }
+        return out.ifEmpty { null }
     }
 }

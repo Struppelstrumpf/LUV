@@ -177,6 +177,19 @@ data class RosterMember(
 
 data class StrokePoint(val x: Float, val y: Float)
 
+/** Ein Strich innerhalb einer Vorlage (Koordinaten 0…1 im Vorlagen-Quadrat). */
+data class TemplateStrokePart(
+    val points: List<StrokePoint>,
+    val width: Float = 18f,
+    val colorIndex: Int = 0
+)
+
+data class DrawTemplate(
+    val id: String,
+    val strokes: List<TemplateStrokePart>,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
 data class Stroke(
     val id: String,
     val points: List<StrokePoint>,
@@ -197,9 +210,14 @@ data class Stroke(
      * Solo-Zeichnung: Farbe bleibt beim Palettenwechsel / Peer-Recolor.
      * Ab 2 Personen neu gemalte Striche haben false und färben sich mit um.
      */
-    val colorLocked: Boolean = false
+    val colorLocked: Boolean = false,
+    /** Platzierte Vorlage: Teile + Transform (points[0] = Zentrum). */
+    val templateParts: List<TemplateStrokePart>? = null,
+    val templateScale: Float = 1f,
+    val templateRotation: Float = 0f
 ) {
     val isEmoji: Boolean get() = !emoji.isNullOrBlank()
+    val isTemplate: Boolean get() = !templateParts.isNullOrEmpty()
 }
 
 /** @deprecated Legacy LAN-Invite */

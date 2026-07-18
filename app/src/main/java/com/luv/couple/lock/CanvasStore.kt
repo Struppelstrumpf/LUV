@@ -96,7 +96,7 @@ object CanvasStore {
 
     /** Gespeicherte Referenzdicke → Pixel auf aktueller Zeichenfläche. */
     fun strokeWidthPx(stroke: Stroke, shortSidePx: Float): Float {
-        if (stroke.isEmoji) return 0f
+        if (stroke.isEmoji || stroke.isTemplate) return 0f
         val short = shortSidePx.coerceAtLeast(1f)
         return (stroke.width / WIDTH_REF * short).coerceIn(1f, short * 0.25f)
     }
@@ -383,6 +383,53 @@ object CanvasStore {
         }
     }
 
+    /** Vorlage als transformierter Leinwand-Eintrag (Zentrum + Parts). */
+    fun addLocalTemplate(
+        parts: List<com.luv.couple.data.TemplateStrokePart>,
+        x: Float,
+        y: Float,
+        scale: Float,
+        rotation: Float,
+        lobbyId: String? = null,
+        id: String = UUID.randomUUID().toString()
+    ): Stroke? {
+        val lobby = resolveLobbyId(lobbyId) ?: return null
+        if (parts.isEmpty()) return null
+        val stroke = Stroke(
+            id = id,
+            points = listOf(
+                StrokePoint(
+                    x = x.coerceIn(0.05f, 0.95f),
+                    y = y.coerceIn(0.05f, 0.95f)
+                )
+            ),
+            width = 0f,
+            isLocal = true,
+            nickname = cachedNickname,
+            colorIndex = cachedColorIndex,
+            authorId = AccountSession.account.value?.id?.takeIf { it.isNotBlank() },
+            colorLocked = true,
+            templateParts = parts,
+            templateScale = scale.coerceIn(0.2f, 4f),
+            templateRotation = rotation
+        )
+        val c = canvas(lobby)
+        if (c.strokes.any { it.id == stroke.id }) return null
+        c.strokes.add(stroke)
+        c.localStrokeIds.add(stroke.id)
+        pushUndo(c, LocalUndo.Stroke(stroke.id))
+        touchStroke(lobby, cachedNickname)
+        bump(lobby)
+        if (::appContext.isInitialized) {
+            PairConnectionService.sendStroke(
+                appContext,
+                PairProtocol.encode(PairMessage.StrokeMsg(stroke)),
+                lobby
+            )
+        }
+        return stroke
+    }
+
     /** Emoji als echter Leinwand-Strich (1 Punkt + emoji-Feld). */
     fun addLocalSticker(
         emoji: String,
@@ -530,12 +577,13 @@ object CanvasStore {
         var changed = false
         val emojiR2 = 0.05f * 0.05f
         for (stroke in mine) {
-            if (stroke.isEmoji) {
+            if (stroke.isEmoji || stroke.isTemplate) {
                 val p = stroke.points.firstOrNull() ?: continue
+                val hitR2 = if (stroke.isTemplate) 0.12f * 0.12f else emojiR2
                 val hit = brush.any { b ->
                     val dx = p.x - b.x
                     val dy = p.y - b.y
-                    dx * dx + dy * dy <= emojiR2
+                    dx * dx + dy * dy <= hitR2
                 }
                 if (!hit) continue
                 c.strokes.removeAll { it.id == stroke.id }
@@ -743,6 +791,35 @@ object CanvasStore {
                 )
                 return@forEach
             }
+            if (stroke.isTemplate) {
+                val parts = stroke.templateParts ?: return@forEach
+                val center = stroke.points.firstOrNull() ?: return@forEach
+                val cx = center.x * width
+                val cy = center.y * height
+                val scale = stroke.templateScale.coerceIn(0.2f, 4f)
+                val box = min(width, height) * 0.4f * scale
+                val rad = Math.toRadians(stroke.templateRotation.toDouble())
+                val cos = kotlin.math.cos(rad).toFloat()
+                val sin = kotlin.math.sin(rad).toFloat()
+                val short = min(width, height).toFloat().coerceAtLeast(1f)
+                parts.forEach { part ->
+                    if (part.points.size < 2) return@forEach
+                    paint.color = PeerPalette.strokeColor(part.colorIndex)
+                    paint.strokeWidth = (part.width / WIDTH_REF) * short * scale
+                    val path = Path()
+                    part.points.forEachIndexed { idx, p ->
+                        val lx = (p.x - 0.5f) * box
+                        val ly = (p.y - 0.5f) * box
+                        val rx = lx * cos - ly * sin
+                        val ry = lx * sin + ly * cos
+                        val x = cx + rx
+                        val y = cy + ry
+                        if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                    }
+                    canvas.drawPath(path, paint)
+                }
+                return@forEach
+            }
             if (stroke.points.isEmpty()) return@forEach
             paint.color = strokeColor(stroke)
             paint.strokeWidth = strokeWidthPx(stroke, min(width, height).toFloat())
@@ -803,18 +880,23 @@ object CanvasStore {
                 stroke.points.forEach { p ->
                     points.put(JSONObject().put("x", p.x.toDouble()).put("y", p.y.toDouble()))
                 }
-                arr.put(
-                    JSONObject()
-                        .put("id", stroke.id)
-                        .put("width", stroke.width.toDouble())
-                        .put("nickname", stroke.nickname)
-                        .put("colorIndex", stroke.colorIndex)
-                        .put("authorId", stroke.authorId)
-                        .put("isLocal", stroke.isLocal)
-                        .put("emoji", stroke.emoji)
-                        .put("colorLocked", stroke.colorLocked)
-                        .put("points", points)
-                )
+                val o = JSONObject()
+                    .put("id", stroke.id)
+                    .put("width", stroke.width.toDouble())
+                    .put("nickname", stroke.nickname)
+                    .put("colorIndex", stroke.colorIndex)
+                    .put("authorId", stroke.authorId)
+                    .put("isLocal", stroke.isLocal)
+                    .put("emoji", stroke.emoji)
+                    .put("colorLocked", stroke.colorLocked)
+                    .put("points", points)
+                val tpl = stroke.templateParts
+                if (!tpl.isNullOrEmpty()) {
+                    o.put("templateParts", PairProtocol.encodeTemplateParts(tpl))
+                    o.put("templateScale", stroke.templateScale.toDouble())
+                    o.put("templateRotation", stroke.templateRotation.toDouble())
+                }
+                arr.put(o)
             }
             val file = diskFile(lobbyId)
             val tmp = File(file.parentFile, "${file.name}.tmp")
@@ -851,8 +933,10 @@ object CanvasStore {
                     }
                 }
                 val emoji = o.optString("emoji").takeIf { it.isNotBlank() && it != "null" }?.take(8)
-                if (emoji == null && points.size < 2) continue
+                val templateParts = PairProtocol.parseTemplateParts(o.optJSONArray("templateParts"))
+                if (emoji == null && templateParts == null && points.size < 2) continue
                 if (emoji != null && points.isEmpty()) continue
+                if (templateParts != null && points.isEmpty()) continue
                 val nickname = o.optString("nickname").takeIf { it.isNotBlank() && it != "null" }
                 val mine = o.optBoolean("isLocal", false) ||
                     (!nick.isNullOrBlank() && nickname.equals(nick, ignoreCase = true))
@@ -865,7 +949,10 @@ object CanvasStore {
                     colorIndex = o.optInt("colorIndex", 0),
                     authorId = o.optString("authorId").takeIf { it.isNotBlank() && it != "null" },
                     emoji = emoji,
-                    colorLocked = o.optBoolean("colorLocked", false)
+                    colorLocked = o.optBoolean("colorLocked", false),
+                    templateParts = templateParts,
+                    templateScale = o.optDouble("templateScale", 1.0).toFloat().coerceIn(0.2f, 4f),
+                    templateRotation = o.optDouble("templateRotation", 0.0).toFloat()
                 )
                 if (target.strokes.any { it.id == stroke.id }) continue
                 target.strokes.add(stroke)

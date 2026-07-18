@@ -1165,6 +1165,66 @@ object LuvApiClient {
         )
     }
 
+    suspend fun fetchDrawTemplates(): List<com.luv.couple.data.DrawTemplate> =
+        withContext(Dispatchers.IO) {
+            val json = authedGet("/v1/me/templates")
+            val arr = json.optJSONArray("templates") ?: return@withContext emptyList()
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val id = o.optString("id").trim()
+                    if (id.isBlank()) continue
+                    val parts = PairProtocol.parseTemplateParts(o.optJSONArray("strokes"))
+                        ?: continue
+                    add(
+                        com.luv.couple.data.DrawTemplate(
+                            id = id,
+                            strokes = parts,
+                            createdAt = o.optLong("createdAt", 0L)
+                        )
+                    )
+                }
+            }
+        }
+
+    suspend fun saveDrawTemplate(
+        strokes: List<com.luv.couple.data.TemplateStrokePart>
+    ): com.luv.couple.data.DrawTemplate = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("strokes", PairProtocol.encodeTemplateParts(strokes))
+            .toString()
+            .toRequestBody(jsonMedia)
+        val request = authedRequestBuilder("/v1/me/templates").post(body).build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            val json = runCatching { JSONObject(raw) }.getOrNull()
+            if (!response.isSuccessful) {
+                throw LuvApiException(json?.optString("message") ?: "Vorlage speichern fehlgeschlagen")
+            }
+            val o = json?.optJSONObject("template")
+                ?: throw LuvApiException("Vorlage speichern fehlgeschlagen")
+            val parts = PairProtocol.parseTemplateParts(o.optJSONArray("strokes"))
+                ?: throw LuvApiException("Vorlage ungültig")
+            com.luv.couple.data.DrawTemplate(
+                id = o.optString("id"),
+                strokes = parts,
+                createdAt = o.optLong("createdAt", System.currentTimeMillis())
+            )
+        }
+    }
+
+    suspend fun deleteDrawTemplate(id: String) = withContext(Dispatchers.IO) {
+        val clean = id.trim().encodeURL()
+        val request = authedRequestBuilder("/v1/me/templates/$clean").delete().build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val raw = response.body?.string().orEmpty()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                throw LuvApiException(json?.optString("message") ?: "Löschen fehlgeschlagen")
+            }
+        }
+    }
+
     suspend fun fetchMyProfileCanvas(): Pair<String, com.luv.couple.profile.ProfileState> =
         withContext(Dispatchers.IO) {
             val json = authedGet("/v1/me/profile")

@@ -206,6 +206,10 @@ class DrawingView @JvmOverloads constructor(
                 )
                 return@forEach
             }
+            if (stroke.isTemplate) {
+                drawTemplateStroke(canvas, stroke, alpha)
+                return@forEach
+            }
             val color = CanvasStore.strokeColor(stroke)
             paint.color = Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
             paint.strokeWidth = CanvasStore.strokeWidthPx(
@@ -257,6 +261,36 @@ class DrawingView @JvmOverloads constructor(
         vLine(left + third * 2f)
         hLine(top + third)
         hLine(top + third * 2f)
+    }
+
+    private fun drawTemplateStroke(canvas: Canvas, stroke: Stroke, alpha: Int) {
+        val parts = stroke.templateParts ?: return
+        val center = stroke.points.firstOrNull() ?: return
+        val cx = center.x * width
+        val cy = center.y * height
+        val scale = stroke.templateScale.coerceIn(0.2f, 4f)
+        val box = min(width, height) * 0.4f * scale
+        val rad = Math.toRadians(stroke.templateRotation.toDouble())
+        val cos = kotlin.math.cos(rad).toFloat()
+        val sin = kotlin.math.sin(rad).toFloat()
+        val short = min(width, height).toFloat().coerceAtLeast(1f)
+        parts.forEach { part ->
+            if (part.points.size < 2) return@forEach
+            val color = PeerPalette.strokeColor(part.colorIndex)
+            paint.color = Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
+            paint.strokeWidth = (part.width / CanvasStore.WIDTH_REF) * short * scale
+            val path = Path()
+            part.points.forEachIndexed { idx, p ->
+                val lx = (p.x - 0.5f) * box
+                val ly = (p.y - 0.5f) * box
+                val rx = lx * cos - ly * sin
+                val ry = lx * sin + ly * cos
+                val x = cx + rx
+                val y = cy + ry
+                if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            canvas.drawPath(path, paint)
+        }
     }
 
     private fun drawDotGrid(canvas: Canvas) {

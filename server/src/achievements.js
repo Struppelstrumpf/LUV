@@ -64,6 +64,10 @@ const ACHIEVEMENTS = [
   { id: "publish_1", title: "Öffentlich", desc: "Veröffentliche ein Bild.", category: "malen", metric: "publishes", target: 1, coins: 1 },
   { id: "publish_5", title: "Galerie-Star", desc: "Veröffentliche 5 Bilder.", category: "malen", metric: "publishes", target: 5, coins: 2 },
   { id: "sticker_place", title: "Sticker-Spaß", desc: "Platziere 10 Sticker.", category: "malen", metric: "stickers_placed", target: 10, coins: 1 },
+  { id: "tpl_create_1", title: "Erste Vorlage", desc: "Speichere eine Zeichen-Vorlage.", category: "malen", metric: "templates_created", target: 1, coins: 1 },
+  { id: "tpl_create_5", title: "Vorlagen-Mappe", desc: "Speichere 5 Vorlagen.", category: "malen", metric: "templates_created", target: 5, coins: 2 },
+  { id: "tpl_place_1", title: "Stempel", desc: "Platziere eine Vorlage auf der Leinwand.", category: "malen", metric: "templates_placed", target: 1, coins: 1 },
+  { id: "tpl_place_10", title: "Vorlagen-Meister", desc: "Platziere 10 Vorlagen.", category: "malen", metric: "templates_placed", target: 10, coins: 2 },
   { id: "undo_10", title: "Oops", desc: "Nutze Undo 10×.", category: "malen", metric: "undos", target: 10, coins: 1 },
   { id: "color_change", title: "Farbenfroh", desc: "Wechsle 5× die Farbe.", category: "malen", metric: "recolors", target: 5, coins: 1 },
   { id: "game_play", title: "Spielrunde", desc: "Spiele ein Lobby-Spiel.", category: "malen", metric: "games_plays", target: 1, coins: 1 },
@@ -133,6 +137,7 @@ const DAILY_POOL = [
   { id: "d_social", title: "Sozial öffnen", metric: "social_opens", target: 1 },
   { id: "d_equip", title: "Begleiter wechseln", metric: "pet_equips", target: 1 },
   { id: "d_sticker", title: "Sticker platzieren", metric: "stickers_placed", target: 1 },
+  { id: "d_template", title: "Vorlage platzieren", metric: "templates_placed", target: 1 },
 ];
 
 function ensureAchievements(user) {

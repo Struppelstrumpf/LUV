@@ -32,10 +32,16 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.luv.couple.LuvApp
 import com.luv.couple.R
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.luv.couple.data.DrawTemplate
 import com.luv.couple.data.LocalMoment
 import com.luv.couple.data.LocalMoments
 import com.luv.couple.data.PeerInfo
 import com.luv.couple.data.PeerPalette
+import com.luv.couple.data.TemplateStrokePart
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.ClearVoteEvent
 import com.luv.couple.net.LuvApiClient
@@ -73,7 +79,7 @@ class LockDrawActivity : ComponentActivity() {
     private lateinit var lobbyTitle: TextView
     private lateinit var btnBack: TextView
     private lateinit var btnSave: TextView
-    private lateinit var btnGame: TextView
+    private lateinit var btnTemplates: TextView
     private lateinit var btnClear: TextView
     private lateinit var btnEraser: TextView
     private lateinit var btnColor: TextView
@@ -89,6 +95,9 @@ class LockDrawActivity : ComponentActivity() {
     private var emojiEditorHost: FrameLayout? = null
     private var brushStudioHost: FrameLayout? = null
     private var profileHost: FrameLayout? = null
+    private var templatesHost: FrameLayout? = null
+    private var templateEditorHost: FrameLayout? = null
+    private var templatePlacementView: TemplatePlacementView? = null
     private lateinit var gameHud: LinearLayout
     private lateinit var gameHudTitle: TextView
     private lateinit var gameHudSubtitle: TextView
@@ -164,7 +173,7 @@ class LockDrawActivity : ComponentActivity() {
         lobbyTitle = findViewById(R.id.lobbyTitle)
         btnBack = findViewById(R.id.btnBack)
         btnSave = findViewById(R.id.btnSave)
-        btnGame = findViewById(R.id.btnGame)
+        btnTemplates = findViewById(R.id.btnTemplates)
         btnClear = findViewById(R.id.btnClear)
         btnEraser = findViewById(R.id.btnEraser)
         btnColor = findViewById(R.id.btnColor)
@@ -218,7 +227,7 @@ class LockDrawActivity : ComponentActivity() {
                     }
             }
         }
-        btnGame.setOnClickListener { openGameMenu() }
+        btnTemplates.setOnClickListener { openTemplatesBrowser() }
         btnClear.setOnClickListener { confirmClearCanvas() }
         btnGuess.setOnClickListener {
             CanvasGameUi.showGuessDialog(this) { text ->
@@ -782,33 +791,196 @@ class LockDrawActivity : ComponentActivity() {
         PairConnectionService.sendReaction(this, emoji, lobbyId)
     }
 
-    private fun openGameMenu() {
-        val active = when {
-            wordsGameActive -> "words"
-            playGameActive -> playGameType
-            else -> activeOverlayGame
+    private fun fullscreenComposeHost(): FrameLayout {
+        return FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            elevation = 46f
+            isClickable = true
+            ViewCompat.setOnApplyWindowInsetsListener(this) { v, insets ->
+                val bars = insets.getInsetsIgnoringVisibility(
+                    WindowInsetsCompat.Type.navigationBars() or
+                        WindowInsetsCompat.Type.systemGestures() or
+                        WindowInsetsCompat.Type.mandatorySystemGestures() or
+                        WindowInsetsCompat.Type.displayCutout()
+                )
+                val minBottom = (28f * resources.displayMetrics.density).toInt()
+                v.setPadding(
+                    bars.left,
+                    bars.top,
+                    bars.right,
+                    maxOf(bars.bottom, minBottom)
+                )
+                insets
+            }
+            ViewCompat.requestApplyInsets(this)
         }
-        val coins = AccountSession.account.value?.coins ?: 0
-        CanvasGameUi.showGameMenu(
-            activity = this,
-            coins = coins,
-            activeGame = active,
-            onStart = { gameId ->
-                // Bereits aktives Spiel erneut tippen → stoppen (kostenlos)
-                val samePlay = playGameActive && gameId == playGameType
-                if (gameId == activeOverlayGame || (gameId == "words" && wordsGameActive) || samePlay) {
-                    PairConnectionService.sendGameStop(this, lobbyId)
-                    stopAllGamesLocal()
-                    return@showGameMenu
+    }
+
+    private fun openTemplatesBrowser() {
+        val root = rootView ?: return
+        if (templatesHost != null) return
+        dismissTemplatePlacement()
+        val host = fullscreenComposeHost()
+        val compose = ComposeView(this).apply {
+            setContent {
+                var templates by remember { mutableStateOf<List<DrawTemplate>>(emptyList()) }
+                var loading by remember { mutableStateOf(true) }
+                androidx.compose.runtime.LaunchedEffect(Unit) {
+                    loading = true
+                    templates = runCatching { LuvApiClient.fetchDrawTemplates() }.getOrDefault(emptyList())
+                    loading = false
                 }
-                PairConnectionService.sendGameStart(this, gameId, lobbyId)
-            },
-            onStop = {
-                PairConnectionService.sendGameStop(this, lobbyId)
-                stopAllGamesLocal()
-            },
-            onNeedCoins = { com.luv.couple.ui.NoCoinsUi.show(this) }
+                LuvTheme {
+                    TemplatesBrowserSheet(
+                        templates = templates,
+                        loading = loading,
+                        onRefresh = {
+                            lifecycleScope.launch {
+                                loading = true
+                                templates = runCatching { LuvApiClient.fetchDrawTemplates() }
+                                    .getOrDefault(emptyList())
+                                loading = false
+                            }
+                        },
+                        onCreate = {
+                            root.removeView(host)
+                            templatesHost = null
+                            openTemplateEditor()
+                        },
+                        onSelect = { tpl ->
+                            root.removeView(host)
+                            templatesHost = null
+                            beginTemplatePlacement(tpl.strokes)
+                        },
+                        onDelete = { tpl ->
+                            lifecycleScope.launch {
+                                runCatching { LuvApiClient.deleteDrawTemplate(tpl.id) }
+                                    .onSuccess {
+                                        templates = templates.filter { it.id != tpl.id }
+                                        Toast.makeText(
+                                            this@LockDrawActivity,
+                                            "Vorlage gelöscht",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                    .onFailure {
+                                        Toast.makeText(
+                                            this@LockDrawActivity,
+                                            it.message ?: "Fehler",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                            }
+                        },
+                        onDismiss = {
+                            root.removeView(host)
+                            templatesHost = null
+                        }
+                    )
+                }
+            }
+        }
+        host.addView(
+            compose,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
         )
+        root.addView(host)
+        templatesHost = host
+    }
+
+    private fun openTemplateEditor() {
+        val root = rootView ?: return
+        if (templateEditorHost != null) return
+        val host = fullscreenComposeHost()
+        val compose = ComposeView(this).apply {
+            setContent {
+                LuvTheme {
+                    TemplateEditorSheet(
+                        onSave = { parts ->
+                            lifecycleScope.launch {
+                                runCatching { LuvApiClient.saveDrawTemplate(parts) }
+                                    .onSuccess {
+                                        Toast.makeText(
+                                            this@LockDrawActivity,
+                                            "Vorlage gespeichert",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                        root.removeView(host)
+                                        templateEditorHost = null
+                                        openTemplatesBrowser()
+                                    }
+                                    .onFailure {
+                                        Toast.makeText(
+                                            this@LockDrawActivity,
+                                            it.message ?: "Speichern fehlgeschlagen",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                            }
+                        },
+                        onDismiss = {
+                            root.removeView(host)
+                            templateEditorHost = null
+                        }
+                    )
+                }
+            }
+        }
+        host.addView(
+            compose,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        root.addView(host)
+        templateEditorHost = host
+    }
+
+    private fun beginTemplatePlacement(parts: List<TemplateStrokePart>) {
+        val root = rootView ?: return
+        dismissTemplatePlacement()
+        if (parts.isEmpty()) return
+        val view = TemplatePlacementView(this).apply {
+            this.parts = parts
+            centerXNorm = 0.5f
+            centerYNorm = 0.45f
+            scaleFactor = 1f
+            rotationDeg = 0f
+            onConfirm = { cx, cy, scale, rot ->
+                CanvasStore.addLocalTemplate(
+                    parts = parts,
+                    x = cx,
+                    y = cy,
+                    scale = scale,
+                    rotation = rot,
+                    lobbyId = lobbyId
+                )
+                dismissTemplatePlacement()
+                Toast.makeText(this@LockDrawActivity, "Vorlage platziert", Toast.LENGTH_SHORT).show()
+            }
+            onCancel = { dismissTemplatePlacement() }
+        }
+        root.addView(
+            view,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        templatePlacementView = view
+    }
+
+    private fun dismissTemplatePlacement() {
+        val root = rootView ?: return
+        templatePlacementView?.let { root.removeView(it) }
+        templatePlacementView = null
     }
 
     private fun applyOverlayBoard(game: String, visible: Boolean) {
@@ -993,12 +1165,7 @@ class LockDrawActivity : ComponentActivity() {
     }
 
     private fun paintGameButton() {
-        val on = activeOverlayGame != null || wordsGameActive || playGameActive
-        btnGame.setBackgroundResource(
-            if (on) R.drawable.lock_dock_slot_active else R.drawable.lock_dock_slot
-        )
-        btnGame.scaleX = if (on) 1.04f else 1f
-        btnGame.scaleY = if (on) 1.04f else 1f
+        // Spiele-Button entfernt — Vorlagen-Button bleibt unverändert
     }
 
     private fun flashStatus(text: String) {

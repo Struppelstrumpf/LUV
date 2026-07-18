@@ -808,11 +808,39 @@ function removeRoomSticker(room, code, stickerId) {
   return true;
 }
 
+function sanitizeTemplateParts(rawParts) {
+  if (!Array.isArray(rawParts)) return null;
+  const out = [];
+  for (const part of rawParts.slice(0, 48)) {
+    if (!part || typeof part !== "object") continue;
+    const pointsIn = Array.isArray(part.points) ? part.points : [];
+    const points = [];
+    for (const p of pointsIn.slice(0, 240)) {
+      if (!p || typeof p !== "object") continue;
+      const x = Number(p.x);
+      const y = Number(p.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      points.push({
+        x: Math.min(1, Math.max(0, x)),
+        y: Math.min(1, Math.max(0, y)),
+      });
+    }
+    if (points.length < 2) continue;
+    out.push({
+      points,
+      width: Math.min(48, Math.max(3, Number(part.width) || 18)),
+      colorIndex: Math.max(0, Math.min(31, Number(part.colorIndex) || 0)),
+    });
+  }
+  return out.length ? out : null;
+}
+
 function sanitizeStoredStroke(raw) {
   if (!raw || typeof raw !== "object") return null;
   const id = String(raw.id || "").trim();
   if (!id || id.length > 80) return null;
   const emoji = String(raw.emoji || "").trim().slice(0, 8) || null;
+  const templateParts = sanitizeTemplateParts(raw.templateParts);
   const pointsIn = Array.isArray(raw.points) ? raw.points : [];
   const points = [];
   for (const p of pointsIn) {
@@ -826,8 +854,8 @@ function sanitizeStoredStroke(raw) {
     });
     if (points.length >= MAX_POINTS_PER_STROKE) break;
   }
-  // Emoji-Zeichnung: 1 Punkt reicht; Linien brauchen ≥2
-  if (emoji) {
+  // Emoji/Vorlage: 1 Punkt reicht; Linien brauchen ≥2
+  if (emoji || templateParts) {
     if (!points.length) return null;
   } else if (points.length < 2) {
     return null;
@@ -836,7 +864,7 @@ function sanitizeStoredStroke(raw) {
     id,
     points,
     // Dicke: Referenz-Pixel (kurze Seite ≈ 1000) — Float beibehalten für feine Pinsel
-    width: emoji
+    width: emoji || templateParts
       ? Math.min(48, Math.max(0, Number(raw.width) || 0))
       : Math.min(48, Math.max(3, Number(raw.width) || 18)),
     nickname: String(raw.nickname || "").trim().slice(0, 18) || null,
@@ -845,6 +873,15 @@ function sanitizeStoredStroke(raw) {
     colorLocked: Boolean(raw.colorLocked),
   };
   if (emoji) out.emoji = emoji;
+  if (templateParts) {
+    out.templateParts = templateParts;
+    const sc = Number(raw.templateScale);
+    out.templateScale = Number.isFinite(sc)
+      ? Math.min(4, Math.max(0.2, sc))
+      : 1;
+    const rot = Number(raw.templateRotation);
+    out.templateRotation = Number.isFinite(rot) ? rot : 0;
+  }
   return out;
 }
 
@@ -940,6 +977,9 @@ function strokeFromSocketMessage(json, socket) {
     authorId,
     emoji: json?.emoji,
     colorLocked: json?.colorLocked,
+    templateParts: json?.templateParts,
+    templateScale: json?.templateScale,
+    templateRotation: json?.templateRotation,
   });
   return base;
 }
@@ -5299,6 +5339,71 @@ app.get("/v1/me/inventory", (req, res) => {
   });
 });
 
+const MAX_DRAW_TEMPLATES = 24;
+
+function ensureDrawTemplates(user) {
+  if (!Array.isArray(user.drawTemplates)) user.drawTemplates = [];
+  return user.drawTemplates;
+}
+
+function publicDrawTemplate(t) {
+  if (!t) return null;
+  return {
+    id: t.id,
+    strokes: t.strokes,
+    createdAt: t.createdAt || 0,
+  };
+}
+
+app.get("/v1/me/templates", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const list = ensureDrawTemplates(ctx.user)
+    .map(publicDrawTemplate)
+    .filter(Boolean)
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return res.json({ ok: true, templates: list, count: list.length });
+});
+
+app.post("/v1/me/templates", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const strokes = sanitizeTemplateParts(req.body?.strokes);
+  if (!strokes || !strokes.length) {
+    return res.status(400).json({ error: "empty", message: "Bitte etwas zeichnen." });
+  }
+  const list = ensureDrawTemplates(ctx.user);
+  if (list.length >= MAX_DRAW_TEMPLATES) {
+    return res.status(400).json({
+      error: "limit",
+      message: `Maximal ${MAX_DRAW_TEMPLATES} Vorlagen.`,
+    });
+  }
+  const entry = {
+    id: `tpl_${crypto.randomBytes(8).toString("hex")}`,
+    strokes,
+    createdAt: Date.now(),
+  };
+  list.push(entry);
+  trackAch(ctx.user, "templates_created", 1);
+  scheduleSave();
+  return res.status(201).json({ ok: true, template: publicDrawTemplate(entry) });
+});
+
+app.delete("/v1/me/templates/:id", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "").trim();
+  const list = ensureDrawTemplates(ctx.user);
+  const before = list.length;
+  ctx.user.drawTemplates = list.filter((t) => t && t.id !== id);
+  if (ctx.user.drawTemplates.length === before) {
+    return res.status(404).json({ error: "not_found" });
+  }
+  scheduleSave();
+  return res.json({ ok: true });
+});
+
 /** —— Erfolge / Daily / Streak —— */
 app.get("/v1/me/achievements", (req, res) => {
   const ctx = requireAuth(req, res);
@@ -8080,6 +8185,7 @@ wss.on("connection", (socket, req) => {
       if (user) {
         trackAch(user, "strokes", 1);
         if (stored.emoji) trackAch(user, "stickers_placed", 1);
+        if (stored.templateParts) trackAch(user, "templates_placed", 1);
         if (drawResult && (drawResult.free || drawResult.charged) && !drawResult.already) {
           trackAch(user, "draw_sessions", 1);
         }
@@ -8100,6 +8206,11 @@ wss.on("connection", (socket, req) => {
         colorLocked: Boolean(stored.colorLocked),
       };
       if (stored.emoji) relayPayload.emoji = stored.emoji;
+      if (stored.templateParts) {
+        relayPayload.templateParts = stored.templateParts;
+        relayPayload.templateScale = stored.templateScale;
+        relayPayload.templateRotation = stored.templateRotation;
+      }
       const relay = JSON.stringify(relayPayload);
       relayToPeers(room, relay, peerId);
       // Legacy: Emoji-Strich zusätzlich als sticker_place für alte Clients
