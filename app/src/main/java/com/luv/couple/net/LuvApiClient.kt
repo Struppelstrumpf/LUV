@@ -904,7 +904,8 @@ object LuvApiClient {
             permissions = perms,
             modSince = o.optLong("modSince").takeIf { it > 0L },
             marriage = parseMarriageInfo(o.optJSONObject("marriage")),
-            marriageCooldownLabel = o.optString("marriageCooldownLabel").takeIf { it.isNotBlank() }
+            marriageCooldownLabel = o.optString("marriageCooldownLabel")
+                .takeIf { it.isNotBlank() && it != "null" && it != "0" }
         )
     }
 

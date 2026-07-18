@@ -499,10 +499,11 @@ const PET_SHOP_PRICES = {
 
 const STARTER_EMOJIS = ["👍", "❌", "❤️", "😂", "😱", "😡", "😭"];
 
-/** Nur Katalog-/Starter-Items — verhindert eingeschmuggelte Fake-Items. */
+/** Nur Katalog-/Starter-/Erfolgs-Items — verhindert eingeschmuggelte Fake-Items. */
 function isKnownInventoryItem(kind, itemId) {
   const id = String(itemId || "").trim();
   if (!id) return false;
+  if (ach.isAchievementRewardItem(kind, id)) return true;
   if (kind === "pets") {
     return (
       id === DEFAULT_PET ||
@@ -516,6 +517,34 @@ function isKnownInventoryItem(kind, itemId) {
     return STARTER_EMOJIS.includes(id) || EMOJI_SHOP_PRICES[id] != null;
   }
   return false;
+}
+
+/** Heirats-Boni & Erfolgs-Exclusives — nie handelbar. */
+function isBoundInventoryItem(kind, itemId) {
+  const id = String(itemId || "").trim();
+  if (!id) return false;
+  if (kind === "pets" && id === marriage.MARRIAGE_PET) return true;
+  if (kind === "stickers" && isAchievementSticker(id)) return true;
+  return false;
+}
+
+function tryClaimAchievementReward(user, achievementId) {
+  return ach.claimAchievement(
+    user,
+    achievementId,
+    todayKey(),
+    (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref),
+    (u, k, itemId) => safeGiveItem(u, k, itemId),
+    (u, k, itemId) => userAlreadyOwnsUnique(u, k, itemId)
+  );
+}
+
+function repairAchievementItemRewards(user) {
+  return ach.repairMissingRewardItems(
+    user,
+    (u, k, itemId) => safeGiveItem(u, k, itemId),
+    (u, k, itemId) => userAlreadyOwnsUnique(u, k, itemId)
+  );
 }
 
 function scrubInventoryCatalog(inv) {
@@ -1102,10 +1131,13 @@ function finalizeWeddingMarriage(m) {
   if (a) {
     marriage.grantMarriageItem(a);
     trackAch(a, "married", 1);
+    // Kapelle-Sticker sofort (nicht handelbar) — Claim nicht dem Zufall überlassen
+    tryClaimAchievementReward(a, "fs_married");
   }
   if (b) {
     marriage.grantMarriageItem(b);
     trackAch(b, "married", 1);
+    tryClaimAchievementReward(b, "fs_married");
   }
   return true;
 }
@@ -7094,6 +7126,14 @@ app.get("/v1/me/inventory", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   migrateStickerInventoryIfNeeded(ctx.user);
+  // Verheiratet → Ehering + Kapelle nachreichen, Erfolg claimen falls offen
+  const myM = marriage.findMarriageForUser(getDb(), ctx.user.id);
+  if (myM && myM.status === "married") {
+    marriage.grantMarriageItem(ctx.user);
+    ach.setMetricAtLeast(ctx.user, "married", 1, todayKey(), null);
+    tryClaimAchievementReward(ctx.user, "fs_married");
+  }
+  repairAchievementItemRewards(ctx.user);
   const inv = ensureInventory(ctx.user);
   scheduleSave();
   return res.json({
@@ -7180,6 +7220,10 @@ app.get("/v1/me/achievements", (req, res) => {
   if (a.progress._activeDayMarked !== todayKey()) {
     a.progress._activeDayMarked = todayKey();
     trackAch(ctx.user, "active_days", 1);
+  }
+  // Nachträglich Items nachreichen (z. B. Kapelle nach Katalog-Fix)
+  if (repairAchievementItemRewards(ctx.user) > 0) {
+    syncAchInventoryMetrics(ctx.user);
   }
   scheduleSave();
   return res.json({ ok: true, ...ach.publicAchievementsState(ctx.user, todayKey()) });
@@ -7284,6 +7328,16 @@ app.post("/v1/me/achievements/:id/claim", (req, res) => {
 /** —— Spieler-Marktplatz (Nasebär-Stil) —— */
 function marketItemMeta(kind, itemId) {
   const id = String(itemId || "").trim();
+  if (isBoundInventoryItem(kind, id)) {
+    const emoji = id;
+    const label =
+      kind === "pets" && id === marriage.MARRIAGE_PET
+        ? marriage.MARRIAGE_PET_LABEL
+        : kind === "stickers" && id === marriage.MARRIAGE_CHAPEL_STICKER
+          ? "Kapelle"
+          : id;
+    return { category: kind, emoji, label, sellable: false };
+  }
   if (kind === "pets") {
     return { category: "pets", emoji: id, label: id, sellable: id !== DEFAULT_PET && PET_SHOP_PRICES[id] != null };
   }

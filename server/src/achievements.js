@@ -329,6 +329,58 @@ function bumpMetric(user, metric, amount, dayKey, applyLedgerFn) {
  * @param {(user, kind, itemId) => boolean} [giveItemFn]
  * @param {(user, kind, itemId) => boolean} [ownsUniqueFn] true wenn Pet/Theme schon im Besitz
  */
+function isAchievementRewardItem(kind, itemId) {
+  const k = String(kind || "");
+  const id = String(itemId || "").trim();
+  if (!k || !id) return false;
+  return ACHIEVEMENTS.some((d) => {
+    const r = d.rewardItem;
+    return r && String(r.kind) === k && String(r.itemId) === id;
+  });
+}
+
+function userHasRewardItem(user, kind, itemId) {
+  const inv = user?.inventory;
+  if (!inv) return false;
+  const id = String(itemId || "").trim();
+  if (kind === "pets") return Array.isArray(inv.pets) && inv.pets.includes(id);
+  if (kind === "themes") return Array.isArray(inv.themes) && inv.themes.includes(id);
+  if (kind === "stickers") return (Number(inv.stickers?.[id]) || 0) >= 1;
+  if (kind === "emojis") return (Number(inv.emojis?.[id]) || 0) >= 1;
+  return false;
+}
+
+/**
+ * Nachgezogen: Claimed ohne Item (z. B. Katalog-Bug) → Item nachreichen.
+ * @returns {number} Anzahl nachgereichter Items
+ */
+function repairMissingRewardItems(user, giveItemFn, ownsUniqueFn) {
+  if (!user || typeof giveItemFn !== "function") return 0;
+  const a = ensureAchievements(user);
+  let repaired = 0;
+  for (const def of ACHIEVEMENTS) {
+    const reward = publicRewardItem(def);
+    if (!reward) continue;
+    const entry = a.unlocked[def.id];
+    if (!entry || !entry.claimed || entry.itemGranted) continue;
+    const uniqueOwned =
+      (reward.kind === "pets" || reward.kind === "themes") &&
+      typeof ownsUniqueFn === "function" &&
+      ownsUniqueFn(user, reward.kind, reward.itemId);
+    if (uniqueOwned || userHasRewardItem(user, reward.kind, reward.itemId)) {
+      entry.itemGranted = true;
+      entry.rewardItem = reward;
+      continue;
+    }
+    if (giveItemFn(user, reward.kind, reward.itemId)) {
+      entry.itemGranted = true;
+      entry.rewardItem = reward;
+      repaired += 1;
+    }
+  }
+  return repaired;
+}
+
 function claimAchievement(user, achievementId, dayKey, applyLedgerFn, giveItemFn, ownsUniqueFn) {
   const a = ensureDaily(user, dayKey);
   const id = String(achievementId || "").trim();
@@ -351,15 +403,21 @@ function claimAchievement(user, achievementId, dayKey, applyLedgerFn, giveItemFn
       (reward.kind === "pets" || reward.kind === "themes") &&
       typeof ownsUniqueFn === "function" &&
       ownsUniqueFn(user, reward.kind, reward.itemId);
-    if (!uniqueOwned) {
-      if (giveItemFn(user, reward.kind, reward.itemId)) {
-        grantItem = reward;
-      } else {
-        grantCoins = Math.max(0, Number(def.coinsFallback) || Number(def.coins) || 0);
-      }
-    } else {
+    if (uniqueOwned) {
       // Unique schon da → Coin-Fallback
       grantCoins = Math.max(0, Number(def.coinsFallback) || 3);
+    } else if (userHasRewardItem(user, reward.kind, reward.itemId)) {
+      // Schon durch Heirats-Bonus o. Ä. erhalten — nicht nochmal stapeln
+      grantItem = reward;
+    } else if (giveItemFn(user, reward.kind, reward.itemId)) {
+      grantItem = reward;
+    } else {
+      // Kein stiller Coin-Fallback mehr — sonst „abgeholt“ ohne Item
+      return {
+        ok: false,
+        error: "grant_failed",
+        message: "Item-Belohnung fehlgeschlagen — bitte gleich nochmal abholen.",
+      };
     }
   } else {
     grantCoins = Math.max(0, Number(def.coins) || 0);
@@ -576,4 +634,7 @@ module.exports = {
   publicAchievementsState,
   remainingAchCoinsToday,
   mergeAchievements,
+  isAchievementRewardItem,
+  repairMissingRewardItems,
+  publicRewardItem,
 };

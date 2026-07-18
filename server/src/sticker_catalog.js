@@ -5,8 +5,8 @@
  * high ~40–90€ | extreme ~120–250€ | legend ~500€.
  */
 
-/** Nur über Erfolge — nicht im Itemshop. */
-const ACHIEVEMENT_STICKERS = ["🦔","🎨","💌","🪄"];
+/** Nur über Erfolge / Heirat — nicht im Itemshop, nicht handelbar. */
+const ACHIEVEMENT_STICKERS = ["🦔", "🎨", "💌", "🪄", "💒"];
 
 const STICKER_SHOP_PRICES = {
   "❄️": 5,

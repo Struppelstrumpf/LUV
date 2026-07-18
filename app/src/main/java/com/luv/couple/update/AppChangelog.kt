@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.9929",
+            listOf(
+                "Erfolge: Item-Belohnungen zuverlässig (u. a. Kapelle nach Heirat)",
+                "Heirats-Boni (Ehering, Kapelle) sind nicht handelbar",
+            )
+        ),
+        Entry(
             "1.9.9928",
             listOf(
                 "Freunde: falsche „Scheidungs-Wartezeit“-Karte entfernt",

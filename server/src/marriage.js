@@ -8,9 +8,11 @@ const fs = require("fs");
 const ENGAGE_WAIT_MS = 7 * 24 * 60 * 60 * 1000;
 const WEDDING_LOBBY_MS = 7 * 24 * 60 * 60 * 1000;
 const DIVORCE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
-/** Einzigartiges Ehe-Item (Pet) — nicht im Shop, fällt bei Scheidung weg */
+/** Einzigartiges Ehe-Item (Pet) — nicht im Shop, nicht handelbar, fällt bei Scheidung weg */
 const MARRIAGE_PET = "💍";
 const MARRIAGE_PET_LABEL = "Ehering";
+/** Kapelle-Sticker — Heirats-Bonus, nicht handelbar (bleibt nach Scheidung) */
+const MARRIAGE_CHAPEL_STICKER = "💒";
 /** Volle 7-Tage-Wartezeit überspringen (Coins) */
 const SKIP_WAIT_FULL_COST = 28;
 /** Heirat ohne Level 100 — volle Kosten bei Level 0 */
@@ -492,6 +494,13 @@ function grantMarriageItem(user) {
   if (!user.inventory.pets.includes(MARRIAGE_PET)) {
     user.inventory.pets.push(MARRIAGE_PET);
   }
+  if (!user.inventory.stickers || typeof user.inventory.stickers !== "object") {
+    user.inventory.stickers = {};
+  }
+  // Kapelle einmalig — nicht stapeln bei Recovery/Re-Grant
+  if ((Number(user.inventory.stickers[MARRIAGE_CHAPEL_STICKER]) || 0) < 1) {
+    user.inventory.stickers[MARRIAGE_CHAPEL_STICKER] = 1;
+  }
 }
 
 module.exports = {
@@ -500,6 +509,7 @@ module.exports = {
   DIVORCE_COOLDOWN_MS,
   MARRIAGE_PET,
   MARRIAGE_PET_LABEL,
+  MARRIAGE_CHAPEL_STICKER,
   SKIP_WAIT_FULL_COST,
   PROPOSE_UNLOCK_FULL_COST,
   DAY_MS,
