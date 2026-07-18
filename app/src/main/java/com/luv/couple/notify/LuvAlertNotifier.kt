@@ -48,6 +48,8 @@ object LuvAlertNotifier {
     private const val NOTIFY_DAILY = 990
     private const val NOTIFY_MOOD = 995
     private const val NOTIFY_MEMORY_BASE = 1100
+    private const val NOTIFY_MARKET_SALE = 996
+    private const val NOTIFY_APP_BADGE = 997
     const val MOOD_CHANNEL_ID = "luv_mood"
 
     private data class PaintBurst(
@@ -359,6 +361,74 @@ object LuvAlertNotifier {
                 .build()
             context.getSystemService(NotificationManager::class.java)
                 .notify(NOTIFY_MEMORY_BASE + (lobbyCode.hashCode() and 0xffff), notification)
+        }
+    }
+
+    /** Launcher-Badge-Zahl (Android zeigt .setNumber auf dem App-Icon). */
+    fun updateAppBadge(context: Context, count: Int) {
+        ensureChannel(context)
+        val mgr = context.getSystemService(NotificationManager::class.java) ?: return
+        if (count <= 0) {
+            mgr.cancel(NOTIFY_APP_BADGE)
+            return
+        }
+        val open = PendingIntent.getActivity(
+            context,
+            NOTIFY_APP_BADGE,
+            Intent(context, MainActivity::class.java).apply {
+                putExtra(MainActivity.EXTRA_FROM_NOTIFICATION, true)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(context.getString(R.string.app_name))
+            .setContentText(
+                if (count == 1) "1 neuer Hinweis" else "$count neue Hinweise"
+            )
+            .setNumber(count)
+            .setContentIntent(open)
+            .setSilent(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .build()
+        mgr.notify(NOTIFY_APP_BADGE, notification)
+    }
+
+    /** Marktplatz: eigenes Angebot verkauft (außerhalb Ruhezeiten, wenn Benachrichtigungen an). */
+    fun onMarketSale(context: Context, itemCount: Int, totalCoins: Int) {
+        scope.launch {
+            if (itemCount <= 0 || totalCoins <= 0) return@launch
+            if (QuietHoursGate.isQuietNow()) return@launch
+            if (!prefsEnabled()) return@launch
+            ensureChannel(context)
+            val open = PendingIntent.getActivity(
+                context,
+                NOTIFY_MARKET_SALE,
+                Intent(context, MainActivity::class.java).apply {
+                    putExtra(MainActivity.EXTRA_FROM_NOTIFICATION, true)
+                    putExtra(MainActivity.EXTRA_OPEN_MARKETPLACE, true)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val text = if (itemCount == 1) {
+                "Dein Angebot wurde verkauft · $totalCoins Coins abholen"
+            } else {
+                "$itemCount Angebote verkauft · $totalCoins Coins abholen"
+            }
+            val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("Marktplatz")
+                .setContentText(text)
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setNumber(itemCount)
+                .build()
+            context.getSystemService(NotificationManager::class.java)
+                .notify(NOTIFY_MARKET_SALE, notification)
         }
     }
 

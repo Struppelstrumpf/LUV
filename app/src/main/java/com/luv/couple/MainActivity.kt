@@ -66,6 +66,9 @@ class MainActivity : ComponentActivity() {
         if (intent?.getBooleanExtra(EXTRA_OPEN_SHOP, false) == true) {
             PendingShop.offer()
         }
+        if (intent?.getBooleanExtra(EXTRA_OPEN_MARKETPLACE, false) == true) {
+            com.luv.couple.net.PendingMarketplace.offer()
+        }
     }
 
     private fun captureJoinIntent(intent: Intent?) {
@@ -94,6 +97,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_OPEN_SHOP = "open_shop"
+        const val EXTRA_OPEN_MARKETPLACE = "open_marketplace"
         const val EXTRA_FROM_NOTIFICATION = "from_notification"
     }
 }

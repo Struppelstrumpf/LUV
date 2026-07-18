@@ -120,6 +120,8 @@ fun LuvAppNav() {
     val reconnectUi by PairConnectionService.reconnectUi.collectAsStateWithLifecycle()
     val account by AccountSession.account.collectAsStateWithLifecycle()
     val sozialClaimable by AchievementsBadge.hasClaimable.collectAsStateWithLifecycle()
+    val sozialDot by com.luv.couple.net.NotificationBadges.hasSozialDot.collectAsStateWithLifecycle()
+    val marketDot by com.luv.couple.net.NotificationBadges.hasMarketDot.collectAsStateWithLifecycle()
     val pendingJoin by PendingJoin.code.collectAsStateWithLifecycle()
     val pendingShopReturn by PendingShopReturn.pending.collectAsStateWithLifecycle()
     val pendingShop by PendingShop.open.collectAsStateWithLifecycle()
@@ -682,6 +684,21 @@ fun LuvAppNav() {
                     runCatching {
                         LuvApiClient.fetchLiveNotice()?.let { LiveNoticeBus.offer(it) }
                     }
+                    val prevSales = runCatching { prefs.pendingSalesKnownCount() }.getOrDefault(0)
+                    val sales = com.luv.couple.net.NotificationBadges.refreshPendingSales(context)
+                    com.luv.couple.net.NotificationBadges.refreshFriends(context)
+                    AchievementsBadge.refresh()
+                    if (sales != null && sales.count > prevSales) {
+                        com.luv.couple.notify.LuvAlertNotifier.onMarketSale(
+                            context,
+                            itemCount = sales.count,
+                            totalCoins = sales.totalCoins
+                        )
+                    }
+                    if (sales != null) {
+                        runCatching { prefs.setPendingSalesKnownCount(sales.count) }
+                    }
+                    com.luv.couple.net.NotificationBadges.syncAppBadge(context)
                 }
             }
         }
@@ -728,6 +745,13 @@ fun LuvAppNav() {
         if (startDestination != Routes.MAIN) return@LaunchedEffect
         if (!PendingShop.consume()) return@LaunchedEffect
         openShopTab()
+    }
+
+    LaunchedEffect(startDestination) {
+        if (startDestination != Routes.MAIN) return@LaunchedEffect
+        if (!com.luv.couple.net.PendingMarketplace.consume()) return@LaunchedEffect
+        tab = 3
+        openMarketPanel = MarketPanel.Marketplace
     }
 
     LaunchedEffect(startDestination) {
@@ -915,6 +939,7 @@ fun LuvAppNav() {
                                 )
                                 scope.launch {
                                     prefs.setActiveLobby(lobby.id)
+                                    prefs.markLobbyCanvasSeen(lobby.code)
                                     refreshAccount()
                                 }
                             },
@@ -1106,7 +1131,8 @@ fun LuvAppNav() {
                 }
                 SimpleBottomBar(
                     selected = tab,
-                    sozialBadge = sozialClaimable,
+                    sozialBadge = sozialDot || sozialClaimable,
+                    marketBadge = marketDot,
                     onSelect = { next ->
                         if (next == 4) accountMessage = null
                         tab = next
@@ -1114,11 +1140,15 @@ fun LuvAppNav() {
                             // Update-Check bei Tab-Wechsel (Käufe/API laufen weiter)
                             runCatching { AppUpdater.checkOnNavigate(context) }
                             when (next) {
-                                1 -> AchievementsBadge.refresh()
+                                1 -> {
+                                    AchievementsBadge.refresh()
+                                    com.luv.couple.net.NotificationBadges.refreshFriends(context)
+                                }
                                 2 -> syncInventory()
                                 3 -> {
                                     refreshAccount()
                                     syncInventory()
+                                    com.luv.couple.net.NotificationBadges.refreshPendingSales(context)
                                 }
                                 4 -> {
                                     googleEnabled = runCatching {

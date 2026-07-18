@@ -71,10 +71,13 @@ fun SocialScreen(
     val scope = rememberCoroutineScope()
     var tab by remember { mutableIntStateOf(0) }
     val hasClaimable by AchievementsBadge.hasClaimable.collectAsStateWithLifecycle()
+    val friendIncoming by com.luv.couple.net.NotificationBadges.friendIncoming
+        .collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         runCatching { LuvApiClient.pingAchievement("social_opens") }
         AchievementsBadge.refresh()
+        com.luv.couple.net.NotificationBadges.refreshFriends()
     }
 
     MenuBackdrop(includeNavigationBars = false) {
@@ -106,7 +109,9 @@ fun SocialScreen(
                             fontSize = 14.sp,
                             softWrap = false
                         )
-                        if (index == 1 && hasClaimable) {
+                        val showDot = (index == 0 && friendIncoming > 0) ||
+                            (index == 1 && hasClaimable)
+                        if (showDot) {
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
@@ -172,6 +177,8 @@ private fun FriendsPanel(
                     friends = it.friends
                     incoming = it.incoming
                     outgoing = it.outgoing
+                    com.luv.couple.net.NotificationBadges.setFriendIncoming(it.incoming.size)
+                    com.luv.couple.net.NotificationBadges.syncAppBadge(context)
                 }
                 .onFailure {
                     Toast.makeText(

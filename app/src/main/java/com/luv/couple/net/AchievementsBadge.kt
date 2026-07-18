@@ -14,7 +14,9 @@ object AchievementsBadge {
     }
 
     fun updateFrom(state: LuvApiClient.AchievementsState?) {
-        _hasClaimable.value = state?.hasClaimable == true
+        val claimable = state?.hasClaimable == true
+        _hasClaimable.value = claimable
+        NotificationBadges.onAchievementsClaimable(claimable)
     }
 
     suspend fun refresh() {

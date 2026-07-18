@@ -973,6 +973,7 @@ function restoreRoomsFromDisk() {
       name: String(data.name || "Lobby").slice(0, MAX_LOBBY_NAME_LENGTH),
       hostNickname: String(data.hostNickname || "Host").slice(0, 18),
       isFree: Boolean(data.isFree),
+      isRandom: Boolean(data.isRandom),
       capacity: Math.min(
         MAX_PEERS,
         Math.max(
@@ -1715,6 +1716,7 @@ function publicJoinedLobbies(user) {
     ),
     isFree: Boolean(meta?.isFree),
     isRandom: Boolean(meta?.isRandom),
+    lastCanvasAt: Number(rooms.get(code)?.lastCanvasAt || meta?.lastCanvasAt || 0),
     hostColorSide: normalizeHostColorSide(meta?.hostColorSide),
     invite: `${PUBLIC_JOIN_BASE}/${code}`,
     hostNickname: String(meta?.hostNickname || "Host").slice(0, 18),
@@ -2845,6 +2847,12 @@ function publicHostedLobbies(user) {
     ),
     isFree: Boolean(meta?.isFree),
     isRandom: Boolean(meta?.isRandom),
+    lastCanvasAt: Number(
+      rooms.get(code)?.lastCanvasAt ||
+        meta?.lastCanvasAt ||
+        getDb().rooms?.[code]?.lastCanvasAt ||
+        0
+    ),
     hostColorSide: normalizeHostColorSide(meta?.hostColorSide),
     invite: `${PUBLIC_JOIN_BASE}/${code}`,
     hostNickname: user.nickname || "Host",
@@ -6252,7 +6260,21 @@ app.post("/v1/market/:id/buy", (req, res) => {
     delete entry.soldAt;
     return res.status(402).json({ error: "no_coins", message: "Nicht genug Coins." });
   }
-  applyLedger(seller.id, price, "market_sell", id);
+  // Verkaufserlös erst nach Abholen durch den Verkäufer
+  if (!Array.isArray(seller.pendingMarketSales)) seller.pendingMarketSales = [];
+  seller.pendingMarketSales.push({
+    id: entry.id,
+    kind: entry.kind,
+    itemId: entry.itemId,
+    emoji: entry.emoji || "📦",
+    label: entry.label || entry.itemId,
+    priceCoins: price,
+    soldAt: Date.now(),
+    buyerNickname: String(ctx.user.nickname || "Jemand").slice(0, 18),
+  });
+  if (seller.pendingMarketSales.length > 80) {
+    seller.pendingMarketSales = seller.pendingMarketSales.slice(-80);
+  }
   safeGiveItem(ctx.user, entry.kind, entry.itemId);
   market.recordPrice(getDb(), entry.kind, entry.itemId, price);
   trackAch(ctx.user, "market_bought", 1);
@@ -6265,6 +6287,64 @@ app.post("/v1/market/:id/buy", (req, res) => {
     ok: true,
     user: publicUser(ctx.user),
     listing: market.listingPublic(entry, ctx.user.id, getDb()),
+  });
+});
+
+app.get("/v1/market/pending-sales", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const pending = Array.isArray(ctx.user.pendingMarketSales)
+    ? ctx.user.pendingMarketSales
+    : [];
+  const totalCoins = pending.reduce(
+    (s, x) => s + Math.max(0, Number(x.priceCoins) || 0),
+    0
+  );
+  return res.json({
+    ok: true,
+    sales: pending.map((x) => ({
+      id: x.id,
+      kind: x.kind,
+      itemId: x.itemId,
+      emoji: x.emoji || "📦",
+      label: x.label || x.itemId,
+      priceCoins: Math.max(0, Number(x.priceCoins) || 0),
+      soldAt: Number(x.soldAt) || 0,
+      buyerNickname: x.buyerNickname || "Jemand",
+    })),
+    totalCoins,
+    count: pending.length,
+  });
+});
+
+app.post("/v1/market/claim-sales", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const pending = Array.isArray(ctx.user.pendingMarketSales)
+    ? ctx.user.pendingMarketSales
+    : [];
+  if (!pending.length) {
+    return res.json({
+      ok: true,
+      claimed: 0,
+      totalCoins: 0,
+      user: publicUser(ctx.user),
+    });
+  }
+  const totalCoins = pending.reduce(
+    (s, x) => s + Math.max(0, Number(x.priceCoins) || 0),
+    0
+  );
+  ctx.user.pendingMarketSales = [];
+  if (totalCoins > 0) {
+    applyLedger(ctx.user.id, totalCoins, "market_sell_claim", `n=${pending.length}`);
+  }
+  flushSave();
+  return res.json({
+    ok: true,
+    claimed: pending.length,
+    totalCoins,
+    user: publicUser(ctx.user),
   });
 });
 
@@ -6513,27 +6593,51 @@ app.post("/v1/webhooks/mollie", async (req, res) => {
 
 
 app.post("/v1/rooms/random-match", (req, res) => {
+  try {
   cleanupRooms();
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   healJoinedRoomsFromMembership(ctx.user);
+  reconcileAbandonedLobbyOwnership(ctx.user);
   pruneHostedRooms(ctx.user);
   const hosted = ensureHostedRooms(ctx.user);
   const joined = ensureJoinedRooms(ctx.user);
-  const alreadyRandom = (map) => {
-    for (const [code] of Object.entries(map || {})) {
-      const room = rooms.get(code) || (getDb().rooms?.[code] ? hydrateRoom(code, getDb().rooms[code]) : null);
-      if (room?.isRandom && Array.isArray(room.memberUserIds) && room.memberUserIds.includes(ctx.user.id)) {
+  const findActiveRandom = () => {
+    const check = (code) => {
+      let room = rooms.get(code);
+      if (!room) {
+        const saved = getDb().rooms?.[code];
+        if (saved && typeof saved === "object") {
+          room = hydrateRoom(code, saved);
+          rooms.set(code, room);
+        }
+      }
+      if (!room?.isRandom) return null;
+      if (!Array.isArray(room.memberUserIds) || !room.memberUserIds.includes(ctx.user.id)) {
+        return null;
+      }
+      return code;
+    };
+    for (const code of Object.keys(hosted || {})) {
+      const hit = check(code);
+      if (hit) return hit;
+    }
+    for (const code of Object.keys(joined || {})) {
+      const hit = check(code);
+      if (hit) return hit;
+    }
+    for (const [code, room] of rooms.entries()) {
+      if (
+        room?.isRandom &&
+        Array.isArray(room.memberUserIds) &&
+        room.memberUserIds.includes(ctx.user.id)
+      ) {
         return code;
       }
-      const meta = map[code];
-      if (meta?.isRandom) return code;
     }
     return null;
   };
-  const existing =
-    alreadyRandom(hosted) ||
-    alreadyRandom(joined);
+  const existing = findActiveRandom();
   if (existing) {
     return res.status(409).json({
       error: "already_in_random",
@@ -6668,6 +6772,13 @@ app.post("/v1/rooms/random-match", (req, res) => {
     memberList: roster,
     ...inviteFor(targetCode),
   });
+  } catch (e) {
+    console.error("random-match failed", e);
+    return res.status(500).json({
+      error: "server_error",
+      message: "Random-Lobby gerade nicht verfügbar. Bitte erneut versuchen.",
+    });
+  }
 });
 
 app.post("/v1/shop/lootbox", (req, res) => {

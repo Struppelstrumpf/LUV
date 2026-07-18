@@ -61,8 +61,12 @@ import com.luv.couple.profile.ProfileThemeBackdrop
 import com.luv.couple.shop.ShopCatalog
 import com.luv.couple.ui.UiScale
 import com.luv.couple.ui.rememberUiScale
+import com.luv.couple.ui.theme.AccentRose
+import com.luv.couple.ui.theme.BgSoft
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
+import com.luv.couple.ui.theme.TextMuted
+import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.launch
 
 private val MarketCream = Color(0xFFF7F0E4)
@@ -106,6 +110,10 @@ fun PlayerMarketScreen(
     var offersLoading by remember { mutableStateOf(false) }
     var previewListing by remember { mutableStateOf<LuvApiClient.MarketListing?>(null) }
     var friends by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
+    var pendingSales by remember {
+        mutableStateOf<com.luv.couple.net.PendingSalesResult?>(null)
+    }
+    var claimBusy by remember { mutableStateOf(false) }
 
     fun openOffers(item: LuvApiClient.MarketItem) {
         offersItem = item
@@ -270,6 +278,88 @@ fun PlayerMarketScreen(
         syncInventory()
         reloadMine()
         runCatching { friends = LuvApiClient.fetchFriends().friends }
+        val sales = com.luv.couple.net.NotificationBadges.refreshPendingSales(context)
+        if (sales != null && sales.count > 0) {
+            pendingSales = sales
+        }
+    }
+
+    pendingSales?.takeIf { it.count > 0 }?.let { sales ->
+        AlertDialog(
+            onDismissRequest = { if (!claimBusy) pendingSales = null },
+            containerColor = BgSoft,
+            title = {
+                Text(
+                    if (sales.count == 1) "Item verkauft" else "Items verkauft",
+                    fontFamily = DisplayFont,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        sales.sales.take(12).forEach { sale ->
+                            Text(sale.emoji, fontSize = 28.sp)
+                        }
+                    }
+                    Text(
+                        if (sales.count == 1) {
+                            "Dein Angebot wurde verkauft."
+                        } else {
+                            "${sales.count} Angebote wurden verkauft."
+                        },
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 14.sp
+                    )
+                    Text(
+                        "${sales.totalCoins} Coins abholen",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 18.sp
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !claimBusy,
+                    onClick = {
+                        claimBusy = true
+                        scope.launch {
+                            runCatching { LuvApiClient.claimPendingMarketSales() }
+                                .onSuccess { result ->
+                                    com.luv.couple.net.NotificationBadges.setPendingSales(0)
+                                    com.luv.couple.net.NotificationBadges.syncAppBadge(context)
+                                    pendingSales = null
+                                    Toast.makeText(
+                                        context,
+                                        "+${result.totalCoins} Coins",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                                .onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        it.message ?: "Abholen fehlgeschlagen",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            claimBusy = false
+                        }
+                    }
+                ) {
+                    Text("Abholen", color = AccentRose, fontFamily = DisplayFont)
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !claimBusy, onClick = { pendingSales = null }) {
+                    Text("Später", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
     }
 
     BoxWithConstraints(

@@ -12,6 +12,15 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.94",
+            listOf(
+                "Random-Lobby zuverlässiger",
+                "Hinweise: Freundesanfragen, Marktplatz-Verkäufe, App-Icon-Zahl",
+                "Lobby-Kacheln leuchten bei neuer Zeichnung",
+                "Lootbox: faire Chancen um 10 Coins",
+            )
+        ),
+        Entry(
             "1.9.93",
             listOf(
                 "Coinshop: größere Pakete (ca. 30/50/100 €), Mengenwahl, Angebote oben",

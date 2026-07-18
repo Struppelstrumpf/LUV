@@ -1,7 +1,27 @@
 /**
- * Lootbox: gewichteter Zufall aus Shop-Katalogen.
- * Teurer = seltener; Items >10 Coins möglich; sehr teuer ~0.1%.
+ * Lootbox: Bucket-Gewichte.
+ * ~30% Items um 10 Coins (±1); billiger/teurer seltener; Extrem ~0,1%.
  */
+
+function bucketOf(price) {
+  const p = Math.max(1, Number(price) || 1);
+  if (p >= 9 && p <= 11) return "sweet";
+  if (p >= 6 && p <= 8) return "midLow";
+  if (p >= 12 && p <= 20) return "midHigh";
+  if (p <= 5) return "cheap";
+  if (p >= 80) return "ultra";
+  return "expensive"; // 21–79
+}
+
+/** Ziel-Masse je Bucket (Summe 1.0). */
+const BUCKET_MASS = {
+  sweet: 0.3,
+  midLow: 0.16,
+  midHigh: 0.22,
+  cheap: 0.08,
+  expensive: 0.239,
+  ultra: 0.001,
+};
 
 function buildPool({
   emojiPrices,
@@ -12,22 +32,16 @@ function buildPool({
   defaultPet,
   starterEmojis,
 }) {
-  const pool = [];
+  const raw = [];
   const push = (kind, itemId, emoji, label, price) => {
     const p = Math.max(1, Number(price) || 1);
     if (p < 1) return;
     if (!isKnown(kind, itemId)) return;
-    let weight;
-    if (p >= 80) weight = 0.001; // ~0.1% class
-    else if (p > 10) weight = 1 / (p * p * 0.35);
-    else if (p < 10) weight = 0.55 / Math.max(1, 11 - p);
-    else weight = 1.2; // exactly ~10
-    weight = Math.max(0.0005, weight);
-    pool.push({ kind, itemId, emoji, label, shopPrice: p, weight });
+    raw.push({ kind, itemId, emoji, label, shopPrice: p, bucket: bucketOf(p) });
   };
 
   for (const [emoji, price] of Object.entries(emojiPrices || {})) {
-    if (starterEmojis.includes(emoji)) continue;
+    if ((starterEmojis || []).includes(emoji)) continue;
     if ((Number(price) || 0) < 1) continue;
     push("emojis", emoji, emoji, emoji, price);
   }
@@ -45,6 +59,30 @@ function buildPool({
     if ((Number(price) || 0) < 1) continue;
     push("stickers", emoji, emoji, emoji, price);
   }
+
+  const byBucket = {};
+  for (const item of raw) {
+    if (!byBucket[item.bucket]) byBucket[item.bucket] = [];
+    byBucket[item.bucket].push(item);
+  }
+
+  const pool = [];
+  for (const [bucket, items] of Object.entries(byBucket)) {
+    const mass = BUCKET_MASS[bucket] ?? 0.05;
+    if (!items.length) continue;
+    // Innerhalb des Buckets: näher an 10 etwas häufiger
+    const inner = items.map((it) => {
+      const dist = Math.abs(it.shopPrice - 10) + 1;
+      return 1 / dist;
+    });
+    const innerSum = inner.reduce((s, w) => s + w, 0) || 1;
+    items.forEach((it, i) => {
+      pool.push({
+        ...it,
+        weight: (mass * inner[i]) / innerSum,
+      });
+    });
+  }
   return pool;
 }
 
@@ -60,11 +98,16 @@ function pickFromPool(pool) {
     }
   }
   const last = pool[pool.length - 1];
-  const total2 = pool.reduce((s, x) => s + x.weight, 0);
   return {
     ...last,
-    chancePercent: Number(((last.weight / total2) * 100).toFixed(2)),
+    chancePercent: Number(((last.weight / total) * 100).toFixed(2)),
   };
 }
 
-module.exports = { buildPool, pickFromPool };
+function weightForPrice(price) {
+  // Nur Debug/Tests — echte Gewichte kommen aus Bucket-Verteilung
+  const b = bucketOf(price);
+  return BUCKET_MASS[b] ?? 0.05;
+}
+
+module.exports = { buildPool, pickFromPool, weightForPrice, bucketOf, BUCKET_MASS };

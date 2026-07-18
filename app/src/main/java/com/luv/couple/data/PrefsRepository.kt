@@ -67,6 +67,10 @@ class PrefsRepository(private val context: Context) {
     private val profileCanvasKey = stringPreferencesKey("profile_canvas_json")
     /** Bewusst verlassene Lobby-Codes — Cloud-Sync darf sie nicht wieder einspielen */
     private val dismissedLobbiesKey = stringPreferencesKey("dismissed_lobby_codes_json")
+    /** Zuletzt geöffnete Leinwand pro Lobby-Code → Glow zurücksetzen */
+    private val lobbyCanvasSeenKey = stringPreferencesKey("lobby_canvas_seen_json")
+    /** Zuletzt bekannte Anzahl pending Markt-Verkäufe (für Push bei Anstieg) */
+    private val pendingSalesKnownKey = intPreferencesKey("pending_sales_known_count")
 
     // Legacy keys — Migration
     private val genderKey = stringPreferencesKey("gender")
@@ -313,7 +317,8 @@ class PrefsRepository(private val context: Context) {
                     isRandom = r.isRandom || prev?.isRandom == true,
                     hostNickname = r.hostNickname.ifBlank { prev?.hostNickname.orEmpty() },
                     hostColorSide = r.hostColorSide,
-                    peakPeers = prev?.peakPeers ?: 1
+                    peakPeers = prev?.peakPeers ?: 1,
+                    lastCanvasAt = r.lastCanvasAt.takeIf { it > 0 } ?: (prev?.lastCanvasAt ?: 0L)
                 )
             }
             for (r in hosted) upsert(r, Role.HOST)
@@ -662,6 +667,52 @@ class PrefsRepository(private val context: Context) {
         }
     }
 
+    val lobbyCanvasSeenFlow: Flow<Map<String, Long>> = context.dataStore.data.map { prefs ->
+        parseLongMap(prefs[lobbyCanvasSeenKey])
+    }
+
+    suspend fun markLobbyCanvasSeen(code: String, at: Long = System.currentTimeMillis()) {
+        val clean = code.trim().uppercase().removePrefix("LUV-")
+        if (clean.length < 3) return
+        context.dataStore.edit { prefs ->
+            val map = parseLongMap(prefs[lobbyCanvasSeenKey]).toMutableMap()
+            map[clean] = at
+            while (map.size > 40) {
+                val oldest = map.minByOrNull { it.value }?.key ?: break
+                map.remove(oldest)
+            }
+            prefs[lobbyCanvasSeenKey] = encodeLongMap(map)
+        }
+    }
+
+    suspend fun pendingSalesKnownCount(): Int =
+        context.dataStore.data.first()[pendingSalesKnownKey] ?: 0
+
+    suspend fun setPendingSalesKnownCount(count: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[pendingSalesKnownKey] = count.coerceAtLeast(0)
+        }
+    }
+
+    private fun parseLongMap(raw: String?): Map<String, Long> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            val o = JSONObject(raw)
+            buildMap {
+                for (key in o.keys()) {
+                    val v = o.optLong(key, 0L)
+                    if (v > 0L) put(key.uppercase(), v)
+                }
+            }
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun encodeLongMap(map: Map<String, Long>): String {
+        val o = JSONObject()
+        map.forEach { (k, v) -> o.put(k, v) }
+        return o.toString()
+    }
+
     suspend fun renameLobby(lobbyId: String, name: String) {
         val clean = name.trim().take(PeerPalette.MAX_LOBBY_NAME_LENGTH).ifBlank { return }
         context.dataStore.edit { prefs ->
@@ -967,7 +1018,8 @@ class PrefsRepository(private val context: Context) {
                                 isRandom = o.optBoolean("isRandom", false),
                                 hostNickname = o.optString("hostNickname", ""),
                                 hostColorSide = o.optString("hostColorSide", "blue").ifBlank { "blue" },
-                                peakPeers = o.optInt("peakPeers", 1).coerceAtLeast(1)
+                                peakPeers = o.optInt("peakPeers", 1).coerceAtLeast(1),
+                                lastCanvasAt = o.optLong("lastCanvasAt", 0L)
                             )
                         )
                     }
@@ -992,6 +1044,7 @@ class PrefsRepository(private val context: Context) {
                         .put("hostNickname", lobby.hostNickname)
                         .put("hostColorSide", lobby.hostColorSide)
                         .put("peakPeers", lobby.peakPeers.coerceAtLeast(1))
+                        .put("lastCanvasAt", lobby.lastCanvasAt)
                 )
             }
             return arr.toString()

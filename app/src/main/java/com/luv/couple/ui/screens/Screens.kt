@@ -656,11 +656,15 @@ private fun LobbyCard(
     val peers by PairSessionState.peers(lobby.id).collectAsStateWithLifecycle()
     val proximityMap by LuvApp.instance.prefs.lobbyProximityFlow
         .collectAsStateWithLifecycle(initialValue = emptyMap())
+    val canvasSeenMap by LuvApp.instance.prefs.lobbyCanvasSeenFlow
+        .collectAsStateWithLifecycle(initialValue = emptyMap())
     val proximityCode = remember(lobby.code) {
         lobby.code.trim().uppercase().removePrefix("LUV-")
     }
     val proximityOn = proximityMap[proximityCode] == true ||
         proximityMap[lobby.id] == true
+    val hasNewDraw = lobby.lastCanvasAt > 0L &&
+        lobby.lastCanvasAt > (canvasSeenMap[proximityCode] ?: 0L)
     val scope = rememberCoroutineScope()
     val capacity = when {
         liveCapacity > 0 -> liveCapacity
@@ -815,13 +819,30 @@ private fun LobbyCard(
             .clip(RoundedCornerShape(22.dp))
             .background(BgSoft)
             .border(
-                width = if (dragging || active) 1.5.dp else 1.dp,
+                width = when {
+                    hasNewDraw -> 2.5.dp
+                    dragging || active -> 1.5.dp
+                    else -> 1.dp
+                },
                 color = when {
+                    hasNewDraw -> accent.copy(alpha = 0.85f)
                     dragging -> accent.copy(alpha = 0.7f)
                     active -> accent.copy(alpha = 0.55f)
                     else -> Color.White.copy(alpha = 0.06f)
                 },
                 shape = RoundedCornerShape(22.dp)
+            )
+            .then(
+                if (hasNewDraw) {
+                    Modifier.shadow(
+                        10.dp,
+                        RoundedCornerShape(22.dp),
+                        ambientColor = accent.copy(alpha = 0.45f),
+                        spotColor = accent.copy(alpha = 0.35f)
+                    )
+                } else {
+                    Modifier
+                }
             )
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)

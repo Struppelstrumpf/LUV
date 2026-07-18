@@ -105,9 +105,27 @@ data class RemoteLobby(
     val capacity: Int,
     val isFree: Boolean,
     val isRandom: Boolean = false,
+    val lastCanvasAt: Long = 0L,
     val hostColorSide: String,
     val invite: String,
     val hostNickname: String
+)
+
+data class PendingMarketSale(
+    val id: String,
+    val kind: String,
+    val itemId: String,
+    val emoji: String,
+    val label: String,
+    val priceCoins: Int,
+    val soldAt: Long,
+    val buyerNickname: String
+)
+
+data class PendingSalesResult(
+    val sales: List<PendingMarketSale>,
+    val totalCoins: Int,
+    val count: Int
 )
 
 data class RedeemResult(
@@ -426,6 +444,7 @@ object LuvApiClient {
                 capacity = o.optInt("capacity", PeerPalette.FREE_LOBBY_START_CAPACITY),
                 isFree = o.optBoolean("isFree", false),
                 isRandom = o.optBoolean("isRandom", false),
+                lastCanvasAt = o.optLong("lastCanvasAt", 0L),
                 hostColorSide = o.optString("hostColorSide", "blue"),
                 invite = o.optString("invite"),
                 hostNickname = o.optString("hostNickname", "Host")
@@ -1889,6 +1908,49 @@ object LuvApiClient {
                 }
             }
         }
+    }
+
+    suspend fun fetchPendingMarketSales(): PendingSalesResult = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/market/pending-sales")
+        val arr = json.optJSONArray("sales")
+        val sales = buildList {
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val id = o.optString("id").trim()
+                    if (id.isBlank()) continue
+                    add(
+                        PendingMarketSale(
+                            id = id,
+                            kind = o.optString("kind"),
+                            itemId = o.optString("itemId"),
+                            emoji = o.optString("emoji").ifBlank { "📦" },
+                            label = o.optString("label").ifBlank { o.optString("itemId") },
+                            priceCoins = o.optInt("priceCoins", 0),
+                            soldAt = o.optLong("soldAt", 0L),
+                            buyerNickname = o.optString("buyerNickname", "Jemand")
+                        )
+                    )
+                }
+            }
+        }
+        PendingSalesResult(
+            sales = sales,
+            totalCoins = json.optInt("totalCoins", sales.sumOf { it.priceCoins }),
+            count = json.optInt("count", sales.size)
+        )
+    }
+
+    suspend fun claimPendingMarketSales(): PendingSalesResult = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/market/claim-sales", "{}")
+        json.optJSONObject("user")?.let { userJson ->
+            AccountSession.setAccount(AccountInfo.fromApi(userJson))
+        }
+        PendingSalesResult(
+            sales = emptyList(),
+            totalCoins = json.optInt("totalCoins", 0),
+            count = json.optInt("claimed", 0)
+        )
     }
 
     suspend fun listMarketItem(

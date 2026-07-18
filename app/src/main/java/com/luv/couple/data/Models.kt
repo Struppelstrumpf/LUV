@@ -131,7 +131,9 @@ data class Lobby(
     val hostNickname: String = "",
     val hostColorSide: String = "blue",
     /** Höchste jemals gesehene Peer-Zahl — für Paar-Modus. */
-    val peakPeers: Int = 1
+    val peakPeers: Int = 1,
+    /** Server: letzte Zeichenaktivität in der Lobby. */
+    val lastCanvasAt: Long = 0L
 ) {
     val joinUrl: String
         get() = "https://reineke.pro/luv/j/$code"

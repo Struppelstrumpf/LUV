@@ -192,8 +192,10 @@ private fun MarketHub(
     onOpenCoinShop: () -> Unit
 ) {
     var hub by remember { mutableStateOf<LuvApiClient.MarketHubData?>(null) }
+    val marketAlert by com.luv.couple.net.NotificationBadges.hasMarketDot.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
         hub = runCatching { LuvApiClient.fetchMarketHub() }.getOrNull()
+        com.luv.couple.net.NotificationBadges.refreshPendingSales()
     }
     val marketPreviews = hub?.marketNewest.orEmpty()
     val shopPreviews = hub?.shopTop.orEmpty()
@@ -226,10 +228,11 @@ private fun MarketHub(
                         .weight(1f)
                         .fillMaxWidth(),
                     title = "Marktplatz",
-                    badge = "Neueste Angebote",
+                    badge = if (marketAlert) "Verkauf!" else "Neueste Angebote",
                     brush = Brush.linearGradient(listOf(Color(0xFF2A3148), Color(0xFF1A2030))),
                     previews = marketPreviews,
                     emptyHint = "Noch keine Angebote",
+                    alertDot = marketAlert,
                     onClick = onOpenMarketplace
                 )
                 MarketTile(
@@ -267,7 +270,8 @@ private fun MarketTile(
     brush: Brush,
     previews: List<LuvApiClient.MarketHubPreview>,
     emptyHint: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    alertDot: Boolean = false
 ) {
     Box(
         modifier = modifier
@@ -277,6 +281,16 @@ private fun MarketTile(
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
+        if (alertDot) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(AccentRose)
+            )
+        }
         Column(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -295,7 +309,7 @@ private fun MarketTile(
                 )
                 Text(
                     badge,
-                    color = TextMuted,
+                    color = if (alertDot) AccentRose else TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 11.sp,
                     maxLines = 1,
