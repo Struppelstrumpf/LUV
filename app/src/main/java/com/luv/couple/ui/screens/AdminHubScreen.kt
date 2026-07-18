@@ -727,6 +727,67 @@ fun AdminHubScreen(
                                             }
                                         }
                                     }
+                                    u.marriage?.let { m ->
+                                        if (m.status == "engaged" || m.status == "wedding" || m.status == "married" || m.status == "proposed") {
+                                            Spacer(modifier = Modifier.height(10.dp))
+                                            Text("Hochzeit / Wartezeit", fontFamily = DisplayFont, color = TextPrimary, fontSize = 16.sp)
+                                            Text(
+                                                when (m.status) {
+                                                    "proposed" -> "Antrag offen · von ${m.proposedBy ?: "?"}"
+                                                    "engaged" -> "Verlobt · Rest ${m.engageRemainingLabel ?: "…"} · Partner ${m.partnerNickname ?: "…"}"
+                                                    "wedding" -> "Hochzeitsleinwand · Rest ${m.weddingRemainingLabel ?: "…"} · ${m.weddingLobbyCode ?: ""}"
+                                                    "married" -> "Verheiratet mit ${m.partnerNickname ?: "…"}"
+                                                    else -> m.status
+                                                },
+                                                color = TextMuted,
+                                                fontFamily = BodyFont,
+                                                fontSize = 13.sp
+                                            )
+                                            if (can("gm.editCoins") && (m.status == "engaged" || m.status == "wedding")) {
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                    AdminPrimaryBtn("Nächster Schritt") {
+                                                        scope.launch {
+                                                            runCatching {
+                                                                LuvApiClient.staffAdvanceMarriage(u.userId, "next")
+                                                            }.onSuccess {
+                                                                selectedUser = it
+                                                                toast("Weitergeschaltet")
+                                                            }.onFailure { toast(it.message ?: "Fehler") }
+                                                        }
+                                                    }
+                                                    AdminGhostBtn("1 Tag") {
+                                                        scope.launch {
+                                                            runCatching {
+                                                                LuvApiClient.staffAdvanceMarriage(
+                                                                    u.userId,
+                                                                    "set_days",
+                                                                    days = 1
+                                                                )
+                                                            }.onSuccess {
+                                                                selectedUser = it
+                                                                toast("Auf 1 Tag gesetzt")
+                                                            }.onFailure { toast(it.message ?: "Fehler") }
+                                                        }
+                                                    }
+                                                    AdminGhostBtn("0 Tage") {
+                                                        scope.launch {
+                                                            runCatching {
+                                                                LuvApiClient.staffAdvanceMarriage(
+                                                                    u.userId,
+                                                                    "set_days",
+                                                                    days = 0
+                                                                )
+                                                            }.onSuccess {
+                                                                selectedUser = it
+                                                                toast("Sofort weiter")
+                                                            }.onFailure { toast(it.message ?: "Fehler") }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         if (can("gm.block")) {
                                             AdminGhostBtn(if (u.banned) "Entsperren" else "Sperren") {

@@ -717,8 +717,6 @@ private fun LobbyCard(
     }
     val proximityOn = proximityMap[proximityCode] == true ||
         proximityMap[lobby.id] == true
-    val hasNewDraw = lobby.lastCanvasAt > 0L &&
-        lobby.lastCanvasAt > (canvasSeenMap[proximityCode] ?: 0L)
     val scope = rememberCoroutineScope()
     val capacity = when {
         liveCapacity > 0 -> liveCapacity
@@ -731,6 +729,11 @@ private fun LobbyCard(
         ?: CanvasStore.cachedNickname
         ?: ""
     val myUserId = AccountSession.account.value?.id
+    // Glow nur wenn jemand anderes in Abwesenheit gezeichnet/platziert hat
+    val hasNewDraw = lobby.lastCanvasAt > 0L &&
+        lobby.lastCanvasAt > (canvasSeenMap[proximityCode] ?: 0L) &&
+        !lobby.lastCanvasActorId.isNullOrBlank() &&
+        lobby.lastCanvasActorId != myUserId
     // Immer kompletter Server-Roster — keine Filterung über capacity
     val nicknames = remember(peers, lobby.hostNickname, myNickname, myUserId) {
         PairSessionState.seatNicknames(

@@ -135,7 +135,9 @@ data class Lobby(
     /** Höchste jemals gesehene Peer-Zahl — für Paar-Modus. */
     val peakPeers: Int = 1,
     /** Server: letzte Zeichenaktivität in der Lobby. */
-    val lastCanvasAt: Long = 0L
+    val lastCanvasAt: Long = 0L,
+    /** Wer zuletzt gezeichnet/platziert hat — Glow nur wenn ≠ eigenes Konto. */
+    val lastCanvasActorId: String? = null
 ) {
     val joinUrl: String
         get() = "https://reineke.pro/luv/j/$code"

@@ -119,6 +119,7 @@ data class RemoteLobby(
     val isRandom: Boolean = false,
     val isWedding: Boolean = false,
     val lastCanvasAt: Long = 0L,
+    val lastCanvasActorId: String? = null,
     val hostColorSide: String,
     val invite: String,
     val hostNickname: String
@@ -184,7 +185,8 @@ data class StaffUserCard(
     val banned: Boolean,
     val petEmoji: String,
     val permissions: Map<String, Boolean> = emptyMap(),
-    val modSince: Long? = null
+    val modSince: Long? = null,
+    val marriage: LuvApiClient.MarriageInfo? = null
 )
 
 data class StaffPermGroup(
@@ -459,6 +461,7 @@ object LuvApiClient {
                 isRandom = o.optBoolean("isRandom", false),
                 isWedding = o.optBoolean("isWedding", false),
                 lastCanvasAt = o.optLong("lastCanvasAt", 0L),
+                lastCanvasActorId = o.optString("lastCanvasActorId").takeIf { it.isNotBlank() },
                 hostColorSide = o.optString("hostColorSide", "blue"),
                 invite = o.optString("invite"),
                 hostNickname = o.optString("hostNickname", "Host")
@@ -864,7 +867,8 @@ object LuvApiClient {
             banned = o.optBoolean("banned", false),
             petEmoji = o.optString("petEmoji", "🐣").ifBlank { "🐣" },
             permissions = perms,
-            modSince = o.optLong("modSince").takeIf { it > 0L }
+            modSince = o.optLong("modSince").takeIf { it > 0L },
+            marriage = parseMarriageInfo(o.optJSONObject("marriage"))
         )
     }
 
@@ -1336,7 +1340,11 @@ object LuvApiClient {
         val weddingRemainingMs: Long = 0L,
         val weddingLobbyCode: String? = null,
         val marriedAt: Long = 0L,
-        val hasWeddingImage: Boolean = false
+        val hasWeddingImage: Boolean = false,
+        val engageSkipCost: Int = 0,
+        val weddingSkipCost: Int = 0,
+        val engageRemainingLabel: String? = null,
+        val weddingRemainingLabel: String? = null
     )
 
     data class PartnerPublic(
@@ -1458,7 +1466,11 @@ object LuvApiClient {
             weddingRemainingMs = o.optLong("weddingRemainingMs", 0L),
             weddingLobbyCode = o.optString("weddingLobbyCode").takeIf { it.isNotBlank() },
             marriedAt = o.optLong("marriedAt", 0L),
-            hasWeddingImage = o.optBoolean("hasWeddingImage", false)
+            hasWeddingImage = o.optBoolean("hasWeddingImage", false),
+            engageSkipCost = o.optInt("engageSkipCost", 0),
+            weddingSkipCost = o.optInt("weddingSkipCost", 0),
+            engageRemainingLabel = o.optString("engageRemainingLabel").takeIf { it.isNotBlank() },
+            weddingRemainingLabel = o.optString("weddingRemainingLabel").takeIf { it.isNotBlank() }
         )
     }
 
@@ -1530,6 +1542,42 @@ object LuvApiClient {
         val body = JSONObject().put("confirm", "scheiden").toString()
         authedPost("/v1/me/marriage/divorce", body)
         Unit
+    }
+
+    data class MarriageSkipResult(
+        val cost: Int,
+        val marriage: MarriageInfo?,
+        val coins: Int
+    )
+
+    suspend fun skipMarriageWait(): MarriageSkipResult = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/me/marriage/skip-wait", "{}")
+        val user = json.optJSONObject("user")
+        if (user != null) {
+            AccountSession.setAccount(AccountInfo.fromApi(user))
+        }
+        MarriageSkipResult(
+            cost = json.optInt("cost", 0),
+            marriage = parseMarriageInfo(json.optJSONObject("marriage")),
+            coins = user?.optInt("coins") ?: (AccountSession.account.value?.coins ?: 0)
+        )
+    }
+
+    suspend fun staffAdvanceMarriage(
+        userId: String,
+        action: String = "next",
+        days: Int? = null,
+        remainingMs: Long? = null
+    ): StaffUserCard = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("action", action)
+        if (days != null) body.put("days", days)
+        if (remainingMs != null) body.put("remainingMs", remainingMs)
+        val json = authedPost(
+            "/v1/admin/users/${userId.trim().encodeURL()}/marriage/advance",
+            body.toString()
+        )
+        parseStaffUserCard(json.optJSONObject("user"))
+            ?: throw LuvApiException("Ungültige Server-Antwort")
     }
 
     fun weddingImageUrl(userId: String): String =

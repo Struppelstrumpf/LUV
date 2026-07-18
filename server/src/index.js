@@ -1066,6 +1066,46 @@ function startEngagement(m) {
   m.engageReadyAt = now + marriage.ENGAGE_WAIT_MS;
 }
 
+/** Sofort Verlobung → Hochzeitslobby oder Hochzeit → Ehe. */
+function advanceMarriageNextStep(m) {
+  if (!m) return { ok: false, error: "no_marriage" };
+  const db = getDb();
+  if (m.status === "engaged") {
+    const a = db.users?.[m.a];
+    const b = db.users?.[m.b];
+    if (!a || !b) return { ok: false, error: "partner_missing" };
+    m.engageReadyAt = Date.now();
+    createWeddingLobby(a, b, m);
+    trackAch(a, "wedding_started", 1);
+    trackAch(b, "wedding_started", 1);
+    return { ok: true, marriage: m };
+  }
+  if (m.status === "wedding") {
+    m.weddingEndsAt = Date.now();
+    finalizeWeddingMarriage(m);
+    return { ok: true, marriage: m };
+  }
+  return { ok: false, error: "wrong_phase", message: "Kein aktiver Warte-Schritt." };
+}
+
+/** Restzeit verkürzen (ms). remainingMs=0 → nächster Schritt. */
+function shortenMarriageWait(m, remainingMs) {
+  if (!m) return { ok: false, error: "no_marriage" };
+  const rem = Math.max(0, Math.floor(Number(remainingMs) || 0));
+  const now = Date.now();
+  if (m.status === "engaged") {
+    if (rem <= 0) return advanceMarriageNextStep(m);
+    m.engageReadyAt = now + rem;
+    return { ok: true, marriage: m };
+  }
+  if (m.status === "wedding") {
+    if (rem <= 0) return advanceMarriageNextStep(m);
+    m.weddingEndsAt = now + rem;
+    return { ok: true, marriage: m };
+  }
+  return { ok: false, error: "wrong_phase" };
+}
+
 function tickMarriages() {
   const db = getDb();
   const all = marriage.ensureMarriages(db);
@@ -1167,6 +1207,7 @@ function serializeRoom(code, room) {
         : {},
     peakPeers: Math.max(1, Number(room.peakPeers) || 1),
     lastCanvasAt: Number(room.lastCanvasAt) || 0,
+    lastCanvasActorId: room.lastCanvasActorId || null,
     memberUserIds: Array.isArray(room.memberUserIds)
       ? room.memberUserIds.filter((id) => typeof id === "string")
       : [],
@@ -1248,6 +1289,7 @@ function restoreRoomsFromDisk() {
           : {},
       peakPeers: Math.max(1, Number(data.peakPeers) || 1),
       lastCanvasAt: Number(data.lastCanvasAt) || 0,
+      lastCanvasActorId: data.lastCanvasActorId || null,
       memberUserIds: Array.isArray(data.memberUserIds)
         ? data.memberUserIds.filter((id) => typeof id === "string")
         : [],
@@ -1673,11 +1715,17 @@ function canvasMemories() {
   return db.canvasMemories;
 }
 
-function touchCanvasActivity(room, peerCountHint) {
+/**
+ * Zeichnen / Sticker / Vorlage — setzt lastCanvasAt + optional lastCanvasActorId
+ * (für Home-Glow: nur fremde Aktivität in Abwesenheit).
+ */
+function touchCanvasActivity(room, peerCountHint, actorUserId) {
   if (!room) return;
   const now = Date.now();
   const prev = Number(room.lastCanvasAt) || 0;
   room.lastCanvasAt = now;
+  const actor = String(actorUserId || "").trim();
+  if (actor) room.lastCanvasActorId = actor;
   const n = Math.max(
     Number(peerCountHint) || 0,
     room.sockets ? room.sockets.size : 0
@@ -1862,6 +1910,7 @@ function hydrateRoom(code, data, tokenOverride) {
         : {},
     peakPeers: Math.max(1, Number(data.peakPeers) || 1),
     lastCanvasAt: Number(data.lastCanvasAt) || 0,
+    lastCanvasActorId: data.lastCanvasActorId || null,
     memberUserIds: Array.isArray(data.memberUserIds)
       ? data.memberUserIds.filter((id) => typeof id === "string")
       : [],
@@ -1983,6 +2032,8 @@ function publicJoinedLobbies(user) {
     isRandom: Boolean(meta?.isRandom),
     isWedding: Boolean(meta?.isWedding),
     lastCanvasAt: Number(rooms.get(code)?.lastCanvasAt || meta?.lastCanvasAt || 0),
+    lastCanvasActorId:
+      rooms.get(code)?.lastCanvasActorId || meta?.lastCanvasActorId || null,
     hostColorSide: normalizeHostColorSide(meta?.hostColorSide),
     invite: `${PUBLIC_JOIN_BASE}/${code}`,
     hostNickname: String(meta?.hostNickname || "Host").slice(0, 18),
@@ -2335,6 +2386,7 @@ function publicRoom(room, code) {
     peakPeers: peak,
     coupleMode: peak <= 2,
     lastCanvasAt: Number(room.lastCanvasAt) || 0,
+    lastCanvasActorId: room.lastCanvasActorId || null,
     members: roster.map((m) => m.nickname),
     memberList: roster,
     ...inviteFor(code),
@@ -3288,6 +3340,11 @@ function publicHostedLobbies(user) {
         getDb().rooms?.[code]?.lastCanvasAt ||
         0
     ),
+    lastCanvasActorId:
+      rooms.get(code)?.lastCanvasActorId ||
+      meta?.lastCanvasActorId ||
+      getDb().rooms?.[code]?.lastCanvasActorId ||
+      null,
     hostColorSide: normalizeHostColorSide(meta?.hostColorSide),
     invite: `${PUBLIC_JOIN_BASE}/${code}`,
     hostNickname: user.nickname || "Host",
@@ -3612,6 +3669,8 @@ function requireStaff(req, res, perm) {
 function staffUserCard(user) {
   if (!user) return null;
   ensureStaffFields(user);
+  const db = getDb();
+  const m = marriage.findMarriageForUser(db, user.id);
   return {
     userId: user.id,
     nickname: String(user.nickname || "Jemand").trim().slice(0, 18) || "Jemand",
@@ -3625,6 +3684,7 @@ function staffUserCard(user) {
     petEmoji: userPetEmoji(user),
     permissions: user.role === "mod" ? staffPermissions(user) : undefined,
     modSince: user.modSince || null,
+    marriage: marriage.publicMarriage(m, user.id, db.users),
   };
 }
 
@@ -5687,6 +5747,60 @@ app.post("/v1/me/marriage/divorce", (req, res) => {
   return res.json({ ok: true });
 });
 
+/** Wartezeit (Verlobung oder Hochzeitsleinwand) mit Coins überspringen. */
+app.post("/v1/me/marriage/skip-wait", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const m = marriage.findMarriageForUser(db, ctx.user.id);
+  if (!m) {
+    return res.status(400).json({ error: "no_marriage", message: "Keine Verlobung/Hochzeit." });
+  }
+  const pub = marriage.publicMarriage(m, ctx.user.id, db.users);
+  let cost = 0;
+  let phase = "";
+  if (m.status === "engaged") {
+    cost = Number(pub?.engageSkipCost) || 0;
+    phase = "engage";
+  } else if (m.status === "wedding") {
+    cost = Number(pub?.weddingSkipCost) || 0;
+    phase = "wedding";
+  } else {
+    return res.status(400).json({
+      error: "wrong_phase",
+      message: "Gerade keine Wartezeit zum Überspringen.",
+    });
+  }
+  if (cost <= 0) {
+    const advanced = advanceMarriageNextStep(m);
+    scheduleSave();
+    return res.json({
+      ok: true,
+      free: true,
+      phase,
+      marriage: marriage.publicMarriage(m, ctx.user.id, db.users),
+      user: publicUser(ctx.user),
+      advanced: advanced.ok,
+    });
+  }
+  ensureCoinBuckets(ctx.user);
+  if (!requireCoins(ctx, cost, res)) return;
+  if (!applyLedger(ctx.user.id, -cost, "marriage_skip_wait", phase)) {
+    return res.status(402).json({ error: "no_coins", message: "Nicht genug Coins." });
+  }
+  trackAch(ctx.user, "coins_spent", cost);
+  const advanced = advanceMarriageNextStep(m);
+  scheduleSave();
+  return res.json({
+    ok: true,
+    phase,
+    cost,
+    marriage: marriage.publicMarriage(m, ctx.user.id, db.users),
+    user: publicUser(ctx.user),
+    advanced: advanced.ok,
+  });
+});
+
 app.get("/v1/users/:userId/wedding", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
@@ -6239,6 +6353,47 @@ app.post("/v1/admin/users/:userId/nickname", (req, res) => {
   target.nickname = nick;
   scheduleSave();
   return res.json({ ok: true, user: staffUserCard(target) });
+});
+
+/** Heirat: Wartezeit verkürzen oder nächsten Schritt (Staff). */
+app.post("/v1/admin/users/:userId/marriage/advance", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.editCoins");
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const db = getDb();
+  const target = db.users?.[uid];
+  if (!target) return res.status(404).json({ error: "not_found" });
+  const m = marriage.findMarriageForUser(db, uid);
+  if (!m) {
+    return res.status(400).json({
+      error: "no_marriage",
+      message: "Nutzer ist nicht verlobt/verheiratet im Wartezustand.",
+    });
+  }
+  const action = String(req.body?.action || "next").trim().toLowerCase();
+  let result;
+  if (action === "shorten") {
+    const rem = Number(req.body?.remainingMs);
+    result = shortenMarriageWait(m, Number.isFinite(rem) ? rem : 0);
+  } else if (action === "set_days") {
+    const days = Math.max(0, Math.min(7, Number(req.body?.days) || 0));
+    result = shortenMarriageWait(m, days * marriage.DAY_MS);
+  } else {
+    // next / skip
+    result = advanceMarriageNextStep(m);
+  }
+  if (!result.ok) {
+    return res.status(400).json({
+      error: result.error || "failed",
+      message: result.message || "Aktion fehlgeschlagen.",
+    });
+  }
+  scheduleSave();
+  return res.json({
+    ok: true,
+    user: staffUserCard(target),
+    marriage: marriage.publicMarriage(m, uid, db.users),
+  });
 });
 
 app.post("/v1/admin/users/:userId/ban", (req, res) => {
@@ -9027,7 +9182,7 @@ app.post("/v1/rooms/:code/canvas-snapshot", (req, res) => {
   return res.json({ ok: true, updatedAt: mem[code].updatedAt });
 });
 
-/** Aktivität auf der Leinwand melden (Presence / Öffnen). */
+/** Aktivität auf der Leinwand melden (Presence / Öffnen) — kein Glow-Trigger. */
 app.post("/v1/rooms/:code/canvas-touch", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
@@ -9036,7 +9191,7 @@ app.post("/v1/rooms/:code/canvas-touch", (req, res) => {
   if (!found) return res.status(404).json({ error: "room_not_found" });
   const { code, room } = found;
   rememberMember(room, ctx.user.id);
-  touchCanvasActivity(room, room.sockets.size);
+  touchRoom(room);
   // Bei neuer Aktivität: pending Release zurücknehmen, wenn wieder jemand malt
   const mem = canvasMemories();
   if (mem[code]?.releasedAt) {
@@ -9045,6 +9200,7 @@ app.post("/v1/rooms/:code/canvas-touch", (req, res) => {
   return res.json({
     ok: true,
     lastCanvasAt: room.lastCanvasAt,
+    lastCanvasActorId: room.lastCanvasActorId || null,
     peakPeers: room.peakPeers || 1,
     coupleMode: (room.peakPeers || 1) <= 2,
   });
@@ -9916,7 +10072,7 @@ wss.on("connection", (socket, req) => {
       const stored = strokeFromSocketMessage(json, socket);
       if (!stored) return;
       appendRoomStroke(room, code, stored);
-      touchCanvasActivity(room, room.sockets.size);
+      touchCanvasActivity(room, room.sockets.size, user?.id || socket.luvUserId);
       if (user) {
         trackAch(user, "strokes", 1);
         if (stored.emoji) trackAch(user, "stickers_placed", 1);
@@ -10008,7 +10164,7 @@ wss.on("connection", (socket, req) => {
       });
       if (!stored) return;
       appendRoomStroke(room, code, stored);
-      touchCanvasActivity(room, room.sockets.size);
+      touchCanvasActivity(room, room.sockets.size, user?.id || socket.luvUserId);
       const strokeRelay = JSON.stringify({
         type: "stroke",
         id: stored.id,
@@ -10037,7 +10193,7 @@ wss.on("connection", (socket, req) => {
       const sid = String(json.id || "").trim();
       if (!sid) return;
       removeRoomStroke(room, code, sid);
-      touchCanvasActivity(room, room.sockets.size);
+      touchCanvasActivity(room, room.sockets.size, user?.id || socket.luvUserId);
       const undoRelay = JSON.stringify({ type: "undo", id: sid });
       const relay = JSON.stringify({ type: "sticker_remove", id: sid });
       relayToPeers(room, undoRelay, peerId);
@@ -10046,7 +10202,8 @@ wss.on("connection", (socket, req) => {
     }
 
     if (type === "presence" && json.active === true) {
-      touchCanvasActivity(room, room.sockets.size);
+      // Nur Presence — kein lastCanvasAt (sonst Glow ohne Zeichnen)
+      touchRoom(room);
     }
 
     // Relay to others (clear, recolor, presence, …)

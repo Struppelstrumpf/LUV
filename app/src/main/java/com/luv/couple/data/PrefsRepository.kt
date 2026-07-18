@@ -321,7 +321,9 @@ class PrefsRepository(private val context: Context) {
                     hostNickname = r.hostNickname.ifBlank { prev?.hostNickname.orEmpty() },
                     hostColorSide = r.hostColorSide,
                     peakPeers = prev?.peakPeers ?: 1,
-                    lastCanvasAt = r.lastCanvasAt.takeIf { it > 0 } ?: (prev?.lastCanvasAt ?: 0L)
+                    lastCanvasAt = r.lastCanvasAt.takeIf { it > 0 } ?: (prev?.lastCanvasAt ?: 0L),
+                    lastCanvasActorId = r.lastCanvasActorId
+                        ?: prev?.lastCanvasActorId
                 )
             }
             for (r in hosted) upsert(r, Role.HOST)
@@ -633,15 +635,23 @@ class PrefsRepository(private val context: Context) {
     }
 
     /** Peer hat gezeichnet → Home-Kachel kann glühen, bis die Leinwand geöffnet wird. */
-    suspend fun bumpLobbyLastCanvasAt(lobbyId: String, at: Long = System.currentTimeMillis()) {
+    suspend fun bumpLobbyLastCanvasAt(
+        lobbyId: String,
+        at: Long = System.currentTimeMillis(),
+        actorUserId: String? = null
+    ) {
         if (lobbyId.isBlank() || at <= 0L) return
         context.dataStore.edit { prefs ->
             val list = parseLobbies(prefs[lobbiesKey]).toMutableList()
             val idx = list.indexOfFirst { it.id == lobbyId }
             if (idx < 0) return@edit
             val cur = list[idx]
-            if (at <= cur.lastCanvasAt) return@edit
-            list[idx] = cur.copy(lastCanvasAt = at)
+            if (at < cur.lastCanvasAt) return@edit
+            list[idx] = cur.copy(
+                lastCanvasAt = at,
+                lastCanvasActorId = actorUserId?.takeIf { it.isNotBlank() }
+                    ?: cur.lastCanvasActorId
+            )
             prefs[lobbiesKey] = encodeLobbies(list)
         }
     }
@@ -1045,7 +1055,9 @@ class PrefsRepository(private val context: Context) {
                                 hostNickname = o.optString("hostNickname", ""),
                                 hostColorSide = o.optString("hostColorSide", "blue").ifBlank { "blue" },
                                 peakPeers = o.optInt("peakPeers", 1).coerceAtLeast(1),
-                                lastCanvasAt = o.optLong("lastCanvasAt", 0L)
+                                lastCanvasAt = o.optLong("lastCanvasAt", 0L),
+                                lastCanvasActorId = o.optString("lastCanvasActorId")
+                                    .takeIf { it.isNotBlank() }
                             )
                         )
                     }
@@ -1072,6 +1084,7 @@ class PrefsRepository(private val context: Context) {
                         .put("hostColorSide", lobby.hostColorSide)
                         .put("peakPeers", lobby.peakPeers.coerceAtLeast(1))
                         .put("lastCanvasAt", lobby.lastCanvasAt)
+                        .put("lastCanvasActorId", lobby.lastCanvasActorId ?: "")
                 )
             }
             return arr.toString()

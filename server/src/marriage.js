@@ -8,6 +8,27 @@ const WEDDING_LOBBY_MS = 7 * 24 * 60 * 60 * 1000;
 /** Einzigartiges Ehe-Item (Pet) — nicht im Shop, fällt bei Scheidung weg */
 const MARRIAGE_PET = "💍";
 const MARRIAGE_PET_LABEL = "Ehering";
+/** Volle 7-Tage-Wartezeit überspringen (Coins) */
+const SKIP_WAIT_FULL_COST = 28;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Coins proportional zur Restzeit (mind. 4, max. SKIP_WAIT_FULL_COST). */
+function skipWaitCost(remainingMs, fullMs = ENGAGE_WAIT_MS) {
+  const rem = Math.max(0, Number(remainingMs) || 0);
+  if (rem <= 0) return 0;
+  const frac = Math.min(1, rem / Math.max(1, fullMs));
+  return Math.max(4, Math.min(SKIP_WAIT_FULL_COST, Math.ceil(frac * SKIP_WAIT_FULL_COST)));
+}
+
+function formatRemaining(ms) {
+  const rem = Math.max(0, Number(ms) || 0);
+  const days = Math.floor(rem / DAY_MS);
+  const hours = Math.floor((rem % DAY_MS) / (60 * 60 * 1000));
+  if (days >= 1) return `${days}d ${hours}h`;
+  const mins = Math.floor((rem % (60 * 60 * 1000)) / 60_000);
+  if (hours >= 1) return `${hours}h ${mins}m`;
+  return `${Math.max(1, mins)}m`;
+}
 
 function pairKey(a, b) {
   return [String(a), String(b)].sort().join("|");
@@ -139,6 +160,14 @@ function publicMarriage(m, viewerId, users) {
     marriedAt: m.marriedAt || 0,
     hasWeddingImage: Boolean(m.weddingImageFile),
     guestbookCount: Array.isArray(m.guestbook) ? m.guestbook.length : 0,
+    engageSkipCost:
+      m.status === "engaged" ? skipWaitCost(engageRemainingMs, ENGAGE_WAIT_MS) : 0,
+    weddingSkipCost:
+      m.status === "wedding" ? skipWaitCost(weddingRemainingMs, WEDDING_LOBBY_MS) : 0,
+    engageRemainingLabel:
+      m.status === "engaged" ? formatRemaining(engageRemainingMs) : null,
+    weddingRemainingLabel:
+      m.status === "wedding" ? formatRemaining(weddingRemainingMs) : null,
   };
 }
 
@@ -176,6 +205,10 @@ module.exports = {
   WEDDING_LOBBY_MS,
   MARRIAGE_PET,
   MARRIAGE_PET_LABEL,
+  SKIP_WAIT_FULL_COST,
+  DAY_MS,
+  skipWaitCost,
+  formatRemaining,
   pairKey,
   ensureMarriages,
   ensureFriendLevels,

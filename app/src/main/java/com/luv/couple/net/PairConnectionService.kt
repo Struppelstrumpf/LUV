@@ -1030,11 +1030,15 @@ class PairConnectionService : Service() {
                     lobbyId = lobby.id
                 )
                 val myId = AccountSession.account.value?.id
+                val authorId = message.stroke.authorId?.takeIf { it.isNotBlank() }
                 val fromPeer = !message.stroke.isLocal &&
-                    (message.stroke.authorId.isNullOrBlank() || message.stroke.authorId != myId)
+                    (authorId == null || authorId != myId)
                 if (fromPeer) {
                     scope.launch {
-                        LuvApp.instance.prefs.bumpLobbyLastCanvasAt(lobby.id)
+                        LuvApp.instance.prefs.bumpLobbyLastCanvasAt(
+                            lobbyId = lobby.id,
+                            actorUserId = authorId ?: "peer"
+                        )
                     }
                 }
                 scope.launch { _events.emit(PairEvent.StrokeReceived(lobby.id, message.stroke)) }
@@ -1086,7 +1090,10 @@ class PairConnectionService : Service() {
                     !message.nickname.equals(myNick, ignoreCase = true)
                 if (fromPeer) {
                     scope.launch {
-                        LuvApp.instance.prefs.bumpLobbyLastCanvasAt(lobby.id)
+                        LuvApp.instance.prefs.bumpLobbyLastCanvasAt(
+                            lobbyId = lobby.id,
+                            actorUserId = "peer"
+                        )
                     }
                 }
                 scope.launch {

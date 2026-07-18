@@ -164,6 +164,8 @@ private fun FriendsPanel(
     var incoming by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
     var outgoing by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
     var marriageProposals by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
+    var myMarriage by remember { mutableStateOf<LuvApiClient.MarriageInfo?>(null) }
+    var showSkipWait by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
     var busyId by remember { mutableStateOf<String?>(null) }
     var dragId by remember { mutableStateOf<String?>(null) }
@@ -182,6 +184,7 @@ private fun FriendsPanel(
                     incoming = it.incoming
                     outgoing = it.outgoing
                     marriageProposals = it.marriageProposals
+                    myMarriage = it.myMarriage
                     com.luv.couple.net.NotificationBadges.setFriendIncoming(
                         it.incoming.size + it.marriageProposals.size
                     )
@@ -245,6 +248,48 @@ private fun FriendsPanel(
             contentAlignment = Alignment.Center
         ) {
             Text("+", color = Color.White, fontFamily = DisplayFont, fontSize = 28.sp)
+        }
+
+        val waitM = myMarriage
+        if (waitM != null && (waitM.status == "engaged" || waitM.status == "wedding")) {
+            val label = if (waitM.status == "engaged") {
+                waitM.engageRemainingLabel ?: "…"
+            } else {
+                waitM.weddingRemainingLabel ?: "…"
+            }
+            val cost = if (waitM.status == "engaged") waitM.engageSkipCost else waitM.weddingSkipCost
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0x22FFD54F))
+                    .border(1.dp, Color(0xFFFFD54F).copy(0.45f), RoundedCornerShape(18.dp))
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    if (waitM.status == "engaged") "💝 Verlobt mit ${waitM.partnerNickname ?: "…"}"
+                    else "💒 Hochzeit mit ${waitM.partnerNickname ?: "…"}",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 16.sp
+                )
+                Text(
+                    "Noch $label",
+                    color = Color(0xFFFFD54F),
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp
+                )
+                Text(
+                    if (cost > 0) "Wartezeit überspringen · $cost Coins" else "Jetzt fortsetzen",
+                    color = AccentRose,
+                    fontFamily = DisplayFont,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .clickable { showSkipWait = true }
+                        .padding(vertical = 4.dp)
+                )
+            }
         }
 
         if (marriageProposals.isNotEmpty()) {
@@ -418,6 +463,18 @@ private fun FriendsPanel(
             onOpenProfile = { id, nick ->
                 showAddFriend = false
                 onOpenFriendProfile(id, nick)
+            }
+        )
+    }
+
+    val skipM = myMarriage
+    if (showSkipWait && skipM != null) {
+        MarriageSkipWaitDialog(
+            marriage = skipM,
+            onDismiss = { showSkipWait = false },
+            onSkipped = {
+                myMarriage = it
+                reload()
             }
         )
     }
