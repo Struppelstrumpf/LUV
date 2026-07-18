@@ -62,10 +62,14 @@
             android:orientation="vertical"
             android:visibility="gone">
 
+            <!-- width/height explizit: LuvEmojiBtn hat 0dp+weight (nur für horizontale Leiste) -->
             <TextView
                 android:id="@+id/emoji0"
                 style="@style/LuvEmojiBtn"
+                android:layout_width="44dp"
+                android:layout_height="40dp"
                 android:layout_marginTop="2dp"
+                android:layout_weight="0"
                 android:text="✓"
                 android:textColor="#FF22C55E"
                 android:textStyle="bold" />
@@ -73,31 +77,49 @@
             <TextView
                 android:id="@+id/emoji1"
                 style="@style/LuvEmojiBtn"
+                android:layout_width="44dp"
+                android:layout_height="40dp"
+                android:layout_weight="0"
                 android:text="❌" />
 
             <TextView
                 android:id="@+id/emoji2"
                 style="@style/LuvEmojiBtn"
+                android:layout_width="44dp"
+                android:layout_height="40dp"
+                android:layout_weight="0"
                 android:text="❤️" />
 
             <TextView
                 android:id="@+id/emoji3"
                 style="@style/LuvEmojiBtn"
+                android:layout_width="44dp"
+                android:layout_height="40dp"
+                android:layout_weight="0"
                 android:text="😂" />
 
             <TextView
                 android:id="@+id/emoji4"
                 style="@style/LuvEmojiBtn"
+                android:layout_width="44dp"
+                android:layout_height="40dp"
+                android:layout_weight="0"
                 android:text="😱" />
 
             <TextView
                 android:id="@+id/emoji5"
                 style="@style/LuvEmojiBtn"
+                android:layout_width="44dp"
+                android:layout_height="40dp"
+                android:layout_weight="0"
                 android:text="😡" />
 
             <TextView
                 android:id="@+id/emoji6"
                 style="@style/LuvEmojiBtn"
+                android:layout_width="44dp"
+                android:layout_height="40dp"
+                android:layout_weight="0"
                 android:text="😭" />
         </LinearLayout>
     </LinearLayout>
