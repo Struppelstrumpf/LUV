@@ -102,12 +102,14 @@ import com.luv.couple.ui.theme.MaleBlue
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.random.Random
+import android.os.SystemClock
 
 @Composable
 fun ProfileCanvasScreen(
@@ -138,8 +140,14 @@ fun ProfileCanvasScreen(
     var loadedNick by remember { mutableStateOf(nickname) }
     var ownedStickers by remember { mutableStateOf<Set<String>>(ProfileCatalog.FREE_STICKERS.toSet()) }
     var confirmDiscard by remember { mutableStateOf(false) }
+    // Fremdprofil: kein Default-Flash — erst Loader, dann fertiges Layout
+    var profileReady by remember(userId, editable) {
+        mutableStateOf(editable)
+    }
 
     LaunchedEffect(userId, editable, nickname) {
+        if (!editable) profileReady = false
+        val started = SystemClock.elapsedRealtime()
         if (editable) {
             val local = withContext(Dispatchers.IO) {
                 ProfileCatalog.decode(prefs.profileCanvasJson(), nickname)
@@ -159,6 +167,7 @@ fun ProfileCanvasScreen(
                 runCatching { prefs.ownedEmojis() }.getOrDefault(emptyMap())
             }
             ownedStickers = (ProfileCatalog.FREE_STICKERS + owned.keys).toSet()
+            profileReady = true
         } else if (!userId.isNullOrBlank()) {
             val remote = LuvApiClient.fetchUserProfileCanvas(userId)
             if (remote != null) {
@@ -169,11 +178,16 @@ fun ProfileCanvasScreen(
                 state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname)).normalized(nickname)
             }
             savedSnapshot = state.snapshotKey()
+            // Mindestens kurz die Animation zeigen
+            val minMs = 1100L
+            val elapsed = SystemClock.elapsedRealtime() - started
+            if (elapsed < minMs) delay(minMs - elapsed)
+            profileReady = true
         } else {
-            // Keine User-ID → kein Fremdprofil ladbar
             loadedNick = nickname
             state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname)).normalized(nickname)
             savedSnapshot = state.snapshotKey()
+            profileReady = true
         }
     }
 
@@ -314,6 +328,23 @@ fun ProfileCanvasScreen(
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
+        if (!profileReady) {
+            ProfileBrushHeartLoader(modifier = Modifier.fillMaxSize())
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp)
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(0.12f))
+                    .clickable(onClick = onClose),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("✕", color = TextMuted, fontSize = 16.sp)
+            }
+            return@Box
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
