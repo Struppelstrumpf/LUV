@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.64",
+            listOf(
+                "Marktplatz, Inventar & Erfolge: einheitliche Darstellung ohne Textkürzung",
+            )
+        ),
+        Entry(
             "1.9.63",
             listOf(
                 "Marktplatz: Angebot erstellen zeigt nur Items zum gewählten Tab",

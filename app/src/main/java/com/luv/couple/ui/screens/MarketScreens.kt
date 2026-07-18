@@ -58,7 +58,6 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -592,37 +591,41 @@ private fun ItemShopContent(
             fontSize = 13.sp
         )
         Spacer(modifier = Modifier.height(10.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            ShopCatalog.SHOP_TAB_LABELS.forEachIndexed { index, label ->
-                val active = tab == index
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(if (active) AccentRose.copy(0.28f) else BgSoft)
-                        .clickable { tab = index }
-                        .padding(horizontal = 6.dp, vertical = 10.dp),
-                    contentAlignment = Alignment.Center
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            ShopCatalog.SHOP_TAB_LABELS.chunked(2).forEachIndexed { rowIndex, rowLabels ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(
-                        label,
-                        color = TextPrimary,
-                        fontFamily = if (active) DisplayFont else BodyFont,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center
-                    )
+                    rowLabels.forEachIndexed { colIndex, label ->
+                        val index = rowIndex * 2 + colIndex
+                        val active = tab == index
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (active) AccentRose.copy(0.28f) else BgSoft)
+                                .clickable { tab = index }
+                                .padding(horizontal = 10.dp, vertical = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                label,
+                                color = TextPrimary,
+                                fontFamily = if (active) DisplayFont else BodyFont,
+                                fontSize = 13.sp,
+                                softWrap = false,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
                 }
             }
         }
         Spacer(modifier = Modifier.height(12.dp))
         when (tab) {
             0 -> LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 88.dp),
+                columns = GridCells.Fixed(3),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -640,7 +643,7 @@ private fun ItemShopContent(
                 }
             }
             1 -> LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 88.dp),
+                columns = GridCells.Fixed(3),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -658,7 +661,7 @@ private fun ItemShopContent(
                 }
             }
             2 -> LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 88.dp),
+                columns = GridCells.Fixed(3),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -676,7 +679,7 @@ private fun ItemShopContent(
                 }
             }
             else -> LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 88.dp),
+                columns = GridCells.Fixed(3),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),

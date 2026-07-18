@@ -9,8 +9,8 @@ const CATEGORIES = [
   { id: "all", label: "Alle Artikel", emoji: "📦" },
   { id: "pets", label: "Begleiter", emoji: "🐣" },
   { id: "stickers", label: "Sticker", emoji: "🎀" },
-  { id: "themes", label: "Profil", emoji: "🖼️" },
-  { id: "emojis", label: "Reaktionen", emoji: "😊" },
+  { id: "themes", label: "Hintergründe", emoji: "🖼️" },
+  { id: "emojis", label: "Emojis", emoji: "😊" },
 ];
 
 function newListingId() {

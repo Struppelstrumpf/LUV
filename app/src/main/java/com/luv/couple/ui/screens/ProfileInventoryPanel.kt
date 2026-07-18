@@ -37,7 +37,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -202,8 +201,7 @@ fun ProfileInventoryPanel(
                             color = TextPrimary,
                             fontFamily = if (on) DisplayFont else BodyFont,
                             fontSize = ts(11.sp),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            softWrap = false,
                             textAlign = TextAlign.Center
                         )
                     }
@@ -231,7 +229,7 @@ fun ProfileInventoryPanel(
                         }
                     } else {
                         LazyVerticalGrid(
-                            columns = GridCells.Adaptive(s(58.dp)),
+                            columns = GridCells.Fixed(5),
                             modifier = gridMod,
                             contentPadding = PaddingValues(s(4.dp)),
                             horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
@@ -275,7 +273,7 @@ fun ProfileInventoryPanel(
                     )
                 } else {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(s(80.dp)),
+                        columns = GridCells.Fixed(3),
                         modifier = gridMod,
                         horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
                         verticalArrangement = Arrangement.spacedBy(s(8.dp)),
@@ -319,7 +317,7 @@ fun ProfileInventoryPanel(
                     )
                 } else {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(s(58.dp)),
+                        columns = GridCells.Fixed(5),
                         modifier = gridMod,
                         contentPadding = PaddingValues(s(4.dp)),
                         horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
@@ -338,7 +336,7 @@ fun ProfileInventoryPanel(
                     }
                 }
                 InvTab.Companions -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(s(64.dp)),
+                    columns = GridCells.Fixed(4),
                     modifier = gridMod,
                     horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
                     verticalArrangement = Arrangement.spacedBy(s(8.dp))
@@ -531,9 +529,7 @@ private fun ShopLinkChip(
                 color = TextPrimary,
                 fontFamily = BodyFont,
                 fontSize = fontSp,
-                maxLines = 1,
                 softWrap = false,
-                overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center
             )
         }

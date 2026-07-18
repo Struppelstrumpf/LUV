@@ -1581,8 +1581,8 @@ object LuvApiClient {
                     MarketCategory("all", "Alle Artikel", "📦"),
                     MarketCategory("pets", "Begleiter", "🐣"),
                     MarketCategory("stickers", "Sticker", "🎀"),
-                    MarketCategory("themes", "Profil", "🖼️"),
-                    MarketCategory("emojis", "Reaktionen", "😊")
+                    MarketCategory("themes", "Hintergründe", "🖼️"),
+                    MarketCategory("emojis", "Emojis", "😊")
                 )
             },
             items = items,

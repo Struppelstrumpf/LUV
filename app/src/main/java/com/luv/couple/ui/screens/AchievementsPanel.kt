@@ -34,7 +34,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.luv.couple.net.LuvApiClient
@@ -321,8 +320,7 @@ private fun DailyTaskRow(task: LuvApiClient.AchievementDailyTask) {
                 color = if (task.done) TextMuted else TextPrimary,
                 fontFamily = BodyFont,
                 fontSize = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                softWrap = true
             )
             LinearProgressIndicator(
                 progress = { progress },
@@ -438,16 +436,14 @@ private fun AchievementRow(item: LuvApiClient.AchievementItem) {
                 color = if (item.unlocked) TextPrimary else TextPrimary.copy(0.85f),
                 fontFamily = DisplayFont,
                 fontSize = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                softWrap = true
             )
             Text(
                 item.desc,
                 color = TextMuted,
                 fontFamily = BodyFont,
                 fontSize = 11.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                softWrap = true
             )
             if (!item.unlocked) {
                 Spacer(modifier = Modifier.height(4.dp))

@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -45,7 +46,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -54,6 +54,8 @@ import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.profile.ProfileCatalog
 import com.luv.couple.shop.ShopCatalog
+import com.luv.couple.ui.UiScale
+import com.luv.couple.ui.rememberUiScale
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
 import kotlinx.coroutines.launch
@@ -181,42 +183,44 @@ fun PlayerMarketScreen(
         runCatching { friends = LuvApiClient.fetchFriends().friends }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .clip(RoundedCornerShape(18.dp))
             .background(MarketCream)
             .border(1.dp, MarketBrownMuted.copy(0.35f), RoundedCornerShape(18.dp))
     ) {
+        val ui = rememberUiScale()
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(14.dp)
+                .padding(ui.s(14.dp))
         ) {
             Text(
                 "Marktplatz",
                 fontFamily = DisplayFont,
-                fontSize = 26.sp,
+                fontSize = ui.ts(26.sp),
                 color = MarketBrown,
                 fontWeight = FontWeight.Bold
             )
             Text(
                 "LUV TAUSCHPLATZ · COMMUNITY-HANDEL",
                 fontFamily = BodyFont,
-                fontSize = 11.sp,
+                fontSize = ui.ts(11.sp),
                 color = MarketBrownMuted,
                 letterSpacing = 1.sp
             )
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(ui.s(10.dp)))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(ui.s(8.dp))
             ) {
                 MarketPillButton(
                     label = "Meine Angebote",
                     badge = myListings.size.takeIf { it > 0 },
                     filled = showMine,
+                    ui = ui,
                     modifier = Modifier.weight(1f),
                     onClick = {
                         showMine = !showMine
@@ -227,6 +231,7 @@ fun PlayerMarketScreen(
                     label = "Angebot erstellen",
                     filled = true,
                     accent = true,
+                    ui = ui,
                     modifier = Modifier.weight(1f),
                     onClick = {
                         scope.launch {
@@ -237,23 +242,24 @@ fun PlayerMarketScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(ui.s(10.dp)))
 
             if (!showMine) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(ui.s(8.dp))
                 ) {
                     listOf("market" to "Markt", "private" to "Privat").forEach { (id, label) ->
                         MarketPillButton(
                             label = label,
                             filled = mode == id,
+                            ui = ui,
                             modifier = Modifier.weight(1f),
                             onClick = { mode = id }
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(ui.s(10.dp)))
 
                 BasicTextField(
                     value = searchInput,
@@ -262,28 +268,28 @@ fun PlayerMarketScreen(
                     textStyle = TextStyle(
                         color = MarketBrown,
                         fontFamily = BodyFont,
-                        fontSize = 14.sp
+                        fontSize = ui.ts(14.sp)
                     ),
                     cursorBrush = SolidColor(MarketGold),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { query = searchInput.trim() }),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(ui.s(12.dp)))
                         .background(MarketCard)
-                        .border(1.dp, MarketBrownMuted.copy(0.25f), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                        .border(1.dp, MarketBrownMuted.copy(0.25f), RoundedCornerShape(ui.s(12.dp)))
+                        .padding(horizontal = ui.s(12.dp), vertical = ui.s(10.dp)),
                     decorationBox = { inner ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("🔍", fontSize = 14.sp)
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("🔍", fontSize = ui.ts(14.sp))
+                            Spacer(modifier = Modifier.width(ui.s(8.dp)))
                             Box(modifier = Modifier.weight(1f)) {
                                 if (searchInput.isBlank()) {
                                     Text(
                                         "Suchen…",
                                         color = MarketBrownMuted,
                                         fontFamily = BodyFont,
-                                        fontSize = 14.sp
+                                        fontSize = ui.ts(14.sp)
                                     )
                                 }
                                 inner()
@@ -299,80 +305,74 @@ fun PlayerMarketScreen(
                     }
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(ui.s(10.dp)))
 
                 Row(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
                 ) {
+                    // Breite so, dass „Hintergründe“ / „Begleiter“ voll lesbar bleiben
                     Column(
                         modifier = Modifier
-                            .width(108.dp)
+                            .width(ui.s(124.dp))
                             .fillMaxHeight()
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(ui.s(12.dp)))
                             .background(MarketCreamDeep)
-                            .padding(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                            .padding(ui.s(6.dp)),
+                        verticalArrangement = Arrangement.spacedBy(ui.s(4.dp))
                     ) {
                         val cats = categories.ifEmpty {
                             listOf(
                                 LuvApiClient.MarketCategory("all", "Alle", "📦"),
                                 LuvApiClient.MarketCategory("pets", "Begleiter", "🐣"),
                                 LuvApiClient.MarketCategory("stickers", "Sticker", "🎀"),
-                                LuvApiClient.MarketCategory("themes", "Profil", "🖼️"),
-                                LuvApiClient.MarketCategory("emojis", "Reaktionen", "😊")
+                                LuvApiClient.MarketCategory("themes", "Hintergründe", "🖼️"),
+                                LuvApiClient.MarketCategory("emojis", "Emojis", "😊")
                             )
                         }
                         cats.forEach { cat ->
                             val active = category == cat.id ||
                                 (category == "all" && cat.id == "all")
-                            val displayLabel = when (cat.id) {
-                                "all" -> "Alle"
-                                "pets" -> "Begleiter"
-                                "stickers" -> "Sticker"
-                                "themes" -> "Profil"
-                                "emojis" -> "Reaktionen"
-                                else -> cat.label
-                            }
+                            val displayLabel = categoryLabel(cat.id).takeIf { cat.id != "all" }
+                                ?: "Alle"
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RoundedCornerShape(ui.s(10.dp)))
                                     .background(
                                         if (active) MarketCard else Color.Transparent
                                     )
                                     .border(
                                         if (active) 1.dp else 0.dp,
                                         MarketGold.copy(0.4f),
-                                        RoundedCornerShape(10.dp)
+                                        RoundedCornerShape(ui.s(10.dp))
                                     )
                                     .clickable { category = cat.id }
-                                    .padding(horizontal = 8.dp, vertical = 8.dp)
+                                    .padding(horizontal = ui.s(6.dp), vertical = ui.s(8.dp))
                             ) {
                                 Column {
-                                    Text(cat.emoji, fontSize = 14.sp)
+                                    Text(cat.emoji, fontSize = ui.ts(14.sp))
                                     Text(
                                         displayLabel,
                                         color = if (active) MarketBrown else MarketBrownMuted,
                                         fontFamily = if (active) DisplayFont else BodyFont,
-                                        fontSize = 11.sp,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
+                                        fontSize = ui.ts(11.sp),
+                                        softWrap = true
                                     )
                                 }
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(ui.s(10.dp)))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             "${account?.coins ?: 0} Coins",
                             color = MarketBrownMuted,
                             fontFamily = BodyFont,
-                            fontSize = 12.sp
+                            fontSize = ui.ts(12.sp)
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(ui.s(6.dp)))
                         when {
                             loading && items.isEmpty() -> {
                                 Box(
@@ -391,19 +391,20 @@ fun PlayerMarketScreen(
                                         "Noch keine Angebote hier.",
                                         color = MarketBrownMuted,
                                         fontFamily = BodyFont,
-                                        fontSize = 13.sp
+                                        fontSize = ui.ts(13.sp)
                                     )
                                 }
                             }
                             else -> {
                                 LazyColumn(
                                     modifier = Modifier.fillMaxSize(),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    verticalArrangement = Arrangement.spacedBy(ui.s(8.dp))
                                 ) {
                                     items(items, key = { it.listingId }) { item ->
                                         MarketItemRow(
                                             item = item,
                                             busy = busyId == item.listingId,
+                                            ui = ui,
                                             onBuy = {
                                                 busyId = item.listingId
                                                 scope.launch {
@@ -528,6 +529,7 @@ private fun MarketPillButton(
     badge: Int? = null,
     filled: Boolean = false,
     accent: Boolean = false,
+    ui: UiScale = UiScale(1f),
     onClick: () -> Unit
 ) {
     val bg = when {
@@ -542,29 +544,28 @@ private fun MarketPillButton(
     }
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(ui.s(12.dp)))
             .background(bg)
-            .border(1.dp, MarketBrownMuted.copy(0.3f), RoundedCornerShape(12.dp))
+            .border(1.dp, MarketBrownMuted.copy(0.3f), RoundedCornerShape(ui.s(12.dp)))
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 10.dp),
+            .padding(horizontal = ui.s(10.dp), vertical = ui.s(10.dp)),
         contentAlignment = Alignment.Center
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(ui.s(6.dp))
         ) {
             Text(
                 label,
                 color = fg,
                 fontFamily = DisplayFont,
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                fontSize = ui.ts(12.sp),
+                softWrap = false
             )
             if (badge != null) {
                 Box(
                     modifier = Modifier
-                        .size(18.dp)
+                        .size(ui.s(18.dp))
                         .clip(CircleShape)
                         .background(MarketGold),
                     contentAlignment = Alignment.Center
@@ -573,7 +574,7 @@ private fun MarketPillButton(
                         "$badge",
                         color = Color.White,
                         fontFamily = BodyFont,
-                        fontSize = 10.sp
+                        fontSize = ui.ts(10.sp)
                     )
                 }
             }
@@ -585,100 +586,97 @@ private fun MarketPillButton(
 private fun MarketItemRow(
     item: LuvApiClient.MarketItem,
     busy: Boolean,
+    ui: UiScale,
     onBuy: () -> Unit,
     onTrade: () -> Unit
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(ui.s(14.dp)))
             .background(MarketCard)
-            .border(1.dp, MarketBrownMuted.copy(0.2f), RoundedCornerShape(14.dp))
-            .padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+            .border(1.dp, MarketBrownMuted.copy(0.2f), RoundedCornerShape(ui.s(14.dp)))
+            .padding(ui.s(10.dp)),
+        verticalArrangement = Arrangement.spacedBy(ui.s(8.dp))
     ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MarketCreamDeep),
-            contentAlignment = Alignment.Center
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(ui.s(10.dp))
         ) {
-            Text(item.emoji, fontSize = 24.sp)
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    item.label,
-                    color = MarketBrown,
-                    fontFamily = DisplayFont,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-                if (item.ownedByViewer) {
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        "DEINS",
-                        color = MarketGold,
-                        fontFamily = DisplayFont,
-                        fontSize = 9.sp,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(MarketGold.copy(0.15f))
-                            .padding(horizontal = 4.dp, vertical = 2.dp)
-                    )
-                }
-            }
-            Text(
-                categoryLabel(item.category) + " · ${item.sellerNickname}",
-                color = MarketBrownMuted,
-                fontFamily = BodyFont,
-                fontSize = 11.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Box(
+                modifier = Modifier
+                    .size(ui.s(44.dp))
+                    .clip(RoundedCornerShape(ui.s(10.dp)))
+                    .background(MarketCreamDeep),
+                contentAlignment = Alignment.Center
             ) {
+                Text(item.emoji, fontSize = ui.ts(24.sp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        item.label,
+                        color = MarketBrown,
+                        fontFamily = DisplayFont,
+                        fontSize = ui.ts(14.sp),
+                        softWrap = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (item.ownedByViewer) {
+                        Spacer(modifier = Modifier.width(ui.s(6.dp)))
+                        Text(
+                            "DEINS",
+                            color = MarketGold,
+                            fontFamily = DisplayFont,
+                            fontSize = ui.ts(9.sp),
+                            softWrap = false,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(ui.s(4.dp)))
+                                .background(MarketGold.copy(0.15f))
+                                .padding(horizontal = ui.s(4.dp), vertical = ui.s(2.dp))
+                        )
+                    }
+                }
                 Text(
-                    if (item.allowTrade && item.priceCoins <= 0) "Tausch"
-                    else if (item.allowTrade) "${item.priceCoins} 🪙 · Tausch"
-                    else "${item.priceCoins} 🪙",
+                    categoryLabel(item.category) + " · ${item.sellerNickname}",
+                    color = MarketBrownMuted,
+                    fontFamily = BodyFont,
+                    fontSize = ui.ts(11.sp),
+                    softWrap = true
+                )
+                Text(
+                    buildString {
+                        append(
+                            if (item.allowTrade && item.priceCoins <= 0) "Tausch"
+                            else if (item.allowTrade) "${item.priceCoins} 🪙 · Tausch"
+                            else "${item.priceCoins} 🪙"
+                        )
+                        append("  ·  ")
+                        append(trendLabel(item.trend))
+                        append("  ·  ×")
+                        append(item.stock)
+                    },
                     color = MarketGold,
                     fontFamily = DisplayFont,
-                    fontSize = 12.sp
-                )
-                Text(
-                    trendLabel(item.trend),
-                    color = MarketBrownMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 11.sp
-                )
-                Text(
-                    "×${item.stock}",
-                    color = MarketBrownMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 11.sp
+                    fontSize = ui.ts(12.sp),
+                    softWrap = true
                 )
             }
         }
         if (!item.isMine) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(ui.s(8.dp))) {
                 if (item.priceCoins > 0) {
                     Text(
                         if (busy) "…" else "Kaufen",
                         color = Color.White,
                         fontFamily = DisplayFont,
-                        fontSize = 11.sp,
+                        fontSize = ui.ts(12.sp),
+                        softWrap = false,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(ui.s(8.dp)))
                             .background(if (busy) MarketBrownMuted else MarketBrown)
                             .clickable(enabled = !busy, onClick = onBuy)
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                            .padding(horizontal = ui.s(12.dp), vertical = ui.s(8.dp))
                     )
                 }
                 if (item.allowTrade) {
@@ -686,13 +684,14 @@ private fun MarketItemRow(
                         "Tausch",
                         color = MarketBrown,
                         fontFamily = DisplayFont,
-                        fontSize = 11.sp,
+                        fontSize = ui.ts(12.sp),
+                        softWrap = false,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(ui.s(8.dp)))
                             .background(MarketCreamDeep)
-                            .border(1.dp, MarketBrownMuted.copy(0.3f), RoundedCornerShape(8.dp))
+                            .border(1.dp, MarketBrownMuted.copy(0.3f), RoundedCornerShape(ui.s(8.dp)))
                             .clickable(enabled = !busy, onClick = onTrade)
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                            .padding(horizontal = ui.s(12.dp), vertical = ui.s(8.dp))
                     )
                 }
             }
@@ -750,8 +749,8 @@ private fun MyListingRow(
 private val CreateInventoryTabs: List<Pair<String, String>> = listOf(
     "pets" to "Begleiter",
     "stickers" to "Sticker",
-    "themes" to "Profil",
-    "emojis" to "Reaktionen"
+    "themes" to "Hintergründe",
+    "emojis" to "Emojis"
 )
 
 @Composable
@@ -817,29 +816,32 @@ private fun CreateListingDialog(
                     fontSize = 12.sp
                 )
                 if (showInventarTabs) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        CreateInventoryTabs.forEach { (id, label) ->
-                            val on = inventarTab == id
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (on) MarketGold.copy(0.2f) else MarketCard)
-                                    .clickable { inventarTab = id }
-                                    .padding(vertical = 8.dp, horizontal = 2.dp),
-                                contentAlignment = Alignment.Center
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        CreateInventoryTabs.chunked(2).forEach { row ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Text(
-                                    label,
-                                    color = MarketBrown,
-                                    fontFamily = if (on) DisplayFont else BodyFont,
-                                    fontSize = 10.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                row.forEach { (id, label) ->
+                                    val on = inventarTab == id
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (on) MarketGold.copy(0.2f) else MarketCard)
+                                            .clickable { inventarTab = id }
+                                            .padding(vertical = 8.dp, horizontal = 6.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            label,
+                                            color = MarketBrown,
+                                            fontFamily = if (on) DisplayFont else BodyFont,
+                                            fontSize = 12.sp,
+                                            softWrap = false
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -1084,8 +1086,9 @@ private fun TradeOfferDialog(
 private fun categoryLabel(category: String): String = when (category) {
     "pets" -> "Begleiter"
     "stickers" -> "Sticker"
-    "themes" -> "Profil"
-    "emojis" -> "Reaktionen"
+    "themes" -> "Hintergründe"
+    "emojis" -> "Emojis"
+    "all" -> "Alle"
     else -> "Artikel"
 }
 
