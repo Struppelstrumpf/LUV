@@ -358,6 +358,17 @@ function clearRoomStickers(room, code) {
   scheduleStickerSave(code, room);
 }
 
+function removeRoomSticker(room, code, stickerId) {
+  const id = String(stickerId || "").trim();
+  if (!id) return false;
+  const list = ensureRoomStickers(room, code);
+  const next = list.filter((s) => s.id !== id);
+  if (next.length === list.length) return false;
+  room.stickers = next;
+  scheduleStickerSave(code, room);
+  return true;
+}
+
 function sanitizeStoredStroke(raw) {
   if (!raw || typeof raw !== "object") return null;
   const id = String(raw.id || "").trim();
@@ -5056,6 +5067,19 @@ wss.on("connection", (socket, req) => {
         y: sticker.y,
         nickname: sticker.nickname,
       });
+      for (const [id, peer] of room.sockets.entries()) {
+        if (id === peerId) continue;
+        if (peer.readyState === 1) peer.send(relay);
+      }
+      return;
+    }
+
+    if (type === "sticker_remove") {
+      const sid = String(json.id || "").trim();
+      if (!sid) return;
+      removeRoomSticker(room, code, sid);
+      touchCanvasActivity(room, room.sockets.size);
+      const relay = JSON.stringify({ type: "sticker_remove", id: sid });
       for (const [id, peer] of room.sockets.entries()) {
         if (id === peerId) continue;
         if (peer.readyState === 1) peer.send(relay);

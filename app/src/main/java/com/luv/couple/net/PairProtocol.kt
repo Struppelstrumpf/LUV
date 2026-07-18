@@ -28,6 +28,7 @@ sealed class PairMessage {
         val y: Float,
         val nickname: String?
     ) : PairMessage()
+    data class StickerRemove(val id: String) : PairMessage()
     data class GameBoard(val game: String, val visible: Boolean) : PairMessage()
     data object Clear : PairMessage()
     data class ClearPropose(val nickname: String?) : PairMessage()
@@ -93,6 +94,9 @@ object PairProtocol {
                 .put("x", message.x.toDouble())
                 .put("y", message.y.toDouble())
                 .put("nickname", message.nickname ?: JSONObject.NULL)
+            is PairMessage.StickerRemove -> JSONObject()
+                .put("type", "sticker_remove")
+                .put("id", message.id)
             is PairMessage.GameBoard -> JSONObject()
                 .put("type", "game_board")
                 .put("game", message.game)
@@ -184,6 +188,7 @@ object PairProtocol {
                     y = json.optDouble("y", 0.5).toFloat().coerceIn(0f, 1f),
                     nickname = json.optString("nickname").takeIf { it.isNotBlank() && it != "null" }
                 )
+                "sticker_remove" -> PairMessage.StickerRemove(json.getString("id"))
                 "game_board" -> PairMessage.GameBoard(
                     game = json.optString("game", "ttt"),
                     visible = json.optBoolean("visible", true)

@@ -309,6 +309,7 @@ class LockDrawActivity : ComponentActivity() {
         drawingView.onDoubleTapUndo = {
             if (CanvasStore.undoLastLocalStroke(lobbyId)) {
                 drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
+                syncStickersFromStore()
                 flashStatus("Rückgängig")
             }
         }
@@ -317,9 +318,14 @@ class LockDrawActivity : ComponentActivity() {
             drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
         }
         drawingView.onErasePath = { brush ->
-            if (CanvasStore.eraseLocalAlong(brush, lobbyId = lobbyId)) {
+            val strokesChanged = CanvasStore.eraseLocalAlong(brush, lobbyId = lobbyId)
+            val erasedStickers = CanvasStore.eraseStickersAlong(brush, lobbyId = lobbyId)
+            if (strokesChanged) {
                 drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
                 refreshLegend()
+            }
+            if (erasedStickers.isNotEmpty()) {
+                erasedStickers.forEach { removeStickerView(it) }
             }
         }
 
@@ -362,6 +368,7 @@ class LockDrawActivity : ComponentActivity() {
                     }
                     is PairEvent.Cleared -> if (event.lobbyId == id) {
                         drawingView.clearCanvas()
+                        CanvasStore.replaceStickers(id, emptyList())
                         clearAllStickers()
                         stopAllGamesLocal()
                     }
@@ -373,9 +380,23 @@ class LockDrawActivity : ComponentActivity() {
                         showReaction(event.emoji)
                     }
                     is PairEvent.StickerPlaced -> if (event.lobbyId == id) {
+                        CanvasStore.upsertRemoteSticker(
+                            CanvasSticker(event.id, event.emoji, event.x, event.y, isLocal = false),
+                            id
+                        )
                         upsertCommittedSticker(event.id, event.emoji, event.x, event.y)
                     }
+                    is PairEvent.StickerRemoved -> if (event.lobbyId == id) {
+                        CanvasStore.removeStickerById(event.id, id, broadcast = false)
+                        removeStickerView(event.id)
+                    }
                     is PairEvent.StickersHistory -> if (event.lobbyId == id) {
+                        CanvasStore.replaceStickers(
+                            id,
+                            event.stickers.map {
+                                CanvasSticker(it.id, it.emoji, it.x, it.y, isLocal = false)
+                            }
+                        )
                         replaceStickersFromHistory(event.stickers)
                     }
                     is PairEvent.GameBoardReceived -> if (event.lobbyId == id) {
@@ -665,9 +686,12 @@ class LockDrawActivity : ComponentActivity() {
         val localY = rawY - loc[1]
         val nx = (localX / w).coerceIn(0.05f, 0.95f)
         val ny = (localY / h).coerceIn(0.05f, 0.95f)
-        val id = UUID.randomUUID().toString()
-        upsertCommittedSticker(id, emoji, nx, ny)
-        PairConnectionService.sendStickerPlace(this, id, emoji, nx, ny, lobbyId)
+        placeEmojiNormalized(emoji, nx, ny)
+    }
+
+    private fun placeEmojiNormalized(emoji: String, nx: Float, ny: Float) {
+        val sticker = CanvasStore.addLocalSticker(emoji, nx, ny, lobbyId) ?: return
+        upsertCommittedSticker(sticker.id, sticker.emoji, sticker.x, sticker.y)
     }
 
     private fun openEmojiBarEditor() {
@@ -750,6 +774,19 @@ class LockDrawActivity : ComponentActivity() {
     private fun clearAllStickers() {
         stickerOverlay.removeAllViews()
         placedStickers.clear()
+    }
+
+    private fun removeStickerView(id: String) {
+        placedStickers.remove(id)?.let { (it.parent as? ViewGroup)?.removeView(it) }
+    }
+
+    private fun syncStickersFromStore() {
+        val stickers = CanvasStore.snapshotStickers(lobbyId)
+        val keep = stickers.map { it.id }.toSet()
+        placedStickers.keys.filter { it !in keep }.toList().forEach { removeStickerView(it) }
+        stickers.forEach { s ->
+            upsertCommittedSticker(s.id, s.emoji, s.x, s.y)
+        }
     }
 
     private fun replaceStickersFromHistory(stickers: List<PairEvent.StickerPlaced>) {

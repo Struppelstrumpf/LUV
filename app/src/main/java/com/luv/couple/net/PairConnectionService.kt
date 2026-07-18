@@ -1008,6 +1008,11 @@ class PairConnectionService : Service() {
                     )
                 }
             }
+            is PairMessage.StickerRemove -> {
+                scope.launch {
+                    _events.emit(PairEvent.StickerRemoved(lobby.id, message.id))
+                }
+            }
             is PairMessage.GameBoard -> {
                 scope.launch {
                     _events.emit(
@@ -1536,6 +1541,11 @@ class PairConnectionService : Service() {
             dispatchPayload(context, payload, lobbyId ?: CanvasStore.activeLobbyId.value)
         }
 
+        fun sendStickerRemove(context: Context, id: String, lobbyId: String? = null) {
+            val payload = PairProtocol.encode(PairMessage.StickerRemove(id))
+            dispatchPayload(context, payload, lobbyId ?: CanvasStore.activeLobbyId.value)
+        }
+
         fun sendGameBoard(
             context: Context,
             game: String,
@@ -1648,6 +1658,7 @@ sealed class PairEvent {
         val y: Float,
         val nickname: String?
     ) : PairEvent()
+    data class StickerRemoved(val lobbyId: String, val id: String) : PairEvent()
     data class StickersHistory(
         val lobbyId: String,
         val stickers: List<StickerPlaced>
