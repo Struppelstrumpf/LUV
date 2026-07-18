@@ -12,12 +12,14 @@
         android:layout_height="match_parent"
         android:layout_gravity="top" />
 
-    <!-- Platzierte Emoji-Sticker (normierte Positionen) -->
-    <FrameLayout
+    <!-- Platzierte Emoji-Sticker — Touches gehen zur Leinwand durch -->
+    <com.luv.couple.lock.PassThroughFrameLayout
         android:id="@+id/stickerOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:layout_gravity="top"
+        android:clickable="false"
+        android:focusable="false"
         android:clipChildren="false"
         android:clipToPadding="false" />
 

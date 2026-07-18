@@ -650,6 +650,8 @@ class LockDrawActivity : ComponentActivity() {
             textSize = 36f
             alpha = 0.92f
             elevation = 18f
+            isClickable = true
+            isFocusable = true
             setShadowLayer(10f, 0f, 3f, 0x66000000)
             tag = StickerTag(id, emoji, 0.5f, 0.45f, drafting = true)
         }
@@ -705,6 +707,8 @@ class LockDrawActivity : ComponentActivity() {
         view.tag = tag.copy(drafting = false)
         view.alpha = 1f
         view.setOnTouchListener(null)
+        view.isClickable = false
+        view.isFocusable = false
         draftStickerId = null
         PairConnectionService.sendStickerPlace(
             this,
@@ -724,6 +728,8 @@ class LockDrawActivity : ComponentActivity() {
             gravity = Gravity.CENTER
             textSize = 36f
             elevation = 12f
+            isClickable = false
+            isFocusable = false
             setShadowLayer(10f, 0f, 3f, 0x66000000)
             layoutParams = FrameLayout.LayoutParams(stickerSizePx(), stickerSizePx())
             stickerOverlay.addView(this)
@@ -731,6 +737,8 @@ class LockDrawActivity : ComponentActivity() {
         }
         tv.text = emoji
         tv.alpha = 1f
+        tv.isClickable = false
+        tv.isFocusable = false
         tv.tag = StickerTag(id, emoji, x, y, drafting = false)
         tv.setOnTouchListener(null)
         positionStickerView(tv, x, y)
@@ -778,6 +786,8 @@ class LockDrawActivity : ComponentActivity() {
                 textSize = 36f
                 alpha = 0.92f
                 elevation = 18f
+                isClickable = true
+                isFocusable = true
                 setShadowLayer(10f, 0f, 3f, 0x66000000)
                 tag = keepDraft
             }
