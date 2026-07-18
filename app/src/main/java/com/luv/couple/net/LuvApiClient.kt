@@ -37,7 +37,27 @@ data class AuthResult(
     val user: AccountInfo,
     val created: Boolean,
     val linked: Boolean = false,
-    val remoteLobbies: List<RemoteLobby> = emptyList()
+    val remoteLobbies: List<RemoteLobby> = emptyList(),
+    val joinedLobbies: List<RemoteLobby> = emptyList(),
+    val settings: CloudSettings? = null
+)
+
+data class CloudSettings(
+    val quietHours: com.luv.couple.data.QuietHoursSchedule =
+        com.luv.couple.data.QuietHoursSchedule.EMPTY,
+    val emojiBar: List<String> = emptyList(),
+    val partnerDrawNotify: Boolean = true,
+    val partnerHaptic: Boolean = true,
+    val liveProximityRich: Boolean = true,
+    val liveProximityWake: Boolean = false,
+    val lobbyProximity: Map<String, Boolean> = emptyMap(),
+    val brushWidth: Float = 18f,
+    val updatedAt: Long = 0L
+)
+
+data class LobbyBundle(
+    val hosted: List<RemoteLobby>,
+    val joined: List<RemoteLobby>
 )
 
 data class AuthConfig(
@@ -268,7 +288,9 @@ object LuvApiClient {
                 user = AccountInfo.fromApi(parsed.getJSONObject("user")),
                 created = parsed.optBoolean("created", false),
                 linked = parsed.optBoolean("linked", false),
-                remoteLobbies = parseRemoteLobbies(parsed.optJSONArray("lobbies"))
+                remoteLobbies = parseRemoteLobbies(parsed.optJSONArray("lobbies")),
+                joinedLobbies = parseRemoteLobbies(parsed.optJSONArray("joined")),
+                settings = parseCloudSettings(parsed.optJSONObject("settings"))
             )
         }
     }
@@ -298,8 +320,29 @@ object LuvApiClient {
     }
 
     suspend fun myLobbies(): List<RemoteLobby> = withContext(Dispatchers.IO) {
+        myLobbyBundle().hosted
+    }
+
+    suspend fun myLobbyBundle(): LobbyBundle = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/me/lobbies")
-        parseRemoteLobbies(json.optJSONArray("lobbies"))
+        LobbyBundle(
+            hosted = parseRemoteLobbies(json.optJSONArray("lobbies")),
+            joined = parseRemoteLobbies(json.optJSONArray("joined"))
+        )
+    }
+
+    suspend fun fetchSettings(): CloudSettings = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/me/settings")
+        parseCloudSettings(json.optJSONObject("settings"))
+            ?: CloudSettings()
+    }
+
+    suspend fun putSettings(settings: CloudSettings): CloudSettings = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("settings", settingsToJson(settings))
+            .toString()
+        val json = authedPut("/v1/me/settings", body)
+        parseCloudSettings(json.optJSONObject("settings")) ?: settings
     }
 
     private fun parseRemoteLobbies(arr: org.json.JSONArray?): List<RemoteLobby> {
@@ -321,6 +364,58 @@ object LuvApiClient {
             )
         }
         return out
+    }
+
+    private fun parseCloudSettings(o: JSONObject?): CloudSettings? {
+        if (o == null) return null
+        val quietRaw = o.optJSONObject("quietHours")?.toString()
+        val quiet = com.luv.couple.data.PrefsRepository.parseQuietHoursPublic(quietRaw)
+        val emojiBar = buildList {
+            val arr = o.optJSONArray("emojiBar")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    arr.optString(i).trim().takeIf { it.isNotBlank() }?.let { add(it) }
+                }
+            }
+        }.distinct().take(com.luv.couple.shop.ShopCatalog.MAX_BAR)
+        val prox = buildMap {
+            val p = o.optJSONObject("lobbyProximity") ?: return@buildMap
+            p.keys().forEach { key ->
+                if (p.optBoolean(key, false) && key.isNotBlank()) put(key, true)
+            }
+        }
+        val brush = o.optDouble("brushWidth", 18.0).toFloat().coerceIn(6f, 40f)
+        return CloudSettings(
+            quietHours = quiet,
+            emojiBar = emojiBar,
+            partnerDrawNotify = o.optBoolean("partnerDrawNotify", true),
+            partnerHaptic = o.optBoolean("partnerHaptic", true),
+            liveProximityRich = o.optBoolean("liveProximityRich", true),
+            liveProximityWake = o.optBoolean("liveProximityWake", false),
+            lobbyProximity = prox,
+            brushWidth = brush,
+            updatedAt = o.optLong("updatedAt", 0L)
+        )
+    }
+
+    fun settingsToJson(settings: CloudSettings): JSONObject {
+        val quiet = JSONObject(
+            com.luv.couple.data.PrefsRepository.encodeQuietHoursPublic(settings.quietHours)
+        )
+        val bar = org.json.JSONArray()
+        settings.emojiBar.forEach { bar.put(it) }
+        val prox = JSONObject()
+        settings.lobbyProximity.forEach { (k, v) -> if (v) prox.put(k, true) }
+        return JSONObject()
+            .put("quietHours", quiet)
+            .put("emojiBar", bar)
+            .put("partnerDrawNotify", settings.partnerDrawNotify)
+            .put("partnerHaptic", settings.partnerHaptic)
+            .put("liveProximityRich", settings.liveProximityRich)
+            .put("liveProximityWake", settings.liveProximityWake)
+            .put("lobbyProximity", prox)
+            .put("brushWidth", settings.brushWidth.toDouble())
+            .put("updatedAt", settings.updatedAt)
     }
 
     suspend fun me(): AccountInfo = withContext(Dispatchers.IO) {

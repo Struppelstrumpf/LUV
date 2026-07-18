@@ -228,6 +228,71 @@ fun LuvAppNav() {
         return n.length >= 2 && !n.equals("Luv", ignoreCase = true)
     }
 
+    suspend fun syncInventory() {
+        runCatching {
+            val remote = LuvApiClient.fetchInventory()
+            prefs.applyInventoryBag(
+                emojis = remote.emojis,
+                themes = remote.themes,
+                stickers = remote.stickers,
+                pets = remote.pets,
+                equippedPet = remote.equippedPet
+            )
+        }
+    }
+
+    var lastCloudSyncAt by remember { mutableStateOf(0L) }
+
+    /**
+     * Google-Konto: Lobbys (Host+Join), Einstellungen, Inventar und Profil
+     * von der Cloud auf dieses Gerät spiegeln.
+     */
+    suspend fun syncCloudAccount(
+        hostedHint: List<com.luv.couple.net.RemoteLobby> = emptyList(),
+        joinedHint: List<com.luv.couple.net.RemoteLobby> = emptyList(),
+        settingsHint: com.luv.couple.net.CloudSettings? = null,
+        force: Boolean = false
+    ) {
+        if (LuvApiClient.sessionToken.isNullOrBlank()) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!force && now - lastCloudSyncAt < 20_000L) return
+        lastCloudSyncAt = now
+        val bundle = runCatching { LuvApiClient.myLobbyBundle() }.getOrNull()
+        val hosted = hostedHint.ifEmpty { bundle?.hosted.orEmpty() }
+        val joined = joinedHint.ifEmpty { bundle?.joined.orEmpty() }
+        if (hosted.isNotEmpty() || joined.isNotEmpty() || bundle != null) {
+            prefs.replaceCloudLobbiesFromRemote(
+                hosted = hosted,
+                joined = joined,
+                dropUnknownJoins = true
+            )
+            CanvasStore.updateKnownLobbies(prefs.snapshot().lobbies.map { it.id })
+            if (prefs.snapshot().hasLobbies) {
+                CanvasStore.setActiveLobby(prefs.snapshot().activeLobbyId)
+                PairConnectionService.startAll(context)
+            }
+        }
+        val remoteSettings = settingsHint
+            ?: runCatching { LuvApiClient.fetchSettings() }.getOrNull()
+        if (remoteSettings != null) {
+            val localQuiet = prefs.quietHours()
+            val serverEmpty = remoteSettings.updatedAt <= 0L &&
+                remoteSettings.quietHours.byDay.isEmpty()
+            if (serverEmpty && localQuiet.byDay.isNotEmpty()) {
+                runCatching { LuvApiClient.putSettings(prefs.buildCloudSettings()) }
+            } else {
+                prefs.applySettingsBag(remoteSettings)
+            }
+        }
+        syncInventory()
+        runCatching {
+            val (_, state) = LuvApiClient.fetchMyProfileCanvas()
+            prefs.setProfileCanvasJson(
+                com.luv.couple.profile.ProfileCatalog.encode(state)
+            )
+        }
+    }
+
     suspend fun applyAuthResult(
         result: com.luv.couple.net.AuthResult,
         fromGoogle: Boolean,
@@ -244,11 +309,15 @@ fun LuvAppNav() {
         if (finishOnboarding) {
             prefs.setTutorialDone(true)
         }
-        if (fromGoogle || result.remoteLobbies.isNotEmpty()) {
-            val remote = result.remoteLobbies.ifEmpty {
-                runCatching { LuvApiClient.myLobbies() }.getOrDefault(emptyList())
-            }
-            prefs.replaceHostedLobbiesFromRemote(remote)
+        if (fromGoogle) {
+            syncCloudAccount(
+                hostedHint = result.remoteLobbies,
+                joinedHint = result.joinedLobbies,
+                settingsHint = result.settings,
+                force = true
+            )
+        } else if (result.remoteLobbies.isNotEmpty()) {
+            prefs.replaceHostedLobbiesFromRemote(result.remoteLobbies)
         }
         colorIndex = prefs.snapshot().colorIndex
         val profileNick = if (applyNickname) result.user.nickname else (prefs.snapshot().nickname ?: "")
@@ -439,19 +508,6 @@ fun LuvAppNav() {
         scope.launch { refreshAccount() }
     }
 
-    suspend fun syncInventory() {
-        runCatching {
-            val remote = LuvApiClient.fetchInventory()
-            prefs.applyInventoryBag(
-                emojis = remote.emojis,
-                themes = remote.themes,
-                stickers = remote.stickers,
-                pets = remote.pets,
-                equippedPet = remote.equippedPet
-            )
-        }
-    }
-
     fun buySeat(lobby: Lobby) {
         if (busy) return
         if ((account?.coins ?: 0) < PeerPalette.SLOT_COST) {
@@ -534,7 +590,12 @@ fun LuvAppNav() {
                 CanvasStore.setActiveLobby(snapshot.activeLobbyId)
                 PairConnectionService.startAll(context)
             }
-            scope.launch { runCatching { LuvApiClient.claimDaily(); refreshAccount() } }
+            scope.launch {
+                runCatching { LuvApiClient.claimDaily(); refreshAccount() }
+                if (snapshot.account?.googleLinked == true) {
+                    runCatching { syncCloudAccount() }
+                }
+            }
             Routes.MAIN
         }
     }
@@ -550,6 +611,9 @@ fun LuvAppNav() {
             scope.launch {
                 runCatching { AppUpdater.check(context, notify = notify) }
                 runCatching { refreshAccount() }
+                if (AccountSession.account.value?.googleLinked == true) {
+                    runCatching { syncCloudAccount() }
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

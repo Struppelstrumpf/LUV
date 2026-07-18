@@ -177,6 +177,7 @@ class PrefsRepository(private val context: Context) {
         context.dataStore.edit {
             it[brushWidthKey] = width.coerceIn(6f, 40f)
         }
+        mirrorSettingsToCloud()
     }
 
     suspend fun profileCanvasJson(): String? =
@@ -258,30 +259,57 @@ class PrefsRepository(private val context: Context) {
     suspend fun replaceHostedLobbiesFromRemote(
         remote: List<com.luv.couple.net.RemoteLobby>
     ) {
+        replaceCloudLobbiesFromRemote(
+            hosted = remote,
+            joined = emptyList(),
+            dropUnknownJoins = false
+        )
+    }
+
+    /**
+     * Host- und Join-Lobbys vom Server spiegeln (Google-Konto / Multi-Gerät).
+     * [dropUnknownJoins]=true entfernt lokale Joins, die der Server nicht mehr kennt.
+     */
+    suspend fun replaceCloudLobbiesFromRemote(
+        hosted: List<com.luv.couple.net.RemoteLobby>,
+        joined: List<com.luv.couple.net.RemoteLobby>,
+        dropUnknownJoins: Boolean = true
+    ) {
         context.dataStore.edit { prefs ->
             val existing = parseLobbies(prefs[lobbiesKey])
-            val joins = existing.filter { it.role == Role.JOIN }
-            val byCode = joins.associateBy { it.code.uppercase() }.toMutableMap()
-            for (r in remote) {
+            val byCode = linkedMapOf<String, Lobby>()
+            if (!dropUnknownJoins) {
+                for (j in existing.filter { it.role == Role.JOIN }) {
+                    byCode[j.code.uppercase()] = j
+                }
+            }
+            fun upsert(r: com.luv.couple.net.RemoteLobby, role: Role) {
                 val code = r.code.uppercase()
-                val token = r.token ?: continue
+                val token = r.token ?: return
                 val prev = existing.firstOrNull { it.code.equals(code, ignoreCase = true) }
+                    ?: byCode[code]
                 byCode[code] = Lobby(
                     id = prev?.id ?: UUID.randomUUID().toString(),
                     name = r.name.ifBlank { prev?.name ?: "Lobby" }
                         .take(PeerPalette.MAX_LOBBY_NAME_LENGTH)
                         .ifBlank { "Lobby" },
-                    role = Role.HOST,
+                    role = role,
                     code = code,
                     token = token,
                     invite = r.invite.ifBlank { prev?.invite.orEmpty() },
                     capacity = r.capacity,
                     isFree = r.isFree,
                     hostNickname = r.hostNickname.ifBlank { prev?.hostNickname.orEmpty() },
-                    hostColorSide = r.hostColorSide
+                    hostColorSide = r.hostColorSide,
+                    peakPeers = prev?.peakPeers ?: 1
                 )
             }
-            // Bisherige Reihenfolge behalten, neue Lobbys ans Ende
+            for (r in hosted) upsert(r, Role.HOST)
+            for (r in joined) {
+                val code = r.code.uppercase()
+                if (byCode[code]?.role == Role.HOST) continue
+                upsert(r, Role.JOIN)
+            }
             val seen = linkedSetOf<String>()
             val merged = buildList {
                 for (old in existing) {
@@ -302,6 +330,48 @@ class PrefsRepository(private val context: Context) {
         }
     }
 
+    suspend fun buildCloudSettings(): com.luv.couple.net.CloudSettings {
+        val prefs = context.dataStore.data.first()
+        return com.luv.couple.net.CloudSettings(
+            quietHours = parseQuietHours(prefs[quietHoursKey]),
+            emojiBar = parseEmojiBar(prefs[emojiBarKey]),
+            partnerDrawNotify = prefs[partnerNotifyKey] ?: true,
+            partnerHaptic = prefs[partnerHapticKey] ?: true,
+            liveProximityRich = prefs[liveProximityRichKey] ?: true,
+            liveProximityWake = prefs[liveProximityWakeKey] ?: false,
+            lobbyProximity = parseLobbyProximity(prefs[lobbyProximityKey]),
+            brushWidth = (prefs[brushWidthKey] ?: 18f).coerceIn(6f, 40f),
+            updatedAt = System.currentTimeMillis()
+        )
+    }
+
+    suspend fun applySettingsBag(
+        settings: com.luv.couple.net.CloudSettings,
+        skipMirror: Boolean = true
+    ) {
+        QuietHoursGate.update(settings.quietHours)
+        context.dataStore.edit { prefs ->
+            prefs[quietHoursKey] = encodeQuietHours(settings.quietHours)
+            if (settings.emojiBar.isNotEmpty()) {
+                prefs[emojiBarKey] = JSONArray(settings.emojiBar).toString()
+            }
+            prefs[partnerNotifyKey] = settings.partnerDrawNotify
+            prefs[partnerHapticKey] = settings.partnerHaptic
+            prefs[liveProximityRichKey] = settings.liveProximityRich
+            prefs[liveProximityWakeKey] = settings.liveProximityWake
+            prefs[lobbyProximityKey] = encodeLobbyProximity(settings.lobbyProximity)
+            prefs[brushWidthKey] = settings.brushWidth.coerceIn(6f, 40f)
+        }
+        if (!skipMirror) mirrorSettingsToCloud()
+    }
+
+    private suspend fun mirrorSettingsToCloud() {
+        if (com.luv.couple.net.LuvApiClient.sessionToken.isNullOrBlank()) return
+        runCatching {
+            com.luv.couple.net.LuvApiClient.putSettings(buildCloudSettings())
+        }
+    }
+
     suspend fun lastNotifiedUpdateCode(): Int =
         context.dataStore.data.first()[lastNotifiedUpdateKey] ?: 0
 
@@ -314,10 +384,12 @@ class PrefsRepository(private val context: Context) {
 
     suspend fun setPartnerDrawNotifyEnabled(enabled: Boolean) {
         context.dataStore.edit { it[partnerNotifyKey] = enabled }
+        mirrorSettingsToCloud()
     }
 
     suspend fun setPartnerHapticEnabled(enabled: Boolean) {
         context.dataStore.edit { it[partnerHapticKey] = enabled }
+        mirrorSettingsToCloud()
     }
 
     suspend fun isPartnerDrawNotifyEnabled(): Boolean =
@@ -356,10 +428,12 @@ class PrefsRepository(private val context: Context) {
 
     suspend fun setLiveProximityRichEnabled(enabled: Boolean) {
         context.dataStore.edit { it[liveProximityRichKey] = enabled }
+        mirrorSettingsToCloud()
     }
 
     suspend fun setLiveProximityWakeEnabled(enabled: Boolean) {
         context.dataStore.edit { it[liveProximityWakeKey] = enabled }
+        mirrorSettingsToCloud()
     }
 
     suspend fun setLastPublicCanvas(
@@ -406,6 +480,7 @@ class PrefsRepository(private val context: Context) {
             if (enabled) map[lobbyId] = true else map.remove(lobbyId)
             prefs[lobbyProximityKey] = encodeLobbyProximity(map)
         }
+        mirrorSettingsToCloud()
     }
 
     suspend fun wasMemorySeen(code: String, releasedAt: Long): Boolean {
@@ -531,6 +606,7 @@ class PrefsRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[quietHoursKey] = encodeQuietHours(schedule)
         }
+        mirrorSettingsToCloud()
     }
 
     suspend fun quietHours(): QuietHoursSchedule {
@@ -549,6 +625,7 @@ class PrefsRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[emojiBarKey] = JSONArray(clean).toString()
         }
+        mirrorSettingsToCloud()
     }
 
     suspend fun ownedEmojis(): Map<String, Int> {
@@ -740,6 +817,11 @@ class PrefsRepository(private val context: Context) {
     }
 
     companion object {
+        fun parseQuietHoursPublic(raw: String?): QuietHoursSchedule = parseQuietHours(raw)
+
+        fun encodeQuietHoursPublic(schedule: QuietHoursSchedule): String =
+            encodeQuietHours(schedule)
+
         fun parseLobbies(raw: String?): List<Lobby> {
             if (raw.isNullOrBlank()) return emptyList()
             return runCatching {

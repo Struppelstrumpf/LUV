@@ -232,6 +232,133 @@ function userPetEmoji(user) {
   return String(inv.equippedPet || DEFAULT_PET).slice(0, 8) || DEFAULT_PET;
 }
 
+function ensureSettings(user) {
+  if (!user.settings || typeof user.settings !== "object") {
+    user.settings = {};
+  }
+  return user.settings;
+}
+
+function sanitizeSettings(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const quietHours =
+    src.quietHours && typeof src.quietHours === "object" ? src.quietHours : {};
+  const quietOut = {};
+  for (let day = 1; day <= 7; day++) {
+    const arr = quietHours[String(day)];
+    if (!Array.isArray(arr)) continue;
+    const windows = [];
+    for (const w of arr) {
+      if (!w || typeof w !== "object") continue;
+      const s = Math.floor(Number(w.s ?? w.startMinutes));
+      const e = Math.floor(Number(w.e ?? w.endMinutes));
+      if (
+        Number.isFinite(s) &&
+        Number.isFinite(e) &&
+        s >= 0 &&
+        s < 1440 &&
+        e >= 0 &&
+        e < 1440 &&
+        s !== e
+      ) {
+        windows.push({ s, e });
+      }
+    }
+    if (windows.length) quietOut[String(day)] = windows.slice(0, 12);
+  }
+  let emojiBar = [];
+  if (Array.isArray(src.emojiBar)) {
+    emojiBar = src.emojiBar
+      .map((e) => String(e || "").trim().slice(0, 8))
+      .filter(Boolean)
+      .filter((e, i, a) => a.indexOf(e) === i)
+      .slice(0, 8);
+  }
+  const lobbyProximity = {};
+  if (src.lobbyProximity && typeof src.lobbyProximity === "object") {
+    for (const [k, v] of Object.entries(src.lobbyProximity)) {
+      if (v === true && String(k).trim()) {
+        lobbyProximity[String(k).trim().slice(0, 64)] = true;
+      }
+    }
+  }
+  const brush = Number(src.brushWidth);
+  const updatedAt = Number(src.updatedAt);
+  return {
+    quietHours: quietOut,
+    emojiBar,
+    partnerDrawNotify: src.partnerDrawNotify !== false,
+    partnerHaptic: src.partnerHaptic !== false,
+    liveProximityRich: src.liveProximityRich !== false,
+    liveProximityWake: Boolean(src.liveProximityWake),
+    lobbyProximity,
+    brushWidth: Number.isFinite(brush)
+      ? Math.min(40, Math.max(6, brush))
+      : 18,
+    updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : 0,
+  };
+}
+
+function publicSettings(user) {
+  return sanitizeSettings(ensureSettings(user));
+}
+
+function mergeInventory(target, source) {
+  const a = ensureInventory(target);
+  const b = ensureInventory(source);
+  for (const [e, n] of Object.entries(b.emojis || {})) {
+    a.emojis[e] = Math.max(Number(a.emojis[e]) || 0, Number(n) || 0);
+  }
+  for (const [e, n] of Object.entries(b.stickers || {})) {
+    a.stickers[e] = Math.max(Number(a.stickers[e]) || 0, Number(n) || 0);
+  }
+  for (const t of b.themes || []) {
+    if (t && !a.themes.includes(t)) a.themes.push(t);
+  }
+  for (const p of b.pets || []) {
+    if (p && !a.pets.includes(p)) a.pets.push(p);
+  }
+  if (!a.equippedPet || !a.pets.includes(a.equippedPet)) {
+    a.equippedPet = b.equippedPet && a.pets.includes(b.equippedPet)
+      ? b.equippedPet
+      : DEFAULT_PET;
+  }
+}
+
+function mergeFriends(target, source) {
+  const a = ensureFriends(target);
+  const b = ensureFriends(source);
+  for (const id of b.list || []) {
+    if (id && id !== target.id && !a.list.includes(id)) a.list.push(id);
+  }
+  for (const id of b.incoming || []) {
+    if (id && id !== target.id && !a.incoming.includes(id) && !a.list.includes(id)) {
+      a.incoming.push(id);
+    }
+  }
+  for (const id of b.outgoing || []) {
+    if (id && id !== target.id && !a.outgoing.includes(id) && !a.list.includes(id)) {
+      a.outgoing.push(id);
+    }
+  }
+}
+
+function profileRichness(p) {
+  if (!p || typeof p !== "object") return 0;
+  const layout = Array.isArray(p.layout) ? p.layout.length : 0;
+  return layout + (String(p.bio || "").trim() ? 2 : 0) + (p.themeId ? 1 : 0);
+}
+
+function mergeSettings(target, source) {
+  const a = ensureSettings(target);
+  const b = ensureSettings(source);
+  const aAt = Number(a.updatedAt) || 0;
+  const bAt = Number(b.updatedAt) || 0;
+  if (bAt > aAt || Object.keys(a).length === 0) {
+    target.settings = sanitizeSettings({ ...a, ...b, updatedAt: Math.max(aAt, bAt) });
+  }
+}
+
 function ensureFriends(user) {
   if (!user.friends || typeof user.friends !== "object") {
     user.friends = {};
@@ -918,17 +1045,125 @@ function hydrateRoom(code, data, tokenOverride) {
   };
 }
 
+function ensureJoinedRooms(user) {
+  if (!user.joinedRooms || typeof user.joinedRooms !== "object") {
+    user.joinedRooms = {};
+  }
+  return user.joinedRooms;
+}
+
+function findRoomCode(room) {
+  if (!room) return null;
+  for (const [code, r] of rooms.entries()) {
+    if (r === room) return code;
+  }
+  return null;
+}
+
+function rememberJoinedLobby(user, code, room) {
+  if (!user || !code || !room) return;
+  const j = ensureJoinedRooms(user);
+  if (room.hostUserId && room.hostUserId === user.id) {
+    delete j[code];
+    return;
+  }
+  j[code] = {
+    name: String(room.name || "Lobby").slice(0, MAX_LOBBY_NAME_LENGTH),
+    token: room.token || null,
+    capacity: roomCapacity(room),
+    isFree: Boolean(room.isFree),
+    hostColorSide: normalizeHostColorSide(room.hostColorSide),
+    hostNickname: String(room.hostNickname || "Host").slice(0, 18),
+    joinedAt: Date.now(),
+  };
+}
+
+function forgetJoinedLobby(user, code) {
+  if (!user || !code) return;
+  ensureJoinedRooms(user);
+  delete user.joinedRooms[code];
+}
+
+function healJoinedRoomsFromMembership(user) {
+  if (!user?.id) return;
+  ensureJoinedRooms(user);
+  const db = getDb();
+  const seen = new Set();
+  for (const [code, room] of rooms.entries()) {
+    if (
+      Array.isArray(room.memberUserIds) &&
+      room.memberUserIds.includes(user.id) &&
+      room.hostUserId !== user.id
+    ) {
+      rememberJoinedLobby(user, code, room);
+      seen.add(code);
+    }
+  }
+  for (const [code, data] of Object.entries(db.rooms || {})) {
+    if (seen.has(code)) continue;
+    const ids = Array.isArray(data.memberUserIds) ? data.memberUserIds : [];
+    if (ids.includes(user.id) && data.hostUserId !== user.id) {
+      rememberJoinedLobby(user, code, data);
+      seen.add(code);
+    }
+  }
+  // Verwaiste Einträge entfernen (Lobby weg / nicht mehr Mitglied)
+  for (const code of Object.keys(user.joinedRooms)) {
+    if (seen.has(code)) continue;
+    const live = rooms.get(code);
+    const stored = db.rooms?.[code];
+    const still =
+      (live &&
+        Array.isArray(live.memberUserIds) &&
+        live.memberUserIds.includes(user.id) &&
+        live.hostUserId !== user.id) ||
+      (stored &&
+        Array.isArray(stored.memberUserIds) &&
+        stored.memberUserIds.includes(user.id) &&
+        stored.hostUserId !== user.id);
+    if (!still) delete user.joinedRooms[code];
+  }
+}
+
+function publicJoinedLobbies(user) {
+  healJoinedRoomsFromMembership(user);
+  return Object.entries(user.joinedRooms || {}).map(([code, meta]) => ({
+    code,
+    name: String(meta?.name || "Lobby").slice(0, MAX_LOBBY_NAME_LENGTH),
+    token: meta?.token || null,
+    capacity: Math.min(
+      MAX_PEERS,
+      Math.max(
+        1,
+        Number(meta?.capacity) || defaultLobbyCapacity(Boolean(meta?.isFree))
+      )
+    ),
+    isFree: Boolean(meta?.isFree),
+    hostColorSide: normalizeHostColorSide(meta?.hostColorSide),
+    invite: `${PUBLIC_JOIN_BASE}/${code}`,
+    hostNickname: String(meta?.hostNickname || "Host").slice(0, 18),
+    role: "join",
+  }));
+}
+
 function rememberMember(room, userId) {
   if (!room || !userId) return false;
   if (!Array.isArray(room.memberUserIds)) room.memberUserIds = [];
+  let added = false;
   if (!room.memberUserIds.includes(userId)) {
     room.memberUserIds.push(userId);
     if (room.memberUserIds.length > 40) {
       room.memberUserIds = room.memberUserIds.slice(-40);
     }
-    return true;
+    added = true;
   }
-  return false;
+  const code = findRoomCode(room);
+  const user = getDb().users?.[userId];
+  if (user && code) {
+    rememberJoinedLobby(user, code, room);
+    scheduleSave();
+  }
+  return added;
 }
 
 /** Bewusstes Verlassen — nicht nur offline, sondern raus aus Kachel/Roster. */
@@ -953,6 +1188,12 @@ function forgetMember(room, userId) {
       room.joinAnnouncedUserIds = nextAnn;
       changed = true;
     }
+  }
+  const code = findRoomCode(room);
+  const user = getDb().users?.[userId];
+  if (user && code) {
+    forgetJoinedLobby(user, code);
+    scheduleSave();
   }
   return changed;
 }
@@ -1771,10 +2012,21 @@ function absorbUserInto(target, source) {
   source.googleSub = null;
   source.googleEmail = null;
 
-  // Profil-Leinwand nicht bei Account-Merge verlieren
-  if (!target.profileCanvas && source.profileCanvas) {
+  // Profil / Inventar / Freunde / Settings / Joins zusammenführen
+  if (profileRichness(source.profileCanvas) > profileRichness(target.profileCanvas)) {
+    target.profileCanvas = source.profileCanvas;
+  } else if (!target.profileCanvas && source.profileCanvas) {
     target.profileCanvas = source.profileCanvas;
   }
+  mergeInventory(target, source);
+  mergeFriends(target, source);
+  mergeSettings(target, source);
+  ensureJoinedRooms(target);
+  ensureJoinedRooms(source);
+  for (const [code, meta] of Object.entries(source.joinedRooms || {})) {
+    if (!target.joinedRooms[code]) target.joinedRooms[code] = { ...meta };
+  }
+  source.joinedRooms = {};
 
   destroyAllSessionsForUser(source.id);
   if (Array.isArray(db.ledger)) {
@@ -3073,6 +3325,8 @@ app.post("/v1/auth/google", async (req, res) => {
     linked,
     user: publicUser(user),
     lobbies: publicHostedLobbies(user),
+    joined: publicJoinedLobbies(user),
+    settings: publicSettings(user),
   });
 });
 
@@ -3092,7 +3346,28 @@ app.delete("/v1/me", (req, res) => {
 app.get("/v1/me/lobbies", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
-  return res.json({ lobbies: publicHostedLobbies(ctx.user) });
+  return res.json({
+    lobbies: publicHostedLobbies(ctx.user),
+    joined: publicJoinedLobbies(ctx.user),
+  });
+});
+
+app.get("/v1/me/settings", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  return res.json({ ok: true, settings: publicSettings(ctx.user) });
+});
+
+app.put("/v1/me/settings", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const next = sanitizeSettings({
+    ...(req.body?.settings || req.body || {}),
+    updatedAt: Date.now(),
+  });
+  ctx.user.settings = next;
+  scheduleSave();
+  return res.json({ ok: true, settings: next });
 });
 
 app.get("/v1/me", (req, res) => {
