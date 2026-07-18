@@ -33,12 +33,8 @@ import androidx.compose.ui.window.DialogWindowProvider
 import com.luv.couple.update.AppChangelog
 import com.luv.couple.update.UpdateUiState
 import com.luv.couple.ui.theme.AccentRose
-import com.luv.couple.ui.theme.BgDeep
-import com.luv.couple.ui.theme.BgSoft
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
-import com.luv.couple.ui.theme.TextMuted
-import com.luv.couple.ui.theme.TextPrimary
 
 fun UpdateUiState.requiresForcedUpdate(): Boolean = when (this) {
     is UpdateUiState.Available,
@@ -108,9 +104,13 @@ fun ForcedUpdateDialog(
         )
     ) {
         ApplyDialogBackdropBlur()
-        // Weißer Frost: Hintergrund verschwimmt / ist kaum noch lesbar
+        // Weißer Frost + deckende dunkle Karte (kein heller Theme-Text auf Weiß)
         val frostAlpha =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) 0.78f else 0.90f
+        val titleOnDark = Color(0xFFFFF8F4)
+        val bodyOnDark = Color(0xFFD0D6E0)
+        val cardBg = Color(0xFF141A24)
+        val insetBg = Color(0xFF1E2633)
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -123,21 +123,21 @@ fun ForcedUpdateDialog(
                     .widthIn(max = 360.dp)
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(24.dp))
-                    .background(BgDeep.copy(alpha = 0.96f))
+                    .background(cardBg)
                     .padding(horizontal = 22.dp, vertical = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
                     "Zeit für ein Update ♥",
-                    color = TextPrimary,
+                    color = titleOnDark,
                     fontFamily = DisplayFont,
                     fontSize = 22.sp,
                     textAlign = TextAlign.Center
                 )
                 Text(
                     "LUV ${release.versionName} ist da. Damit Zeichnen, Lobbys und Sync weiter zuverlässig laufen, brauchst du kurz die neue Version.",
-                    color = TextMuted,
+                    color = bodyOnDark,
                     fontFamily = BodyFont,
                     fontSize = 14.sp,
                     lineHeight = 19.sp,
@@ -148,21 +148,21 @@ fun ForcedUpdateDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(14.dp))
-                            .background(BgSoft.copy(alpha = 0.85f))
+                            .background(insetBg)
                             .padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                         horizontalAlignment = Alignment.Start
                     ) {
                         Text(
                             "Neu in dieser Version",
-                            color = TextPrimary,
+                            color = titleOnDark,
                             fontFamily = DisplayFont,
                             fontSize = 13.sp
                         )
                         teasers.forEach { line ->
                             Text(
                                 "· $line",
-                                color = TextMuted,
+                                color = bodyOnDark,
                                 fontFamily = BodyFont,
                                 fontSize = 13.sp,
                                 lineHeight = 17.sp,
@@ -174,7 +174,7 @@ fun ForcedUpdateDialog(
                 }
                 Text(
                     "Daten bleiben erhalten — ohne Update geht’s nicht weiter.",
-                    color = TextMuted,
+                    color = bodyOnDark,
                     fontFamily = BodyFont,
                     fontSize = 12.sp,
                     lineHeight = 16.sp,
@@ -190,11 +190,11 @@ fun ForcedUpdateDialog(
                                 .height(8.dp)
                                 .clip(RoundedCornerShape(999.dp)),
                             color = AccentRose,
-                            trackColor = BgSoft
+                            trackColor = insetBg
                         )
                         Text(
                             "Lädt… ${(state.progress * 100).toInt()}%",
-                            color = TextMuted,
+                            color = bodyOnDark,
                             fontFamily = BodyFont,
                             fontSize = 13.sp
                         )
@@ -202,7 +202,7 @@ fun ForcedUpdateDialog(
                     is UpdateUiState.Error -> {
                         Text(
                             state.message,
-                            color = AccentRose,
+                            color = Color(0xFFFF8FA3),
                             fontFamily = BodyFont,
                             fontSize = 13.sp,
                             textAlign = TextAlign.Center,
@@ -230,7 +230,7 @@ fun ForcedUpdateDialog(
                     ) {
                         Text(
                             actionLabel,
-                            color = TextPrimary,
+                            color = Color.White,
                             fontFamily = DisplayFont,
                             fontSize = 16.sp,
                             textAlign = TextAlign.Center,

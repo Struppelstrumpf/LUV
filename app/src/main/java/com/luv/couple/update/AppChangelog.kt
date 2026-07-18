@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.49",
+            listOf(
+                "Update-Hinweis: Text gut lesbar auf dunkler Karte",
+            )
+        ),
+        Entry(
             "1.9.48",
             listOf(
                 "Lobby-Glocke (Impulse) wird gespeichert und geräteübergreifend synchronisiert",
