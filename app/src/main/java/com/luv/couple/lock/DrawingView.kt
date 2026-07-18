@@ -269,16 +269,15 @@ class DrawingView @JvmOverloads constructor(
         val cx = center.x * width
         val cy = center.y * height
         val scale = stroke.templateScale.coerceIn(0.2f, 4f)
-        val box = min(width, height) * 0.4f * scale
+        val box = min(width, height) * CanvasStore.TEMPLATE_PLACE_FRAC * scale
         val rad = Math.toRadians(stroke.templateRotation.toDouble())
         val cos = kotlin.math.cos(rad).toFloat()
         val sin = kotlin.math.sin(rad).toFloat()
-        val short = min(width, height).toFloat().coerceAtLeast(1f)
         parts.forEach { part ->
-            if (part.points.size < 2) return@forEach
+            if (part.points.isEmpty()) return@forEach
             val color = PeerPalette.strokeColor(part.colorIndex)
             paint.color = Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
-            paint.strokeWidth = (part.width / CanvasStore.WIDTH_REF) * short * scale
+            paint.strokeWidth = (part.width / CanvasStore.WIDTH_REF) * box
             val path = Path()
             part.points.forEachIndexed { idx, p ->
                 val lx = (p.x - 0.5f) * box
@@ -288,6 +287,9 @@ class DrawingView @JvmOverloads constructor(
                 val x = cx + rx
                 val y = cy + ry
                 if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            if (part.points.size == 1) {
+                path.lineTo(cx + 0.01f, cy)
             }
             canvas.drawPath(path, paint)
         }

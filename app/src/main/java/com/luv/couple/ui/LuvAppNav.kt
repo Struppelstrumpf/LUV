@@ -1062,10 +1062,10 @@ fun LuvAppNav() {
                                 }
                             },
                             onRefreshInventory = { syncInventory() },
-                            onBuyPack = { pack ->
+                            onBuyPack = { pack, quantity ->
                                 scope.launch {
                                     runCatching {
-                                        val url = LuvApiClient.checkout(pack.id)
+                                        val url = LuvApiClient.checkout(pack.id, quantity)
                                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                                     }.onFailure {
                                         accountMessage = it.message

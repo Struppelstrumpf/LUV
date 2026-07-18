@@ -211,7 +211,10 @@ data class ShopPack(
     val label: String,
     val coins: Int,
     val amountEur: String,
-    val compareAtEur: String? = null
+    val compareAtEur: String? = null,
+    val onceOnly: Boolean = false,
+    val isOffer: Boolean = false,
+    val mostPurchased: Boolean = false
 )
 
 class LuvApiException(
@@ -2109,7 +2112,14 @@ object LuvApiClient {
                             label = o.optString("label"),
                             coins = o.optInt("coins"),
                             amountEur = o.optString("amountEur"),
-                            compareAtEur = o.optString("compareAtEur").takeIf { it.isNotBlank() }
+                            compareAtEur = o.optString("compareAtEur").takeIf { it.isNotBlank() },
+                            onceOnly = o.optBoolean("onceOnly", false),
+                            isOffer = o.optBoolean(
+                                "isOffer",
+                                o.optBoolean("onceOnly", false) ||
+                                    o.optString("compareAtEur").isNotBlank()
+                            ),
+                            mostPurchased = o.optBoolean("mostPurchased", false)
                         )
                     )
                 }
@@ -2118,8 +2128,13 @@ object LuvApiClient {
         }
     }
 
-    suspend fun checkout(packId: String): String = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("packId", packId).toString().toRequestBody(jsonMedia)
+    suspend fun checkout(packId: String, quantity: Int = 1): String = withContext(Dispatchers.IO) {
+        val qty = quantity.coerceIn(1, 20)
+        val body = JSONObject()
+            .put("packId", packId)
+            .put("quantity", qty)
+            .toString()
+            .toRequestBody(jsonMedia)
         val request = authedRequestBuilder("/v1/shop/checkout").post(body).build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()

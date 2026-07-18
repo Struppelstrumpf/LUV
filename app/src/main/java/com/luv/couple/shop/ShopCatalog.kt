@@ -360,16 +360,24 @@ object ShopCatalog {
 
     fun playfulPackTitle(pack: ShopPack): String = when {
         pack.id.contains("intro", ignoreCase = true) || pack.coins in 90..110 -> "Säckchen Glück"
-        pack.coins <= 60 -> "Handvoll Coins"
-        pack.coins <= 160 -> "Beutel voll Coins"
-        pack.coins <= 450 -> "Schatztruhe"
+        pack.id == "pack_50" || pack.coins <= 60 -> "Handvoll Coins"
+        pack.id == "pack_150" || pack.coins in 120..180 -> "Beutel voll Coins"
+        pack.id == "pack_400" || pack.coins in 300..500 -> "Schatztruhe"
+        pack.id == "pack_900" || pack.coins in 700..1200 -> "Münzhaufen"
+        pack.id == "pack_2000" || pack.coins in 1500..3000 -> "Goldschatz"
+        pack.id == "pack_5000" || pack.coins >= 4000 -> "Schatzkammer"
         else -> pack.label.ifBlank { "${pack.coins} Coins" }
     }
 
     fun packImageRes(pack: ShopPack): Int = when {
-        pack.coins <= 60 -> R.drawable.shop_coins_handful
-        pack.coins <= 110 -> R.drawable.shop_coins_pouch
-        pack.coins <= 200 -> R.drawable.shop_coins_chest
+        pack.id.contains("intro", ignoreCase = true) || pack.coins in 90..110 ->
+            R.drawable.shop_coins_pouch
+        pack.id == "pack_50" || pack.coins <= 60 -> R.drawable.shop_coins_handful
+        pack.id == "pack_150" || pack.coins in 120..180 -> R.drawable.shop_coins_chest
+        pack.id == "pack_400" || pack.coins in 300..500 -> R.drawable.shop_coins_crate
+        pack.id == "pack_900" || pack.coins in 700..1200 -> R.drawable.shop_coins_hoard
+        pack.id == "pack_2000" || pack.coins in 1500..3000 -> R.drawable.shop_coins_vault
+        pack.id == "pack_5000" || pack.coins >= 4000 -> R.drawable.shop_coins_treasure
         else -> R.drawable.shop_coins_treasure
     }
 }

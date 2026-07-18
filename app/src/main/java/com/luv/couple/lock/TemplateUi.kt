@@ -2,10 +2,13 @@ package com.luv.couple.lock
 
 import android.view.MotionEvent
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -65,6 +69,9 @@ import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.launch
 import kotlin.math.min
+
+/** Vorlagen-Koordinaten 0…1 beziehen sich auf dieses Quadrat; Stempel nutzt fast die volle kurze Seite. */
+private val TEMPLATE_PLACE_FRAC = CanvasStore.TEMPLATE_PLACE_FRAC
 
 private val SheetBg = Color(0xFF121824)
 private val CardBg = Color(0xFF1C2433)
@@ -266,6 +273,7 @@ private fun TemplateThumb(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TemplateEditorSheet(
     onSave: (List<TemplateStrokePart>) -> Unit,
@@ -447,7 +455,7 @@ fun TemplateEditorSheet(
                     inactiveTrackColor = Color.White.copy(0.12f)
                 )
             )
-            // Dicke als Linie sichtbar (nicht nur Zahl)
+            // Dicke wie beim Zeichnen (WIDTH_REF = 1000), nicht relativ zur Max-Stärke
             val previewColor = if (eraserOn) {
                 Color(0xFFFFD54F)
             } else {
@@ -458,7 +466,9 @@ fun TemplateEditorSheet(
                     .width(36.dp)
                     .height(28.dp)
             ) {
-                val stroke = (brushWidth / 40f * size.height * 0.85f).coerceIn(2f, size.height)
+                val short = min(size.width, size.height)
+                val stroke = ((brushWidth / CanvasStore.WIDTH_REF) * short * 2.2f)
+                    .coerceIn(2f, size.height)
                 drawLine(
                     color = previewColor,
                     start = Offset(2f, size.height / 2f),
@@ -469,37 +479,54 @@ fun TemplateEditorSheet(
             }
         }
         Spacer(modifier = Modifier.height(6.dp))
+        // Quadrat = ganze Zeichenfläche (0…1), kein Rechteck-Crop beim Speichern
         Box(
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color(0xFF0A1018))
-                .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(18.dp))
+                .fillMaxWidth(),
+            contentAlignment = Alignment.Center
         ) {
-            Canvas(
+            Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(colorIndex, brushWidth, eraserOn) {
-                        detectDragGestures(
-                            onDragStart = { offset ->
-                                val nx = (offset.x / size.width).coerceIn(0f, 1f)
-                                val ny = (offset.y / size.height).coerceIn(0f, 1f)
-                                currentPoints = listOf(StrokePoint(nx, ny))
-                            },
-                            onDrag = { change, _ ->
-                                change.consume()
-                                val nx = (change.position.x / size.width).coerceIn(0f, 1f)
-                                val ny = (change.position.y / size.height).coerceIn(0f, 1f)
-                                currentPoints = currentPoints + StrokePoint(nx, ny)
-                            },
-                            onDragEnd = {
+                    .fillMaxWidth()
+                    .fillMaxHeight()
+                    .aspectRatio(1f, matchHeightConstraintsFirst = true)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xFF0A1018))
+                    .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(18.dp))
+            ) {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(colorIndex, brushWidth, eraserOn) {
+                            // Ohne Touch-Slop: Ansatz sitzt punktgenau (dünne Pinsel nicht versetzt)
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                fun norm(x: Float, y: Float) = StrokePoint(
+                                    (x / size.width).coerceIn(0f, 1f),
+                                    (y / size.height).coerceIn(0f, 1f)
+                                )
+                                var pts = listOf(norm(down.position.x, down.position.y))
+                                currentPoints = pts
+                                drag(down.id) { change ->
+                                    change.consume()
+                                    pts = pts + norm(change.position.x, change.position.y)
+                                    currentPoints = pts
+                                }
                                 val brush = currentPoints
                                 currentPoints = emptyList()
-                                if (brush.size < 2) return@detectDragGestures
+                                val saved = when {
+                                    brush.isEmpty() -> return@awaitEachGesture
+                                    brush.size == 1 -> listOf(
+                                        brush[0],
+                                        StrokePoint(brush[0].x, brush[0].y)
+                                    )
+                                    else -> brush
+                                }
                                 if (eraserOn) {
-                                    val radius = 0.018f + (brushWidth / 1100f).coerceIn(0.01f, 0.045f)
-                                    val next = eraseTemplateParts(parts.toList(), brush, radius)
+                                    val radius =
+                                        0.018f + (brushWidth / 1100f).coerceIn(0.01f, 0.045f)
+                                    val next = eraseTemplateParts(parts.toList(), saved, radius)
                                     if (next != parts.toList()) {
                                         pushUndo()
                                         parts.clear()
@@ -509,60 +536,65 @@ fun TemplateEditorSheet(
                                     pushUndo()
                                     parts.add(
                                         TemplateStrokePart(
-                                            points = brush.toList(),
+                                            points = saved,
                                             width = brushWidth,
                                             colorIndex = colorIndex
                                         )
                                     )
                                 }
-                            },
-                            onDragCancel = { currentPoints = emptyList() }
-                        )
-                    }
-            ) {
-                val short = min(size.width, size.height)
-                fun drawPart(part: TemplateStrokePart, alpha: Float = 1f) {
-                    if (part.points.size < 2) return
-                    val path = Path()
-                    part.points.forEachIndexed { idx, p ->
-                        val x = p.x * size.width
-                        val y = p.y * size.height
-                        if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                    }
-                    val col = Color(PeerPalette.strokeColor(part.colorIndex)).copy(alpha = alpha)
-                    drawPath(
-                        path,
-                        color = col,
-                        style = Stroke(
-                            width = (part.width / 1000f) * short,
-                            cap = StrokeCap.Round,
-                            join = StrokeJoin.Round
-                        )
-                    )
-                }
-                parts.forEach { drawPart(it) }
-                if (currentPoints.size >= 2) {
-                    if (eraserOn) {
+                            }
+                        }
+                ) {
+                    val short = min(size.width, size.height)
+                    fun drawPart(part: TemplateStrokePart, alpha: Float = 1f) {
+                        if (part.points.isEmpty()) return
                         val path = Path()
-                        currentPoints.forEachIndexed { idx, p ->
+                        part.points.forEachIndexed { idx, p ->
                             val x = p.x * size.width
                             val y = p.y * size.height
                             if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
                         }
+                        if (part.points.size == 1) {
+                            path.lineTo(
+                                part.points[0].x * size.width + 0.01f,
+                                part.points[0].y * size.height
+                            )
+                        }
+                        val col = Color(PeerPalette.strokeColor(part.colorIndex)).copy(alpha = alpha)
                         drawPath(
                             path,
-                            color = Color.White.copy(alpha = 0.35f),
+                            color = col,
                             style = Stroke(
-                                width = (brushWidth / 1000f) * short * 1.6f,
+                                width = (part.width / CanvasStore.WIDTH_REF) * short,
                                 cap = StrokeCap.Round,
                                 join = StrokeJoin.Round
                             )
                         )
-                    } else {
-                        drawPart(
-                            TemplateStrokePart(currentPoints, brushWidth, colorIndex),
-                            alpha = 0.9f
-                        )
+                    }
+                    parts.forEach { drawPart(it) }
+                    if (currentPoints.isNotEmpty()) {
+                        if (eraserOn) {
+                            val path = Path()
+                            currentPoints.forEachIndexed { idx, p ->
+                                val x = p.x * size.width
+                                val y = p.y * size.height
+                                if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                            }
+                            drawPath(
+                                path,
+                                color = Color.White.copy(alpha = 0.35f),
+                                style = Stroke(
+                                    width = (brushWidth / CanvasStore.WIDTH_REF) * short * 1.6f,
+                                    cap = StrokeCap.Round,
+                                    join = StrokeJoin.Round
+                                )
+                            )
+                        } else {
+                            drawPart(
+                                TemplateStrokePart(currentPoints, brushWidth, colorIndex),
+                                alpha = 0.9f
+                            )
+                        }
                     }
                 }
             }
@@ -669,7 +701,7 @@ fun TemplatePreviewCanvas(
                 path,
                 color = Color(PeerPalette.strokeColor(part.colorIndex)),
                 style = Stroke(
-                    width = (part.width / 1000f * short).coerceAtLeast(2f),
+                    width = (part.width / CanvasStore.WIDTH_REF * short).coerceAtLeast(2f),
                     cap = StrokeCap.Round,
                     join = StrokeJoin.Round
                 )
@@ -724,14 +756,15 @@ class TemplatePlacementView(
         if (width <= 0 || height <= 0) return
         val cx = centerXNorm * width
         val cy = centerYNorm * height
-        val box = min(width, height) * 0.4f * scaleFactor
+        val box = min(width, height) * TEMPLATE_PLACE_FRAC * scaleFactor
         val rad = Math.toRadians(rotationDeg.toDouble())
         val cos = kotlin.math.cos(rad).toFloat()
         val sin = kotlin.math.sin(rad).toFloat()
         parts.forEach { part ->
-            if (part.points.size < 2) return@forEach
+            if (part.points.isEmpty()) return@forEach
             paint.color = PeerPalette.strokeColor(part.colorIndex)
-            paint.strokeWidth = (part.width / 1000f) * min(width, height) * scaleFactor
+            // Dicke proportional zur Stempel-Box — nicht zur Vollfläche (sonst Versatz/Dickenfehler)
+            paint.strokeWidth = (part.width / CanvasStore.WIDTH_REF) * box
             val path = android.graphics.Path()
             part.points.forEachIndexed { idx, p ->
                 val lx = (p.x - 0.5f) * box
@@ -741,6 +774,9 @@ class TemplatePlacementView(
                 val x = cx + rx
                 val y = cy + ry
                 if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            if (part.points.size == 1) {
+                path.lineTo(cx + 0.01f, cy)
             }
             canvas.drawPath(path, paint)
         }

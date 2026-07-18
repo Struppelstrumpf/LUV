@@ -150,6 +150,9 @@ const PACKS = {
   pack_50: { id: "pack_50", coins: 50, amountEur: "2.99", label: "Handvoll Coins" },
   pack_150: { id: "pack_150", coins: 150, amountEur: "6.99", label: "Beutel voll Coins" },
   pack_400: { id: "pack_400", coins: 400, amountEur: "14.99", label: "Schatztruhe" },
+  pack_900: { id: "pack_900", coins: 900, amountEur: "29.99", label: "Münzhaufen" },
+  pack_2000: { id: "pack_2000", coins: 2000, amountEur: "49.99", label: "Goldschatz" },
+  pack_5000: { id: "pack_5000", coins: 5000, amountEur: "99.99", label: "Schatzkammer" },
 };
 
 /** Faire Coin-Preise für Itemshop-Emojis (Client-Katalog muss passen). */
@@ -2905,28 +2908,65 @@ function canClaimIntroOffer(user, ip) {
   return true;
 }
 
-function publicPack(pack) {
+function packPurchaseStats() {
+  const stats = ensureShopStats(getDb());
+  if (!stats.packs || typeof stats.packs !== "object") stats.packs = {};
+  return stats.packs;
+}
+
+function bumpPackPurchase(packId, qty = 1) {
+  const id = String(packId || "").trim();
+  if (!id || !PACKS[id]) return;
+  const packs = packPurchaseStats();
+  const n = Math.max(1, Math.floor(Number(qty) || 1));
+  packs[id] = Math.max(0, Number(packs[id]) || 0) + n;
+}
+
+/** Meistgekauftes Normal-Paket (ohne Aktions-/Once-Angebote). Fallback: pack_400 (14,99). */
+function mostPurchasedNormalPackId() {
+  const packs = packPurchaseStats();
+  let bestId = "pack_400";
+  let best = Number(packs[bestId]) || 0;
+  for (const pack of Object.values(PACKS)) {
+    if (pack.oncePerUserAndIp) continue;
+    if (pack.id === bestId) continue;
+    const n = Number(packs[pack.id]) || 0;
+    if (n > best) {
+      best = n;
+      bestId = pack.id;
+    }
+  }
+  return bestId;
+}
+
+function publicPack(pack, { mostPurchasedId } = {}) {
   const out = {
     id: pack.id,
     label: pack.label,
     coins: pack.coins,
     amountEur: pack.amountEur,
+    onceOnly: Boolean(pack.oncePerUserAndIp),
+    isOffer: Boolean(pack.oncePerUserAndIp || pack.compareAtEur),
+    mostPurchased: mostPurchasedId ? pack.id === mostPurchasedId : false,
   };
   if (pack.compareAtEur) out.compareAtEur = pack.compareAtEur;
   return out;
 }
 
 function listShopPacks(user, ip) {
+  const mostPurchasedId = mostPurchasedNormalPackId();
   const packs = [];
   for (const pack of Object.values(PACKS)) {
     if (pack.expiresAt && Date.now() >= pack.expiresAt) continue;
     if (pack.oncePerUserAndIp && !canClaimIntroOffer(user, ip)) continue;
-    packs.push(publicPack(pack));
+    packs.push(publicPack(pack, { mostPurchasedId }));
   }
+  // Angebote zuerst, dann nach Preis aufsteigend
   packs.sort((a, b) => {
-    if (a.id === INTRO_PACK_ID) return -1;
-    if (b.id === INTRO_PACK_ID) return 1;
-    return 0;
+    const ao = a.isOffer ? 0 : 1;
+    const bo = b.isOffer ? 0 : 1;
+    if (ao !== bo) return ao - bo;
+    return Number(a.amountEur) - Number(b.amountEur);
   });
   return packs;
 }
@@ -6332,16 +6372,30 @@ app.post("/v1/shop/checkout", async (req, res) => {
       message: "Dieses Angebot hast du schon genutzt.",
     });
   }
+  let quantity = Math.floor(Number(req.body?.quantity) || 1);
+  if (!Number.isFinite(quantity) || quantity < 1) quantity = 1;
+  if (pack.oncePerUserAndIp) quantity = 1;
+  quantity = Math.min(20, quantity);
+  const unitEur = Number(pack.amountEur);
+  if (!Number.isFinite(unitEur) || unitEur <= 0) {
+    return res.status(400).json({ error: "invalid_pack" });
+  }
+  const totalEur = (unitEur * quantity).toFixed(2);
+  const totalCoins = pack.coins * quantity;
   try {
     const body = {
-      amount: { currency: "EUR", value: pack.amountEur },
-      description: `LUV ${pack.label}`,
+      amount: { currency: "EUR", value: totalEur },
+      description:
+        quantity > 1
+          ? `LUV ${pack.label} ×${quantity}`
+          : `LUV ${pack.label}`,
       redirectUrl: PUBLIC_SHOP_REDIRECT,
       webhookUrl: MOLLIE_WEBHOOK_URL,
       metadata: {
         userId: ctx.user.id,
         packId: pack.id,
-        coins: String(pack.coins),
+        coins: String(totalCoins),
+        quantity: String(quantity),
         ip: ip || "",
       },
     };
@@ -6362,7 +6416,8 @@ app.post("/v1/shop/checkout", async (req, res) => {
       id: data.id,
       userId: ctx.user.id,
       packId: pack.id,
-      coins: pack.coins,
+      coins: totalCoins,
+      quantity,
       ip: ip || "",
       status: data.status,
       createdAt: Date.now(),
@@ -6395,11 +6450,16 @@ app.post("/v1/webhooks/mollie", async (req, res) => {
       if (!pack || !userId || !db.users[userId]) {
         return res.status(200).send("ok");
       }
+      const qtyMeta = Math.min(
+        20,
+        Math.max(1, Math.floor(Number(data.metadata?.quantity) || 1))
+      );
       payment = {
         id,
         userId,
         packId: pack.id,
-        coins: Number(pack.coins) || 0,
+        coins: (Number(pack.coins) || 0) * qtyMeta,
+        quantity: qtyMeta,
         status: data.status,
         createdAt: Date.now(),
         credited: false,
@@ -6410,10 +6470,22 @@ app.post("/v1/webhooks/mollie", async (req, res) => {
     payment.status = data.status;
     const packId = payment.packId || data.metadata?.packId;
     const pack = packId ? PACKS[packId] : null;
+    const qty = Math.min(
+      20,
+      Math.max(
+        1,
+        Math.floor(
+          Number(payment.quantity) ||
+            Number(data.metadata?.quantity) ||
+            1
+        )
+      )
+    );
+    payment.quantity = qty;
     const creditCoins = pack
-      ? Number(pack.coins) || 0
+      ? (Number(pack.coins) || 0) * qty
       : Number(payment.coins) || 0;
-    if (pack) payment.coins = creditCoins;
+    if (creditCoins > 0) payment.coins = creditCoins;
     // credited sofort setzen (vor weiteren awaits) → kein Double-Credit bei Parallel-Webhooks
     if (
       data.status === "paid" &&
@@ -6423,6 +6495,7 @@ app.post("/v1/webhooks/mollie", async (req, res) => {
     ) {
       payment.credited = true;
       applyLedger(payment.userId, creditCoins, "mollie_purchase", id);
+      if (pack) bumpPackPurchase(pack.id, qty);
       if (pack?.oncePerUserAndIp) {
         const user = db.users[payment.userId];
         if (user) user.introOfferUsed = true;

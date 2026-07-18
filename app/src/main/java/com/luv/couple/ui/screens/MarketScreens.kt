@@ -101,7 +101,7 @@ sealed class MarketReturnTo {
 fun MarketScreen(
     shopEnabled: Boolean,
     packs: List<ShopPack>,
-    onBuyPack: (ShopPack) -> Unit,
+    onBuyPack: (ShopPack, Int) -> Unit,
     onRefreshInventory: suspend () -> Unit = {},
     startInCoinShop: Boolean = false,
     onStartInCoinShopConsumed: () -> Unit = {},
@@ -470,9 +470,93 @@ private fun EmptyMarketCard(title: String, body: String) {
 private fun CoinShopContent(
     shopEnabled: Boolean,
     packs: List<ShopPack>,
-    onBuyPack: (ShopPack) -> Unit
+    onBuyPack: (ShopPack, Int) -> Unit
 ) {
     val account by AccountSession.account.collectAsStateWithLifecycle()
+    var pendingPack by remember { mutableStateOf<ShopPack?>(null) }
+    var quantity by remember { mutableIntStateOf(1) }
+    val offers = remember(packs) { packs.filter { it.isOffer || it.onceOnly } }
+    val normals = remember(packs) { packs.filterNot { it.isOffer || it.onceOnly } }
+
+    pendingPack?.let { pack ->
+        val unit = pack.amountEur.replace(',', '.').toDoubleOrNull() ?: 0.0
+        val qty = if (pack.onceOnly) 1 else quantity.coerceIn(1, 20)
+        val total = String.format(java.util.Locale.GERMANY, "%.2f", unit * qty)
+        AlertDialog(
+            onDismissRequest = { pendingPack = null },
+            containerColor = BgSoft,
+            title = {
+                Text(
+                    ShopCatalog.playfulPackTitle(pack),
+                    fontFamily = DisplayFont,
+                    color = TextPrimary,
+                    fontSize = 22.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "${pack.coins * qty} Coins · $total €",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 14.sp
+                    )
+                    if (pack.onceOnly) {
+                        Text(
+                            "Aktionsangebot — nur einmal kaufbar.",
+                            color = AccentRose,
+                            fontFamily = BodyFont,
+                            fontSize = 13.sp
+                        )
+                    } else {
+                        Text(
+                            "Menge",
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 15.sp
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            TextButton(
+                                onClick = { quantity = (quantity - 1).coerceAtLeast(1) },
+                                enabled = quantity > 1
+                            ) {
+                                Text("−", color = TextPrimary, fontSize = 22.sp)
+                            }
+                            Text(
+                                "$qty",
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 22.sp
+                            )
+                            TextButton(
+                                onClick = { quantity = (quantity + 1).coerceAtMost(20) }
+                            ) {
+                                Text("+", color = TextPrimary, fontSize = 22.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val buyQty = if (pack.onceOnly) 1 else quantity.coerceIn(1, 20)
+                    pendingPack = null
+                    onBuyPack(pack, buyQty)
+                }) {
+                    Text("Kaufen", color = AccentRose, fontFamily = DisplayFont)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingPack = null }) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
             "${account?.coins ?: 0} Coins auf dem Konto",
@@ -494,8 +578,38 @@ private fun CoinShopContent(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            packs.forEach { pack ->
-                CoinPackCard(pack = pack, onBuy = { onBuyPack(pack) })
+            if (offers.isNotEmpty()) {
+                Text(
+                    "Angebote",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 16.sp
+                )
+                offers.forEach { pack ->
+                    CoinPackCard(
+                        pack = pack,
+                        onBuy = {
+                            quantity = 1
+                            pendingPack = pack
+                        }
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    "Coin-Pakete",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 16.sp
+                )
+            }
+            normals.forEach { pack ->
+                CoinPackCard(
+                    pack = pack,
+                    onBuy = {
+                        quantity = 1
+                        pendingPack = pack
+                    }
+                )
             }
             Spacer(modifier = Modifier.height(8.dp))
         }
@@ -545,6 +659,36 @@ private fun CoinPackCard(pack: ShopPack, onBuy: () -> Unit) {
                         .background(Color.Black.copy(0.55f))
                         .padding(horizontal = 8.dp, vertical = 3.dp)
                 )
+                when {
+                    pack.onceOnly || pack.compareAtEur != null -> {
+                        Text(
+                            "1× Angebot",
+                            color = Color.White,
+                            fontFamily = DisplayFont,
+                            fontSize = 11.sp,
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(6.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(AccentRose.copy(0.92f))
+                                .padding(horizontal = 7.dp, vertical = 3.dp)
+                        )
+                    }
+                    pack.mostPurchased -> {
+                        Text(
+                            "Am meisten gekauft",
+                            color = Color.White,
+                            fontFamily = DisplayFont,
+                            fontSize = 10.sp,
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(6.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaleBlue.copy(0.92f))
+                                .padding(horizontal = 7.dp, vertical = 3.dp)
+                        )
+                    }
+                }
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(title, color = TextPrimary, fontFamily = DisplayFont, fontSize = 20.sp)
