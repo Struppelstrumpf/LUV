@@ -236,7 +236,18 @@ class PrefsRepository(private val context: Context) {
                     hostColorSide = r.hostColorSide
                 )
             }
-            val merged = byCode.values.toList()
+            // Bisherige Reihenfolge behalten, neue Lobbys ans Ende
+            val seen = linkedSetOf<String>()
+            val merged = buildList {
+                for (old in existing) {
+                    val code = old.code.uppercase()
+                    val next = byCode[code] ?: continue
+                    if (seen.add(code)) add(next)
+                }
+                for ((code, lobby) in byCode) {
+                    if (seen.add(code)) add(lobby)
+                }
+            }
             prefs[lobbiesKey] = encodeLobbies(merged)
             val active = prefs[activeLobbyKey]
             if (active.isNullOrBlank() || merged.none { it.id == active }) {
@@ -426,6 +437,26 @@ class PrefsRepository(private val context: Context) {
                 if (it.id == lobbyId) it.copy(name = clean) else it
             }
             prefs[lobbiesKey] = encodeLobbies(list)
+        }
+    }
+
+    /** Reihenfolge der Lobby-Kacheln im Hauptmenü speichern. */
+    suspend fun reorderLobbies(orderedIds: List<String>) {
+        if (orderedIds.isEmpty()) return
+        context.dataStore.edit { prefs ->
+            val list = parseLobbies(prefs[lobbiesKey])
+            if (list.size <= 1) return@edit
+            val byId = list.associateBy { it.id }
+            val next = buildList {
+                for (id in orderedIds) {
+                    byId[id]?.let { add(it) }
+                }
+                for (lobby in list) {
+                    if (none { it.id == lobby.id }) add(lobby)
+                }
+            }
+            if (next.map { it.id } == list.map { it.id }) return@edit
+            prefs[lobbiesKey] = encodeLobbies(next)
         }
     }
 

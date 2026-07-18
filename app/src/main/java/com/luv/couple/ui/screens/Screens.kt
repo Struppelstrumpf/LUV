@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -43,11 +46,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -57,6 +66,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.LuvApp
 import com.luv.couple.data.ConnectionState
@@ -253,10 +263,64 @@ fun LobbiesScreen(
     val accent = PeerPalette.menuAccent()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
     val lastPublic by LuvApp.instance.prefs.lastPublicCanvasFlow
         .collectAsStateWithLifecycle(initialValue = null)
     var showReportDialog by remember { mutableStateOf(false) }
     var reportBusy by remember { mutableStateOf(false) }
+    var orderedLobbies by remember { mutableStateOf(lobbies) }
+    var dragLobbyId by remember { mutableStateOf<String?>(null) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    val cardHeights = remember { mutableStateMapOf<String, Int>() }
+
+    LaunchedEffect(lobbies) {
+        // Während Drag lokale Reihenfolge behalten; sonst mit Prefs-Liste mergen
+        if (dragLobbyId != null) return@LaunchedEffect
+        orderedLobbies = mergeLobbyOrder(orderedLobbies, lobbies)
+    }
+
+    fun persistOrder(next: List<Lobby>) {
+        orderedLobbies = next
+        scope.launch {
+            LuvApp.instance.prefs.reorderLobbies(next.map { it.id })
+        }
+    }
+
+    fun swapWhileDragging() {
+        val id = dragLobbyId ?: return
+        while (true) {
+            val from = orderedLobbies.indexOfFirst { it.id == id }
+            if (from < 0) return
+            val myH = cardHeights[id] ?: 180
+            if (dragOffsetY > 0f && from < orderedLobbies.lastIndex) {
+                val nextId = orderedLobbies[from + 1].id
+                val nextH = (cardHeights[nextId] ?: myH).toFloat()
+                if (dragOffsetY > nextH * 0.5f) {
+                    val m = orderedLobbies.toMutableList()
+                    val item = m.removeAt(from)
+                    m.add(from + 1, item)
+                    orderedLobbies = m
+                    dragOffsetY -= nextH
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    continue
+                }
+            }
+            if (dragOffsetY < 0f && from > 0) {
+                val prevId = orderedLobbies[from - 1].id
+                val prevH = (cardHeights[prevId] ?: myH).toFloat()
+                if (dragOffsetY < -prevH * 0.5f) {
+                    val m = orderedLobbies.toMutableList()
+                    val item = m.removeAt(from)
+                    m.add(from - 1, item)
+                    orderedLobbies = m
+                    dragOffsetY += prevH
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    continue
+                }
+            }
+            break
+        }
+    }
 
     if (showReportDialog) {
         AlertDialog(
@@ -352,7 +416,10 @@ fun LobbiesScreen(
                 .fillMaxSize()
                 .padding(horizontal = 28.dp)
                 .padding(top = 20.dp, bottom = 8.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(
+                    rememberScrollState(),
+                    enabled = dragLobbyId == null
+                ),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             UpdateBanner(state = updateState, onUpdate = onUpdateApp)
@@ -404,13 +471,40 @@ fun LobbiesScreen(
                 Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
             }
 
-            lobbies.forEach { lobby ->
+            orderedLobbies.forEach { lobby ->
+                val dragging = dragLobbyId == lobby.id
                 LobbyCard(
                     lobby = lobby,
                     active = lobby.id == activeLobbyId,
                     state = lobbyStates[lobby.id] ?: ConnectionState.IDLE,
                     reconnect = reconnectUi[lobby.id],
                     accent = accent,
+                    dragging = dragging,
+                    dragOffsetY = if (dragging) dragOffsetY else 0f,
+                    reorderEnabled = orderedLobbies.size > 1,
+                    onHeight = { cardHeights[lobby.id] = it },
+                    onNameDragStart = {
+                        dragLobbyId = lobby.id
+                        dragOffsetY = 0f
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    },
+                    onNameDrag = { dy ->
+                        if (dragLobbyId != lobby.id) return@LobbyCard
+                        dragOffsetY += dy
+                        swapWhileDragging()
+                    },
+                    onNameDragEnd = {
+                        if (dragLobbyId == lobby.id) {
+                            persistOrder(orderedLobbies)
+                        }
+                        dragLobbyId = null
+                        dragOffsetY = 0f
+                    },
+                    onNameDragCancel = {
+                        dragLobbyId = null
+                        dragOffsetY = 0f
+                        orderedLobbies = mergeLobbyOrder(emptyList(), lobbies)
+                    },
                     onOpen = { onOpenLobby(lobby) },
                     onInviteSeat = { onInviteSeat(lobby) },
                     onBuySeat = { onBuySeat(lobby) },
@@ -420,7 +514,7 @@ fun LobbiesScreen(
                 )
             }
 
-            if (lobbies.size < PeerPalette.MAX_LOBBIES) {
+            if (orderedLobbies.size < PeerPalette.MAX_LOBBIES) {
                 PrimaryButton(
                     label = if (canCreateFreeLobby) {
                         "Neue Lobby"
@@ -438,6 +532,15 @@ fun LobbiesScreen(
     }
 }
 
+private fun mergeLobbyOrder(current: List<Lobby>, incoming: List<Lobby>): List<Lobby> {
+    if (incoming.isEmpty()) return emptyList()
+    if (current.isEmpty()) return incoming
+    val byId = incoming.associateBy { it.id }
+    val kept = current.mapNotNull { byId[it.id] }
+    val known = kept.map { it.id }.toSet()
+    return kept + incoming.filter { it.id !in known }
+}
+
 @Composable
 private fun LobbyCard(
     lobby: Lobby,
@@ -445,6 +548,14 @@ private fun LobbyCard(
     state: ConnectionState,
     reconnect: LobbyReconnectUi?,
     accent: Color,
+    dragging: Boolean = false,
+    dragOffsetY: Float = 0f,
+    reorderEnabled: Boolean = false,
+    onHeight: (Int) -> Unit = {},
+    onNameDragStart: () -> Unit = {},
+    onNameDrag: (Float) -> Unit = {},
+    onNameDragEnd: () -> Unit = {},
+    onNameDragCancel: () -> Unit = {},
     onOpen: () -> Unit,
     onInviteSeat: () -> Unit,
     onBuySeat: () -> Unit,
@@ -594,12 +705,29 @@ private fun LobbyCard(
 
     Column(
         modifier = Modifier
+            .zIndex(if (dragging) 8f else 0f)
+            .graphicsLayer {
+                translationY = dragOffsetY
+                scaleX = if (dragging) 1.02f else 1f
+                scaleY = if (dragging) 1.02f else 1f
+                alpha = if (dragging) 0.96f else 1f
+            }
+            .shadow(
+                if (dragging) 16.dp else 0.dp,
+                RoundedCornerShape(22.dp),
+                clip = false
+            )
             .fillMaxWidth()
+            .onSizeChanged { onHeight(it.height) }
             .clip(RoundedCornerShape(22.dp))
             .background(BgSoft)
             .border(
-                width = if (active) 1.5.dp else 1.dp,
-                color = if (active) accent.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.06f),
+                width = if (dragging || active) 1.5.dp else 1.dp,
+                color = when {
+                    dragging -> accent.copy(alpha = 0.7f)
+                    active -> accent.copy(alpha = 0.55f)
+                    else -> Color.White.copy(alpha = 0.06f)
+                },
                 shape = RoundedCornerShape(22.dp)
             )
             .padding(18.dp),
@@ -611,7 +739,24 @@ private fun LobbyCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                AutoShrinkLobbyName(name = lobby.name)
+                AutoShrinkLobbyName(
+                    name = lobby.name,
+                    modifier = if (reorderEnabled) {
+                        Modifier.pointerInput(lobby.id) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { onNameDragStart() },
+                                onDragEnd = onNameDragEnd,
+                                onDragCancel = onNameDragCancel,
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    onNameDrag(dragAmount.y)
+                                }
+                            )
+                        }
+                    } else {
+                        Modifier
+                    }
+                )
                 Text(
                     text = when (lobby.role) {
                         Role.HOST -> "Von dir erstellt"
@@ -1301,7 +1446,10 @@ fun RenameLobbyScreen(
 }
 
 @Composable
-private fun AutoShrinkLobbyName(name: String) {
+private fun AutoShrinkLobbyName(
+    name: String,
+    modifier: Modifier = Modifier
+) {
     var fontSize by remember(name) { mutableStateOf(22f) }
     Text(
         text = name,
@@ -1311,7 +1459,7 @@ private fun AutoShrinkLobbyName(name: String) {
         maxLines = 1,
         softWrap = false,
         overflow = TextOverflow.Clip,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         onTextLayout = { layout ->
             if (layout.hasVisualOverflow && fontSize > 13f) {
                 fontSize = (fontSize - 1.5f).coerceAtLeast(13f)
