@@ -16,6 +16,7 @@ const {
 const { pickShareLine } = require("./share_lines");
 const ach = require("./achievements");
 const market = require("./market");
+const lootbox = require("./lootbox");
 const {
   STICKER_SHOP_PRICES,
   isKnownSticker,
@@ -896,6 +897,7 @@ function serializeRoom(code, room) {
     name: room.name || "Lobby",
     hostNickname: room.hostNickname || "Host",
     isFree: Boolean(room.isFree),
+    isRandom: Boolean(room.isRandom),
     capacity: roomCapacity(room),
     hostColorSide: normalizeHostColorSide(room.hostColorSide),
     colorByUserId:
@@ -1578,6 +1580,7 @@ function hydrateRoom(code, data, tokenOverride) {
     name: String(data.name || "Lobby").slice(0, MAX_LOBBY_NAME_LENGTH),
     hostNickname: String(data.hostNickname || "Host").slice(0, 18),
     isFree: Boolean(data.isFree),
+    isRandom: Boolean(data.isRandom),
     capacity: Math.min(
       MAX_PEERS,
       Math.max(
@@ -1640,6 +1643,7 @@ function rememberJoinedLobby(user, code, room) {
     token: room.token || null,
     capacity: roomCapacity(room),
     isFree: Boolean(room.isFree),
+    isRandom: Boolean(room.isRandom),
     hostColorSide: normalizeHostColorSide(room.hostColorSide),
     hostNickname: String(room.hostNickname || "Host").slice(0, 18),
     joinedAt: Date.now(),
@@ -1707,6 +1711,7 @@ function publicJoinedLobbies(user) {
       )
     ),
     isFree: Boolean(meta?.isFree),
+    isRandom: Boolean(meta?.isRandom),
     hostColorSide: normalizeHostColorSide(meta?.hostColorSide),
     invite: `${PUBLIC_JOIN_BASE}/${code}`,
     hostNickname: String(meta?.hostNickname || "Host").slice(0, 18),
@@ -1937,23 +1942,31 @@ function healRoomMembership(room) {
 }
 
 /**
- * Verbundene + offline bekannte Mitglieder — für Kachel/Avatare.
- * Online zuerst, dann Offline (alphabetisch nach Nickname).
+ * Verbundene + sonst bekannte Mitglieder — fuer Kachel/Avatare.
+ * Reihenfolge = Beitrittsreihenfolge (memberUserIds).
  */
 function roomRosterAll(room) {
-  const connected = roomConnectedMembers(room).map((m) => ({
-    ...m,
-    online: true,
-    active: Boolean(m.active),
-  }));
-  const seen = new Set(
-    connected.map((m) => m.userId).filter((id) => typeof id === "string" && id)
-  );
-  const offline = [];
+  const connectedById = new Map();
+  for (const m of roomConnectedMembers(room)) {
+    if (m?.userId) {
+      connectedById.set(m.userId, {
+        ...m,
+        online: true,
+        active: Boolean(m.active),
+      });
+    }
+  }
   const memberIds = Array.isArray(room?.memberUserIds) ? room.memberUserIds : [];
+  const out = [];
+  const seen = new Set();
   for (const uid of memberIds) {
     if (!uid || seen.has(uid)) continue;
     seen.add(uid);
+    const live = connectedById.get(uid);
+    if (live) {
+      out.push(live);
+      continue;
+    }
     const u = getDb().users?.[uid];
     const nick =
       String(u?.nickname || "")
@@ -1963,7 +1976,7 @@ function roomRosterAll(room) {
     const colorIndex = Number.isFinite(rawColor)
       ? Math.max(0, Math.floor(rawColor))
       : 0;
-    offline.push({
+    out.push({
       userId: uid,
       nickname: nick,
       colorIndex,
@@ -1972,10 +1985,11 @@ function roomRosterAll(room) {
       petEmoji: u ? userPetEmoji(u) : DEFAULT_PET,
     });
   }
-  offline.sort((a, b) =>
-    String(a.nickname).localeCompare(String(b.nickname), "de", { sensitivity: "base" })
-  );
-  return [...connected, ...offline];
+  for (const [uid, m] of connectedById) {
+    if (seen.has(uid)) continue;
+    out.push(m);
+  }
+  return out;
 }
 
 function publicRoom(room, code) {
@@ -1991,6 +2005,7 @@ function publicRoom(room, code) {
     capacity: roomCapacity(room),
     maxPeers: MAX_PEERS,
     isFree: Boolean(room.isFree),
+    isRandom: Boolean(room.isRandom),
     hostColorSide: normalizeHostColorSide(room.hostColorSide),
     peakPeers: peak,
     coupleMode: peak <= 2,
@@ -2826,6 +2841,7 @@ function publicHostedLobbies(user) {
       )
     ),
     isFree: Boolean(meta?.isFree),
+    isRandom: Boolean(meta?.isRandom),
     hostColorSide: normalizeHostColorSide(meta?.hostColorSide),
     invite: `${PUBLIC_JOIN_BASE}/${code}`,
     hostNickname: user.nickname || "Host",
@@ -6422,6 +6438,212 @@ app.post("/v1/webhooks/mollie", async (req, res) => {
   return res.status(200).send("ok");
 });
 
+
+app.post("/v1/rooms/random-match", (req, res) => {
+  cleanupRooms();
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  healJoinedRoomsFromMembership(ctx.user);
+  pruneHostedRooms(ctx.user);
+  const hosted = ensureHostedRooms(ctx.user);
+  const joined = ensureJoinedRooms(ctx.user);
+  const alreadyRandom = (map) => {
+    for (const [code] of Object.entries(map || {})) {
+      const room = rooms.get(code) || (getDb().rooms?.[code] ? hydrateRoom(code, getDb().rooms[code]) : null);
+      if (room?.isRandom && Array.isArray(room.memberUserIds) && room.memberUserIds.includes(ctx.user.id)) {
+        return code;
+      }
+      const meta = map[code];
+      if (meta?.isRandom) return code;
+    }
+    return null;
+  };
+  const existing =
+    alreadyRandom(hosted) ||
+    alreadyRandom(joined);
+  if (existing) {
+    return res.status(409).json({
+      error: "already_in_random",
+      message: "Du bist schon in einer Random-Lobby. Bitte zuerst verlassen.",
+      code: existing,
+    });
+  }
+
+  const RANDOM_CAP = 5;
+  let targetCode = null;
+  let targetRoom = null;
+  for (const [code, room] of rooms.entries()) {
+    if (!room?.isRandom) continue;
+    healRoomMembership(room);
+    const cap = Math.min(MAX_PEERS, Math.max(1, Number(room.capacity) || RANDOM_CAP));
+    const count = Array.isArray(room.memberUserIds) ? room.memberUserIds.length : 0;
+    if (count >= cap) continue;
+    if (room.memberUserIds?.includes(ctx.user.id)) {
+      targetCode = code;
+      targetRoom = room;
+      break;
+    }
+    if (!targetRoom) {
+      targetCode = code;
+      targetRoom = room;
+    }
+  }
+
+  if (!targetRoom) {
+    const hostedCount = Object.keys(hosted).length;
+    if (hostedCount >= MAX_LOBBIES) {
+      return res.status(403).json({
+        error: "max_lobbies",
+        message: `Maximal ${MAX_LOBBIES} Lobbys. Bitte eine verlassen, bevor eine neue Random-Lobby startet.`,
+      });
+    }
+    let code = randomCode();
+    while (rooms.has(code)) code = randomCode();
+    const token = randomToken().slice(0, 32);
+    const hostColorSide = normalizeHostColorSide(ctx.user.colorSide || "blue");
+    const hostIdx = hostColorIndex(hostColorSide);
+    targetRoom = {
+      token,
+      createdAt: Date.now(),
+      lastActiveAt: Date.now(),
+      sockets: new Map(),
+      clearProposal: null,
+      hostUserId: ctx.user.id,
+      name: "Random",
+      hostNickname: ctx.user.nickname || "Host",
+      isFree: true,
+      isRandom: true,
+      capacity: RANDOM_CAP,
+      hostColorSide,
+      colorByUserId: { [ctx.user.id]: hostIdx },
+      peakPeers: 1,
+      lastCanvasAt: 0,
+      memberUserIds: [ctx.user.id],
+      joinAnnouncedUserIds: [ctx.user.id],
+      publicShare: { day: "", count: 0, nextAt: 0 },
+      publicProposal: null,
+      strokes: [],
+      stickers: [],
+    };
+    rooms.set(code, targetRoom);
+    hosted[code] = {
+      createdAt: Date.now(),
+      isFree: true,
+      isRandom: true,
+      name: "Random",
+      capacity: RANDOM_CAP,
+      token,
+      hostColorSide,
+      colorByUserId: { [ctx.user.id]: hostIdx },
+    };
+    persistRooms();
+    scheduleSave();
+    return res.status(201).json({
+      token,
+      maxPeers: MAX_PEERS,
+      capacity: RANDOM_CAP,
+      isFree: true,
+      isRandom: true,
+      name: "Random",
+      hostNickname: ctx.user.nickname || "Host",
+      hostColorSide,
+      suggestedColorIndex: hostIdx,
+      role: "HOST",
+      user: publicUser(ctx.user),
+      ...inviteFor(code),
+    });
+  }
+
+  // Join existing open random lobby
+  rememberMember(targetRoom, ctx.user.id);
+  healRoomMembership(targetRoom);
+  cancelEmptyFreeLobbyTimer(targetCode);
+  touchRoom(targetRoom);
+  persistRooms();
+  const isHost = Boolean(targetRoom.hostUserId && ctx.user.id === targetRoom.hostUserId);
+  const suggestedColorIndex = assignRoomColor(targetRoom, ctx.user.id, isHost);
+  if (isHost) {
+    hosted[targetCode] = {
+      createdAt: targetRoom.createdAt || Date.now(),
+      isFree: true,
+      isRandom: true,
+      name: "Random",
+      capacity: RANDOM_CAP,
+      token: targetRoom.token,
+      hostColorSide: normalizeHostColorSide(targetRoom.hostColorSide),
+      colorByUserId: targetRoom.colorByUserId || {},
+    };
+  } else {
+    rememberJoinedLobby(ctx.user, targetCode, targetRoom);
+  }
+  scheduleSave();
+  const roster = roomRosterAll(targetRoom);
+  return res.json({
+    token: targetRoom.token,
+    peers: uniqueConnectedCount(targetRoom),
+    capacity: roomCapacity(targetRoom),
+    maxPeers: MAX_PEERS,
+    name: "Random",
+    hostNickname: targetRoom.hostNickname || "Host",
+    hostUserId: targetRoom.hostUserId || null,
+    isFree: true,
+    isRandom: true,
+    hostColorSide: normalizeHostColorSide(targetRoom.hostColorSide),
+    suggestedColorIndex,
+    role: isHost ? "HOST" : "JOIN",
+    members: roster.map((m) => m.nickname),
+    memberList: roster,
+    ...inviteFor(targetCode),
+  });
+});
+
+app.post("/v1/shop/lootbox", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const LOOTBOX_PRICE = 10;
+  if (!requireCoins(ctx, LOOTBOX_PRICE, res)) return;
+  const pool = lootbox.buildPool({
+    emojiPrices: EMOJI_SHOP_PRICES,
+    themePrices: THEME_SHOP_PRICES,
+    petPrices: PET_SHOP_PRICES,
+    stickerPrices: STICKER_SHOP_PRICES,
+    isKnown: isKnownInventoryItem,
+    defaultPet: DEFAULT_PET,
+    starterEmojis: STARTER_EMOJIS,
+  });
+  ensureInventory(ctx.user);
+  // Themes/Begleiter: lieber noch nicht besessen; Emojis/Sticker stapeln
+  const filtered = pool.filter((x) => {
+    if (x.kind === "emojis" || x.kind === "stickers") return true;
+    return !market.userOwnsItem(ctx.user, ensureInventory, x.kind, x.itemId);
+  });
+  const usePool = filtered.length ? filtered : pool;
+  const pick = lootbox.pickFromPool(usePool);
+  if (!pick) {
+    return res.status(500).json({ error: "empty_pool", message: "Keine Items verfügbar." });
+  }
+  if (!applyLedger(ctx.user.id, -LOOTBOX_PRICE, "lootbox", `${pick.kind}:${pick.itemId}`)) {
+    return res.status(402).json({ error: "no_coins", message: "Nicht genug Coins." });
+  }
+  safeGiveItem(ctx.user, pick.kind, pick.itemId);
+  bumpShopPurchase(pick.kind, pick.itemId);
+  trackAch(ctx.user, "coins_spent", LOOTBOX_PRICE);
+  flushSave();
+  return res.json({
+    ok: true,
+    price: LOOTBOX_PRICE,
+    item: {
+      kind: pick.kind,
+      itemId: pick.itemId,
+      emoji: pick.emoji,
+      label: pick.label,
+      shopPrice: pick.shopPrice,
+      chancePercent: pick.chancePercent,
+    },
+    user: publicUser(ctx.user),
+  });
+});
+
 app.post("/v1/rooms", (req, res) => {
   cleanupRooms();
   const ctx = requireAuth(req, res);
@@ -6976,6 +7198,7 @@ app.post("/v1/rooms/:code/join", (req, res) => {
     hostNickname: room.hostNickname || "Host",
     hostUserId: room.hostUserId || null,
     isFree: Boolean(room.isFree),
+    isRandom: Boolean(room.isRandom),
     hostColorSide: normalizeHostColorSide(room.hostColorSide),
     suggestedColorIndex,
     members: roster.map((m) => m.nickname),

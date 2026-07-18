@@ -44,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -446,14 +447,26 @@ fun TemplateEditorSheet(
                     inactiveTrackColor = Color.White.copy(0.12f)
                 )
             )
-            Text(
-                "${brushWidth.roundToInt()}",
-                color = TextPrimary,
-                fontFamily = DisplayFont,
-                fontSize = 14.sp,
-                modifier = Modifier.width(28.dp),
-                textAlign = TextAlign.End
-            )
+            // Dicke als Linie sichtbar (nicht nur Zahl)
+            val previewColor = if (eraserOn) {
+                Color(0xFFFFD54F)
+            } else {
+                Color(PeerPalette.strokeColor(colorIndex))
+            }
+            Canvas(
+                modifier = Modifier
+                    .width(36.dp)
+                    .height(28.dp)
+            ) {
+                val stroke = (brushWidth / 40f * size.height * 0.85f).coerceIn(2f, size.height)
+                drawLine(
+                    color = previewColor,
+                    start = Offset(2f, size.height / 2f),
+                    end = Offset(size.width - 2f, size.height / 2f),
+                    strokeWidth = stroke,
+                    cap = StrokeCap.Round
+                )
+            }
         }
         Spacer(modifier = Modifier.height(6.dp))
         Box(

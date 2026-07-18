@@ -12,6 +12,15 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.92",
+            listOf(
+                "Hauptmenü: Random-Lobby (Zufall, max. 5, blaue Kachel)",
+                "Itemshop: Lootbox für 10 Coins mit Öffnen-Animation",
+                "Vorlagen: Pinseldicke als Linie sichtbar",
+                "Galerie: Löschen mit Hinweis bei veröffentlichten Bildern",
+            )
+        ),
+        Entry(
             "1.9.91",
             listOf(
                 "App-Start: öffentliches Ladebild zwei Sekunden sichtbar",

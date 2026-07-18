@@ -259,6 +259,7 @@ fun LobbiesScreen(
     onOpenLobby: (Lobby) -> Unit,
     onCreateLobby: () -> Unit,
     onJoinLobby: () -> Unit,
+    onRandomLobby: () -> Unit,
     onInviteSeat: (Lobby) -> Unit,
     onBuySeat: (Lobby) -> Unit,
     onRenameLobby: (Lobby) -> Unit,
@@ -477,24 +478,22 @@ fun LobbiesScreen(
                         fontSize = 13.sp
                     )
                 }
-                if (orderedLobbies.size < PeerPalette.MAX_LOBBIES) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .aspectRatio(1f)
-                            .clip(CircleShape)
-                            .background(accent)
-                            .clickable { showLobbyPlusDialog = true },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "+",
-                            color = Color.White,
-                            fontFamily = DisplayFont,
-                            fontSize = 36.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .aspectRatio(1f)
+                        .clip(CircleShape)
+                        .background(accent)
+                        .clickable { showLobbyPlusDialog = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "+",
+                        color = Color.White,
+                        fontFamily = DisplayFont,
+                        fontSize = 36.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
 
@@ -532,6 +531,15 @@ fun LobbiesScreen(
                                 },
                                 bordered = true
                             )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            PrimaryButton(
+                                "🎲 Random Lobby",
+                                MaleBlue,
+                                {
+                                    showLobbyPlusDialog = false
+                                    onRandomLobby()
+                                }
+                            )
                         }
                     },
                     confirmButton = {},
@@ -555,7 +563,7 @@ fun LobbiesScreen(
                         active = lobby.id == activeLobbyId,
                         state = lobbyStates[lobby.id] ?: ConnectionState.IDLE,
                         reconnect = reconnectUi[lobby.id],
-                        accent = accent,
+                        accent = if (lobby.isRandom) MaleBlue else accent,
                         dragging = dragging,
                         dragOffsetY = visualShiftFor(lobby.id),
                         reorderEnabled = orderedLobbies.size > 1,
@@ -825,7 +833,7 @@ private fun LobbyCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 AutoShrinkLobbyName(
-                    name = lobby.name,
+                    name = if (lobby.isRandom) "🎲 Random" else lobby.name,
                     modifier = if (reorderEnabled) {
                         Modifier.pointerInput(lobby.id) {
                             detectDragGesturesAfterLongPress(
@@ -843,9 +851,10 @@ private fun LobbyCard(
                     }
                 )
                 Text(
-                    text = when (lobby.role) {
-                        Role.HOST -> "Von dir erstellt"
-                        Role.JOIN -> "Beigetreten"
+                    text = when {
+                        lobby.isRandom -> "Zufalls-Lobby · max. 5"
+                        lobby.role == Role.HOST -> "Von dir erstellt"
+                        else -> "Beigetreten"
                     },
                     color = TextMuted,
                     fontFamily = BodyFont,
@@ -880,17 +889,19 @@ private fun LobbyCard(
             ReconnectBanner(reconnect = reconnect, accent = accent, onReconnect = onReconnect)
         }
         PrimaryButton("Leinwand öffnen", accent, onOpen)
-        SeatGrid(
-            capacity = capacity,
-            maxPeers = PeerPalette.MAX_PEERS,
-            occupied = occupied,
-            nicknames = nicknames,
-            accent = accent,
-            canManage = true,
-            onInvite = onInviteSeat,
-            onBuy = onBuySeat
-        )
-        if (lobby.role == Role.HOST) {
+        if (!lobby.isRandom) {
+            SeatGrid(
+                capacity = capacity,
+                maxPeers = PeerPalette.MAX_PEERS,
+                occupied = occupied,
+                nicknames = nicknames,
+                accent = accent,
+                canManage = true,
+                onInvite = onInviteSeat,
+                onBuy = onBuySeat
+            )
+        }
+        if (lobby.role == Role.HOST && !lobby.isRandom) {
             PrimaryButton("Umbenennen", BgDeep, onRename, bordered = true)
         }
         Text(

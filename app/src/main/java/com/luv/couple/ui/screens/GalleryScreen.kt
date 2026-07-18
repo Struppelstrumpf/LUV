@@ -414,8 +414,23 @@ fun GalleryScreen(
                 )
             },
             text = {
+                val published = pending.count { !it.publicId.isNullOrBlank() }
                 Text(
-                    "Das lässt sich nicht rückgängig machen.",
+                    buildString {
+                        append("Das lässt sich nicht rückgängig machen.")
+                        if (published > 0) {
+                            append("\n\n")
+                            if (published == 1) {
+                                append(
+                                    "Dieses Bild ist veröffentlicht — die Veröffentlichung wird zurückgezogen."
+                                )
+                            } else {
+                                append(
+                                    "$published Bilder sind veröffentlicht — diese Veröffentlichungen werden zurückgezogen."
+                                )
+                            }
+                        }
+                    },
                     color = TextMuted,
                     fontFamily = BodyFont
                 )
@@ -426,6 +441,11 @@ fun GalleryScreen(
                         val toDelete = pending
                         confirmDelete = null
                         scope.launch {
+                            toDelete.mapNotNull { it.publicId?.takeIf { id -> id.isNotBlank() } }
+                                .distinct()
+                                .forEach { pubId ->
+                                    runCatching { LuvApiClient.unpublishPublicCanvas(pubId) }
+                                }
                             val removed = LocalMoments.delete(context, toDelete)
                             if (preview != null && toDelete.any { it.id == preview?.id }) {
                                 preview = null

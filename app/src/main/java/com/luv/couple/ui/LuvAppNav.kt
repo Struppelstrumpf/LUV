@@ -528,6 +528,7 @@ fun LuvAppNav() {
                     invite = room.invite,
                     capacity = room.capacity,
                     isFree = room.isFree,
+                    isRandom = room.isRandom,
                     hostNickname = room.hostNickname,
                     hostColorSide = room.hostColorSide
                 )
@@ -924,6 +925,62 @@ fun LuvAppNav() {
                             onJoinLobby = {
                                 joinError = null
                                 navController.navigate(Routes.JOIN)
+                            },
+                            onRandomLobby = {
+                                joinError = null
+                                scope.launch {
+                                    if (lobbies.any { it.isRandom }) {
+                                        joinError =
+                                            "Du bist schon in einer Random-Lobby. Bitte zuerst verlassen."
+                                        return@launch
+                                    }
+                                    busy = true
+                                    try {
+                                        val nick = prefs.snapshot().nickname.orEmpty()
+                                        if (!ensureAuth(nick)) return@launch
+                                        val room = LuvApiClient.randomMatch()
+                                        room.suggestedColorIndex?.let { suggested ->
+                                            prefs.setColorIndex(suggested)
+                                            colorIndex = suggested
+                                            CanvasStore.updateProfile(nick, suggested)
+                                        }
+                                        val role = when (room.role?.uppercase()) {
+                                            "JOIN" -> Role.JOIN
+                                            else -> Role.HOST
+                                        }
+                                        val lobby = Lobby(
+                                            id = UUID.randomUUID().toString(),
+                                            name = "Random",
+                                            role = role,
+                                            code = room.code,
+                                            token = room.token,
+                                            invite = room.invite,
+                                            capacity = room.capacity,
+                                            isFree = room.isFree,
+                                            isRandom = true,
+                                            hostNickname = room.hostNickname,
+                                            hostColorSide = room.hostColorSide
+                                        )
+                                        prefs.upsertLobby(lobby)
+                                        PairSessionState.setCapacity(lobby.id, room.capacity)
+                                        CanvasStore.setActiveLobby(lobby.id)
+                                        PairConnectionService.startAll(context)
+                                        LockScreenWidgetProvider.requestUpdate(context)
+                                        refreshAccount()
+                                        Toast.makeText(
+                                            context,
+                                            "Random-Lobby bereit",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    } catch (e: Exception) {
+                                        joinError = when (e) {
+                                            is LuvApiException -> e.message
+                                            else -> "Random-Lobby fehlgeschlagen."
+                                        }
+                                    } finally {
+                                        busy = false
+                                    }
+                                }
                             },
                             onInviteSeat = { lobby -> inviteSeat(lobby) },
                             onBuySeat = { lobby -> buySeat(lobby) },

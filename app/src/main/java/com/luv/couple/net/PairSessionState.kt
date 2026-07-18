@@ -192,11 +192,24 @@ object PairSessionState {
             departed = false,
             petEmoji = myPetEmoji.ifBlank { "🐣" }
         )
-        // Für die Legende: nur noch aktive Lobby-Mitglieder (nicht departed)
-        val others = remote.filter { peer ->
-            !peer.departed && !isSelf(peer, myNickname, myUserId)
-        }.distinctBy { it.nickname.trim().lowercase() }
-        return listOf(me) + others
+        // Beitrittsreihenfolge vom Server (Map-Insertion = memberUserIds-Reihenfolge)
+        val ordered = remote.filter { peer ->
+            !peer.departed
+        }.distinctBy {
+            it.userId?.takeIf { id -> id.isNotBlank() }
+                ?: it.nickname.trim().lowercase()
+        }
+        if (ordered.isEmpty()) return listOf(me)
+        // „Me“ an die Position des eigenen Join-Slots — nicht immer ganz vorne
+        return ordered.map { peer ->
+            if (isSelf(peer, myNickname, myUserId)) me.copy(
+                peerKey = peer.peerKey,
+                nickname = peer.nickname.takeIf { it.isNotBlank() } ?: me.nickname
+            ) else peer
+        }.let { list ->
+            if (list.any { isSelf(it, myNickname, myUserId) }) list
+            else listOf(me) + list
+        }
     }
 
     /**

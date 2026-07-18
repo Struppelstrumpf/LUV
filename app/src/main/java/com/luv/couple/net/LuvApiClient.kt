@@ -24,12 +24,24 @@ data class RoomSession(
     val maxPeers: Int = PeerPalette.MAX_PEERS,
     val capacity: Int = PeerPalette.FREE_LOBBY_START_CAPACITY,
     val isFree: Boolean = false,
+    val isRandom: Boolean = false,
     val name: String = "Lobby",
     val hostNickname: String = "Host",
     val hostColorSide: String = "blue",
     val suggestedColorIndex: Int? = null,
     val peers: Int = 0,
-    val memberList: List<RosterMember> = emptyList()
+    val memberList: List<RosterMember> = emptyList(),
+    val role: String? = null
+)
+
+data class LootboxResult(
+    val kind: String,
+    val itemId: String,
+    val emoji: String,
+    val label: String,
+    val shopPrice: Int,
+    val chancePercent: Double,
+    val coins: Int
 )
 
 data class AuthResult(
@@ -92,6 +104,7 @@ data class RemoteLobby(
     val token: String?,
     val capacity: Int,
     val isFree: Boolean,
+    val isRandom: Boolean = false,
     val hostColorSide: String,
     val invite: String,
     val hostNickname: String
@@ -409,6 +422,7 @@ object LuvApiClient {
                 token = o.optString("token").takeIf { it.isNotBlank() },
                 capacity = o.optInt("capacity", PeerPalette.FREE_LOBBY_START_CAPACITY),
                 isFree = o.optBoolean("isFree", false),
+                isRandom = o.optBoolean("isRandom", false),
                 hostColorSide = o.optString("hostColorSide", "blue"),
                 invite = o.optString("invite"),
                 hostNickname = o.optString("hostNickname", "Host")
@@ -2325,7 +2339,10 @@ object LuvApiClient {
                         "room_not_found" -> "Lobby nicht gefunden. Host muss online sein — Link neu teilen."
                         "room_full" -> "Lobby ist voll (max. ${PeerPalette.MAX_PEERS} Personen)."
                         "max_lobbies" -> "Maximal ${PeerPalette.MAX_LOBBIES} Lobbys."
+                        "already_in_random" -> msg
+                            ?: "Du bist schon in einer Random-Lobby. Bitte zuerst verlassen."
                         "no_coins" -> "Nicht genug Coins."
+                        "insufficient_coins" -> "Nicht genug Coins."
                         "capacity_full" -> "Maximal ${PeerPalette.MAX_PEERS} Personen."
                         "not_host" -> "Nur der Host kann Plätze freischalten."
                         "unauthorized" -> "Bitte neu anmelden."
@@ -2355,14 +2372,43 @@ object LuvApiClient {
                 maxPeers = parsed.optInt("maxPeers", PeerPalette.MAX_PEERS),
                 capacity = parsed.optInt("capacity", PeerPalette.FREE_LOBBY_START_CAPACITY),
                 isFree = parsed.optBoolean("isFree", false),
+                isRandom = parsed.optBoolean("isRandom", false),
                 name = parsed.optString("name", "Lobby"),
                 hostNickname = parsed.optString("hostNickname", "Host"),
                 hostColorSide = parsed.optString("hostColorSide", "blue").ifBlank { "blue" },
                 suggestedColorIndex = suggested,
                 peers = parsed.optInt("peers", parsed.optInt("count", 0)),
-                memberList = parseMemberList(parsed)
+                memberList = parseMemberList(parsed),
+                role = parsed.optString("role").takeIf { it.isNotBlank() }
             )
         }
+    }
+
+    suspend fun randomMatch(): RoomSession = withContext(Dispatchers.IO) {
+        val request = authedRequestBuilder("/v1/rooms/random-match")
+            .post("{}".toRequestBody(jsonMedia))
+            .build()
+        executeRoom(request)
+    }
+
+    suspend fun buyLootbox(): LootboxResult = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/shop/lootbox", JSONObject().toString())
+        json.optJSONObject("user")?.let { userJson ->
+            AccountSession.setAccount(AccountInfo.fromApi(userJson))
+        }
+        val item = json.optJSONObject("item")
+            ?: throw LuvApiException("Keine Lootbox-Belohnung erhalten")
+        val userCoins = json.optJSONObject("user")?.optInt("coins", -1)?.takeIf { it >= 0 }
+            ?: AccountSession.account.value?.coins ?: 0
+        LootboxResult(
+            kind = item.optString("kind"),
+            itemId = item.optString("itemId"),
+            emoji = item.optString("emoji").ifBlank { item.optString("itemId") },
+            label = item.optString("label").ifBlank { item.optString("itemId") },
+            shopPrice = item.optInt("shopPrice", 0),
+            chancePercent = item.optDouble("chancePercent", 0.0),
+            coins = userCoins
+        )
     }
 
     private fun parseMemberList(json: JSONObject): List<RosterMember> {

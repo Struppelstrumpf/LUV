@@ -82,6 +82,7 @@ import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
+import com.luv.couple.ui.theme.MaleBlue
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.launch
@@ -880,7 +881,7 @@ private fun ItemShopContent(
                     )
                 }
             }
-            else -> LazyVerticalGrid(
+            3 -> LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 12.dp),
@@ -899,7 +900,230 @@ private fun ItemShopContent(
                     )
                 }
             }
+            else -> LootboxTab(
+                coins = account?.coins ?: 0,
+                busy = busyKey != null,
+                onBusy = { busyKey = it },
+                onRefresh = { reloadBag() }
+            )
         }
+    }
+}
+
+@Composable
+private fun LootboxTab(
+    coins: Int,
+    busy: Boolean,
+    onBusy: (String?) -> Unit,
+    onRefresh: suspend () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    var tapsLeft by remember { mutableIntStateOf(0) }
+    var pendingReward by remember { mutableStateOf<com.luv.couple.net.LootboxResult?>(null) }
+    var phase by remember { mutableStateOf("idle") } // idle | tapping | reveal
+    var shake by remember { mutableFloatStateOf(0f) }
+    var flash by remember { mutableFloatStateOf(0f) }
+    val shakeAnim by animateFloatAsState(shake, label = "lootShake")
+    val flashAnim by animateFloatAsState(flash, label = "lootFlash")
+
+    fun kindLabel(kind: String): String = when (kind) {
+        "themes" -> "Hintergrund"
+        "pets" -> "Begleiter"
+        "stickers" -> "Sticker"
+        "emojis" -> "Emoji"
+        else -> "Item"
+    }
+
+    fun resolveLabel(result: com.luv.couple.net.LootboxResult): String = when (result.kind) {
+        "themes" -> ShopCatalog.THEMES.firstOrNull { it.id == result.itemId }?.label
+            ?: result.label
+        "pets" -> ShopCatalog.PETS.firstOrNull { it.emoji == result.itemId }?.label
+            ?: result.label
+        else -> result.emoji.ifBlank { result.label }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier
+                    .graphicsLayer {
+                        translationX = shakeAnim * 10f
+                        rotationZ = shakeAnim * 4f
+                    }
+            ) {
+                Text(
+                    "Lootbox",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 28.sp
+                )
+                Text(
+                    "${ShopCatalog.LOOTBOX_PRICE_COINS} Coins",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 15.sp
+                )
+                Box(
+                    modifier = Modifier
+                        .size(168.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color(0xFF2A3344), Color(0xFF1A2230))
+                            )
+                        )
+                        .border(1.5.dp, MaleBlue.copy(0.55f), RoundedCornerShape(28.dp))
+                        .clickable(enabled = !busy && phase != "reveal") {
+                            when (phase) {
+                                "idle" -> {
+                                    if (coins < ShopCatalog.LOOTBOX_PRICE_COINS) {
+                                        Toast.makeText(
+                                            context,
+                                            "Nicht genug Coins",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                        return@clickable
+                                    }
+                                    onBusy("lootbox")
+                                    scope.launch {
+                                        runCatching { LuvApiClient.buyLootbox() }
+                                            .onSuccess { result ->
+                                                pendingReward = result
+                                                tapsLeft = ShopCatalog.LOOTBOX_TAP_COUNT
+                                                phase = "tapping"
+                                                haptics.performHapticFeedback(
+                                                    HapticFeedbackType.LongPress
+                                                )
+                                            }
+                                            .onFailure {
+                                                Toast.makeText(
+                                                    context,
+                                                    it.message ?: "Kauf fehlgeschlagen",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        onBusy(null)
+                                    }
+                                }
+                                "tapping" -> {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    tapsLeft = (tapsLeft - 1).coerceAtLeast(0)
+                                    if (tapsLeft == 0) {
+                                        phase = "reveal"
+                                        scope.launch {
+                                            shake = 1f
+                                            kotlinx.coroutines.delay(80)
+                                            shake = -1f
+                                            kotlinx.coroutines.delay(80)
+                                            shake = 1f
+                                            kotlinx.coroutines.delay(80)
+                                            shake = 0f
+                                            flash = 1f
+                                            kotlinx.coroutines.delay(220)
+                                            flash = 0f
+                                            onRefresh()
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("🎁", fontSize = 72.sp)
+                }
+                Text(
+                    when (phase) {
+                        "tapping" -> "Noch $tapsLeft× tippen"
+                        "reveal" -> "Geöffnet!"
+                        else -> "Tippen zum Öffnen · ${ShopCatalog.LOOTBOX_PRICE_COINS} Coins"
+                    },
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 16.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
+            Text(
+                "Zufallsinhalt aus dem Itemshop. Chance steigt mit günstigeren Items; " +
+                    "teure Items sind seltener. Sehr teure Items sind extrem selten. " +
+                    "Coins für Lootboxen sind nicht erstattungsfähig. Details in den AGB.",
+                color = TextMuted.copy(alpha = 0.85f),
+                fontFamily = BodyFont,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 10.dp)
+            )
+        }
+        if (flashAnim > 0.05f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.White.copy(alpha = flashAnim * 0.85f))
+            )
+        }
+    }
+
+    pendingReward?.takeIf { phase == "reveal" }?.let { reward ->
+        AlertDialog(
+            onDismissRequest = {
+                pendingReward = null
+                phase = "idle"
+                tapsLeft = 0
+            },
+            containerColor = BgSoft,
+            title = {
+                Text("Lootbox geöffnet", fontFamily = DisplayFont, color = TextPrimary)
+            },
+            text = {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(reward.emoji.ifBlank { "✨" }, fontSize = 56.sp)
+                    Text(
+                        "${kindLabel(reward.kind)} · ${resolveLabel(reward)}",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 18.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        "Shop-Preis: ${reward.shopPrice} Coins",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 14.sp
+                    )
+                    Text(
+                        "Chance: ${"%.2f".format(reward.chancePercent)} %",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingReward = null
+                    phase = "idle"
+                    tapsLeft = 0
+                }) {
+                    Text("Ins Inventar", color = AccentRose, fontFamily = DisplayFont)
+                }
+            }
+        )
     }
 }
 

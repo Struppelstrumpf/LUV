@@ -1300,10 +1300,18 @@ private fun PetKraulOverlay(
                         textAlign = TextAlign.Center
                     )
                     Text(
-                        "2 Sekunden kraulen",
+                        "2 Sekunden kraulen — einmal pro Tag möglich",
                         color = Color.White.copy(0.55f),
                         fontFamily = BodyFont,
                         fontSize = 12.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Du und der Begleiter bekommt je 1 Coin.",
+                        color = Color.White.copy(0.4f),
+                        fontFamily = BodyFont,
+                        fontSize = 11.sp,
                         textAlign = TextAlign.Center
                     )
                 }

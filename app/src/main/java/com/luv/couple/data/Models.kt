@@ -126,6 +126,8 @@ data class Lobby(
     val invite: String = "LUV-$code",
     val capacity: Int = PeerPalette.FREE_LOBBY_START_CAPACITY,
     val isFree: Boolean = false,
+    /** Zufalls-Matchmaking-Lobby (blau, keine Einladungen). */
+    val isRandom: Boolean = false,
     val hostNickname: String = "",
     val hostColorSide: String = "blue",
     /** Höchste jemals gesehene Peer-Zahl — für Paar-Modus. */

@@ -231,8 +231,11 @@ object ShopCatalog {
 
     /** Tab-Labels — Inventar (Menü) und Itemshop müssen übereinstimmen. */
     val SHOP_TAB_LABELS: List<String> = listOf(
-        "Sticker", "Hintergründe", "Begleiter", "Emojis"
+        "Sticker", "Hintergründe", "Begleiter", "Emojis", "Lootbox"
     )
+
+    const val LOOTBOX_PRICE_COINS = 10
+    const val LOOTBOX_TAP_COUNT = 6
 
     /** Nur Tiere — Küken ist Starter. Preise nach Seltenheit. */
     val PETS: List<ShopPet> = listOf(
