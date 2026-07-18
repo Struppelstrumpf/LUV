@@ -842,16 +842,16 @@ class LockDrawActivity : ComponentActivity() {
 
     private fun paintEraserButton() {
         val gold = 0xFFFFD56A.toInt()
-        val white = 0xFFFFFFFF.toInt()
-        btnEraser.setTextColor(if (eraserOn) gold else white)
-        btnEraser.alpha = if (eraserOn) 1f else 0.92f
-        btnEraser.background = GradientDrawable().apply {
-            cornerRadius = 12f * resources.displayMetrics.density
-            setColor(if (eraserOn) 0x33FFD56A else 0x22FFFFFF)
-            setStroke(
-                (1.2f * resources.displayMetrics.density).toInt(),
-                if (eraserOn) gold else 0x55FFFFFF
-            )
+        btnEraser.alpha = 1f
+        if (eraserOn) {
+            // Nur gelbe Umrandung wenn aktiv — kein graues Kästchen
+            btnEraser.background = GradientDrawable().apply {
+                cornerRadius = 12f * resources.displayMetrics.density
+                setColor(android.graphics.Color.TRANSPARENT)
+                setStroke((2f * resources.displayMetrics.density).toInt(), gold)
+            }
+        } else {
+            btnEraser.background = null
         }
     }
 

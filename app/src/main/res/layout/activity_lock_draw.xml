@@ -333,7 +333,7 @@
                     android:layout_height="40dp"
                     android:layout_marginStart="4dp"
                     android:layout_weight="1"
-                    android:background="@drawable/lock_dock_slot"
+                    android:background="@android:color/transparent"
                     android:clickable="true"
                     android:focusable="true"
                     android:gravity="center"

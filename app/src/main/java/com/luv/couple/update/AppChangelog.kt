@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.8.99",
+            listOf(
+                "Schwamm ohne graues Kästchen — gelb nur wenn aktiv",
+            )
+        ),
+        Entry(
             "1.8.98",
             listOf(
                 "Etwas mehr Abstand zwischen Reaktions-Emojis",
