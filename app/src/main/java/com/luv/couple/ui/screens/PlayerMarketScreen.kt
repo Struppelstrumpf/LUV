@@ -109,6 +109,7 @@ fun PlayerMarketScreen(
     /** Item aus Übersicht → Angebots-Liste (Nasebär). */
     var offersItem by remember { mutableStateOf<LuvApiClient.MarketItem?>(null) }
     var offersList by remember { mutableStateOf<List<LuvApiClient.MarketListing>>(emptyList()) }
+    var offersInsight by remember { mutableStateOf<LuvApiClient.MarketPriceInsight?>(null) }
     var offersLoading by remember { mutableStateOf(false) }
     var previewListing by remember { mutableStateOf<LuvApiClient.MarketListing?>(null) }
     var friends by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
@@ -120,6 +121,7 @@ fun PlayerMarketScreen(
     fun openOffers(item: LuvApiClient.MarketItem) {
         offersItem = item
         offersList = emptyList()
+        offersInsight = item.priceInsight
         offersLoading = true
         scope.launch {
             runCatching {
@@ -130,6 +132,7 @@ fun PlayerMarketScreen(
                 )
             }.onSuccess {
                 offersList = it.offers
+                if (it.priceInsight != null) offersInsight = it.priceInsight
             }.onFailure {
                 Toast.makeText(
                     context,
@@ -137,6 +140,7 @@ fun PlayerMarketScreen(
                     Toast.LENGTH_SHORT
                 ).show()
                 offersItem = null
+                offersInsight = null
             }
             offersLoading = false
         }
@@ -261,8 +265,10 @@ fun PlayerMarketScreen(
                 )
             }.onSuccess {
                 offersList = it.offers
+                if (it.priceInsight != null) offersInsight = it.priceInsight
                 if (it.offers.isEmpty()) {
                     offersItem = null
+                    offersInsight = null
                     reloadMarket()
                 }
             }
@@ -272,6 +278,7 @@ fun PlayerMarketScreen(
     LaunchedEffect(mode, category, query) {
         offersItem = null
         offersList = emptyList()
+        offersInsight = null
         previewListing = null
         reloadMarket()
     }
@@ -570,9 +577,11 @@ fun PlayerMarketScreen(
                                 offers = offersList,
                                 loading = offersLoading,
                                 ui = ui,
+                                priceInsight = offersInsight ?: offersProduct.priceInsight,
                                 onBack = {
                                     offersItem = null
                                     offersList = emptyList()
+                                    offersInsight = null
                                     previewListing = null
                                 },
                                 onSelectOffer = { previewListing = it }
@@ -692,6 +701,7 @@ fun PlayerMarketScreen(
         MarketListingPreviewDialog(
             listing = listing,
             busy = busyId == listing.id,
+            priceInsight = offersInsight,
             onDismiss = { previewListing = null },
             onBuy = {
                 if (!economyUnlocked) {
@@ -789,6 +799,7 @@ private fun MarketOffersPanel(
     offers: List<LuvApiClient.MarketListing>,
     loading: Boolean,
     ui: UiScale,
+    priceInsight: LuvApiClient.MarketPriceInsight? = product.priceInsight,
     onBack: () -> Unit,
     onSelectOffer: (LuvApiClient.MarketListing) -> Unit
 ) {
@@ -827,6 +838,10 @@ private fun MarketOffersPanel(
                     )
                 }
                 Text("Zurück", color = MarketGold, fontFamily = DisplayFont, fontSize = ui.ts(12.sp))
+            }
+            if (priceInsight != null && priceInsight.hasAny) {
+                Spacer(modifier = Modifier.height(ui.s(8.dp)))
+                MarketPriceInsightCard(insight = priceInsight, compact = true)
             }
             Spacer(modifier = Modifier.height(ui.s(8.dp)))
             if (loading && offers.isEmpty()) {
@@ -923,6 +938,7 @@ private fun MarketOfferRow(
 private fun MarketListingPreviewDialog(
     listing: LuvApiClient.MarketListing,
     busy: Boolean,
+    priceInsight: LuvApiClient.MarketPriceInsight? = null,
     onDismiss: () -> Unit,
     onBuy: () -> Unit
 ) {
@@ -989,6 +1005,11 @@ private fun MarketListingPreviewDialog(
                     color = MarketGold,
                     fontFamily = DisplayFont,
                     fontSize = 14.sp
+                )
+                MarketPriceInsightCard(
+                    insight = priceInsight,
+                    compact = true,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         },
@@ -1083,13 +1104,22 @@ private fun MarketItemRow(
                     append(item.offerCount)
                     append(if (item.offerCount == 1) " Angebot" else " Angebote")
                     append("  ·  ")
-                    append(trendLabel(item.trend))
+                    append(trendArrow(item.trend))
                 },
                 color = MarketGold,
                 fontFamily = DisplayFont,
                 fontSize = ui.ts(12.sp),
                 softWrap = true
             )
+            priceInsightSummary(item.priceInsight)?.let { summary ->
+                Text(
+                    summary,
+                    color = MarketBrownMuted,
+                    fontFamily = BodyFont,
+                    fontSize = ui.ts(11.sp),
+                    softWrap = true
+                )
+            }
         }
         Text("›", color = MarketBrownMuted, fontFamily = DisplayFont, fontSize = ui.ts(22.sp))
     }
@@ -1174,10 +1204,36 @@ private fun CreateListingDialog(
     var isPrivate by remember { mutableStateOf(false) }
     var targetFriend by remember { mutableStateOf<LuvApiClient.FriendCard?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var priceInsight by remember { mutableStateOf<LuvApiClient.MarketPriceInsight?>(null) }
+    var priceInsightLoading by remember { mutableStateOf(false) }
 
     val activeKind = if (showInventarTabs) inventarTab else categoryFilter
     val sellInventory = remember(inventory, activeKind) {
         inventory.filter { it.kind == activeKind }
+    }
+
+    LaunchedEffect(pick?.kind, pick?.itemId) {
+        val selected = pick
+        if (selected == null) {
+            priceInsight = null
+            return@LaunchedEffect
+        }
+        priceInsightLoading = true
+        priceInsight = runCatching {
+            LuvApiClient.fetchMarketItemPrice(selected.kind, selected.itemId)
+        }.getOrNull()
+        priceInsightLoading = false
+        // Sinnvoller Startpreis: Mittel der Spanne oder Shop-Preis
+        val hint = priceInsight
+        val suggest = when {
+            hint?.sales != null -> (hint.sales.min + hint.sales.max) / 2
+            hint?.listings != null -> (hint.listings.min + hint.listings.max) / 2
+            hint?.shopPrice != null -> hint.shopPrice
+            else -> null
+        }
+        if (suggest != null && suggest > 0) {
+            priceText = suggest.coerceIn(1, 500).toString()
+        }
     }
 
     AlertDialog(
@@ -1335,6 +1391,16 @@ private fun CreateListingDialog(
                                     .padding(horizontal = 8.dp, vertical = 6.dp)
                             )
                         }
+                        if (priceInsightLoading) {
+                            Text(
+                                "Preise werden geladen…",
+                                color = MarketBrownMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 12.sp
+                            )
+                        } else {
+                            MarketPriceInsightCard(insight = priceInsight)
+                        }
                     }
                     Text(
                         "Preis (Coins)",
@@ -1471,5 +1537,125 @@ private fun categoryLabel(category: String): String = when (category) {
 private fun trendLabel(trend: String): String = when (trend) {
     "↑" -> "↑ steigend"
     "↓" -> "↓ fallend"
-    else -> "= stabil"
+    else -> "→ stabil"
+}
+
+private fun trendArrow(trend: String): String = when (trend) {
+    "↑" -> "↑"
+    "↓" -> "↓"
+    else -> "→"
+}
+
+private fun trendColor(trend: String): Color = when (trend) {
+    "↑" -> Color(0xFF2E7D32)
+    "↓" -> Color(0xFFC62828)
+    else -> MarketBrownMuted
+}
+
+private fun formatCoinRange(min: Int, max: Int): String =
+    if (min == max) "$min 🪙" else "$min–$max 🪙"
+
+@Composable
+private fun MarketPriceInsightCard(
+    insight: LuvApiClient.MarketPriceInsight?,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
+) {
+    if (insight == null || !insight.hasAny) return
+    val shape = RoundedCornerShape(if (compact) 10.dp else 12.dp)
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(MarketCreamDeep.copy(0.85f))
+            .border(1.dp, MarketGold.copy(0.28f), shape)
+            .padding(
+                horizontal = if (compact) 10.dp else 12.dp,
+                vertical = if (compact) 8.dp else 10.dp
+            ),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp)
+    ) {
+        insight.shopPrice?.let { shop ->
+            PriceInsightLine(
+                label = "Itemshop",
+                value = "$shop 🪙",
+                accent = MarketBrown,
+                compact = compact
+            )
+        }
+        insight.sales?.let { sales ->
+            PriceInsightLine(
+                label = "Verkauft · ${insight.windowDays} Tage",
+                value = formatCoinRange(sales.min, sales.max),
+                trend = sales.trend,
+                accent = MarketGold,
+                compact = compact
+            )
+        }
+        insight.listings?.let { listings ->
+            PriceInsightLine(
+                label = "Aktuelle Angebote",
+                value = formatCoinRange(listings.min, listings.max),
+                trend = listings.trend,
+                accent = MarketGold,
+                compact = compact
+            )
+        }
+    }
+}
+
+@Composable
+private fun PriceInsightLine(
+    label: String,
+    value: String,
+    accent: Color,
+    compact: Boolean,
+    trend: String? = null
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            label,
+            color = MarketBrownMuted,
+            fontFamily = BodyFont,
+            fontSize = if (compact) 11.sp else 12.sp,
+            modifier = Modifier.weight(1f)
+        )
+        if (trend != null) {
+            Text(
+                trendArrow(trend),
+                color = trendColor(trend),
+                fontFamily = DisplayFont,
+                fontSize = if (compact) 13.sp else 14.sp
+            )
+        }
+        Text(
+            value,
+            color = accent,
+            fontFamily = DisplayFont,
+            fontSize = if (compact) 12.sp else 13.sp,
+            softWrap = false
+        )
+    }
+}
+
+/** Kurze Zeile für Marktlisten (gleiche Infos, kompakt). */
+private fun priceInsightSummary(insight: LuvApiClient.MarketPriceInsight?): String? {
+    if (insight == null || !insight.hasAny) return null
+    val parts = mutableListOf<String>()
+    insight.shopPrice?.let { parts.add("Shop $it 🪙") }
+    when {
+        insight.sales != null -> {
+            val s = insight.sales
+            parts.add("${trendArrow(s.trend)} ${formatCoinRange(s.min, s.max)}")
+        }
+        insight.listings != null -> {
+            val l = insight.listings
+            parts.add("Angebote ${formatCoinRange(l.min, l.max)}")
+        }
+    }
+    return parts.joinToString("  ·  ").takeIf { it.isNotBlank() }
 }

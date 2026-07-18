@@ -50,6 +50,7 @@ const ALL_MOD_PERMISSION_IDS = [
   "gm.block",
   "gm.delete",
   "live.notify",
+  "market.settings",
   "mods.manage",
 ];
 
@@ -99,6 +100,15 @@ const MOD_PERMISSION_GROUPS = [
     label: "Live-Hinweis",
     description: "Kurze In-App-Nachricht an alle",
     permissions: [{ id: "live.notify", label: "Live-Hinweis senden" }],
+  },
+  {
+    id: "market",
+    icon: "🏪",
+    label: "Marktplatz",
+    description: "Preis-Anzeige und Markt-Einstellungen",
+    permissions: [
+      { id: "market.settings", label: "Preis-Zeitfenster einstellen" },
+    ],
   },
   {
     id: "mods",
@@ -7245,6 +7255,11 @@ app.get("/v1/market/hub", (req, res) => {
   });
 });
 
+function attachPriceInsight(kind, itemId) {
+  const shop = shopItemPrice(kind, itemId);
+  return market.priceInsight(getDb(), kind, itemId, shop > 0 ? shop : null);
+}
+
 app.get("/v1/market", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
@@ -7254,7 +7269,20 @@ app.get("/v1/market", (req, res) => {
   const category = String(req.query.category || "all").trim() || "all";
   const q = String(req.query.q || "").trim().slice(0, 40);
   const data = market.aggregateMarket(getDb(), ctx.user.id, { category, q, mode });
-  return res.json({ ok: true, ...data });
+  const items = (data.items || []).map((it) => {
+    const priceInsight = attachPriceInsight(it.kind, it.itemId);
+    return {
+      ...it,
+      priceInsight,
+      trend: priceInsight.trend || it.trend,
+    };
+  });
+  return res.json({
+    ok: true,
+    ...data,
+    items,
+    priceWindowDays: market.priceWindowDays(getDb()),
+  });
 });
 
 /** Angebote zu einem Item (Nasebär-Drill-down). */
@@ -7268,8 +7296,63 @@ app.get("/v1/market/offers", (req, res) => {
     return res.status(400).json({ error: "bad_item", message: "Item ungültig." });
   }
   const data = market.listOffersForItem(getDb(), ctx.user.id, { kind, itemId, mode });
-  return res.json({ ok: true, ...data });
+  const priceInsight = attachPriceInsight(kind, itemId);
+  return res.json({
+    ok: true,
+    ...data,
+    priceInsight,
+    priceWindowDays: market.priceWindowDays(getDb()),
+  });
 });
+
+/** Preis-Infos für Angebot erstellen / Detail. */
+app.get("/v1/market/item-price", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const kind = String(req.query.kind || "").trim();
+  const itemId = String(req.query.itemId || "").trim().slice(0, 24);
+  if (!["pets", "themes", "stickers", "emojis"].includes(kind) || !itemId) {
+    return res.status(400).json({ error: "bad_item", message: "Item ungültig." });
+  }
+  const priceInsight = attachPriceInsight(kind, itemId);
+  return res.json({
+    ok: true,
+    kind,
+    itemId,
+    priceInsight,
+    priceWindowDays: market.priceWindowDays(getDb()),
+  });
+});
+
+app.get("/v1/admin/market-settings", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  return res.json({
+    ok: true,
+    priceWindowDays: market.priceWindowDays(getDb()),
+    options: market.PRICE_WINDOW_OPTIONS,
+  });
+});
+
+function applyMarketSettings(req, res) {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const result = market.setPriceWindowDays(getDb(), req.body?.priceWindowDays);
+  if (!result.ok) {
+    return res.status(400).json({
+      error: "bad_window",
+      message: `Erlaubt: ${market.PRICE_WINDOW_OPTIONS.join(", ")} Tage.`,
+    });
+  }
+  flushSave();
+  return res.json({
+    ok: true,
+    priceWindowDays: result.priceWindowDays,
+    options: result.options,
+  });
+}
+app.put("/v1/admin/market-settings", applyMarketSettings);
+app.post("/v1/admin/market-settings", applyMarketSettings);
 
 app.get("/v1/market/mine", (req, res) => {
   const ctx = requireAuth(req, res);
@@ -7366,7 +7449,7 @@ app.post("/v1/market/list", (req, res) => {
     expiresAt: Date.now() + 14 * 24 * 60 * 60 * 1000,
   };
   listings[id] = entry;
-  market.recordPrice(getDb(), kind, itemId, priceCoins);
+  // Kein Sale-Record beim Einstellen — nur echte Verkäufe zählen für die Spanne
   trackAch(ctx.user, "market_listed", 1);
   if (isPrivate) trackAch(ctx.user, "market_private", 1);
   syncAchInventoryMetrics(ctx.user);
@@ -7477,7 +7560,7 @@ app.post("/v1/market/:id/buy", (req, res) => {
     seller.pendingMarketSales = seller.pendingMarketSales.slice(-80);
   }
   safeGiveItem(ctx.user, entry.kind, entry.itemId);
-  market.recordPrice(getDb(), entry.kind, entry.itemId, price);
+  market.recordSale(getDb(), entry.kind, entry.itemId, price);
   trackAch(ctx.user, "market_bought", 1);
   trackAch(ctx.user, "coins_spent", price);
   trackAch(seller, "market_sold", 1);

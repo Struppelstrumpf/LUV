@@ -1828,6 +1828,25 @@ object LuvApiClient {
         val emoji: String
     )
 
+    data class MarketPriceRange(
+        val min: Int,
+        val max: Int,
+        val count: Int,
+        val trend: String = "="
+    )
+
+    data class MarketPriceInsight(
+        val shopPrice: Int? = null,
+        val windowDays: Int = 90,
+        val sales: MarketPriceRange? = null,
+        val listings: MarketPriceRange? = null,
+        val source: String = "none",
+        val trend: String = "="
+    ) {
+        val hasAny: Boolean
+            get() = shopPrice != null || sales != null || listings != null
+    }
+
     data class MarketItem(
         val listingId: String,
         val kind: String,
@@ -1842,7 +1861,8 @@ object LuvApiClient {
         val offerCount: Int,
         val isMine: Boolean,
         val ownedByViewer: Boolean,
-        val sellerNickname: String
+        val sellerNickname: String,
+        val priceInsight: MarketPriceInsight? = null
     )
 
     data class MarketListing(
@@ -1883,7 +1903,8 @@ object LuvApiClient {
         val emoji: String,
         val category: String,
         val offers: List<MarketListing>,
-        val count: Int
+        val count: Int,
+        val priceInsight: MarketPriceInsight? = null
     )
 
     private fun parseAchievementsState(json: JSONObject): AchievementsState {
@@ -1991,12 +2012,40 @@ object LuvApiClient {
         )
     }
 
+    private fun parseMarketPriceRange(o: JSONObject?): MarketPriceRange? {
+        if (o == null) return null
+        val min = o.optInt("min", 0)
+        val max = o.optInt("max", 0)
+        if (min < 1 && max < 1) return null
+        return MarketPriceRange(
+            min = min.coerceAtLeast(1),
+            max = max.coerceAtLeast(min.coerceAtLeast(1)),
+            count = o.optInt("count", 0),
+            trend = o.optString("trend", "=").ifBlank { "=" }
+        )
+    }
+
+    fun parseMarketPriceInsight(o: JSONObject?): MarketPriceInsight? {
+        if (o == null) return null
+        val shopRaw = o.optInt("shopPrice", -1)
+        val shopPrice = if (o.has("shopPrice") && !o.isNull("shopPrice") && shopRaw > 0) shopRaw else null
+        return MarketPriceInsight(
+            shopPrice = shopPrice,
+            windowDays = o.optInt("windowDays", 90).coerceIn(1, 365),
+            sales = parseMarketPriceRange(o.optJSONObject("sales")),
+            listings = parseMarketPriceRange(o.optJSONObject("listings")),
+            source = o.optString("source", "none").ifBlank { "none" },
+            trend = o.optString("trend", "=").ifBlank { "=" }
+        )
+    }
+
     private fun parseMarketItem(o: JSONObject): MarketItem? {
         val kind = o.optString("kind")
         val itemId = o.optString("itemId")
         if (kind.isBlank() || itemId.isBlank()) return null
         val listingId = o.optString("listingId").ifBlank { o.optString("id") }
             .ifBlank { "$kind|$itemId" }
+        val insight = parseMarketPriceInsight(o.optJSONObject("priceInsight"))
         return MarketItem(
             listingId = listingId,
             kind = kind,
@@ -2006,12 +2055,13 @@ object LuvApiClient {
             category = o.optString("category").ifBlank { kind },
             priceCoins = o.optInt("priceCoins", 0),
             allowTrade = o.optBoolean("allowTrade", false),
-            trend = o.optString("trend", "="),
+            trend = insight?.trend?.takeIf { it.isNotBlank() } ?: o.optString("trend", "="),
             stock = o.optInt("stock", o.optInt("offerCount", 1)),
             offerCount = o.optInt("offerCount", o.optInt("stock", 1)),
             isMine = o.optBoolean("isMine", false),
             ownedByViewer = o.optBoolean("ownedByViewer", false),
-            sellerNickname = o.optString("sellerNickname", "Jemand")
+            sellerNickname = o.optString("sellerNickname", "Jemand"),
+            priceInsight = insight
         )
     }
 
@@ -2215,8 +2265,40 @@ object LuvApiClient {
             emoji = json.optString("emoji").ifBlank { "?" },
             category = json.optString("category", kind),
             offers = offers,
-            count = json.optInt("count", offers.size)
+            count = json.optInt("count", offers.size),
+            priceInsight = parseMarketPriceInsight(json.optJSONObject("priceInsight"))
         )
+    }
+
+    suspend fun fetchMarketItemPrice(
+        kind: String,
+        itemId: String
+    ): MarketPriceInsight = withContext(Dispatchers.IO) {
+        val path =
+            "/v1/market/item-price?kind=${kind.trim().encodeURL()}&itemId=${itemId.trim().encodeURL()}"
+        val json = authedGet(path)
+        parseMarketPriceInsight(json.optJSONObject("priceInsight"))
+            ?: MarketPriceInsight(windowDays = json.optInt("priceWindowDays", 90))
+    }
+
+    suspend fun fetchAdminMarketSettings(): Pair<Int, List<Int>> = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/admin/market-settings")
+        val options = buildList {
+            val arr = json.optJSONArray("options")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val n = arr.optInt(i, 0)
+                    if (n > 0) add(n)
+                }
+            }
+        }.ifEmpty { listOf(7, 14, 30, 60, 90, 180) }
+        json.optInt("priceWindowDays", 90) to options
+    }
+
+    suspend fun setAdminMarketPriceWindow(days: Int): Int = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("priceWindowDays", days).toString()
+        val json = authedPost("/v1/admin/market-settings", body)
+        json.optInt("priceWindowDays", days)
     }
 
     suspend fun fetchMyMarketListings(): List<MarketListing> = withContext(Dispatchers.IO) {

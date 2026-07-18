@@ -90,6 +90,7 @@ private enum class AdminTab(val label: String, val icon: String) {
     Reports("Meldungen", "🚩"),
     Codes("Codes", "🎟️"),
     Users("Nutzer", "🎮"),
+    Market("Markt", "🏪"),
     Live("Live", "📣")
 }
 
@@ -111,6 +112,7 @@ fun AdminHubScreen(
             if (can("reports.view")) add(AdminTab.Reports)
             if (can("codes.view")) add(AdminTab.Codes)
             if (can("gm.search")) add(AdminTab.Users)
+            if (can("market.settings")) add(AdminTab.Market)
             if (can("live.notify")) add(AdminTab.Live)
         }
     }
@@ -153,6 +155,8 @@ fun AdminHubScreen(
     var liveText by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var banner by remember { mutableStateOf<String?>(null) }
+    var marketWindowDays by remember { mutableIntStateOf(90) }
+    var marketWindowOptions by remember { mutableStateOf(listOf(7, 14, 30, 60, 90, 180)) }
 
     fun toast(msg: String) =
         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
@@ -230,6 +234,14 @@ fun AdminHubScreen(
             }
             AdminTab.Codes -> if (can("codes.view")) {
                 vouchers = runCatching { LuvApiClient.listVouchers() }.getOrDefault(emptyList())
+            }
+            AdminTab.Market -> if (can("market.settings")) {
+                runCatching { LuvApiClient.fetchAdminMarketSettings() }
+                    .onSuccess {
+                        marketWindowDays = it.first
+                        marketWindowOptions = it.second
+                    }
+                    .onFailure { banner = it.message }
             }
             else -> Unit
         }
@@ -1011,6 +1023,83 @@ fun AdminHubScreen(
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    AdminTab.Market -> {
+                        AdminCard {
+                            Text(
+                                "Marktplatz-Preise",
+                                fontFamily = DisplayFont,
+                                color = TextPrimary,
+                                fontSize = 20.sp
+                            )
+                            Text(
+                                "Zeitfenster für die Preisspanne (günstigster und teuerster Verkauf) in Angebot erstellen und Marktplatz.",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 13.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Aktuell: $marketWindowDays Tage",
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 15.sp
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            marketWindowOptions.chunked(3).forEach { row ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    row.forEach { days ->
+                                        val on = marketWindowDays == days
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(
+                                                    if (on) AccentRose.copy(0.28f)
+                                                    else Color.White.copy(0.06f)
+                                                )
+                                                .clickable(enabled = !busy) {
+                                                    busy = true
+                                                    scope.launch {
+                                                        runCatching {
+                                                            LuvApiClient.setAdminMarketPriceWindow(days)
+                                                        }.onSuccess {
+                                                            marketWindowDays = it
+                                                            toast("Preis-Fenster: $it Tage")
+                                                        }.onFailure {
+                                                            toast(it.message ?: "Speichern fehlgeschlagen")
+                                                        }
+                                                        busy = false
+                                                    }
+                                                }
+                                                .padding(vertical = 12.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                "$days T",
+                                                color = TextPrimary,
+                                                fontFamily = if (on) DisplayFont else BodyFont,
+                                                fontSize = 14.sp
+                                            )
+                                        }
+                                    }
+                                    repeat(3 - row.size) {
+                                        Spacer(modifier = Modifier.weight(1f))
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+                            Text(
+                                "Ohne Verkäufe im Fenster wird keine Verkaufsspanne gezeigt. Beim ersten Angebot erscheint die Spanne der aktuellen Listings.",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 12.sp
+                            )
                         }
                     }
 
