@@ -107,11 +107,22 @@ function todayKey(tzOffsetMin = 0) {
       day: "2-digit",
     }).format(new Date());
   } catch {
+    // Fallback: Europe/Berlin ≈ UTC+1/+2 — nie reines UTC (Mitternacht-Fehler)
     const d = new Date();
-    if (process.env.TZ_OFFSET_MINUTES) {
-      d.setMinutes(d.getMinutes() + Number(process.env.TZ_OFFSET_MINUTES));
+    const offsetMin = Number(process.env.TZ_OFFSET_MINUTES);
+    if (Number.isFinite(offsetMin)) {
+      d.setMinutes(d.getMinutes() + offsetMin);
+    } else {
+      // Grobe MESZ/MEZ-Näherung ohne Intl
+      const m = d.getUTCMonth();
+      const utcH = d.getUTCHours();
+      const berlinOffset = m >= 2 && m <= 9 ? 2 : 1; // grob Sommer/Winter
+      d.setUTCHours(utcH + berlinOffset);
     }
-    return d.toISOString().slice(0, 10);
+    const y = d.getUTCFullYear();
+    const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}-${mo}-${day}`;
   }
 }
 

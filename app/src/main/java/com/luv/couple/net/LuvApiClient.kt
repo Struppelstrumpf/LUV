@@ -1187,7 +1187,9 @@ object LuvApiClient {
         val coins: Int,
         val petEmoji: String = "🐣",
         val friendStatus: String = "none",
-        val canPetKraul: Boolean = true
+        val canPetKraul: Boolean = true,
+        val canTipGlass: Boolean = true,
+        val glassTipsRemaining: Int = 10
     )
 
     suspend fun fetchUserProfileCanvas(userId: String): PeerProfile? =
@@ -1209,7 +1211,9 @@ object LuvApiClient {
                     coins = json.optInt("coins", 0),
                     petEmoji = pet,
                     friendStatus = json.optString("friendStatus", "none"),
-                    canPetKraul = json.optBoolean("canPetKraul", true)
+                    canPetKraul = json.optBoolean("canPetKraul", true),
+                    canTipGlass = json.optBoolean("canTipGlass", true),
+                    glassTipsRemaining = json.optInt("glassTipsRemaining", 10)
                 )
             }.getOrNull()
         }
@@ -1217,7 +1221,8 @@ object LuvApiClient {
     data class GlassTipResult(
         val remaining: Int,
         val toCoins: Int,
-        val from: AccountInfo?
+        val from: AccountInfo?,
+        val received: Int = 0
     )
 
     data class FriendCard(
@@ -1806,7 +1811,7 @@ object LuvApiClient {
         }
     }
 
-    /** 1 Coin ins Münzglas spenden (max. 10/Tag, 0:00 Berlin). */
+    /** 1 Coin ins Münzglas — max. 10 Coins pro Profil/Tag (0:00 MEZ), alle Spender zusammen. */
     suspend fun tipGlass(userId: String): GlassTipResult = withContext(Dispatchers.IO) {
         val uid = userId.trim()
         val request = authedRequestBuilder("/v1/users/${uid.encodeURL()}/tip-glass")
@@ -1819,10 +1824,13 @@ object LuvApiClient {
                 val err = json?.optString("error").orEmpty()
                 throw LuvApiException(
                     when (err) {
-                        "daily_tip_limit" -> "Heute schon 10 Coins gespendet (Reset 0 Uhr MEZ)"
+                        "daily_tip_limit" ->
+                            json?.optString("message")?.takeIf { it.isNotBlank() }
+                                ?: "Münzglas heute voll (10 Coins). Ab 0 Uhr MEZ wieder."
                         "insufficient_coins" -> "Nicht genug Coins"
                         "no_glass" -> "Kein Münzglas auf dem Profil"
                         "self_tip" -> "Eigenes Glas"
+                        "rate_limited" -> "Zu schnell — kurz warten"
                         else -> json?.optString("message")?.takeIf { it.isNotBlank() }
                             ?: "Spenden fehlgeschlagen"
                     },
@@ -1836,7 +1844,8 @@ object LuvApiClient {
             GlassTipResult(
                 remaining = body.optInt("remaining", 0),
                 toCoins = body.optInt("toCoins", 0),
-                from = from
+                from = from,
+                received = body.optInt("received", 0)
             )
         }
     }

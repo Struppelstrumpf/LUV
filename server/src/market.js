@@ -126,8 +126,12 @@ function aggregateMarket(db, viewerId, { category, q, mode }) {
 
   const items = [...groups.values()]
     .map((g) => {
-      const best = g.listings.sort((a, b) => a.priceCoins - b.priceCoins)[0];
-      const owned = g.listings.some((l) => l.sellerId === viewerId);
+      const sorted = g.listings.sort((a, b) => a.priceCoins - b.priceCoins);
+      // Kaufbares Listing bevorzugen — eigenes Angebot darf Fremd-Stock nicht blockieren
+      const buyable = sorted.find((l) => l.sellerId !== viewerId);
+      const best = buyable || sorted[0];
+      const hasMine = sorted.some((l) => l.sellerId === viewerId);
+      const allMine = !buyable;
       return {
         listingId: best.id,
         kind: g.kind,
@@ -140,8 +144,8 @@ function aggregateMarket(db, viewerId, { category, q, mode }) {
         trend: trendFor(db, g.kind, g.itemId, g.minPrice),
         stock: g.listings.length,
         offerCount: g.listings.length,
-        isMine: owned,
-        ownedByViewer: owned,
+        isMine: allMine,
+        ownedByViewer: hasMine,
         sellerNickname: best.sellerNickname,
       };
     })

@@ -668,7 +668,8 @@ private fun ItemShopContent(
                                 color = TextPrimary,
                                 fontFamily = if (active) DisplayFont else BodyFont,
                                 fontSize = 13.sp,
-                                softWrap = false,
+                                softWrap = true,
+                                maxLines = 2,
                                 textAlign = TextAlign.Center
                             )
                         }

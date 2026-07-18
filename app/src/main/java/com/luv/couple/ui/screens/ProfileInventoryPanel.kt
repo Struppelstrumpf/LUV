@@ -202,7 +202,8 @@ fun ProfileInventoryPanel(
                             color = TextPrimary,
                             fontFamily = if (on) DisplayFont else BodyFont,
                             fontSize = ts(11.sp),
-                            softWrap = false,
+                            softWrap = true,
+                            maxLines = 2,
                             textAlign = TextAlign.Center
                         )
                     }
@@ -540,7 +541,8 @@ private fun ShopLinkChip(
                 color = TextPrimary,
                 fontFamily = BodyFont,
                 fontSize = fontSp,
-                softWrap = false,
+                softWrap = true,
+                maxLines = 2,
                 textAlign = TextAlign.Center
             )
         }

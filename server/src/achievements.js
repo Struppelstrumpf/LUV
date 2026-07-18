@@ -303,14 +303,22 @@ function claimAchievement(user, achievementId, dayKey, applyLedgerFn) {
     return { ok: false, error: "already_claimed", message: "Coins schon abgeholt." };
   }
   const room = remainingAchCoinsToday(user, dayKey);
-  const grant = Math.min(def.coins, room);
-  if (grant <= 0) {
+  if (room <= 0) {
     return {
       ok: false,
       error: "cap_reached",
       message: "Tageslimit erreicht — hol die Coins morgen ab.",
     };
   }
+  // Kein Teil-Claim: sonst gehen Rest-Coins des Erfolgs verloren
+  if (room < def.coins) {
+    return {
+      ok: false,
+      error: "cap_reached",
+      message: `Heute nur noch ${room} Coin(s) frei — hol „${def.title}“ (${def.coins}) morgen vollständig ab.`,
+    };
+  }
+  const grant = def.coins;
   entry.claimed = true;
   entry.claimedAt = Date.now();
   entry.coins = grant;

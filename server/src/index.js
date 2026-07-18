@@ -105,7 +105,7 @@ const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || "").trim();
 const WEB_DIR = String(process.env.WEB_DIR || "/opt/luv-web").trim();
 
 const DAILY_COINS = 10;
-/** Max. Coins, die man anderen pro Tag (0:00 Berlin) ins Münzglas spenden kann */
+/** Max. Coins, die ein Profil pro Tag (0:00 Europe/Berlin) ins Münzglas bekommen kann (alle Spender zusammen). */
 const GLASS_TIP_DAILY_MAX = 10;
 const STARTING_COINS = 15;
 const FREE_SESSIONS_PER_DAY = 5;
@@ -4136,6 +4136,7 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   if (!profile.companionEmoji) profile.companionEmoji = petEmoji;
   const isSelf = uid === ctx.user.id;
   const areFriends = !isSelf && friendRelation(ctx.user, uid) === "friends";
+  const tipRecv = glassTipRecvState(user);
   return res.json({
     nickname: user.nickname || "Jemand",
     userId: user.id,
@@ -4144,6 +4145,10 @@ app.get("/v1/users/:userId/profile", (req, res) => {
     petEmoji,
     friendStatus: isSelf ? "self" : friendRelation(ctx.user, uid),
     canPetKraul: areFriends && canPetKraulToday(ctx.user, uid),
+    glassTipsRemaining: tipRecv.remaining,
+    glassTipsReceived: tipRecv.received,
+    glassTipDailyMax: GLASS_TIP_DAILY_MAX,
+    canTipGlass: !isSelf && tipRecv.remaining > 0,
   });
 });
 
@@ -4352,10 +4357,25 @@ app.post("/v1/users/:userId/pet-kraul", (req, res) => {
   });
 });
 
-/** 1 Coin ins Münzglas eines anderen Users — max. GLASS_TIP_DAILY_MAX / Tag (0:00 Berlin). */
+/** Empfangenes Münzglas-Tageslimit (pro Profil, alle Spender, 0:00 Berlin). */
+function glassTipRecvState(user) {
+  const day = todayKey();
+  if (user.glassTipsRecvDay !== day) {
+    user.glassTipsRecvDay = day;
+    user.glassTipsRecvCount = 0;
+  }
+  const received = Math.max(0, Number(user.glassTipsRecvCount) || 0);
+  const remaining = Math.max(0, GLASS_TIP_DAILY_MAX - received);
+  return { day, received, remaining, limit: GLASS_TIP_DAILY_MAX };
+}
+
+/** 1 Coin ins Münzglas — max. GLASS_TIP_DAILY_MAX Coins / Profil / Tag (0:00 Berlin). */
 app.post("/v1/users/:userId/tip-glass", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
+  if (!rateLimit(`tip:${ctx.user.id}`, 30, 60_000)) {
+    return res.status(429).json({ error: "rate_limited", message: "Zu schnell — kurz warten." });
+  }
   const toId = String(req.params.userId || "").trim();
   if (!toId) return res.status(400).json({ error: "invalid_user" });
   if (toId === ctx.user.id) {
@@ -4376,17 +4396,14 @@ app.post("/v1/users/:userId/tip-glass", (req, res) => {
     return res.status(400).json({ error: "no_glass" });
   }
 
-  const day = todayKey();
-  if (ctx.user.glassTipsDay !== day) {
-    ctx.user.glassTipsDay = day;
-    ctx.user.glassTipsGiven = 0;
-  }
-  const given = Number(ctx.user.glassTipsGiven) || 0;
-  if (given >= GLASS_TIP_DAILY_MAX) {
+  const recv = glassTipRecvState(target);
+  if (recv.remaining <= 0) {
     return res.status(400).json({
       error: "daily_tip_limit",
+      message: "Dieses Münzglas ist heute voll (10 Coins). Ab 0 Uhr MEZ wieder möglich.",
       remaining: 0,
       limit: GLASS_TIP_DAILY_MAX,
+      received: recv.received,
     });
   }
   if ((ctx.user.coins || 0) < 1) {
@@ -4397,14 +4414,19 @@ app.post("/v1/users/:userId/tip-glass", (req, res) => {
     return res.status(402).json({ error: "insufficient_coins" });
   }
   applyLedger(toId, 1, "glass_tip_recv", ctx.user.id);
-  ctx.user.glassTipsGiven = given + 1;
+  target.glassTipsRecvCount = recv.received + 1;
+  target.glassTipsRecvDay = recv.day;
+  trackAch(ctx.user, "tips_given", 1);
+  trackAch(target, "tips_received", 1);
   scheduleSave();
 
+  const after = glassTipRecvState(target);
   return res.json({
     ok: true,
     amount: 1,
-    remaining: Math.max(0, GLASS_TIP_DAILY_MAX - ctx.user.glassTipsGiven),
+    remaining: after.remaining,
     limit: GLASS_TIP_DAILY_MAX,
+    received: after.received,
     from: publicUser(ctx.user),
     toCoins: target.coins || 0,
   });

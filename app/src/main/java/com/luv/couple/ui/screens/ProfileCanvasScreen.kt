@@ -163,6 +163,9 @@ fun ProfileCanvasScreen(
     var tipPopIds by remember { mutableStateOf<List<Long>>(emptyList()) }
     var friendStatus by remember { mutableStateOf("none") }
     var canPetKraul by remember { mutableStateOf(false) }
+    var canTipGlass by remember { mutableStateOf(true) }
+    var glassTipsRemaining by remember { mutableIntStateOf(10) }
+    var tipBusy by remember { mutableStateOf(false) }
     var peerPetEmoji by remember { mutableStateOf("🐣") }
     var showPetKraul by remember { mutableStateOf(false) }
     var petKraulBusy by remember { mutableStateOf(false) }
@@ -228,6 +231,8 @@ fun ProfileCanvasScreen(
                 displayCoins = remote.coins
                 friendStatus = remote.friendStatus
                 canPetKraul = remote.canPetKraul
+                canTipGlass = remote.canTipGlass
+                glassTipsRemaining = remote.glassTipsRemaining
                 peerPetEmoji = remote.petEmoji.ifBlank { remote.state.companionEmoji.ifBlank { "🐣" } }
             } else {
                 loadedNick = nickname
@@ -235,6 +240,8 @@ fun ProfileCanvasScreen(
                 displayCoins = 0
                 friendStatus = "none"
                 canPetKraul = false
+                canTipGlass = false
+                glassTipsRemaining = 0
                 peerPetEmoji = "🐣"
             }
             savedSnapshot = state.snapshotKey()
@@ -256,11 +263,14 @@ fun ProfileCanvasScreen(
 
     fun tipGlassOnce() {
         val uid = userId ?: return
-        if (editable) return
+        if (editable || tipBusy || !canTipGlass) return
+        tipBusy = true
         scope.launch {
             try {
                 val result = LuvApiClient.tipGlass(uid)
                 displayCoins = result.toCoins
+                glassTipsRemaining = result.remaining
+                canTipGlass = result.remaining > 0
                 val id = SystemClock.elapsedRealtimeNanos()
                 tipPopIds = tipPopIds + id
                 delay(900)
@@ -271,6 +281,12 @@ fun ProfileCanvasScreen(
                     e.message ?: "Spenden fehlgeschlagen",
                     Toast.LENGTH_SHORT
                 ).show()
+                if (e is com.luv.couple.net.LuvApiException && e.error == "daily_tip_limit") {
+                    canTipGlass = false
+                    glassTipsRemaining = 0
+                }
+            } finally {
+                tipBusy = false
             }
         }
     }
@@ -494,7 +510,7 @@ fun ProfileCanvasScreen(
                     onLayoutChange = { patchLayout(it) },
                     onOpenChest = { if (editable) showChest = true },
                     onEdit = { if (editable) editElId = it },
-                    onTipGlass = if (!editable && !userId.isNullOrBlank()) {
+                    onTipGlass = if (!editable && !userId.isNullOrBlank() && canTipGlass && !tipBusy) {
                         { tipGlassOnce() }
                     } else {
                         null
@@ -521,8 +537,26 @@ fun ProfileCanvasScreen(
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp, bottom = 8.dp)
+                    .padding(top = 10.dp, bottom = 4.dp)
             )
+            if (!editable && state.layout.any { it.type == ProfileElType.Glass }) {
+                Text(
+                    if (canTipGlass) {
+                        "Münzglas heute noch $glassTipsRemaining / 10 · Tippen zum Spenden"
+                    } else {
+                        "Münzglas heute voll · ab 0 Uhr MEZ wieder"
+                    },
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                )
+            } else {
+                Spacer(modifier = Modifier.height(4.dp))
+            }
 
             if (editable) {
                 Text("Bio", color = TextMuted, fontFamily = BodyFont, fontSize = 13.sp)
