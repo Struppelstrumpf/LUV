@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.67",
+            listOf(
+                "Sicherheit: Käufe, Tausch & Inventar serverseitig abgesichert",
+            )
+        ),
+        Entry(
             "1.9.66",
             listOf(
                 "Erfolge & Tagesaufgaben: Coins selbst abholen — Punkt bei Sozial",

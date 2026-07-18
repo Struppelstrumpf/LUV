@@ -1108,6 +1108,10 @@ private fun CreateListingDialog(
                         Toast.makeText(context, "Preis mind. 1 Coin oder Tausch", Toast.LENGTH_SHORT).show()
                         return@TextButton
                     }
+                    if (allowTrade && tradeWant == null) {
+                        Toast.makeText(context, "Beim Tausch Gesuch auswählen", Toast.LENGTH_SHORT).show()
+                        return@TextButton
+                    }
                     busy = true
                     scope.launch {
                         runCatching {

@@ -1552,7 +1552,7 @@ object LuvApiClient {
         withContext(Dispatchers.IO) {
             val body = JSONObject()
                 .put("metric", metric.trim().take(40))
-                .put("amount", amount.coerceIn(1, 50))
+                .put("amount", 1) // Server akzeptiert nur 1 — kein Client-Multiplikator
                 .toString()
             val json = authedPost("/v1/me/achievements/ping", body)
             json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }

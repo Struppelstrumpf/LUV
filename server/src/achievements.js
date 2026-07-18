@@ -304,10 +304,17 @@ function claimAchievement(user, achievementId, dayKey, applyLedgerFn) {
   }
   const room = remainingAchCoinsToday(user, dayKey);
   const grant = Math.min(def.coins, room);
+  if (grant <= 0) {
+    return {
+      ok: false,
+      error: "cap_reached",
+      message: "Tageslimit erreicht — hol die Coins morgen ab.",
+    };
+  }
   entry.claimed = true;
   entry.claimedAt = Date.now();
   entry.coins = grant;
-  if (grant > 0 && applyLedgerFn) {
+  if (applyLedgerFn) {
     applyLedgerFn(user.id, grant, "achievement", id);
     a.coinsEarnedToday += grant;
     a.totalAchCoins += grant;
@@ -329,9 +336,16 @@ function claimDailyReward(user, dayKey, applyLedgerFn) {
   }
   const room = remainingAchCoinsToday(user, dayKey);
   const grant = Math.min(1, room);
+  if (grant <= 0) {
+    return {
+      ok: false,
+      error: "cap_reached",
+      message: "Tageslimit erreicht — hol die Belohnung morgen ab.",
+    };
+  }
   a.daily.rewardClaimed = true;
   a.daily.claimedAt = Date.now();
-  if (grant > 0 && applyLedgerFn) {
+  if (applyLedgerFn) {
     applyLedgerFn(user.id, grant, "daily_tasks", dayKey);
     a.coinsEarnedToday += grant;
     a.totalAchCoins += grant;
