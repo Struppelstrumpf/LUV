@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.34",
+            listOf(
+                "Home: Lobbies per Drag über andere hinweg verschieben",
+            )
+        ),
+        Entry(
             "1.9.33",
             listOf(
                 "Bildschirm bleibt an, solange die App offen ist",

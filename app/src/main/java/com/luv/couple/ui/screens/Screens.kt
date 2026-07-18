@@ -35,7 +35,9 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +58,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
@@ -262,6 +265,7 @@ fun LobbiesScreen(
 ) {
     val accent = PeerPalette.menuAccent()
     val context = LocalContext.current
+    val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
     val lastPublic by LuvApp.instance.prefs.lastPublicCanvasFlow
@@ -271,7 +275,9 @@ fun LobbiesScreen(
     var orderedLobbies by remember { mutableStateOf(lobbies) }
     var dragLobbyId by remember { mutableStateOf<String?>(null) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    var dragHoverIndex by remember { mutableIntStateOf(-1) }
     val cardHeights = remember { mutableStateMapOf<String, Int>() }
+    val listGapPx = with(density) { 16.dp.toPx() }
 
     LaunchedEffect(lobbies) {
         // Während Drag lokale Reihenfolge behalten; sonst mit Prefs-Liste mergen
@@ -286,39 +292,39 @@ fun LobbiesScreen(
         }
     }
 
-    fun swapWhileDragging() {
-        val id = dragLobbyId ?: return
-        while (true) {
-            val from = orderedLobbies.indexOfFirst { it.id == id }
-            if (from < 0) return
-            val myH = cardHeights[id] ?: 180
-            if (dragOffsetY > 0f && from < orderedLobbies.lastIndex) {
-                val nextId = orderedLobbies[from + 1].id
-                val nextH = (cardHeights[nextId] ?: myH).toFloat()
-                if (dragOffsetY > nextH * 0.5f) {
-                    val m = orderedLobbies.toMutableList()
-                    val item = m.removeAt(from)
-                    m.add(from + 1, item)
-                    orderedLobbies = m
-                    dragOffsetY -= nextH
-                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    continue
-                }
-            }
-            if (dragOffsetY < 0f && from > 0) {
-                val prevId = orderedLobbies[from - 1].id
-                val prevH = (cardHeights[prevId] ?: myH).toFloat()
-                if (dragOffsetY < -prevH * 0.5f) {
-                    val m = orderedLobbies.toMutableList()
-                    val item = m.removeAt(from)
-                    m.add(from - 1, item)
-                    orderedLobbies = m
-                    dragOffsetY += prevH
-                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    continue
-                }
-            }
-            break
+    fun cardH(id: String): Float = (cardHeights[id] ?: 180).toFloat()
+
+    /** Zielindex nur aus Offset berechnen — Liste während Drag nicht umbauen (sonst bricht die Geste). */
+    fun previewDropIndex(): Int {
+        val id = dragLobbyId ?: return -1
+        val from = orderedLobbies.indexOfFirst { it.id == id }
+        if (from < 0) return -1
+        var baseY = 0f
+        for (i in 0 until from) {
+            baseY += cardH(orderedLobbies[i].id) + listGapPx
+        }
+        val centerY = baseY + cardH(id) / 2f + dragOffsetY
+        var acc = 0f
+        orderedLobbies.forEachIndexed { i, lobby ->
+            val h = cardH(lobby.id)
+            if (centerY < acc + h / 2f) return i
+            acc += h + listGapPx
+        }
+        return orderedLobbies.lastIndex
+    }
+
+    fun visualShiftFor(lobbyId: String): Float {
+        val dragId = dragLobbyId ?: return 0f
+        if (lobbyId == dragId) return dragOffsetY
+        val from = orderedLobbies.indexOfFirst { it.id == dragId }
+        val to = dragHoverIndex
+        val i = orderedLobbies.indexOfFirst { it.id == lobbyId }
+        if (from < 0 || to < 0 || i < 0 || from == to) return 0f
+        val step = cardH(dragId) + listGapPx
+        return when {
+            from < to && i in (from + 1)..to -> -step
+            from > to && i in to until from -> step
+            else -> 0f
         }
     }
 
@@ -472,46 +478,64 @@ fun LobbiesScreen(
             }
 
             orderedLobbies.forEach { lobby ->
-                val dragging = dragLobbyId == lobby.id
-                LobbyCard(
-                    lobby = lobby,
-                    active = lobby.id == activeLobbyId,
-                    state = lobbyStates[lobby.id] ?: ConnectionState.IDLE,
-                    reconnect = reconnectUi[lobby.id],
-                    accent = accent,
-                    dragging = dragging,
-                    dragOffsetY = if (dragging) dragOffsetY else 0f,
-                    reorderEnabled = orderedLobbies.size > 1,
-                    onHeight = { cardHeights[lobby.id] = it },
-                    onNameDragStart = {
-                        dragLobbyId = lobby.id
-                        dragOffsetY = 0f
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    },
-                    onNameDrag = { dy ->
-                        if (dragLobbyId != lobby.id) return@LobbyCard
-                        dragOffsetY += dy
-                        swapWhileDragging()
-                    },
-                    onNameDragEnd = {
-                        if (dragLobbyId == lobby.id) {
-                            persistOrder(orderedLobbies)
-                        }
-                        dragLobbyId = null
-                        dragOffsetY = 0f
-                    },
-                    onNameDragCancel = {
-                        dragLobbyId = null
-                        dragOffsetY = 0f
-                        orderedLobbies = mergeLobbyOrder(emptyList(), lobbies)
-                    },
-                    onOpen = { onOpenLobby(lobby) },
-                    onInviteSeat = { onInviteSeat(lobby) },
-                    onBuySeat = { onBuySeat(lobby) },
-                    onRename = { onRenameLobby(lobby) },
-                    onLeave = { onLeaveLobby(lobby) },
-                    onReconnect = { onReconnect(lobby) }
-                )
+                key(lobby.id) {
+                    val dragging = dragLobbyId == lobby.id
+                    LobbyCard(
+                        lobby = lobby,
+                        active = lobby.id == activeLobbyId,
+                        state = lobbyStates[lobby.id] ?: ConnectionState.IDLE,
+                        reconnect = reconnectUi[lobby.id],
+                        accent = accent,
+                        dragging = dragging,
+                        dragOffsetY = visualShiftFor(lobby.id),
+                        reorderEnabled = orderedLobbies.size > 1,
+                        onHeight = { cardHeights[lobby.id] = it },
+                        onNameDragStart = {
+                            dragLobbyId = lobby.id
+                            dragOffsetY = 0f
+                            dragHoverIndex = orderedLobbies.indexOfFirst { it.id == lobby.id }
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        },
+                        onNameDrag = { dy ->
+                            if (dragLobbyId != lobby.id) return@LobbyCard
+                            dragOffsetY += dy
+                            val nextHover = previewDropIndex()
+                            if (nextHover >= 0 && nextHover != dragHoverIndex) {
+                                dragHoverIndex = nextHover
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                        },
+                        onNameDragEnd = {
+                            if (dragLobbyId == lobby.id) {
+                                val from = orderedLobbies.indexOfFirst { it.id == lobby.id }
+                                val to = previewDropIndex()
+                                if (from >= 0 && to >= 0 && from != to) {
+                                    val m = orderedLobbies.toMutableList()
+                                    val item = m.removeAt(from)
+                                    m.add(to.coerceIn(0, m.size), item)
+                                    persistOrder(m)
+                                } else {
+                                    persistOrder(orderedLobbies)
+                                }
+                            }
+                            dragLobbyId = null
+                            dragOffsetY = 0f
+                            dragHoverIndex = -1
+                        },
+                        onNameDragCancel = {
+                            dragLobbyId = null
+                            dragOffsetY = 0f
+                            dragHoverIndex = -1
+                            orderedLobbies = mergeLobbyOrder(emptyList(), lobbies)
+                        },
+                        onOpen = { onOpenLobby(lobby) },
+                        onInviteSeat = { onInviteSeat(lobby) },
+                        onBuySeat = { onBuySeat(lobby) },
+                        onRename = { onRenameLobby(lobby) },
+                        onLeave = { onLeaveLobby(lobby) },
+                        onReconnect = { onReconnect(lobby) }
+                    )
+                }
             }
 
             if (orderedLobbies.size < PeerPalette.MAX_LOBBIES) {
