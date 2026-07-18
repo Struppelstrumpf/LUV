@@ -1034,11 +1034,65 @@ function ensureHostedRooms(user) {
 /**
  * Früher: hat hostedRooms gelöscht, sobald der Raum nicht im RAM war —
  * nach Restart/Deploy weg. Nie mehr so: Lobbys bleiben bis explizites Verlassen.
+ * Geister nach Leave (Ownership ohne Mitgliedschaft) räumt reconcileAbandonedLobbyOwnership.
  */
 function pruneHostedRooms(user) {
   ensureHostedRooms(user);
   // No-op (bewusst): fehlende rooms-Map-Einträge dürfen Ownership nicht killen.
   return false;
+}
+
+/**
+ * Ownership ohne Mitgliedschaft = bewusst verlassen → aus Cloud-Liste entfernen.
+ * Leere Geisterräume (bezahlt wie gratis) wirklich löschen, damit Sync sie nicht zurückbringt.
+ */
+function reconcileAbandonedLobbyOwnership(user) {
+  if (!user?.id) return false;
+  ensureHostedRooms(user);
+  let dirty = false;
+  for (const code of Object.keys(user.hostedRooms || {})) {
+    let room = rooms.get(code);
+    if (!room) {
+      const saved = getDb().rooms?.[code];
+      if (saved && typeof saved === "object") {
+        const members = Array.isArray(saved.memberUserIds) ? saved.memberUserIds : [];
+        if (!members.includes(user.id)) {
+          delete user.hostedRooms[code];
+          dirty = true;
+          if (members.length === 0) {
+            delete getDb().rooms[code];
+          } else if (saved.hostUserId === user.id) {
+            room = hydrateRoom(code, saved);
+            rooms.set(code, room);
+            if (!promoteNextHostFromMembers(room, code)) {
+              dissolveEmptyLobby(room, code);
+            }
+          }
+        }
+        continue;
+      }
+      delete user.hostedRooms[code];
+      dirty = true;
+      continue;
+    }
+    const members = Array.isArray(room.memberUserIds) ? room.memberUserIds : [];
+    if (members.includes(user.id)) continue;
+    delete user.hostedRooms[code];
+    dirty = true;
+    if (room.hostUserId === user.id) {
+      if ((room.sockets?.size || 0) > 0) {
+        if (!promoteNextHost(room, code)) promoteNextHostFromMembers(room, code);
+      } else if (!promoteNextHostFromMembers(room, code)) {
+        dissolveEmptyLobby(room, code);
+      }
+    }
+  }
+  healJoinedRoomsFromMembership(user);
+  if (dirty) {
+    persistRooms();
+    scheduleSave();
+  }
+  return dirty;
 }
 
 function hydrateRoom(code, data, tokenOverride) {
@@ -2187,6 +2241,7 @@ async function verifyGoogleIdToken(idToken) {
 }
 
 function publicHostedLobbies(user) {
+  reconcileAbandonedLobbyOwnership(user);
   ensureHostedRooms(user);
   return Object.entries(user.hostedRooms).map(([code, meta]) => ({
     code,
@@ -2556,11 +2611,15 @@ function cancelHostFailoverTimer(code) {
   }
 }
 
-function dissolveEmptyFreeLobby(room, code) {
-  if (!room?.isFree) return false;
+/** Leere Lobby (gratis oder bezahlt) nach bewusstem Leave / ohne Mitglieder auflösen. */
+function dissolveEmptyLobby(room, code) {
+  if (!room) return false;
   if ((room.sockets?.size || 0) > 0) return false;
   cancelEmptyFreeLobbyTimer(code);
+  cancelHostFailoverTimer(code);
   const hostId = room.hostUserId;
+  const memberIds = Array.isArray(room.memberUserIds) ? [...room.memberUserIds] : [];
+  const wasFree = Boolean(room.isFree);
   rooms.delete(code);
   if (getDb().rooms?.[code]) {
     delete getDb().rooms[code];
@@ -2568,16 +2627,58 @@ function dissolveEmptyFreeLobby(room, code) {
   if (hostId) {
     releaseHostedRoom(code, hostId);
     const host = getDb().users[hostId];
-    if (host && host.freeLobbyCreateDay === todayKey()) {
+    if (host && wasFree && host.freeLobbyCreateDay === todayKey()) {
       const stillFree = Object.entries(host.hostedRooms || {}).some(
         ([c, m]) => m?.isFree && c !== code && roomExistsAnywhere(c)
       );
       if (!stillFree) host.freeLobbyCreateDay = null;
     }
   }
+  for (const uid of memberIds) {
+    const u = getDb().users?.[uid];
+    if (u) forgetJoinedLobby(u, code);
+  }
   persistRooms();
   scheduleSave();
-  console.log(`dissolved empty free lobby ${code}`);
+  console.log(`dissolved empty lobby ${code} free=${wasFree}`);
+  return true;
+}
+
+function dissolveEmptyFreeLobby(room, code) {
+  if (!room?.isFree) return false;
+  return dissolveEmptyLobby(room, code);
+}
+
+/** Host-Nachfolger auch offline (Mitgliedsliste), z. B. nach Leave des Hosts. */
+function promoteNextHostFromMembers(room, code) {
+  if (!room || !rooms.has(code)) return false;
+  if (promoteNextHost(room, code)) return true;
+  const members = Array.isArray(room.memberUserIds) ? room.memberUserIds : [];
+  const nextId = members.find((id) => id && id !== room.hostUserId) || null;
+  if (!nextId) return false;
+  const prevHost = room.hostUserId;
+  if (prevHost) releaseHostedRoom(code, prevHost);
+  room.hostUserId = nextId;
+  const newHost = getDb().users[nextId];
+  if (newHost) {
+    room.hostNickname = String(newHost.nickname || room.hostNickname || "Host").slice(0, 18);
+    ensureHostedRooms(newHost);
+    newHost.hostedRooms[code] = {
+      createdAt: Date.now(),
+      isFree: Boolean(room.isFree),
+      name: room.name,
+      capacity: roomCapacity(room),
+      token: room.token,
+      hostColorSide: room.hostColorSide,
+    };
+    forgetJoinedLobby(newHost, code);
+    scheduleSave();
+  }
+  touchRoom(room);
+  persistRooms();
+  console.log(
+    `host failover (offline) code=${code} -> ${room.hostNickname || "?"} (${room.hostUserId})`
+  );
   return true;
 }
 
@@ -2658,15 +2759,21 @@ function scheduleHostFailover(room, code) {
 }
 
 /**
- * Host weg (Leave oder Disconnect) → nächsten User zum Host machen oder Free-Lobby auflösen.
+ * Host weg (Leave oder Disconnect) → nächsten User zum Host machen oder Lobby auflösen.
  * @param immediateEmpty true nur bei bewusstem Leave-API — sonst Grace für Reconnect.
+ * Bewusstes Leave: auch bezahlte leere Lobbys weg (sonst bringt Cloud-Sync sie zurück).
  */
 function ensureHostOrDissolve(room, code, { immediateEmpty = false } = {}) {
   if (!room) return;
   if ((room.sockets?.size || 0) === 0) {
     cancelHostFailoverTimer(code);
-    if (immediateEmpty) dissolveEmptyFreeLobby(room, code);
-    else scheduleEmptyFreeLobbyDissolve(room, code);
+    if (immediateEmpty) {
+      if (!promoteNextHostFromMembers(room, code)) {
+        dissolveEmptyLobby(room, code);
+      }
+    } else {
+      scheduleEmptyFreeLobbyDissolve(room, code);
+    }
     return;
   }
   cancelEmptyFreeLobbyTimer(code);
@@ -2685,8 +2792,8 @@ function ensureHostOrDissolve(room, code, { immediateEmpty = false } = {}) {
   }
 
   cancelHostFailoverTimer(code);
-  if (!promoteNextHost(room, code)) {
-    dissolveEmptyFreeLobby(room, code);
+  if (!promoteNextHost(room, code) && !promoteNextHostFromMembers(room, code)) {
+    dissolveEmptyLobby(room, code);
   }
 }
 
@@ -4714,7 +4821,7 @@ app.post("/v1/rooms/:code/slots", (req, res) => {
   });
 });
 
-/** Verlassen ohne die Lobby für andere zu zerstören */
+/** Verlassen ohne die Lobby für andere zu zerstören — Ownership des Leavers immer weg. */
 app.post("/v1/rooms/:code/leave", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
@@ -4731,15 +4838,16 @@ app.post("/v1/rooms/:code/leave", (req, res) => {
   }
   if (!room) {
     releaseHostedRoom(code, ctx.user.id);
+    forgetJoinedLobby(ctx.user, code);
     if (ctx.user.freeLobbyCreateDay === todayKey()) {
       const stillFree = Object.entries(ctx.user.hostedRooms || {}).some(
         ([c, m]) => m?.isFree && c !== code && roomExistsAnywhere(c)
       );
       if (!stillFree) {
         ctx.user.freeLobbyCreateDay = null;
-        scheduleSave();
       }
     }
+    scheduleSave();
     return res.json({ ok: true, alreadyGone: true });
   }
 
@@ -4773,10 +4881,14 @@ app.post("/v1/rooms/:code/leave", (req, res) => {
   });
   broadcastPeerCount(room);
   ensureHostOrDissolve(room, code, { immediateEmpty: true });
+  // Belt & suspenders: Leaver erscheint nie wieder in /v1/me/lobbies
+  releaseHostedRoom(code, ctx.user.id);
+  forgetJoinedLobby(ctx.user, code);
   if (rooms.has(code)) {
     touchRoom(room);
     persistRooms();
   }
+  scheduleSave();
 
   return res.json({ ok: true });
 });
@@ -4904,9 +5016,18 @@ app.delete("/v1/rooms/:code", (req, res) => {
   const code = String(req.params.code || "")
     .toUpperCase()
     .replace(/^LUV-/, "");
-  const room = rooms.get(code);
+  let room = rooms.get(code);
+  if (!room) {
+    const saved = getDb().rooms?.[code];
+    if (saved && typeof saved === "object") {
+      room = hydrateRoom(code, saved);
+      rooms.set(code, room);
+    }
+  }
   if (!room) {
     releaseHostedRoom(code, ctx.user.id);
+    forgetJoinedLobby(ctx.user, code);
+    scheduleSave();
     return res.json({ ok: true, alreadyGone: true });
   }
   // Auflösen nur noch, wenn niemand sonst verbunden ist
@@ -4933,9 +5054,12 @@ app.delete("/v1/rooms/:code", (req, res) => {
       /* ignore */
     }
   }
-  rooms.delete(code);
+  room.sockets.clear();
+  forgetMember(room, ctx.user.id);
+  dissolveEmptyLobby(room, code);
   releaseHostedRoom(code, ctx.user.id);
-  persistRooms();
+  forgetJoinedLobby(ctx.user, code);
+  scheduleSave();
   return res.json({ ok: true });
 });
 

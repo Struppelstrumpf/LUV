@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.47",
+            listOf(
+                "Verlassene Lobbys bleiben weg — kein Zurückholen nach Update oder Appstart",
+            )
+        ),
+        Entry(
             "1.9.46",
             listOf(
                 "Inventar & Menüs: mehr Abstand im Button-Text, bessere Anpassung an kleine Displays",

@@ -1266,7 +1266,17 @@ object LuvApiClient {
     suspend fun leaveRoom(code: String) = withContext(Dispatchers.IO) {
         val clean = normalizeCode(code) ?: return@withContext
         val request = authedRequestBuilder("/v1/rooms/$clean/leave").post(emptyBody).build()
-        http.newCall(request).execute().use { /* best effort — Lobby bleibt für andere */ }
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful && response.code != 404) {
+                val raw = response.body?.string().orEmpty()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                throw LuvApiException(
+                    message = json?.optString("message")?.takeIf { it.isNotBlank() }
+                        ?: "Lobby verlassen fehlgeschlagen.",
+                    error = json?.optString("error")
+                )
+            }
+        }
     }
 
     @Deprecated("Use leaveRoom — abandon kicked everyone")

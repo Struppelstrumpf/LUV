@@ -61,6 +61,8 @@ class PrefsRepository(private val context: Context) {
     private val brushWidthKey = floatPreferencesKey("brush_width")
     /** Profil-Leinwand JSON */
     private val profileCanvasKey = stringPreferencesKey("profile_canvas_json")
+    /** Bewusst verlassene Lobby-Codes — Cloud-Sync darf sie nicht wieder einspielen */
+    private val dismissedLobbiesKey = stringPreferencesKey("dismissed_lobby_codes_json")
 
     // Legacy keys — Migration
     private val genderKey = stringPreferencesKey("gender")
@@ -269,6 +271,7 @@ class PrefsRepository(private val context: Context) {
     /**
      * Host- und Join-Lobbys vom Server spiegeln (Google-Konto / Multi-Gerät).
      * [dropUnknownJoins]=true entfernt lokale Joins, die der Server nicht mehr kennt.
+     * Lokal verlassene Codes ([dismissedLobbiesKey]) werden nicht wieder eingefügt.
      */
     suspend fun replaceCloudLobbiesFromRemote(
         hosted: List<com.luv.couple.net.RemoteLobby>,
@@ -277,14 +280,18 @@ class PrefsRepository(private val context: Context) {
     ) {
         context.dataStore.edit { prefs ->
             val existing = parseLobbies(prefs[lobbiesKey])
+            val dismissed = parseDismissedLobbyCodes(prefs[dismissedLobbiesKey])
             val byCode = linkedMapOf<String, Lobby>()
             if (!dropUnknownJoins) {
                 for (j in existing.filter { it.role == Role.JOIN }) {
-                    byCode[j.code.uppercase()] = j
+                    val code = j.code.uppercase()
+                    if (code in dismissed) continue
+                    byCode[code] = j
                 }
             }
             fun upsert(r: com.luv.couple.net.RemoteLobby, role: Role) {
                 val code = r.code.uppercase()
+                if (code in dismissed) return
                 val token = r.token ?: return
                 val prev = existing.firstOrNull { it.code.equals(code, ignoreCase = true) }
                     ?: byCode[code]
@@ -542,11 +549,34 @@ class PrefsRepository(private val context: Context) {
             }
             prefs[lobbiesKey] = encodeLobbies(list)
             prefs[activeLobbyKey] = lobby.id
+            // Neu beigetreten / erstellt → Dismiss-Sperre für diesen Code aufheben
+            val code = lobby.code.uppercase()
+            if (code.isNotBlank()) {
+                val dismissed = parseDismissedLobbyCodes(prefs[dismissedLobbiesKey]).toMutableSet()
+                if (dismissed.remove(code)) {
+                    prefs[dismissedLobbiesKey] = encodeDismissedLobbyCodes(dismissed)
+                }
+            }
             // Legacy cleanup
             prefs.remove(tokenKey)
             prefs.remove(inviteCodeKey)
             prefs.remove(pairedKey)
             prefs.remove(roleKey)
+        }
+    }
+
+    /** Lobby-Code nach Verlassen sperren, damit Cloud-Sync sie nicht zurückholt. */
+    suspend fun dismissLobbyCode(code: String) {
+        val clean = code.trim().uppercase().removePrefix("LUV-")
+        if (clean.length < 3) return
+        context.dataStore.edit { prefs ->
+            val set = parseDismissedLobbyCodes(prefs[dismissedLobbiesKey]).toMutableSet()
+            if (set.add(clean)) {
+                while (set.size > 80) {
+                    set.remove(set.first())
+                }
+                prefs[dismissedLobbiesKey] = encodeDismissedLobbyCodes(set)
+            }
         }
     }
 
@@ -706,7 +736,9 @@ class PrefsRepository(private val context: Context) {
 
     suspend fun removeLobby(lobbyId: String) {
         context.dataStore.edit { prefs ->
-            val list = parseLobbies(prefs[lobbiesKey]).filterNot { it.id == lobbyId }
+            val before = parseLobbies(prefs[lobbiesKey])
+            val removed = before.firstOrNull { it.id == lobbyId }
+            val list = before.filterNot { it.id == lobbyId }
             prefs[lobbiesKey] = encodeLobbies(list)
             if (prefs[activeLobbyKey] == lobbyId) {
                 if (list.isEmpty()) prefs.remove(activeLobbyKey)
@@ -717,6 +749,14 @@ class PrefsRepository(private val context: Context) {
             val prox = parseLobbyProximity(prefs[lobbyProximityKey]).toMutableMap()
             if (prox.remove(lobbyId) != null) {
                 prefs[lobbyProximityKey] = encodeLobbyProximity(prox)
+            }
+            val code = removed?.code?.uppercase()?.removePrefix("LUV-").orEmpty()
+            if (code.length >= 3) {
+                val set = parseDismissedLobbyCodes(prefs[dismissedLobbiesKey]).toMutableSet()
+                if (set.add(code)) {
+                    while (set.size > 80) set.remove(set.first())
+                    prefs[dismissedLobbiesKey] = encodeDismissedLobbyCodes(set)
+                }
             }
         }
     }
@@ -869,6 +909,29 @@ class PrefsRepository(private val context: Context) {
                         .put("peakPeers", lobby.peakPeers.coerceAtLeast(1))
                 )
             }
+            return arr.toString()
+        }
+
+        fun parseDismissedLobbyCodes(raw: String?): Set<String> {
+            if (raw.isNullOrBlank()) return emptySet()
+            return runCatching {
+                val arr = JSONArray(raw)
+                buildSet {
+                    for (i in 0 until arr.length()) {
+                        arr.optString(i)
+                            .trim()
+                            .uppercase()
+                            .removePrefix("LUV-")
+                            .takeIf { it.length >= 3 }
+                            ?.let { add(it) }
+                    }
+                }
+            }.getOrDefault(emptySet())
+        }
+
+        fun encodeDismissedLobbyCodes(codes: Set<String>): String {
+            val arr = JSONArray()
+            codes.forEach { arr.put(it) }
             return arr.toString()
         }
 

@@ -840,7 +840,8 @@ fun LuvAppNav() {
                             },
                             onLeaveLobby = { lobby ->
                                 scope.launch {
-                                    // Zuerst Leave-API (Host-Transfer), dann WS stoppen
+                                    // Sofort lokal sperren — Cloud-Sync darf die Kachel nicht zurückholen
+                                    prefs.dismissLobbyCode(lobby.code)
                                     runCatching { LuvApiClient.leaveRoom(lobby.code) }
                                     PairConnectionService.stop(context, lobby.id)
                                     CanvasStore.clearLobby(lobby.id)
@@ -850,6 +851,7 @@ fun LuvAppNav() {
                                     if (prefs.snapshot().lobbies.isEmpty()) {
                                         PairConnectionService.stop(context)
                                     }
+                                    runCatching { syncCloudAccount(force = true) }
                                     refreshAccount()
                                 }
                             },
