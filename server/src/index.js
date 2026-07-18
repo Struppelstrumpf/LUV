@@ -15,6 +15,11 @@ const {
 const { pickShareLine } = require("./share_lines");
 const ach = require("./achievements");
 const market = require("./market");
+const {
+  STICKER_SHOP_PRICES,
+  isKnownSticker,
+  isAchievementSticker,
+} = require("./sticker_catalog");
 
 const PORT = Number(process.env.PORT || 8080);
 const ROOM_TTL_MS = Number(process.env.ROOM_TTL_MS || 24 * 60 * 60 * 1000);
@@ -183,15 +188,6 @@ const THEME_SHOP_PRICES = {
   hearth: 24,
 };
 
-const STICKER_SHOP_PRICES = {
-  "🦋": 8, "🐝": 6, "🐞": 7, "🌸": 7, "🌺": 8, "🌷": 7, "🌻": 8, "🌹": 10,
-  "🍀": 6, "🌿": 5, "🍃": 5, "🍄": 8, "🌳": 6, "🌈": 10, "☀️": 6, "🌙": 6,
-  "⭐": 6, "✨": 6, "💫": 8, "🌟": 8, "☁️": 5, "❄️": 7, "🌊": 8, "🐚": 7,
-  "❤️": 8, "💕": 10, "💝": 12, "🫶": 12, "💌": 10, "🎀": 8, "🎈": 8, "🎁": 12,
-  "🏠": 8, "☕": 6, "🎵": 6, "🎨": 10, "✏️": 5, "🔥": 8, "😎": 8, "🦔": 12,
-  "🐶": 10, "🐱": 10, "🐦": 8, "🧸": 12, "🪄": 10, "🪶": 7, "🪴": 8, "🪸": 9,
-};
-
 const PET_SHOP_PRICES = {
   "🐣": 0, "🐦": 14, "🐔": 16, "🐸": 16, "🐶": 20, "🐱": 20, "🐰": 22,
   "🐹": 18, "🐻": 24, "🦊": 26, "🐼": 28, "🐨": 26, "🦉": 24, "🐯": 30, "🦁": 32,
@@ -206,7 +202,7 @@ function isKnownInventoryItem(kind, itemId) {
   if (!id) return false;
   if (kind === "pets") return id === DEFAULT_PET || PET_SHOP_PRICES[id] != null;
   if (kind === "themes") return id === "meadow" || THEME_SHOP_PRICES[id] != null;
-  if (kind === "stickers") return STICKER_SHOP_PRICES[id] != null;
+  if (kind === "stickers") return isKnownSticker(id);
   if (kind === "emojis") {
     return STARTER_EMOJIS.includes(id) || EMOJI_SHOP_PRICES[id] != null;
   }
@@ -5534,7 +5530,13 @@ function marketItemMeta(kind, itemId) {
     };
   }
   if (kind === "stickers") {
-    return { category: "stickers", emoji: id, label: id, sellable: STICKER_SHOP_PRICES[id] != null };
+    return {
+      category: "stickers",
+      emoji: id,
+      label: id,
+      // Achievement-Exclusives nicht verkaufen
+      sellable: STICKER_SHOP_PRICES[id] != null && !isAchievementSticker(id),
+    };
   }
   if (kind === "emojis") {
     return {

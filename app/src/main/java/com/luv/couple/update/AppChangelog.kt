@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.82",
+            listOf(
+                "Itemshop: 500+ Sticker aus allen Kategorien, mit seltenen teuren Stufen",
+                "Erfolgs-Sticker nur über Erfolge — nicht im Shop",
+            )
+        ),
+        Entry(
             "1.9.81",
             listOf(
                 "Seltene Erfolge belohnen mit Items (anklickbare Vorschau)",
