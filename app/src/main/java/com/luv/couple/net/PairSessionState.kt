@@ -196,7 +196,10 @@ object PairSessionState {
         return listOf(me) + others
     }
 
-    /** Belegte Sitze im Menü — nur wer wirklich online ist (Leave → sofort „+“). */
+    /**
+     * Belegte Sitze im Menü — alle Lobby-Mitglieder, auch kurz offline
+     * (Update, App zu). Freier Slot nur nach echtem Leave ([removePeer] / departed).
+     */
     fun seatNicknames(
         lobbyId: String,
         myNickname: String?,
@@ -204,7 +207,7 @@ object PairSessionState {
         hostNickname: String?
     ): List<String> {
         val others = peersByLobby[lobbyId]?.value?.values.orEmpty()
-            .filter { it.online && !it.departed && !isSelf(it, myNickname, myUserId) }
+            .filter { !it.departed && !isSelf(it, myNickname, myUserId) }
             .map { it.nickname.trim() }
             .filter { it.isNotBlank() && !it.equals("Du", ignoreCase = true) }
             .distinctBy { it.lowercase() }
