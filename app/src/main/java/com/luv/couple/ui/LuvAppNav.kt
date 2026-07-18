@@ -63,6 +63,7 @@ import com.luv.couple.ui.screens.EmojiBarEditorDialog
 import com.luv.couple.ui.screens.InventoryScreen
 import com.luv.couple.ui.screens.LobbiesScreen
 import com.luv.couple.ui.screens.MarketPanel
+import com.luv.couple.ui.screens.MarketReturnTo
 import com.luv.couple.ui.screens.MarketScreen
 import com.luv.couple.ui.screens.NicknameScreen
 import com.luv.couple.ui.screens.ProfileCanvasScreen
@@ -126,6 +127,10 @@ fun LuvAppNav() {
     var tab by remember { mutableIntStateOf(0) }
     var openMarketCoinShop by remember { mutableStateOf(false) }
     var openMarketPanel by remember { mutableStateOf<MarketPanel?>(null) }
+    var marketReturnTo by remember { mutableStateOf<MarketReturnTo>(MarketReturnTo.None) }
+    var inventorySubTab by remember { mutableIntStateOf(0) }
+    var reopenProfileChest by remember { mutableStateOf(false) }
+    var profileChestTab by remember { mutableIntStateOf(0) }
     var showEmojiBarEditor by remember { mutableStateOf(false) }
     var shopEnabled by remember { mutableStateOf(false) }
     var packs by remember { mutableStateOf<List<ShopPack>>(emptyList()) }
@@ -767,11 +772,15 @@ fun LuvAppNav() {
                         1 -> GalleryScreen()
                         2 -> InventoryScreen(
                             nickname = nickname ?: "Du",
+                            selectedTab = inventorySubTab,
+                            onTabChange = { inventorySubTab = it },
                             onOpenMarketplace = {
+                                marketReturnTo = MarketReturnTo.Inventory(inventorySubTab)
                                 tab = 3
                                 openMarketPanel = MarketPanel.Marketplace
                             },
                             onOpenItemShop = {
+                                marketReturnTo = MarketReturnTo.Inventory(inventorySubTab)
                                 tab = 3
                                 openMarketPanel = MarketPanel.ItemShop
                             },
@@ -784,6 +793,23 @@ fun LuvAppNav() {
                             onStartInCoinShopConsumed = { openMarketCoinShop = false },
                             startPanel = openMarketPanel,
                             onStartPanelConsumed = { openMarketPanel = null },
+                            onLeaveDeepLink = {
+                                when (val ret = marketReturnTo) {
+                                    is MarketReturnTo.Inventory -> {
+                                        inventorySubTab = ret.subTab
+                                        marketReturnTo = MarketReturnTo.None
+                                        tab = 2
+                                    }
+                                    is MarketReturnTo.Profile -> {
+                                        profileChestTab = ret.chestTab
+                                        reopenProfileChest = true
+                                        marketReturnTo = MarketReturnTo.None
+                                        tab = 0
+                                        navController.navigate(Routes.PROFILE)
+                                    }
+                                    MarketReturnTo.None -> Unit
+                                }
+                            },
                             onRefreshInventory = { syncInventory() },
                             onBuyPack = { pack ->
                                 scope.launch {
@@ -878,9 +904,14 @@ fun LuvAppNav() {
                 nickname = nickname ?: "Du",
                 colorIndex = colorIndex,
                 editable = true,
+                initialOpenChest = reopenProfileChest,
+                initialChestTab = profileChestTab,
+                onInitialChestConsumed = { reopenProfileChest = false },
                 onClose = { navController.popBackStack() },
                 onEditNickname = { navController.navigate(Routes.NICKNAME) },
-                onOpenMarketplace = {
+                onOpenMarketplace = { chestTab ->
+                    profileChestTab = chestTab
+                    marketReturnTo = MarketReturnTo.Profile(chestTab)
                     navController.popBackStack()
                     tab = 3
                     openMarketPanel = MarketPanel.Marketplace
@@ -889,7 +920,9 @@ fun LuvAppNav() {
                         syncInventory()
                     }
                 },
-                onOpenItemShop = {
+                onOpenItemShop = { chestTab ->
+                    profileChestTab = chestTab
+                    marketReturnTo = MarketReturnTo.Profile(chestTab)
                     navController.popBackStack()
                     tab = 3
                     openMarketPanel = MarketPanel.ItemShop

@@ -31,6 +31,8 @@ const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || "").trim();
 const WEB_DIR = String(process.env.WEB_DIR || "/opt/luv-web").trim();
 
 const DAILY_COINS = 10;
+/** Max. Coins, die man anderen pro Tag (0:00 Berlin) ins Münzglas spenden kann */
+const GLASS_TIP_DAILY_MAX = 10;
 const STARTING_COINS = 15;
 const FREE_SESSIONS_PER_DAY = 5;
 const SESSION_COST = 1;
@@ -1144,6 +1146,7 @@ const PAID_CREDIT_REASONS = new Set([
   "signup_grant",
   "admin_grant",
   "public_share_reward",
+  "glass_tip_recv",
 ]);
 
 const PUBLIC_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -2543,6 +2546,7 @@ app.get("/health", (_req, res) => {
     users: Object.keys(getDb().users).length,
     economy: {
       dailyCoins: DAILY_COINS,
+      glassTipDailyMax: GLASS_TIP_DAILY_MAX,
       freeSessionsPerDay: FREE_SESSIONS_PER_DAY,
       sessionCost: SESSION_COST,
       startingCoins: STARTING_COINS,
@@ -2859,6 +2863,7 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   const db = getDb();
   const user = db.users?.[uid];
   if (!user) return res.status(404).json({ error: "not_found" });
+  ensureCoinBuckets(user);
   const profile = sanitizeProfileCanvas(user.profileCanvas) || {
     themeId: "meadow",
     statusEmoji: "😊",
@@ -2869,7 +2874,64 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   return res.json({
     nickname: user.nickname || "Jemand",
     userId: user.id,
+    coins: user.coins || 0,
     profile,
+  });
+});
+
+/** 1 Coin ins Münzglas eines anderen Users — max. GLASS_TIP_DAILY_MAX / Tag (0:00 Berlin). */
+app.post("/v1/users/:userId/tip-glass", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const toId = String(req.params.userId || "").trim();
+  if (!toId) return res.status(400).json({ error: "invalid_user" });
+  if (toId === ctx.user.id) {
+    return res.status(400).json({ error: "self_tip" });
+  }
+  const db = getDb();
+  const target = db.users?.[toId];
+  if (!target) return res.status(404).json({ error: "not_found" });
+  ensureCoinBuckets(ctx.user);
+  ensureCoinBuckets(target);
+  ensureDailyGrant(ctx.user);
+
+  const layout = Array.isArray(target.profileCanvas?.layout)
+    ? target.profileCanvas.layout
+    : [];
+  const hasGlass = layout.some((el) => el && String(el.type).toLowerCase() === "glass");
+  if (!hasGlass) {
+    return res.status(400).json({ error: "no_glass" });
+  }
+
+  const day = todayKey();
+  if (ctx.user.glassTipsDay !== day) {
+    ctx.user.glassTipsDay = day;
+    ctx.user.glassTipsGiven = 0;
+  }
+  const given = Number(ctx.user.glassTipsGiven) || 0;
+  if (given >= GLASS_TIP_DAILY_MAX) {
+    return res.status(400).json({
+      error: "daily_tip_limit",
+      remaining: 0,
+      limit: GLASS_TIP_DAILY_MAX,
+    });
+  }
+  if ((ctx.user.coins || 0) < 1) {
+    return res.status(402).json({ error: "insufficient_coins" });
+  }
+
+  applyLedger(ctx.user.id, -1, "glass_tip", toId);
+  applyLedger(toId, 1, "glass_tip_recv", ctx.user.id);
+  ctx.user.glassTipsGiven = given + 1;
+  scheduleSave();
+
+  return res.json({
+    ok: true,
+    amount: 1,
+    remaining: Math.max(0, GLASS_TIP_DAILY_MAX - ctx.user.glassTipsGiven),
+    limit: GLASS_TIP_DAILY_MAX,
+    from: publicUser(ctx.user),
+    toCoins: target.coins || 0,
   });
 });
 

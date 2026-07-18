@@ -112,6 +112,7 @@ class LuvApiException(
 ) : Exception(message) {
     val isNoCoins: Boolean
         get() = error == "no_coins" ||
+            error == "insufficient_coins" ||
             message?.contains("coin", ignoreCase = true) == true
 }
 
@@ -507,7 +508,13 @@ object LuvApiClient {
             runCatching { authedPut("/v1/me/profile", body) }.isSuccess
         }
 
-    suspend fun fetchUserProfileCanvas(userId: String): Pair<String, com.luv.couple.profile.ProfileState>? =
+    data class PeerProfile(
+        val nickname: String,
+        val state: com.luv.couple.profile.ProfileState,
+        val coins: Int
+    )
+
+    suspend fun fetchUserProfileCanvas(userId: String): PeerProfile? =
         withContext(Dispatchers.IO) {
             val uid = userId.trim()
             if (uid.isBlank()) return@withContext null
@@ -515,9 +522,54 @@ object LuvApiClient {
                 val json = authedGet("/v1/users/${uid.encodeURL()}/profile")
                 val nick = json.optString("nickname", "Jemand")
                 val raw = json.optJSONObject("profile")?.toString()
-                nick to com.luv.couple.profile.ProfileCatalog.decode(raw, nick)
+                PeerProfile(
+                    nickname = nick,
+                    state = com.luv.couple.profile.ProfileCatalog.decode(raw, nick),
+                    coins = json.optInt("coins", 0)
+                )
             }.getOrNull()
         }
+
+    data class GlassTipResult(
+        val remaining: Int,
+        val toCoins: Int,
+        val from: AccountInfo?
+    )
+
+    /** 1 Coin ins Münzglas spenden (max. 10/Tag, 0:00 Berlin). */
+    suspend fun tipGlass(userId: String): GlassTipResult = withContext(Dispatchers.IO) {
+        val uid = userId.trim()
+        val request = authedRequestBuilder("/v1/users/${uid.encodeURL()}/tip-glass")
+            .post("{}".toRequestBody(jsonMedia))
+            .build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            val json = runCatching { JSONObject(raw) }.getOrNull()
+            if (!response.isSuccessful) {
+                val err = json?.optString("error").orEmpty()
+                throw LuvApiException(
+                    when (err) {
+                        "daily_tip_limit" -> "Heute schon 10 Coins gespendet (Reset 0 Uhr MEZ)"
+                        "insufficient_coins" -> "Nicht genug Coins"
+                        "no_glass" -> "Kein Münzglas auf dem Profil"
+                        "self_tip" -> "Eigenes Glas"
+                        else -> json?.optString("message")?.takeIf { it.isNotBlank() }
+                            ?: "Spenden fehlgeschlagen"
+                    },
+                    error = err.ifBlank { null }
+                )
+            }
+            val body = json ?: throw LuvApiException("Ungültige Server-Antwort")
+            val fromJson = body.optJSONObject("from")
+            val from = fromJson?.let { AccountInfo.fromApi(it) }
+            if (from != null) AccountSession.setAccount(from)
+            GlassTipResult(
+                remaining = body.optInt("remaining", 0),
+                toCoins = body.optInt("toCoins", 0),
+                from = from
+            )
+        }
+    }
 
     suspend fun shopPacks(): Pair<Boolean, List<ShopPack>> = withContext(Dispatchers.IO) {
         val request = authedRequestBuilder("/v1/shop/packs").get().build()

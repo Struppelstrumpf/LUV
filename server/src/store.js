@@ -63,13 +63,22 @@ function scheduleSave() {
 }
 
 function todayKey(tzOffsetMin = 0) {
-  // Europe/Berlin approx via env; default UTC date is fine for fairness globally
-  const d = new Date();
-  if (process.env.TZ_OFFSET_MINUTES) {
-    d.setMinutes(d.getMinutes() + Number(process.env.TZ_OFFSET_MINUTES));
-  }
+  // Tagesgrenze 0:00 Europe/Berlin (MEZ/MESZ)
   void tzOffsetMin;
-  return d.toISOString().slice(0, 10);
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Berlin",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  } catch {
+    const d = new Date();
+    if (process.env.TZ_OFFSET_MINUTES) {
+      d.setMinutes(d.getMinutes() + Number(process.env.TZ_OFFSET_MINUTES));
+    }
+    return d.toISOString().slice(0, 10);
+  }
 }
 
 function hashSecret(secret) {

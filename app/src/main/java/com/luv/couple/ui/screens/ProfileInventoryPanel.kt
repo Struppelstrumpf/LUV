@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -55,13 +56,34 @@ import com.luv.couple.ui.theme.TextPrimary
 /** Referenzbreite für Scale 1.0 — darunter proportional kleiner. */
 private val RefInventoryWidth = 390.dp
 
+enum class InventoryPanelMode { Menu, ProfileChest }
+
+private enum class InvTab(val label: String) {
+    Emojis("Emojis"),
+    Themes("Hintergrund"),
+    Stickers("Sticker"),
+    Companions("Begleiter"),
+    Extras("Extras")
+}
+
+private fun tabsFor(mode: InventoryPanelMode): List<InvTab> = when (mode) {
+    InventoryPanelMode.Menu -> listOf(
+        InvTab.Emojis, InvTab.Themes, InvTab.Stickers, InvTab.Companions
+    )
+    InventoryPanelMode.ProfileChest -> listOf(
+        InvTab.Themes, InvTab.Stickers, InvTab.Companions, InvTab.Extras
+    )
+}
+
 /**
  * Gemeinsames Inventar (Profil-Truhe + Hauptmenü).
- * Skaliert nach Breite, damit Tabs (inkl. Extras) und Inhalt immer vollständig sichtbar sind.
+ * Menü: Emojis zuerst, ohne Extras. Profil: Extras, ohne Emojis.
  */
 @Composable
 fun ProfileInventoryPanel(
+    mode: InventoryPanelMode,
     ownedStickers: List<String>,
+    ownedEmojis: Map<String, Int> = emptyMap(),
     currentThemeId: String,
     currentCompanion: String,
     hasGlass: Boolean,
@@ -69,21 +91,27 @@ fun ProfileInventoryPanel(
     onTheme: (ProfileTheme) -> Unit,
     onSticker: (String) -> Unit,
     onCompanion: (String) -> Unit,
-    onGlass: () -> Unit,
-    onBio: () -> Unit,
+    onEmoji: (String) -> Unit = {},
+    onGlass: () -> Unit = {},
+    onBio: () -> Unit = {},
     onOpenMarketplace: () -> Unit,
     onOpenItemShop: () -> Unit,
+    selectedTab: Int = 0,
+    onTabChange: (Int) -> Unit = {},
     onDismiss: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     showCardChrome: Boolean = true
 ) {
-    var tab by remember { mutableIntStateOf(0) }
+    val tabs = remember(mode) { tabsFor(mode) }
+    var tab by remember(mode) { mutableIntStateOf(selectedTab.coerceIn(0, tabs.lastIndex)) }
+    LaunchedEffect(selectedTab, tabs.size) {
+        tab = selectedTab.coerceIn(0, tabs.lastIndex)
+    }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val scale = (maxWidth / RefInventoryWidth).coerceIn(0.72f, 1f)
         fun s(dp: Dp): Dp = dp * scale
         fun ts(sp: TextUnit): TextUnit = (sp.value * scale).sp
-        val tabs = listOf("Hintergrund", "Sticker", "Begleiter", "Extras")
 
         val body = Modifier
             .fillMaxSize()
@@ -131,24 +159,26 @@ fun ProfileInventoryPanel(
                 ShopLinkChip("✨ Mehr Sticker", onOpenItemShop, Modifier.weight(1f), scale)
             }
             Spacer(modifier = Modifier.height(s(12.dp)))
-            // Alle Tabs immer sichtbar — kein Abschneiden von „Extras“
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(s(4.dp))
             ) {
-                tabs.forEachIndexed { i, label ->
+                tabs.forEachIndexed { i, invTab ->
                     val on = tab == i
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(s(12.dp)))
                             .background(if (on) AccentRose.copy(0.28f) else Color.White.copy(0.06f))
-                            .clickable { tab = i }
+                            .clickable {
+                                tab = i
+                                onTabChange(i)
+                            }
                             .padding(vertical = s(9.dp), horizontal = s(2.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            label,
+                            invTab.label,
                             color = TextPrimary,
                             fontFamily = if (on) DisplayFont else BodyFont,
                             fontSize = ts(11.sp),
@@ -164,8 +194,56 @@ fun ProfileInventoryPanel(
                 .weight(1f, fill = true)
                 .fillMaxHeight()
 
-            when (tab) {
-                0 -> LazyVerticalGrid(
+            when (tabs.getOrNull(tab)) {
+                InvTab.Emojis -> {
+                    val entries = ownedEmojis.entries.sortedBy { it.key }
+                    if (entries.isEmpty()) {
+                        Box(modifier = gridMod, contentAlignment = Alignment.Center) {
+                            Text(
+                                "Noch keine Emojis — im Itemshop gibt’s welche.",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = ts(13.sp),
+                                modifier = Modifier.padding(s(12.dp))
+                            )
+                        }
+                    } else {
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(s(58.dp)),
+                            modifier = gridMod,
+                            contentPadding = PaddingValues(s(4.dp)),
+                            horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
+                            verticalArrangement = Arrangement.spacedBy(s(8.dp))
+                        ) {
+                            items(entries, key = { it.key }) { (emoji, count) ->
+                                Box(
+                                    modifier = Modifier
+                                        .aspectRatio(1f)
+                                        .clip(RoundedCornerShape(s(14.dp)))
+                                        .background(BgSoft)
+                                        .clickable { onEmoji(emoji) }
+                                        .padding(s(6.dp))
+                                ) {
+                                    Text(
+                                        emoji,
+                                        fontSize = ts(26.sp),
+                                        modifier = Modifier.align(Alignment.Center)
+                                    )
+                                    if (count > 1) {
+                                        Text(
+                                            "×$count",
+                                            color = TextMuted,
+                                            fontFamily = BodyFont,
+                                            fontSize = ts(10.sp),
+                                            modifier = Modifier.align(Alignment.BottomEnd)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                InvTab.Themes -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(s(80.dp)),
                     modifier = gridMod,
                     horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
@@ -199,7 +277,7 @@ fun ProfileInventoryPanel(
                         }
                     }
                 }
-                1 -> LazyVerticalGrid(
+                InvTab.Stickers -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(s(58.dp)),
                     modifier = gridMod,
                     contentPadding = PaddingValues(s(4.dp)),
@@ -217,7 +295,7 @@ fun ProfileInventoryPanel(
                         ) { Text(emoji, fontSize = ts(26.sp)) }
                     }
                 }
-                2 -> LazyVerticalGrid(
+                InvTab.Companions -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(s(64.dp)),
                     modifier = gridMod,
                     horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
@@ -240,7 +318,7 @@ fun ProfileInventoryPanel(
                         ) { Text(emoji, fontSize = ts(28.sp)) }
                     }
                 }
-                else -> Column(
+                InvTab.Extras -> Column(
                     modifier = gridMod,
                     verticalArrangement = Arrangement.spacedBy(s(10.dp))
                 ) {
@@ -287,6 +365,7 @@ fun ProfileInventoryPanel(
                         }
                     }
                 }
+                null -> Unit
             }
         }
     }
@@ -306,6 +385,8 @@ fun ProfileChestDialog(
     onBio: () -> Unit,
     onOpenMarketplace: () -> Unit,
     onOpenItemShop: () -> Unit,
+    selectedTab: Int = 0,
+    onTabChange: (Int) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     Dialog(
@@ -313,6 +394,7 @@ fun ProfileChestDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         ProfileInventoryPanel(
+            mode = InventoryPanelMode.ProfileChest,
             ownedStickers = ownedStickers,
             currentThemeId = currentThemeId,
             currentCompanion = currentCompanion,
@@ -325,6 +407,8 @@ fun ProfileChestDialog(
             onBio = onBio,
             onOpenMarketplace = onOpenMarketplace,
             onOpenItemShop = onOpenItemShop,
+            selectedTab = selectedTab,
+            onTabChange = onTabChange,
             onDismiss = onDismiss,
             modifier = Modifier
                 .fillMaxWidth()

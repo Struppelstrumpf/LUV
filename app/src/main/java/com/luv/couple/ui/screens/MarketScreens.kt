@@ -88,6 +88,13 @@ import kotlin.math.roundToInt
 
 enum class MarketPanel { Hub, Marketplace, ItemShop, CoinShop }
 
+/** Wohin „Zurück“ aus einem Deep-Link (Inventar/Profil → Markt) führt. */
+sealed class MarketReturnTo {
+    data class Inventory(val subTab: Int) : MarketReturnTo()
+    data class Profile(val chestTab: Int) : MarketReturnTo()
+    data object None : MarketReturnTo()
+}
+
 @Composable
 fun MarketScreen(
     shopEnabled: Boolean,
@@ -97,29 +104,50 @@ fun MarketScreen(
     startInCoinShop: Boolean = false,
     onStartInCoinShopConsumed: () -> Unit = {},
     startPanel: MarketPanel? = null,
-    onStartPanelConsumed: () -> Unit = {}
+    onStartPanelConsumed: () -> Unit = {},
+    onLeaveDeepLink: (() -> Unit)? = null
 ) {
     var panel by remember { mutableStateOf(MarketPanel.Hub) }
+    var deepLinked by remember { mutableStateOf(false) }
+    fun backFromPanel() {
+        if (deepLinked && onLeaveDeepLink != null) {
+            deepLinked = false
+            onLeaveDeepLink()
+        } else {
+            panel = MarketPanel.Hub
+        }
+    }
     LaunchedEffect(startInCoinShop) {
         if (startInCoinShop) {
             panel = MarketPanel.CoinShop
+            deepLinked = onLeaveDeepLink != null
             onStartInCoinShopConsumed()
         }
     }
     LaunchedEffect(startPanel) {
         val target = startPanel ?: return@LaunchedEffect
         panel = target
+        deepLinked = onLeaveDeepLink != null
         onStartPanelConsumed()
     }
     when (panel) {
         MarketPanel.Hub -> MarketHub(
-            onOpenMarketplace = { panel = MarketPanel.Marketplace },
-            onOpenItemShop = { panel = MarketPanel.ItemShop },
-            onOpenCoinShop = { panel = MarketPanel.CoinShop }
+            onOpenMarketplace = {
+                deepLinked = false
+                panel = MarketPanel.Marketplace
+            },
+            onOpenItemShop = {
+                deepLinked = false
+                panel = MarketPanel.ItemShop
+            },
+            onOpenCoinShop = {
+                deepLinked = false
+                panel = MarketPanel.CoinShop
+            }
         )
         MarketPanel.Marketplace -> MarketExpandShell(
             title = "Marktplatz",
-            onBack = { panel = MarketPanel.Hub }
+            onBack = { backFromPanel() }
         ) {
             EmptyMarketCard(
                 title = "Bald hier",
@@ -128,13 +156,13 @@ fun MarketScreen(
         }
         MarketPanel.ItemShop -> MarketExpandShell(
             title = "Itemshop",
-            onBack = { panel = MarketPanel.Hub }
+            onBack = { backFromPanel() }
         ) {
             ItemShopContent(onRefreshInventory = onRefreshInventory)
         }
         MarketPanel.CoinShop -> MarketExpandShell(
             title = "Coinshop",
-            onBack = { panel = MarketPanel.Hub }
+            onBack = { backFromPanel() }
         ) {
             CoinShopContent(
                 shopEnabled = shopEnabled,
@@ -579,6 +607,8 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
 @Composable
 fun InventoryScreen(
     nickname: String,
+    selectedTab: Int = 0,
+    onTabChange: (Int) -> Unit = {},
     onOpenMarketplace: () -> Unit,
     onOpenItemShop: () -> Unit,
     onOpenProfileDesigner: () -> Unit
@@ -615,18 +645,21 @@ fun InventoryScreen(
                 .padding(top = 12.dp, bottom = 8.dp)
         ) {
             ProfileInventoryPanel(
+                mode = InventoryPanelMode.Menu,
                 ownedStickers = stickers,
+                ownedEmojis = owned,
                 currentThemeId = profile.themeId,
                 currentCompanion = profile.companionEmoji,
-                hasGlass = profile.layout.any { it.type == ProfileElType.Glass },
-                hasBio = profile.layout.any { it.type == ProfileElType.Bio },
+                hasGlass = false,
+                hasBio = false,
                 onTheme = { confirmPlace(ProfilePlaceAction.Theme(it.id)) },
                 onSticker = { confirmPlace(ProfilePlaceAction.Sticker(it)) },
                 onCompanion = { confirmPlace(ProfilePlaceAction.Buddy(it)) },
-                onGlass = { confirmPlace(ProfilePlaceAction.Glass) },
-                onBio = { confirmPlace(ProfilePlaceAction.Bio) },
+                onEmoji = { confirmPlace(ProfilePlaceAction.Sticker(it)) },
                 onOpenMarketplace = onOpenMarketplace,
                 onOpenItemShop = onOpenItemShop,
+                selectedTab = selectedTab,
+                onTabChange = onTabChange,
                 modifier = Modifier.fillMaxSize(),
                 showCardChrome = true
             )

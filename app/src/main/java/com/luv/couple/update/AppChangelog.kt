@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.32",
+            listOf(
+                "Inventar: Emojis-Tab, Zurück aus Markt behält Kontext",
+                "Münzglas: bis 10 Coins/Tag an andere spenden (0 Uhr MEZ)",
+            )
+        ),
+        Entry(
             "1.9.31",
             listOf(
                 "Profil: Standard-Name wieder sichtbar auf der Leinwand",

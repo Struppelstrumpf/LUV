@@ -48,10 +48,15 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -117,17 +122,20 @@ fun ProfileCanvasScreen(
     colorIndex: Int,
     editable: Boolean,
     userId: String? = null,
+    initialOpenChest: Boolean = false,
+    initialChestTab: Int = 0,
+    onInitialChestConsumed: () -> Unit = {},
     onClose: () -> Unit,
     onEditNickname: (() -> Unit)? = null,
     onReport: (() -> Unit)? = null,
-    onOpenMarketplace: (() -> Unit)? = null,
-    onOpenItemShop: (() -> Unit)? = null
+    onOpenMarketplace: ((chestTab: Int) -> Unit)? = null,
+    onOpenItemShop: ((chestTab: Int) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prefs = LuvApp.instance.prefs
     val account by AccountSession.account.collectAsStateWithLifecycle()
-    val coins = account?.coins ?: 0
+    val myCoins = account?.coins ?: 0
 
     var state by remember {
         mutableStateOf(ProfileState(layout = ProfileCatalog.defaultLayout(nickname)).normalized(nickname))
@@ -135,14 +143,25 @@ fun ProfileCanvasScreen(
     var savedSnapshot by remember { mutableStateOf("") }
     var selectedId by remember { mutableStateOf<String?>(null) }
     var showChest by remember { mutableStateOf(false) }
+    var chestTab by remember { mutableIntStateOf(initialChestTab) }
     var editElId by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var loadedNick by remember { mutableStateOf(nickname) }
     var ownedStickers by remember { mutableStateOf<Set<String>>(ProfileCatalog.FREE_STICKERS.toSet()) }
     var confirmDiscard by remember { mutableStateOf(false) }
+    var displayCoins by remember { mutableIntStateOf(myCoins) }
+    var tipPopIds by remember { mutableStateOf<List<Long>>(emptyList()) }
     // Fremdprofil: kein Default-Flash — erst Loader, dann fertiges Layout
     var profileReady by remember(userId, editable) {
         mutableStateOf(editable)
+    }
+
+    LaunchedEffect(initialOpenChest) {
+        if (initialOpenChest && editable) {
+            chestTab = initialChestTab
+            showChest = true
+            onInitialChestConsumed()
+        }
     }
 
     LaunchedEffect(userId, editable, nickname) {
@@ -167,18 +186,20 @@ fun ProfileCanvasScreen(
                 runCatching { prefs.ownedEmojis() }.getOrDefault(emptyMap())
             }
             ownedStickers = (ProfileCatalog.FREE_STICKERS + owned.keys).toSet()
+            displayCoins = AccountSession.account.value?.coins ?: myCoins
             profileReady = true
         } else if (!userId.isNullOrBlank()) {
             val remote = LuvApiClient.fetchUserProfileCanvas(userId)
             if (remote != null) {
-                loadedNick = remote.first
-                state = remote.second.normalized(remote.first)
+                loadedNick = remote.nickname
+                state = remote.state.normalized(remote.nickname)
+                displayCoins = remote.coins
             } else {
                 loadedNick = nickname
                 state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname)).normalized(nickname)
+                displayCoins = 0
             }
             savedSnapshot = state.snapshotKey()
-            // Mindestens kurz die Animation zeigen
             val minMs = 1100L
             val elapsed = SystemClock.elapsedRealtime() - started
             if (elapsed < minMs) delay(minMs - elapsed)
@@ -188,6 +209,31 @@ fun ProfileCanvasScreen(
             state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname)).normalized(nickname)
             savedSnapshot = state.snapshotKey()
             profileReady = true
+        }
+    }
+
+    LaunchedEffect(myCoins, editable) {
+        if (editable) displayCoins = myCoins
+    }
+
+    fun tipGlassOnce() {
+        val uid = userId ?: return
+        if (editable) return
+        scope.launch {
+            try {
+                val result = LuvApiClient.tipGlass(uid)
+                displayCoins = result.toCoins
+                val id = SystemClock.elapsedRealtimeNanos()
+                tipPopIds = tipPopIds + id
+                delay(900)
+                tipPopIds = tipPopIds.filter { it != id }
+            } catch (e: Exception) {
+                Toast.makeText(
+                    context,
+                    e.message ?: "Spenden fehlgeschlagen",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
     }
 
@@ -398,18 +444,30 @@ fun ProfileCanvasScreen(
             }
             Spacer(modifier = Modifier.height(12.dp))
 
-            ProfileCanvasBoard(
-                state = state,
-                nickname = loadedNick,
-                colorIndex = colorIndex,
-                coins = coins,
-                editable = editable,
-                selectedId = selectedId,
-                onSelect = { selectedId = it },
-                onLayoutChange = { patchLayout(it) },
-                onOpenChest = { if (editable) showChest = true },
-                onEdit = { if (editable) editElId = it }
-            )
+            Box(modifier = Modifier.fillMaxWidth()) {
+                ProfileCanvasBoard(
+                    state = state,
+                    nickname = loadedNick,
+                    colorIndex = colorIndex,
+                    coins = displayCoins,
+                    editable = editable,
+                    selectedId = selectedId,
+                    onSelect = { selectedId = it },
+                    onLayoutChange = { patchLayout(it) },
+                    onOpenChest = { if (editable) showChest = true },
+                    onEdit = { if (editable) editElId = it },
+                    onTipGlass = if (!editable && !userId.isNullOrBlank()) {
+                        { tipGlassOnce() }
+                    } else {
+                        null
+                    }
+                )
+                tipPopIds.forEach { popId ->
+                    key(popId) {
+                        TipCoinPop(modifier = Modifier.align(Alignment.Center))
+                    }
+                }
+            }
 
             Text(
                 if (editable) "FÜR ALLE SICHTBAR" else "PROFIL",
@@ -512,9 +570,11 @@ fun ProfileCanvasScreen(
                 onCompanion = { placeCompanion(it) },
                 onGlass = { placeGlass() },
                 onBio = { placeBio() },
+                selectedTab = chestTab,
+                onTabChange = { chestTab = it },
                 onOpenMarketplace = {
                     showChest = false
-                    if (onOpenMarketplace != null) onOpenMarketplace()
+                    if (onOpenMarketplace != null) onOpenMarketplace(chestTab)
                     else {
                         PendingShop.offer()
                         Toast.makeText(context, "Öffne den Marktplatz im Menü", Toast.LENGTH_SHORT).show()
@@ -523,7 +583,7 @@ fun ProfileCanvasScreen(
                 },
                 onOpenItemShop = {
                     showChest = false
-                    if (onOpenItemShop != null) onOpenItemShop()
+                    if (onOpenItemShop != null) onOpenItemShop(chestTab)
                     else {
                         PendingShop.offer()
                         Toast.makeText(context, "Öffne den Itemshop im Menü", Toast.LENGTH_SHORT).show()
@@ -583,6 +643,34 @@ fun ProfileCanvasScreen(
 }
 
 @Composable
+private fun TipCoinPop(modifier: Modifier = Modifier) {
+    var visible by remember { mutableStateOf(true) }
+    val alpha by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(700),
+        label = "tipAlpha"
+    )
+    val rise by animateFloatAsState(
+        targetValue = if (visible) -36f else 0f,
+        animationSpec = tween(700),
+        label = "tipRise"
+    )
+    LaunchedEffect(Unit) {
+        delay(40)
+        visible = false
+    }
+    Text(
+        "+1 Coin",
+        color = AccentRose,
+        fontFamily = DisplayFont,
+        fontSize = 22.sp,
+        modifier = modifier
+            .offset(y = rise.dp)
+            .alpha(alpha)
+    )
+}
+
+@Composable
 private fun ProfileCanvasBoard(
     state: ProfileState,
     nickname: String,
@@ -593,7 +681,8 @@ private fun ProfileCanvasBoard(
     onSelect: (String?) -> Unit,
     onLayoutChange: (List<ProfileLayoutEl>) -> Unit,
     onOpenChest: () -> Unit,
-    onEdit: (String) -> Unit
+    onEdit: (String) -> Unit,
+    onTipGlass: (() -> Unit)? = null
 ) {
     val theme = ProfileCatalog.theme(state.themeId)
     BoxWithConstraints(
@@ -674,7 +763,8 @@ private fun ProfileCanvasBoard(
                     onLayoutChange(state.layout.filterNot { it.id == el.id })
                     onSelect(null)
                 },
-                onEdit = { onEdit(el.id) }
+                onEdit = { onEdit(el.id) },
+                onTipGlass = if (el.type == ProfileElType.Glass) onTipGlass else null
             )
         }
 
@@ -755,7 +845,8 @@ private fun ProfileElementView(
     onSelect: () -> Unit,
     onChange: (ProfileLayoutEl) -> Unit,
     onRemove: () -> Unit,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    onTipGlass: (() -> Unit)? = null
 ) {
     val density = LocalDensity.current
     var dragEl by remember(el.id) { mutableStateOf(el) }
@@ -843,7 +934,12 @@ private fun ProfileElementView(
                 scaleY = s
                 transformOrigin = TransformOrigin(0.5f, 0.5f)
             }
-            .clickable(enabled = editable) { onSelect() }
+            .clickable(
+                enabled = editable || (el.type == ProfileElType.Glass && onTipGlass != null)
+            ) {
+                if (editable) onSelect()
+                else onTipGlass?.invoke()
+            }
     ) {
         Box(
             modifier = Modifier
