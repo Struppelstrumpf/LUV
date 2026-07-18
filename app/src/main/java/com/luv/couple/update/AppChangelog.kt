@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.8.97",
+            listOf(
+                "Reaktion: Daumen hoch statt Haken",
+            )
+        ),
+        Entry(
             "1.8.96",
             listOf(
                 "Radierer unten wieder als Schwamm-Emoji",

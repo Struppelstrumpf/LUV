@@ -211,7 +211,7 @@ class LockDrawActivity : ComponentActivity() {
         }
 
         listOf(
-            R.id.emoji0 to "✔️",
+            R.id.emoji0 to "👍",
             R.id.emoji1 to "❌",
             R.id.emoji2 to "❤️",
             R.id.emoji3 to "😂",
