@@ -184,8 +184,7 @@ fun ProfileCanvasScreen(
     var showDivorce by remember { mutableStateOf(false) }
     var divorceTyped by remember { mutableStateOf("") }
     var divorceStep2 by remember { mutableStateOf(false) }
-    var showUnfriendHold by remember { mutableStateOf(false) }
-    var unfriendHoldMs by remember { mutableIntStateOf(0) }
+    var showUnfriendConfirm by remember { mutableStateOf(false) }
     var showGuestbookFor by remember { mutableStateOf<String?>(null) }
     // Fremdprofil: kein Default-Flash — erst Loader, dann fertiges Layout
     var profileReady by remember(userId, editable) {
@@ -1006,73 +1005,48 @@ fun ProfileCanvasScreen(
                     if (friendStatus == "friends" && !canDivorce) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Freundschaft beenden (halten)",
+                            "Freundschaft beenden",
                             color = TextMuted.copy(0.85f),
                             fontFamily = BodyFont,
                             fontSize = 12.sp,
                             modifier = Modifier
                                 .align(Alignment.CenterHorizontally)
-                                .pointerInput(userId) {
-                                    detectTapGestures(
-                                        onPress = {
-                                            showUnfriendHold = true
-                                            unfriendHoldMs = 0
-                                            val start = SystemClock.elapsedRealtime()
-                                            var completed = false
-                                            try {
-                                                while (true) {
-                                                    val held = (SystemClock.elapsedRealtime() - start).toInt()
-                                                    unfriendHoldMs = held.coerceAtMost(5000)
-                                                    if (held >= 5000) {
-                                                        completed = true
-                                                        break
-                                                    }
-                                                    delay(50)
-                                                }
-                                            } finally {
-                                                showUnfriendHold = false
-                                                unfriendHoldMs = 0
-                                            }
-                                            if (completed) {
-                                                val uid = userId ?: return@detectTapGestures
-                                                scope.launch {
-                                                    runCatching { LuvApiClient.removeFriend(uid) }
-                                                        .onSuccess {
-                                                            friendStatus = "none"
-                                                            friendshipLevel = 0
-                                                            Toast.makeText(
-                                                                context,
-                                                                "Freundschaft beendet",
-                                                                Toast.LENGTH_SHORT
-                                                            ).show()
-                                                        }
-                                                        .onFailure {
-                                                            Toast.makeText(
-                                                                context,
-                                                                it.message ?: "Fehler",
-                                                                Toast.LENGTH_SHORT
-                                                            ).show()
-                                                        }
-                                                }
-                                            }
-                                        }
-                                    )
-                                }
+                                .clickable { showUnfriendConfirm = true }
                                 .padding(6.dp)
                         )
-                        if (showUnfriendHold) {
-                            Text(
-                                "Noch ${(5000 - unfriendHoldMs).coerceAtLeast(0) / 1000 + 1}s halten…",
-                                color = AccentRose,
-                                fontFamily = BodyFont,
-                                fontSize = 12.sp,
-                                modifier = Modifier.fillMaxWidth(),
-                                textAlign = TextAlign.Center
-                            )
-                        }
                     }
                 }
             }
+        }
+
+        if (showUnfriendConfirm) {
+            HoldSlideConfirmDialog(
+                title = "Freundschaft beenden",
+                body = "Schiebe den Regler nach rechts und halte ihn 5 Sekunden. " +
+                    "Loslassen setzt zurück. Freundschaftslevel wird zurückgesetzt.",
+                holdSeconds = 5,
+                accent = AccentRose,
+                confirmHint = "Nach rechts schieben und halten",
+                onDismiss = { showUnfriendConfirm = false },
+                onConfirmed = {
+                    val uid = userId ?: return@HoldSlideConfirmDialog
+                    scope.launch {
+                        runCatching { LuvApiClient.removeFriend(uid) }
+                            .onSuccess {
+                                friendStatus = "none"
+                                friendshipLevel = 0
+                                Toast.makeText(context, "Freundschaft beendet", Toast.LENGTH_SHORT).show()
+                            }
+                            .onFailure {
+                                Toast.makeText(
+                                    context,
+                                    it.message ?: "Fehler",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                    }
+                }
+            )
         }
 
         if (showMarryInfo) {
@@ -1080,168 +1054,125 @@ fun ProfileCanvasScreen(
             val cool = marriageCooldownSkipCost
             val total = unlock + cool
             val coins = AccountSession.account.value?.coins ?: displayCoins
+            val costLine = buildString {
+                append("Level $friendshipLevel/100. ")
+                if (unlock > 0) append("Freischaltung $unlock Coins. ")
+                else append("Level 100 — Antrag kostenlos. ")
+                if (cool > 0) append("Scheidungs-Wartezeit +$cool Coins. ")
+                if (total > 0) append("Gesamt $total · du hast $coins. ")
+                append("Nach Annahme: 7 Tage verlobt, dann Hochzeitsleinwand.")
+            }
+            HoldSlideConfirmDialog(
+                title = if (total > 0) "Hochzeit anfragen · $total Coins" else "Hochzeit anfragen",
+                body = costLine,
+                holdSeconds = 10,
+                accent = Color(0xFFFFD54F),
+                confirmHint = "Nach rechts schieben und halten",
+                enabled = total <= 0 || coins >= total,
+                onDismiss = { showMarryInfo = false },
+                onConfirmed = {
+                    val uid = userId ?: return@HoldSlideConfirmDialog
+                    scope.launch {
+                        runCatching {
+                            LuvApiClient.proposeMarriage(uid, unlockWithCoins = unlock > 0)
+                        }
+                            .onSuccess {
+                                canProposeMarriage = false
+                                proposeUnlockCost = 0
+                                marriageCooldownSkipCost = 0
+                                marriageCooldownLabel = null
+                                displayCoins = AccountSession.account.value?.coins ?: displayCoins
+                                Toast.makeText(
+                                    context,
+                                    if (total > 0) "Antrag gesendet (−$total Coins) 💍"
+                                    else "Antrag gesendet 💍",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                            .onFailure {
+                                Toast.makeText(
+                                    context,
+                                    it.message ?: "Antrag fehlgeschlagen",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                    }
+                }
+            )
+        }
+
+        if (showDivorce && !divorceStep2) {
             AlertDialog(
-                onDismissRequest = { showMarryInfo = false },
-                title = { Text("Heiraten", fontFamily = DisplayFont) },
+                onDismissRequest = { showDivorce = false },
+                title = { Text("Scheidung", fontFamily = DisplayFont) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            "Nach Annahme: 7 Tage verlobt, dann 7 Tage Hochzeitsleinwand. " +
-                                "Danach Ehepartner-Extra, Gästebuch und Ehering. Nur eine Ehe gleichzeitig.",
+                            "Tippe „scheiden“ zur Bestätigung. Partner muss nicht zustimmen. " +
+                                "Ehepartner-Extra, Hochzeitsbild und Ehering entfallen. " +
+                                "Danach 7 Tage Wartezeit (oder Coins), bevor wieder geheiratet werden kann.",
                             fontFamily = BodyFont,
                             color = TextMuted
                         )
-                        Text(
-                            "Freundschaftslevel $friendshipLevel / 100",
-                            color = TextPrimary,
-                            fontFamily = DisplayFont,
-                            fontSize = 14.sp
+                        BasicTextField(
+                            value = divorceTyped,
+                            onValueChange = { divorceTyped = it },
+                            textStyle = TextStyle(color = TextPrimary, fontFamily = BodyFont),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(BgSoft, RoundedCornerShape(12.dp))
+                                .padding(12.dp)
                         )
-                        if (unlock > 0) {
-                            Text(
-                                "Unter Level 100: $unlock Coins Freischaltung",
-                                color = Color(0xFFFFD54F),
-                                fontFamily = BodyFont,
-                                fontSize = 13.sp
-                            )
-                        } else {
-                            Text(
-                                "Level 100 — Antrag kostenlos",
-                                color = TextMuted,
-                                fontFamily = BodyFont,
-                                fontSize = 13.sp
-                            )
-                        }
-                        if (cool > 0) {
-                            Text(
-                                "Deine Scheidungs-Wartezeit (${marriageCooldownLabel ?: "…"}): +$cool Coins",
-                                color = AccentRose,
-                                fontFamily = BodyFont,
-                                fontSize = 13.sp
-                            )
-                        }
-                        if (total > 0) {
-                            Text(
-                                "Gesamt $total Coins · du hast $coins",
-                                color = TextPrimary,
-                                fontFamily = DisplayFont,
-                                fontSize = 14.sp
-                            )
-                        }
                     }
                 },
                 confirmButton = {
-                    TextButton(
-                        enabled = total <= 0 || coins >= total,
-                        onClick = {
-                            val uid = userId ?: return@TextButton
-                            showMarryInfo = false
-                            scope.launch {
-                                runCatching {
-                                    LuvApiClient.proposeMarriage(uid, unlockWithCoins = unlock > 0)
-                                }
-                                    .onSuccess {
-                                        canProposeMarriage = false
-                                        proposeUnlockCost = 0
-                                        marriageCooldownSkipCost = 0
-                                        marriageCooldownLabel = null
-                                        displayCoins = AccountSession.account.value?.coins ?: displayCoins
-                                        Toast.makeText(
-                                            context,
-                                            if (total > 0) "Antrag gesendet (−$total Coins) 💍"
-                                            else "Antrag gesendet 💍",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                    .onFailure {
-                                        Toast.makeText(
-                                            context,
-                                            it.message ?: "Antrag fehlgeschlagen",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                            }
+                    TextButton(onClick = {
+                        if (divorceTyped.trim().equals("scheiden", ignoreCase = true)) {
+                            divorceStep2 = true
+                        } else {
+                            Toast.makeText(context, "Bitte „scheiden“ eingeben", Toast.LENGTH_SHORT).show()
                         }
-                    ) {
-                        Text(
-                            if (total > 0) "Antrag senden · $total Coins" else "Antrag senden",
-                            color = AccentRose
-                        )
+                    }) {
+                        Text("Weiter", color = AccentRose)
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showMarryInfo = false }) {
+                    TextButton(onClick = { showDivorce = false }) {
                         Text("Abbrechen", color = TextMuted)
                     }
                 }
             )
         }
 
-        if (showDivorce) {
-            AlertDialog(
-                onDismissRequest = { showDivorce = false },
-                title = { Text("Scheidung", fontFamily = DisplayFont) },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (!divorceStep2) {
-                            Text(
-                                "Tippe „scheiden“ zur Bestätigung. Partner muss nicht zustimmen. " +
-                                    "Ehepartner-Extra, Hochzeitsbild und Ehering entfallen. " +
-                                    "Danach 7 Tage Wartezeit (oder Coins), bevor wieder geheiratet werden kann.",
-                                fontFamily = BodyFont,
-                                color = TextMuted
-                            )
-                            BasicTextField(
-                                value = divorceTyped,
-                                onValueChange = { divorceTyped = it },
-                                textStyle = TextStyle(color = TextPrimary, fontFamily = BodyFont),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(BgSoft, RoundedCornerShape(12.dp))
-                                    .padding(12.dp)
-                            )
-                        } else {
-                            Text(
-                                "Wirklich scheiden lassen? Das kann nicht rückgängig gemacht werden.",
-                                fontFamily = BodyFont,
-                                color = TextMuted
-                            )
-                        }
-                    }
+        if (showDivorce && divorceStep2) {
+            HoldSlideConfirmDialog(
+                title = "Wirklich scheiden?",
+                body = "Schiebe nach rechts und halte 10 Sekunden. " +
+                    "Das kann nicht rückgängig gemacht werden.",
+                holdSeconds = 10,
+                accent = AccentRose,
+                confirmHint = "Nach rechts schieben und halten",
+                onDismiss = {
+                    showDivorce = false
+                    divorceStep2 = false
                 },
-                confirmButton = {
-                    TextButton(onClick = {
-                        if (!divorceStep2) {
-                            if (divorceTyped.trim().equals("scheiden", ignoreCase = true)) {
-                                divorceStep2 = true
-                            } else {
-                                Toast.makeText(context, "Bitte „scheiden“ eingeben", Toast.LENGTH_SHORT).show()
+                onConfirmed = {
+                    showDivorce = false
+                    divorceStep2 = false
+                    scope.launch {
+                        runCatching { LuvApiClient.divorceMarriage() }
+                            .onSuccess {
+                                canDivorce = false
+                                spouseExtraName = null
+                                Toast.makeText(context, "Geschieden", Toast.LENGTH_SHORT).show()
                             }
-                        } else {
-                            showDivorce = false
-                            scope.launch {
-                                runCatching { LuvApiClient.divorceMarriage() }
-                                    .onSuccess {
-                                        canDivorce = false
-                                        spouseExtraName = null
-                                        Toast.makeText(context, "Geschieden", Toast.LENGTH_SHORT).show()
-                                    }
-                                    .onFailure {
-                                        Toast.makeText(
-                                            context,
-                                            it.message ?: "Fehler",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
+                            .onFailure {
+                                Toast.makeText(
+                                    context,
+                                    it.message ?: "Fehler",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             }
-                        }
-                    }) {
-                        Text(if (divorceStep2) "Ja, scheiden" else "Weiter", color = AccentRose)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showDivorce = false }) {
-                        Text("Abbrechen", color = TextMuted)
                     }
                 }
             )
