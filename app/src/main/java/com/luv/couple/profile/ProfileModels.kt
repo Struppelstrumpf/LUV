@@ -110,17 +110,20 @@ data class ProfileState(
                 x = if (def.type == ProfileElType.Name && saved.x < 40f) 50f else saved.x,
             )
         }
+        val legacyPet = layout.firstOrNull { it.type == ProfileElType.Pet }
         val extras = layout.filter { el ->
             when (el.type) {
                 ProfileElType.Avatar, ProfileElType.Name -> false
                 // Stimmung & Freitext-Overlays entfernt; Bio optional auf der Leinwand
                 ProfileElType.Status, ProfileElType.Text -> false
-                ProfileElType.Sticker, ProfileElType.Glass, ProfileElType.Pet, ProfileElType.Bio -> true
+                // Begleiter sitzt mittig im Avatar — kein separates Pet-Element
+                ProfileElType.Pet -> false
+                ProfileElType.Sticker, ProfileElType.Glass, ProfileElType.Bio -> true
             }
         }.take(ProfileCatalog.MAX_DECOR + 4)
-        val pet = extras.firstOrNull { it.type == ProfileElType.Pet }
         return copy(
-            companionEmoji = (pet?.emoji ?: companionEmoji).ifBlank { "🐣" },
+            companionEmoji = companionEmoji.ifBlank { legacyPet?.emoji.orEmpty() }
+                .ifBlank { "🐣" },
             bio = bio.take(ProfileCatalog.MAX_BIO),
             layout = core + extras
         )

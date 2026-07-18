@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.39",
+            listOf(
+                "Begleiter mittig im Avatar — Home, Sozial, Profil & Leinwand",
+                "Lobby-Einladung: Freunde in Sozial-Reihenfolge einladen",
+            )
+        ),
+        Entry(
             "1.9.38",
             listOf(
                 "Google-Konto: Lobbys, Einstellungen, Ruhezeiten & Inventar geräteübergreifend",

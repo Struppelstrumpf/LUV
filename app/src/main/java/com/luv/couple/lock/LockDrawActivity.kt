@@ -1876,9 +1876,8 @@ class LockDrawActivity : ComponentActivity() {
         val onCanvas = !peer.departed && (peer.active || peer.peerKey == "me" || painting)
         val ringPad = if (onCanvas) (3 * dp).toInt() else 0
         val wrap = FrameLayout(this).apply {
-            // Begleiter-Badge darf über den Kreis ragen
-            clipChildren = false
-            clipToPadding = false
+            clipChildren = true
+            clipToPadding = true
             layoutParams = LinearLayout.LayoutParams(size + ringPad * 2, size + ringPad * 2)
             elevation = 0f
             if (onCanvas) {
@@ -1894,14 +1893,16 @@ class LockDrawActivity : ComponentActivity() {
         } else {
             PeerPalette.strokeColor(peer.colorIndex)
         }
+        val pet = peer.petEmoji.trim().ifBlank { ShopCatalog.DEFAULT_PET }
         val circle = TextView(this).apply {
             layoutParams = FrameLayout.LayoutParams(size, size).apply {
                 gravity = Gravity.CENTER
             }
             gravity = Gravity.CENTER
-            text = peer.nickname.trim().take(1).uppercase(Locale.getDefault())
+            text = pet
+            includeFontPadding = false
             setTextColor(if (peer.departed) 0xFFD1D5DB.toInt() else 0xFF1A1F2E.toInt())
-            textSize = 14f
+            textSize = 16f
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(fillColor)
@@ -1921,24 +1922,6 @@ class LockDrawActivity : ComponentActivity() {
             elevation = 0f
         }
         wrap.addView(circle)
-        val pet = peer.petEmoji.trim().ifBlank { ShopCatalog.DEFAULT_PET }
-        wrap.addView(
-            TextView(this).apply {
-                text = pet
-                gravity = Gravity.CENTER
-                textSize = 11f
-                includeFontPadding = false
-                layoutParams = FrameLayout.LayoutParams(
-                    (16 * dp).toInt(),
-                    (16 * dp).toInt()
-                ).apply {
-                    gravity = Gravity.BOTTOM or Gravity.END
-                    marginEnd = (-2 * dp).toInt()
-                    bottomMargin = (-2 * dp).toInt()
-                }
-                elevation = 4f * dp
-            }
-        )
         wrap.isClickable = true
         wrap.isFocusable = true
         wrap.setOnClickListener { showPeerProfileDialog(peer) }

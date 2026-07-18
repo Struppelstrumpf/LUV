@@ -687,6 +687,14 @@ fun LuvAppNav() {
                 shareText(inviteMessage(lobby))
                 inviteLobby = null
             },
+            onShareToFriend = { friend ->
+                val who = nickname?.takeIf { it.isNotBlank() }
+                    ?: lobby.hostNickname.takeIf { it.isNotBlank() }
+                    ?: "Jemand"
+                shareText(
+                    "Hey ${friend.nickname}, $who lädt dich zu „${lobby.name}“ ein\n${lobby.joinUrl}"
+                )
+            },
             onOpen = {
                 inviteLobby = null
                 CanvasStore.setActiveLobby(lobby.id)

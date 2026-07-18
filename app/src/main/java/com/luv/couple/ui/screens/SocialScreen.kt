@@ -351,28 +351,14 @@ private fun FriendRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Box(modifier = Modifier.size(44.dp)) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(CircleShape)
-                    .background(color),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    card.nickname.take(1).uppercase(),
-                    color = Color(0xFF1A1F2E),
-                    fontFamily = DisplayFont,
-                    fontSize = 18.sp
-                )
-            }
-            Text(
-                card.petEmoji,
-                fontSize = 16.sp,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .offset(x = 2.dp, y = 2.dp)
-            )
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(color),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(card.petEmoji, fontSize = 22.sp)
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(card.nickname, color = TextPrimary, fontFamily = DisplayFont, fontSize = 17.sp)

@@ -439,29 +439,12 @@ fun LobbiesScreen(
                 Box(
                     modifier = Modifier
                         .size(44.dp)
-                        .clickable(onClick = onOpenProfile)
+                        .clip(CircleShape)
+                        .background(accent)
+                        .clickable(onClick = onOpenProfile),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(CircleShape)
-                            .background(accent),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            nickname.take(1).uppercase(),
-                            color = Color.White,
-                            fontFamily = DisplayFont,
-                            fontSize = 20.sp
-                        )
-                    }
-                    Text(
-                        equippedPet,
-                        fontSize = 16.sp,
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .offset(x = 4.dp, y = 4.dp)
-                    )
+                    Text(equippedPet, fontSize = 22.sp)
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Row(
@@ -1163,10 +1146,119 @@ fun InviteLobbyDialog(
     lobby: Lobby,
     onShare: () -> Unit,
     onOpen: () -> Unit,
+    onShareToFriend: (com.luv.couple.net.LuvApiClient.FriendCard) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    var showFriends by remember { mutableStateOf(false) }
+    var friends by remember {
+        mutableStateOf<List<com.luv.couple.net.LuvApiClient.FriendCard>>(emptyList())
+    }
+    var friendsLoading by remember { mutableStateOf(false) }
+
+    if (showFriends) {
+        LaunchedEffect(Unit) {
+            friendsLoading = true
+            friends = runCatching {
+                com.luv.couple.net.LuvApiClient.fetchFriends().friends
+            }.getOrDefault(emptyList())
+            friendsLoading = false
+        }
+        AlertDialog(
+            onDismissRequest = { showFriends = false },
+            containerColor = BgSoft,
+            title = {
+                Text(
+                    "Freunde einladen",
+                    fontFamily = DisplayFont,
+                    fontSize = 22.sp,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Reihenfolge wie unter Sozial — tippe, um den Link zu teilen.",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp
+                    )
+                    when {
+                        friendsLoading -> Text(
+                            "Lädt…",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 14.sp
+                        )
+                        friends.isEmpty() -> Text(
+                            "Noch keine Freunde — unter Sozial kannst du welche hinzufügen.",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 14.sp
+                        )
+                        else -> Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(280.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            friends.forEach { card ->
+                                val color = Color(
+                                    PeerPalette.strokeColor(PeerPalette.indexFor(card.nickname))
+                                )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(Color.White.copy(0.06f))
+                                        .clickable {
+                                            onShareToFriend(card)
+                                            showFriends = false
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(CircleShape)
+                                            .background(color),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(card.petEmoji, fontSize = 20.sp)
+                                    }
+                                    Text(
+                                        card.nickname,
+                                        color = TextPrimary,
+                                        fontFamily = DisplayFont,
+                                        fontSize = 16.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Text(
+                                        "Einladen",
+                                        color = AccentRose,
+                                        fontFamily = BodyFont,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showFriends = false }) {
+                    Text("Zurück", color = TextPrimary, fontFamily = BodyFont, fontSize = 15.sp)
+                }
+            }
+        )
+        return
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = BgSoft,
@@ -1184,7 +1276,7 @@ fun InviteLobbyDialog(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    "QR scannen oder Link teilen — dann malt ihr zusammen.",
+                    "QR scannen, Link teilen oder Freunde einladen — dann malt ihr zusammen.",
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 14.sp,
@@ -1212,6 +1304,17 @@ fun InviteLobbyDialog(
                     fontFamily = BodyFont,
                     fontSize = 13.sp
                 )
+                TextButton(
+                    onClick = { showFriends = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "Freunde einladen",
+                        color = AccentRose,
+                        fontFamily = DisplayFont,
+                        fontSize = 15.sp
+                    )
+                }
             }
         },
         confirmButton = {

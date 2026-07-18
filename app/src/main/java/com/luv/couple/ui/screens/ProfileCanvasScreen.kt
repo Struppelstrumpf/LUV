@@ -315,22 +315,10 @@ fun ProfileCanvasScreen(
 
     fun placeCompanion(emoji: String) {
         if (!editable) return
-        state = state.copy(companionEmoji = emoji)
-        val existing = state.layout.firstOrNull { it.type == ProfileElType.Pet }
-        if (existing != null) {
-            patchLayout(
-                state.layout.map {
-                    if (it.type == ProfileElType.Pet) {
-                        it.copy(emoji = emoji, text = emoji, visible = true)
-                    } else it
-                }
-            )
-            selectedId = existing.id
-        } else {
-            val el = ProfileCatalog.newCompanion(emoji)
-            patchLayout(state.layout + el)
-            selectedId = el.id
-        }
+        // Begleiter sitzt mittig im Avatar-Kreis — kein separates Pet-Element mehr
+        val nextLayout = state.layout.filterNot { it.type == ProfileElType.Pet }
+        state = state.copy(companionEmoji = emoji, layout = nextLayout)
+        selectedId = nextLayout.firstOrNull { it.type == ProfileElType.Avatar }?.id
         showChest = false
         scope.launch {
             runCatching {
@@ -1111,6 +1099,7 @@ private fun ProfileCanvasBoard(
                 nickname = nickname,
                 colorIndex = colorIndex,
                 coins = coins,
+                companionEmoji = state.companionEmoji,
                 selected = selected && editable,
                 boardW = boardW,
                 boardH = boardH,
@@ -1142,7 +1131,9 @@ private fun ProfileCanvasBoard(
                 },
                 onEdit = { onEdit(el.id) },
                 onTipGlass = if (el.type == ProfileElType.Glass) onTipGlass else null,
-                onPetKraul = if (el.type == ProfileElType.Pet) onPetKraul else null
+                onPetKraul = if (el.type == ProfileElType.Avatar || el.type == ProfileElType.Pet) {
+                    onPetKraul
+                } else null
             )
         }
 
@@ -1216,6 +1207,7 @@ private fun ProfileElementView(
     nickname: String,
     colorIndex: Int,
     coins: Int,
+    companionEmoji: String,
     selected: Boolean,
     boardW: Float,
     boardH: Float,
@@ -1316,12 +1308,13 @@ private fun ProfileElementView(
             .clickable(
                 enabled = editable ||
                     (el.type == ProfileElType.Glass && onTipGlass != null) ||
-                    (el.type == ProfileElType.Pet && onPetKraul != null)
+                    ((el.type == ProfileElType.Pet || el.type == ProfileElType.Avatar) &&
+                        onPetKraul != null)
             ) {
                 if (editable) onSelect()
                 else when (el.type) {
                     ProfileElType.Glass -> onTipGlass?.invoke()
-                    ProfileElType.Pet -> onPetKraul?.invoke()
+                    ProfileElType.Pet, ProfileElType.Avatar -> onPetKraul?.invoke()
                     else -> Unit
                 }
             }
@@ -1348,7 +1341,7 @@ private fun ProfileElementView(
                 else -> Alignment.Center
             }
         ) {
-            ElementContent(dragEl, nickname, colorIndex, coins)
+            ElementContent(dragEl, nickname, colorIndex, coins, companionEmoji)
         }
 
         if (selected && editable) {
@@ -1462,7 +1455,8 @@ private fun ElementContent(
     el: ProfileLayoutEl,
     nickname: String,
     colorIndex: Int,
-    coins: Int
+    coins: Int,
+    companionEmoji: String = "🐣"
 ) {
     val font = when (el.fontFamily) {
         ProfileFont.Playful -> DisplayFont
@@ -1481,6 +1475,9 @@ private fun ElementContent(
     when (el.type) {
         ProfileElType.Avatar -> {
             val fill = Color(PeerPalette.strokeColor(colorIndex))
+            val pet = companionEmoji.trim().ifBlank {
+                el.emoji?.takeIf { it.isNotBlank() } ?: "🐣"
+            }
             Box(
                 modifier = Modifier
                     .fillMaxSize(0.88f)
@@ -1489,17 +1486,7 @@ private fun ElementContent(
                     .border(2.dp, Color.White.copy(0.9f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                val face = el.emoji?.takeIf { it.isNotBlank() }
-                if (face != null) {
-                    Text(face, fontSize = 26.sp)
-                } else {
-                        Text(
-                            nickname.take(1).uppercase(),
-                            color = Color(0xFF1A1F2E),
-                            fontFamily = FontFamily.Serif,
-                            fontSize = 22.sp
-                        )
-                }
+                Text(pet, fontSize = 28.sp)
             }
         }
         ProfileElType.Name -> {
