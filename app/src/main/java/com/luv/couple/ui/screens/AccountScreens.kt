@@ -818,7 +818,8 @@ fun SimpleBottomBar(
     selected: Int,
     onSelect: (Int) -> Unit,
     sozialBadge: Boolean = false,
-    marketBadge: Boolean = false
+    marketBadge: Boolean = false,
+    inventarBadge: Boolean = false
 ) {
     // Home · Sozial · Inventar · Markt · Zahnrad (Konto)
     val labels = listOf("Home", "Sozial", "Inventar", "Markt", null)
@@ -868,7 +869,11 @@ fun SimpleBottomBar(
                             textAlign = TextAlign.Center
                         )
                     }
-                    if ((index == 1 && sozialBadge) || (index == 3 && marketBadge)) {
+                    if (
+                        (index == 1 && sozialBadge) ||
+                        (index == 2 && inventarBadge) ||
+                        (index == 3 && marketBadge)
+                    ) {
                         Box(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)

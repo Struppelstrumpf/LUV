@@ -2160,7 +2160,8 @@ class LockDrawActivity : ComponentActivity() {
             profileHost = null
         }
         val resolvedUserId = when {
-            isMe -> null
+            // Eigenes Profil auch per userId laden — sonst erscheint nur die Default-Leinwand
+            isMe -> myId
             !peer.userId.isNullOrBlank() -> peer.userId
             else -> {
                 val id = lobbyId

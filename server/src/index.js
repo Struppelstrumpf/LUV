@@ -876,11 +876,48 @@ function ensureFriends(user) {
   if (!Array.isArray(f.outgoing)) f.outgoing = [];
   if (!Array.isArray(f.petKraulTargets)) f.petKraulTargets = [];
   marriage.ensureFriendLevels(f);
+  if (!f.levelRewardClaimed || typeof f.levelRewardClaimed !== "object") {
+    f.levelRewardClaimed = {};
+  }
   f.list = f.list.map((id) => String(id || "").trim()).filter(Boolean);
   f.incoming = f.incoming.map((id) => String(id || "").trim()).filter(Boolean);
   f.outgoing = f.outgoing.map((id) => String(id || "").trim()).filter(Boolean);
   user.friends = f;
   return f;
+}
+
+/** Abholbare Coins aus Freundschaftslevel (alle 10 Level · 1 Coin, summiert). */
+function pendingFriendshipLevelCoins(user) {
+  const f = ensureFriends(user);
+  let pending = 0;
+  for (const otherId of f.list) {
+    const lv = marriage.getLevel(user, otherId);
+    const last = Math.max(0, Math.floor(Number(f.levelRewardClaimed[otherId]) || 0));
+    for (let m = 10; m <= lv; m += 10) {
+      if (m > last) pending += 1;
+    }
+  }
+  return pending;
+}
+
+function claimFriendshipLevelCoins(user) {
+  const f = ensureFriends(user);
+  let granted = 0;
+  for (const otherId of f.list) {
+    const lv = marriage.getLevel(user, otherId);
+    let last = Math.max(0, Math.floor(Number(f.levelRewardClaimed[otherId]) || 0));
+    for (let m = 10; m <= lv; m += 10) {
+      if (m > last) {
+        granted += 1;
+        last = m;
+      }
+    }
+    f.levelRewardClaimed[otherId] = last;
+  }
+  if (granted > 0) {
+    applyLedger(user.id, granted, "friendship_level", "milestones");
+  }
+  return granted;
 }
 
 function friendPublicCard(user, viewer) {
@@ -2560,6 +2597,7 @@ const PAID_CREDIT_REASONS = new Set([
   "glass_tip_recv",
   "pet_kraul_recv",
   "market_sell",
+  "friendship_level",
 ]);
 
 const PUBLIC_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -5467,6 +5505,7 @@ app.get("/v1/me/friends", (req, res) => {
     f.list.map((id) => friendPublicCard(db.users[id], ctx.user)).filter(Boolean)
   );
   const myCd = marriage.cooldownRemainingMs(ctx.user);
+  const pendingFriendshipCoins = pendingFriendshipLevelCoins(ctx.user);
   return res.json({
     ok: true,
     friends: friendCards,
@@ -5481,6 +5520,7 @@ app.get("/v1/me/friends", (req, res) => {
     marriageCooldownRemainingMs: myCd,
     marriageCooldownSkipCost: marriage.skipWaitCost(myCd, marriage.DIVORCE_COOLDOWN_MS),
     marriageCooldownLabel: myCd > 0 ? marriage.formatRemaining(myCd) : null,
+    pendingFriendshipCoins,
   });
 });
 
@@ -5523,6 +5563,28 @@ app.post("/v1/users/:userId/friend-request", (req, res) => {
   trackAch(ctx.user, "friend_requests_sent", 1);
   scheduleSave();
   return res.json({ ok: true, friendStatus: "outgoing" });
+});
+
+app.post("/v1/me/friends/claim-level-coins", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const pending = pendingFriendshipLevelCoins(ctx.user);
+  if (pending <= 0) {
+    return res.json({
+      ok: true,
+      claimed: 0,
+      pendingFriendshipCoins: 0,
+      user: publicUser(ctx.user),
+    });
+  }
+  const claimed = claimFriendshipLevelCoins(ctx.user);
+  scheduleSave();
+  return res.json({
+    ok: true,
+    claimed,
+    pendingFriendshipCoins: pendingFriendshipLevelCoins(ctx.user),
+    user: publicUser(ctx.user),
+  });
 });
 
 app.post("/v1/me/friends/accept", (req, res) => {

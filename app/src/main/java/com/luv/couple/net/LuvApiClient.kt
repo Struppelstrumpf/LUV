@@ -1478,7 +1478,8 @@ object LuvApiClient {
         val myMarriage: MarriageInfo? = null,
         val marriageCooldownRemainingMs: Long = 0L,
         val marriageCooldownSkipCost: Int = 0,
-        val marriageCooldownLabel: String? = null
+        val marriageCooldownLabel: String? = null,
+        val pendingFriendshipCoins: Int = 0
     )
 
     data class PetKraulResult(
@@ -1573,8 +1574,15 @@ object LuvApiClient {
             myMarriage = parseMarriageInfo(json.optJSONObject("myMarriage")),
             marriageCooldownRemainingMs = json.optLong("marriageCooldownRemainingMs", 0L),
             marriageCooldownSkipCost = json.optInt("marriageCooldownSkipCost", 0),
-            marriageCooldownLabel = json.optString("marriageCooldownLabel").takeIf { it.isNotBlank() }
+            marriageCooldownLabel = json.optString("marriageCooldownLabel").takeIf { it.isNotBlank() },
+            pendingFriendshipCoins = json.optInt("pendingFriendshipCoins", 0)
         )
+    }
+
+    suspend fun claimFriendshipLevelCoins(): Int = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/me/friends/claim-level-coins", "{}")
+        json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
+        json.optInt("claimed", 0)
     }
 
     suspend fun proposeMarriage(

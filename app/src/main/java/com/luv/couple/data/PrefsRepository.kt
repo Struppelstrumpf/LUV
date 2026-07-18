@@ -69,6 +69,12 @@ class PrefsRepository(private val context: Context) {
     private val dismissedLobbiesKey = stringPreferencesKey("dismissed_lobby_codes_json")
     /** Zuletzt geöffnete Leinwand pro Lobby-Code → Glow zurücksetzen */
     private val lobbyCanvasSeenKey = stringPreferencesKey("lobby_canvas_seen_json")
+    /** Glow-Pause bis Timestamp (ms) pro Lobby-Code */
+    private val lobbyGlowSnoozeKey = stringPreferencesKey("lobby_glow_snooze_json")
+    /** Bereits gesehene Inventar-Keys (kind:id) */
+    private val inventorySeenKey = stringPreferencesKey("inventory_seen_ids_json")
+    /** Noch nicht im Tab angeschauten neuen Items */
+    private val inventoryUnseenKey = stringPreferencesKey("inventory_unseen_ids_json")
     /** Zuletzt bekannte Anzahl pending Markt-Verkäufe (für Push bei Anstieg) */
     private val pendingSalesKnownKey = intPreferencesKey("pending_sales_known_count")
     /** Lootbox: vor Kauf bestätigen (Standard an) */
@@ -720,6 +726,58 @@ class PrefsRepository(private val context: Context) {
         }
     }
 
+    val lobbyGlowSnoozeFlow: Flow<Map<String, Long>> = context.dataStore.data.map { prefs ->
+        parseLongMap(prefs[lobbyGlowSnoozeKey])
+    }
+
+    /** Glow auf Lobby-Kachel 5 Minuten pausieren (nach Betreten der Leinwand). */
+    suspend fun snoozeLobbyGlow(code: String, durationMs: Long = 5 * 60_000L) {
+        val clean = code.trim().uppercase().removePrefix("LUV-")
+        if (clean.length < 3) return
+        val until = System.currentTimeMillis() + durationMs
+        context.dataStore.edit { prefs ->
+            val map = parseLongMap(prefs[lobbyGlowSnoozeKey]).toMutableMap()
+            map[clean] = until
+            val now = System.currentTimeMillis()
+            map.entries.removeAll { it.value < now }
+            while (map.size > 40) {
+                val oldest = map.minByOrNull { it.value }?.key ?: break
+                map.remove(oldest)
+            }
+            prefs[lobbyGlowSnoozeKey] = encodeLongMap(map)
+        }
+    }
+
+    val inventoryUnseenFlow: Flow<Set<String>> = context.dataStore.data.map { prefs ->
+        parseStringSet(prefs[inventoryUnseenKey])
+    }
+
+    suspend fun inventoryUnseenIds(): Set<String> {
+        val prefs = context.dataStore.data.first()
+        return parseStringSet(prefs[inventoryUnseenKey])
+    }
+
+    suspend fun markInventoryKindSeen(kindPrefix: String) {
+        context.dataStore.edit { prefs ->
+            val unseen = parseStringSet(prefs[inventoryUnseenKey]).toMutableSet()
+            val seen = parseStringSet(prefs[inventorySeenKey]).toMutableSet()
+            val moving = unseen.filter { it.startsWith("$kindPrefix:") }.toSet()
+            unseen.removeAll(moving)
+            seen.addAll(moving)
+            prefs[inventoryUnseenKey] = encodeStringSet(unseen)
+            prefs[inventorySeenKey] = encodeStringSet(seen)
+        }
+    }
+
+    suspend fun markAllInventorySeen(currentKeys: Set<String>) {
+        context.dataStore.edit { prefs ->
+            val seen = parseStringSet(prefs[inventorySeenKey]).toMutableSet()
+            seen.addAll(currentKeys)
+            prefs[inventorySeenKey] = encodeStringSet(seen)
+            prefs[inventoryUnseenKey] = encodeStringSet(emptySet())
+        }
+    }
+
     suspend fun pendingSalesKnownCount(): Int =
         context.dataStore.data.first()[pendingSalesKnownKey] ?: 0
 
@@ -899,8 +957,40 @@ class PrefsRepository(private val context: Context) {
             prefs[equippedPetKey] =
                 if (eq.isNotBlank() && petList.contains(eq)) eq
                 else com.luv.couple.shop.ShopCatalog.DEFAULT_PET
+
+            val currentKeys = buildSet {
+                stickers.forEach { (k, v) -> if (k.isNotBlank() && v > 0) add("stickers:$k") }
+                themes.map { it.trim() }.filter { it.isNotBlank() }.forEach { add("themes:$it") }
+                petList.forEach { add("pets:$it") }
+                emojis.forEach { (k, v) -> if (k.isNotBlank() && v > 0) add("emojis:$k") }
+            }
+            val seen = parseStringSet(prefs[inventorySeenKey])
+            val prevUnseen = parseStringSet(prefs[inventoryUnseenKey])
+            if (seen.isEmpty() && prevUnseen.isEmpty()) {
+                prefs[inventorySeenKey] = encodeStringSet(currentKeys)
+                prefs[inventoryUnseenKey] = encodeStringSet(emptySet())
+            } else {
+                val fresh = currentKeys - seen
+                val still = prevUnseen.intersect(currentKeys)
+                prefs[inventoryUnseenKey] = encodeStringSet(fresh + still)
+            }
         }
     }
+
+    private fun parseStringSet(raw: String?): Set<String> {
+        if (raw.isNullOrBlank()) return emptySet()
+        return runCatching {
+            val arr = JSONArray(raw)
+            buildSet {
+                for (i in 0 until arr.length()) {
+                    arr.optString(i).trim().takeIf { it.isNotBlank() }?.let { add(it) }
+                }
+            }
+        }.getOrDefault(emptySet())
+    }
+
+    private fun encodeStringSet(set: Set<String>): String =
+        JSONArray(set.toList().sorted()).toString()
 
     suspend fun removeLobby(lobbyId: String) {
         context.dataStore.edit { prefs ->

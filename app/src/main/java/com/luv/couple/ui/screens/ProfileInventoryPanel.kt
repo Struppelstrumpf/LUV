@@ -61,12 +61,12 @@ private val RefInventoryWidth = 390.dp
 
 enum class InventoryPanelMode { Menu, ProfileChest }
 
-private enum class InvTab(val label: String) {
-    Stickers("Sticker"),
-    Themes("Hintergründe"),
-    Companions("Begleiter"),
-    Emojis("Emojis"),
-    Extras("Extras")
+private enum class InvTab(val label: String, val kindPrefix: String?) {
+    Stickers("Sticker", "stickers"),
+    Themes("Hintergründe", "themes"),
+    Companions("Begleiter", "pets"),
+    Emojis("Emojis", "emojis"),
+    Extras("Extras", null)
 }
 
 /**
@@ -114,6 +114,12 @@ fun ProfileInventoryPanel(
     onOpenGallery: (() -> Unit)? = null,
     selectedTab: Int = 0,
     onTabChange: (Int) -> Unit = {},
+    /** Item-Keys mit Session-Glow, z. B. "stickers:🦋" */
+    highlightKeys: Set<String> = emptySet(),
+    /** Noch ungesehen (Tab-Punkte), z. B. "themes:night" */
+    unseenKeys: Set<String> = emptySet(),
+    /** Tab besucht → Kind als gesehen melden ("stickers", "themes", …) */
+    onKindVisited: (String) -> Unit = {},
     onDismiss: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     showCardChrome: Boolean = true
@@ -122,6 +128,9 @@ fun ProfileInventoryPanel(
     var tab by remember(mode) { mutableIntStateOf(selectedTab.coerceIn(0, tabs.lastIndex)) }
     LaunchedEffect(selectedTab, tabs.size) {
         tab = selectedTab.coerceIn(0, tabs.lastIndex)
+    }
+    LaunchedEffect(tab, tabs) {
+        tabs.getOrNull(tab)?.kindPrefix?.let(onKindVisited)
     }
     val themeItems = remember(ownedThemes) {
         val owned = ownedThemes.toSet()
@@ -192,6 +201,9 @@ fun ProfileInventoryPanel(
             ) {
                 tabs.forEachIndexed { i, invTab ->
                     val on = tab == i
+                    val tabHasNew = invTab.kindPrefix?.let { prefix ->
+                        unseenKeys.any { it.startsWith("$prefix:") }
+                    } == true
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -223,6 +235,16 @@ fun ProfileInventoryPanel(
                                 maxLines = 1,
                                 overflow = TextOverflow.Clip,
                                 textAlign = TextAlign.Center
+                            )
+                        }
+                        if (tabHasNew) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(top = s(2.dp), end = s(4.dp))
+                                    .size(s(7.dp))
+                                    .clip(CircleShape)
+                                    .background(AccentRose)
                             )
                         }
                     }
@@ -257,27 +279,34 @@ fun ProfileInventoryPanel(
                             verticalArrangement = Arrangement.spacedBy(s(8.dp))
                         ) {
                             items(entries, key = { it.key }) { (emoji, count) ->
-                                Box(
-                                    modifier = Modifier
-                                        .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(s(14.dp)))
-                                        .background(BgSoft)
-                                        .clickable { onEmoji(emoji) }
-                                        .padding(s(6.dp))
+                                val itemKey = "emojis:$emoji"
+                                ItemNewGlowBorder(
+                                    active = itemKey in highlightKeys,
+                                    corner = s(14.dp),
+                                    modifier = Modifier.aspectRatio(1f)
                                 ) {
-                                    Text(
-                                        emoji,
-                                        fontSize = ts(26.sp),
-                                        modifier = Modifier.align(Alignment.Center)
-                                    )
-                                    if (count > 0) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(RoundedCornerShape(s(14.dp)))
+                                            .background(BgSoft)
+                                            .clickable { onEmoji(emoji) }
+                                            .padding(s(6.dp))
+                                    ) {
                                         Text(
-                                            "×$count",
-                                            color = TextMuted,
-                                            fontFamily = BodyFont,
-                                            fontSize = ts(10.sp),
-                                            modifier = Modifier.align(Alignment.BottomEnd)
+                                            emoji,
+                                            fontSize = ts(26.sp),
+                                            modifier = Modifier.align(Alignment.Center)
                                         )
+                                        if (count > 0) {
+                                            Text(
+                                                "×$count",
+                                                color = TextMuted,
+                                                fontFamily = BodyFont,
+                                                fontSize = ts(10.sp),
+                                                modifier = Modifier.align(Alignment.BottomEnd)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -302,37 +331,44 @@ fun ProfileInventoryPanel(
                     ) {
                         items(themeItems, key = { it.id }) { theme ->
                             val on = theme.id == currentThemeId
-                            Box(
-                                modifier = Modifier
-                                    .aspectRatio(1.12f)
-                                    .clip(RoundedCornerShape(s(14.dp)))
-                                    .border(
-                                        1.dp,
-                                        if (on) AccentRose.copy(0.85f) else Color.White.copy(0.08f),
-                                        RoundedCornerShape(s(14.dp))
-                                    )
-                                    .clickable { onTheme(theme) }
+                            val itemKey = "themes:${theme.id}"
+                            ItemNewGlowBorder(
+                                active = itemKey in highlightKeys,
+                                corner = s(14.dp),
+                                modifier = Modifier.aspectRatio(1.12f)
                             ) {
-                                ProfileThemeBackdrop(
-                                    theme = theme,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                                Column(
+                                Box(
                                     modifier = Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .fillMaxWidth()
-                                        .background(Color.Black.copy(0.32f))
-                                        .padding(vertical = s(4.dp), horizontal = s(4.dp)),
-                                    horizontalAlignment = Alignment.CenterHorizontally
+                                        .fillMaxSize()
+                                        .clip(RoundedCornerShape(s(14.dp)))
+                                        .border(
+                                            1.dp,
+                                            if (on) AccentRose.copy(0.85f) else Color.White.copy(0.08f),
+                                            RoundedCornerShape(s(14.dp))
+                                        )
+                                        .clickable { onTheme(theme) }
                                 ) {
-                                    Text(theme.emoji, fontSize = ts(16.sp))
-                                    Text(
-                                        theme.label,
-                                        color = Color.White,
-                                        fontFamily = BodyFont,
-                                        fontSize = ts(10.sp),
-                                        maxLines = 1
+                                    ProfileThemeBackdrop(
+                                        theme = theme,
+                                        modifier = Modifier.fillMaxSize()
                                     )
+                                    Column(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .fillMaxWidth()
+                                            .background(Color.Black.copy(0.32f))
+                                            .padding(vertical = s(4.dp), horizontal = s(4.dp)),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text(theme.emoji, fontSize = ts(16.sp))
+                                        Text(
+                                            theme.label,
+                                            color = Color.White,
+                                            fontFamily = BodyFont,
+                                            fontSize = ts(10.sp),
+                                            maxLines = 1
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -357,27 +393,34 @@ fun ProfileInventoryPanel(
                             verticalArrangement = Arrangement.spacedBy(s(8.dp))
                         ) {
                             items(stickerEntries, key = { it.key }) { (emoji, count) ->
-                                Box(
-                                    modifier = Modifier
-                                        .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(s(14.dp)))
-                                        .background(BgSoft)
-                                        .clickable { onSticker(emoji) }
-                                        .padding(s(4.dp))
+                                val itemKey = "stickers:$emoji"
+                                ItemNewGlowBorder(
+                                    active = itemKey in highlightKeys,
+                                    corner = s(14.dp),
+                                    modifier = Modifier.aspectRatio(1f)
                                 ) {
-                                    Text(
-                                        emoji,
-                                        fontSize = ts(26.sp),
-                                        modifier = Modifier.align(Alignment.Center)
-                                    )
-                                    if (count > 0) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(RoundedCornerShape(s(14.dp)))
+                                            .background(BgSoft)
+                                            .clickable { onSticker(emoji) }
+                                            .padding(s(4.dp))
+                                    ) {
                                         Text(
-                                            "×$count",
-                                            color = TextMuted,
-                                            fontFamily = BodyFont,
-                                            fontSize = ts(10.sp),
-                                            modifier = Modifier.align(Alignment.BottomEnd)
+                                            emoji,
+                                            fontSize = ts(26.sp),
+                                            modifier = Modifier.align(Alignment.Center)
                                         )
+                                        if (count > 0) {
+                                            Text(
+                                                "×$count",
+                                                color = TextMuted,
+                                                fontFamily = BodyFont,
+                                                fontSize = ts(10.sp),
+                                                modifier = Modifier.align(Alignment.BottomEnd)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -392,19 +435,26 @@ fun ProfileInventoryPanel(
                 ) {
                     items(petItems, key = { it }) { emoji ->
                         val on = emoji == currentCompanion
-                        Box(
-                            modifier = Modifier
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(s(14.dp)))
-                                .background(if (on) AccentRose.copy(0.22f) else BgSoft)
-                                .border(
-                                    1.dp,
-                                    if (on) AccentRose.copy(0.65f) else Color.White.copy(0.08f),
-                                    RoundedCornerShape(s(14.dp))
-                                )
-                                .clickable { onCompanion(emoji) },
-                            contentAlignment = Alignment.Center
-                        ) { Text(emoji, fontSize = ts(28.sp)) }
+                        val itemKey = "pets:$emoji"
+                        ItemNewGlowBorder(
+                            active = itemKey in highlightKeys,
+                            corner = s(14.dp),
+                            modifier = Modifier.aspectRatio(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(s(14.dp)))
+                                    .background(if (on) AccentRose.copy(0.22f) else BgSoft)
+                                    .border(
+                                        1.dp,
+                                        if (on) AccentRose.copy(0.65f) else Color.White.copy(0.08f),
+                                        RoundedCornerShape(s(14.dp))
+                                    )
+                                    .clickable { onCompanion(emoji) },
+                                contentAlignment = Alignment.Center
+                            ) { Text(emoji, fontSize = ts(28.sp)) }
+                        }
                     }
                 }
                 InvTab.Extras -> Column(

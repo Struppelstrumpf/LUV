@@ -128,6 +128,7 @@ fun LuvAppNav() {
     val account by AccountSession.account.collectAsStateWithLifecycle()
     val sozialDot by com.luv.couple.net.NotificationBadges.hasSozialDot.collectAsStateWithLifecycle()
     val marketDot by com.luv.couple.net.NotificationBadges.hasMarketDot.collectAsStateWithLifecycle()
+    val inventarDot by com.luv.couple.net.NotificationBadges.hasInventoryDot.collectAsStateWithLifecycle()
     val pendingJoin by PendingJoin.code.collectAsStateWithLifecycle()
     val pendingShopReturn by PendingShopReturn.pending.collectAsStateWithLifecycle()
     val pendingShop by PendingShop.open.collectAsStateWithLifecycle()
@@ -330,6 +331,8 @@ fun LuvAppNav() {
                 pets = remote.pets,
                 equippedPet = remote.equippedPet
             )
+            com.luv.couple.net.NotificationBadges.syncInventoryUnseenFromPrefs()
+            com.luv.couple.net.NotificationBadges.syncAppBadge(context)
         }
     }
 
@@ -985,6 +988,7 @@ fun LuvAppNav() {
                                     scope.launch {
                                         prefs.setActiveLobby(lobby.id)
                                         prefs.markLobbyCanvasSeen(lobby.code)
+                                        prefs.snoozeLobbyGlow(lobby.code)
                                         refreshAccount()
                                     }
                                 }
@@ -1194,6 +1198,7 @@ fun LuvAppNav() {
                     selected = tab,
                     sozialBadge = sozialDot,
                     marketBadge = marketDot,
+                    inventarBadge = inventarDot,
                     onSelect = { next ->
                         if (next == 4) accountMessage = null
                         tab = next

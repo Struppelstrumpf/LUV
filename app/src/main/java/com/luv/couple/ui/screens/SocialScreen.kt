@@ -70,8 +70,9 @@ fun SocialScreen(
 ) {
     val scope = rememberCoroutineScope()
     var tab by remember { mutableIntStateOf(0) }
-    val hasClaimable by AchievementsBadge.hasClaimable.collectAsStateWithLifecycle()
-    val friendIncoming by com.luv.couple.net.NotificationBadges.friendIncoming
+    val friendsTabDot by com.luv.couple.net.NotificationBadges.hasFriendsTabDot
+        .collectAsStateWithLifecycle()
+    val achievementsTabDot by com.luv.couple.net.NotificationBadges.hasAchievementsTabDot
         .collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
@@ -79,8 +80,14 @@ fun SocialScreen(
         com.luv.couple.net.NotificationBadges.markSozialSeen()
         AchievementsBadge.refresh()
         com.luv.couple.net.NotificationBadges.refreshFriends()
-        // Nach Refresh erneut als gesehen — Punkt bleibt weg bis neue Aktivität
         com.luv.couple.net.NotificationBadges.markSozialSeen()
+        // Start auf Freunde-Tab → dortigen Punkt sofort clearen
+        com.luv.couple.net.NotificationBadges.markFriendsTabSeen()
+    }
+
+    LaunchedEffect(tab) {
+        if (tab == 0) com.luv.couple.net.NotificationBadges.markFriendsTabSeen()
+        else com.luv.couple.net.NotificationBadges.markAchievementsTabSeen()
     }
 
     MenuBackdrop(includeNavigationBars = false) {
@@ -101,7 +108,14 @@ fun SocialScreen(
                             .weight(1f)
                             .clip(RoundedCornerShape(14.dp))
                             .background(if (active) AccentRose.copy(0.28f) else BgSoft)
-                            .clickable { tab = index }
+                            .clickable {
+                                tab = index
+                                if (index == 0) {
+                                    com.luv.couple.net.NotificationBadges.markFriendsTabSeen()
+                                } else {
+                                    com.luv.couple.net.NotificationBadges.markAchievementsTabSeen()
+                                }
+                            }
                             .padding(vertical = 10.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -112,8 +126,8 @@ fun SocialScreen(
                             fontSize = 14.sp,
                             softWrap = false
                         )
-                        val showDot = (index == 0 && friendIncoming > 0) ||
-                            (index == 1 && hasClaimable)
+                        val showDot = (index == 0 && friendsTabDot) ||
+                            (index == 1 && achievementsTabDot)
                         if (showDot) {
                             Box(
                                 modifier = Modifier
@@ -177,6 +191,8 @@ private fun FriendsPanel(
     val rowHeights = remember { mutableMapOf<String, Int>() }
     val gapPx = with(density) { 10.dp.toPx() }
     var showAddFriend by remember { mutableStateOf(false) }
+    var pendingFriendshipCoins by remember { mutableIntStateOf(0) }
+    var claimingCoins by remember { mutableStateOf(false) }
 
     fun reload() {
         scope.launch {
@@ -190,6 +206,7 @@ private fun FriendsPanel(
                     myMarriage = it.myMarriage
                     divorceCooldownLabel = it.marriageCooldownLabel
                     divorceCooldownSkipCost = it.marriageCooldownSkipCost
+                    pendingFriendshipCoins = it.pendingFriendshipCoins
                     com.luv.couple.net.NotificationBadges.setFriendIncoming(
                         it.incoming.size + it.marriageProposals.size
                     )
@@ -243,16 +260,64 @@ private fun FriendsPanel(
             ),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Runde Plus-Kachel: Spitzname suchen
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .clip(CircleShape)
-                .background(AccentRose)
-                .clickable { showAddFriend = true },
-            contentAlignment = Alignment.Center
+        // Runde Plus-Kachel + ggf. Freundschaftslevel-Coins abholen (gleiche Höhe)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("+", color = Color.White, fontFamily = DisplayFont, fontSize = 28.sp)
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(AccentRose)
+                    .clickable { showAddFriend = true },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("+", color = Color.White, fontFamily = DisplayFont, fontSize = 28.sp)
+            }
+            if (pendingFriendshipCoins > 0) {
+                val gold = Color(0xFFFFD54F)
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(gold.copy(0.22f))
+                        .border(1.dp, gold.copy(0.7f), RoundedCornerShape(20.dp))
+                        .clickable(enabled = !claimingCoins) {
+                            claimingCoins = true
+                            scope.launch {
+                                runCatching { LuvApiClient.claimFriendshipLevelCoins() }
+                                    .onSuccess { claimed ->
+                                        pendingFriendshipCoins = 0
+                                        Toast.makeText(
+                                            context,
+                                            if (claimed > 0) "+$claimed Coins abgeholt"
+                                            else "Bereits abgeholt",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                        reload()
+                                    }
+                                    .onFailure {
+                                        Toast.makeText(
+                                            context,
+                                            it.message ?: "Abholen fehlgeschlagen",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                claimingCoins = false
+                            }
+                        }
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        if (claimingCoins) "…" else "🪙 $pendingFriendshipCoins abholen",
+                        color = gold,
+                        fontFamily = DisplayFont,
+                        fontSize = 14.sp,
+                        softWrap = false
+                    )
+                }
+            }
         }
 
         if (!divorceCooldownLabel.isNullOrBlank() && myMarriage == null) {

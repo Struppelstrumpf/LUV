@@ -714,6 +714,8 @@ private fun LobbyCard(
         .collectAsStateWithLifecycle(initialValue = emptyMap())
     val canvasSeenMap by LuvApp.instance.prefs.lobbyCanvasSeenFlow
         .collectAsStateWithLifecycle(initialValue = emptyMap())
+    val glowSnoozeMap by LuvApp.instance.prefs.lobbyGlowSnoozeFlow
+        .collectAsStateWithLifecycle(initialValue = emptyMap())
     val proximityCode = remember(lobby.code) {
         lobby.code.trim().uppercase().removePrefix("LUV-")
     }
@@ -731,8 +733,12 @@ private fun LobbyCard(
         ?: CanvasStore.cachedNickname
         ?: ""
     val myUserId = AccountSession.account.value?.id
+    val nowMs = System.currentTimeMillis()
+    val glowSnoozed = (glowSnoozeMap[proximityCode] ?: 0L) > nowMs
     // Glow nur wenn jemand anderes in Abwesenheit gezeichnet/platziert hat
-    val hasNewDraw = lobby.lastCanvasAt > 0L &&
+    // (nach Betreten 5 Min pausiert)
+    val hasNewDraw = !glowSnoozed &&
+        lobby.lastCanvasAt > 0L &&
         lobby.lastCanvasAt > (canvasSeenMap[proximityCode] ?: 0L) &&
         !lobby.lastCanvasActorId.isNullOrBlank() &&
         lobby.lastCanvasActorId != myUserId

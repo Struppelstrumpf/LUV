@@ -35,6 +35,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -44,6 +45,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -1675,6 +1677,10 @@ fun InventoryScreen(
     val emojiBar by prefs.emojiBarFlow.collectAsStateWithLifecycle(
         initialValue = ShopCatalog.DEFAULT_BAR
     )
+    val unseenKeys by prefs.inventoryUnseenFlow.collectAsStateWithLifecycle(
+        initialValue = emptySet()
+    )
+    var sessionGlowKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
     var profile by remember {
         mutableStateOf(ProfileState(layout = ProfileCatalog.defaultLayout(nickname)))
     }
@@ -1684,6 +1690,41 @@ fun InventoryScreen(
     var replacePickFor by remember { mutableStateOf<String?>(null) }
     var showBarEditor by remember { mutableStateOf(false) }
     var showGallery by remember { mutableStateOf(false) }
+
+    LaunchedEffect(unseenKeys) {
+        if (unseenKeys.isNotEmpty()) {
+            sessionGlowKeys = sessionGlowKeys + unseenKeys
+        }
+    }
+
+    val ownedStickersLatest = rememberUpdatedState(ownedStickersMap)
+    val ownedThemesLatest = rememberUpdatedState(ownedThemes)
+    val ownedPetsLatest = rememberUpdatedState(ownedPets)
+    val ownedEmojisLatest = rememberUpdatedState(owned)
+
+    DisposableEffect(Unit) {
+        onDispose {
+            val keys = buildSet {
+                ownedStickersLatest.value.forEach { (k, v) ->
+                    if (k.isNotBlank() && v > 0) add("stickers:$k")
+                }
+                ownedThemesLatest.value.forEach { id ->
+                    id.trim().takeIf { it.isNotBlank() }?.let { add("themes:$it") }
+                }
+                ownedPetsLatest.value.forEach { pet ->
+                    pet.trim().takeIf { it.isNotBlank() }?.let { add("pets:$it") }
+                }
+                ownedEmojisLatest.value.forEach { (k, v) ->
+                    if (k.isNotBlank() && v > 0) add("emojis:$k")
+                }
+            }
+            kotlinx.coroutines.MainScope().launch {
+                prefs.markAllInventorySeen(keys)
+                com.luv.couple.net.NotificationBadges.syncInventoryUnseenFromPrefs()
+                com.luv.couple.net.NotificationBadges.syncAppBadge(context)
+            }
+        }
+    }
 
     LaunchedEffect(nickname) {
         runCatching {
@@ -1695,6 +1736,8 @@ fun InventoryScreen(
                 pets = remote.pets,
                 equippedPet = remote.equippedPet
             )
+            com.luv.couple.net.NotificationBadges.syncInventoryUnseenFromPrefs()
+            com.luv.couple.net.NotificationBadges.syncAppBadge(context)
         }
         val json = runCatching { prefs.profileCanvasJson() }.getOrNull()
         profile = ProfileCatalog.decode(json, nickname)
@@ -1785,6 +1828,15 @@ fun InventoryScreen(
                 onOpenGallery = { showGallery = true },
                 selectedTab = selectedTab,
                 onTabChange = onTabChange,
+                highlightKeys = sessionGlowKeys,
+                unseenKeys = unseenKeys,
+                onKindVisited = { kind ->
+                    scope.launch {
+                        prefs.markInventoryKindSeen(kind)
+                        com.luv.couple.net.NotificationBadges.syncInventoryUnseenFromPrefs()
+                        com.luv.couple.net.NotificationBadges.syncAppBadge(context)
+                    }
+                },
                 modifier = Modifier.fillMaxSize(),
                 showCardChrome = true
             )
