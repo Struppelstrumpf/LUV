@@ -106,7 +106,7 @@ fun BrushStudioSheet(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.52f))
+            // Kein Scrim — Canvas dahinter bleibt klar sichtbar
             .clickable(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() },
