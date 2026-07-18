@@ -1005,11 +1005,14 @@ fun ProfileCanvasScreen(
                     } else if (
                         friendStatus == "friends" &&
                         !alreadyBonded &&
-                        !partnerCooldownLabel.isNullOrBlank()
+                        canProposeMarriage.not() &&
+                        !partnerCooldownLabel.isNullOrBlank() &&
+                        partnerCooldownLabel != "null" &&
+                        partnerCooldownLabel!!.any { it.isDigit() }
                     ) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Partner hat noch Scheidungs-Wartezeit (${partnerCooldownLabel})",
+                            "Partner hat noch Scheidungs-Wartezeit ($partnerCooldownLabel)",
                             color = TextMuted,
                             fontFamily = BodyFont,
                             fontSize = 12.sp,

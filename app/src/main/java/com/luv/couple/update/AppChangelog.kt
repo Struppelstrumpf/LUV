@@ -12,6 +12,22 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.9926",
+            listOf(
+                "Tutorial neu gestaltet — inkl. Heirat & voller Hochzeitsleinwand",
+                "Profil-Elemente behalten ihre Größe nach dem Speichern",
+                "Heiraten: Level 100 gratis, Ablauf 7+7 Tage klar erklärt",
+            )
+        ),
+        Entry(
+            "1.9.95",
+            listOf(
+                "Tutorial neu gestaltet — inkl. Heirat & voller Hochzeitsleinwand",
+                "Profil-Elemente behalten ihre Größe nach dem Speichern",
+                "Heiraten: Level 100 gratis, Ablauf 7+7 Tage klar erklärt",
+            )
+        ),
+        Entry(
             "1.9.94",
             listOf(
                 "Random-Lobby zuverlässiger",
