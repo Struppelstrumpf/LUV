@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.16",
+            listOf(
+                "Profil-Leinwand komplett: Truhe, Stimmung, Begleiter, Münzglas, Text",
+                "Hintergründe mit Effekten, Schrift-Styles und Wiederherstellen",
+            )
+        ),
+        Entry(
             "1.9.15",
             listOf(
                 "Profil-Leinwand: Sticker, Hintergründe und Truhe",

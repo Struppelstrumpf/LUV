@@ -2767,14 +2767,34 @@ function sanitizeProfileCanvas(raw) {
   if (!raw || typeof raw !== "object") return null;
   const themeId = String(raw.themeId || "meadow").trim().slice(0, 32) || "meadow";
   const statusEmoji = String(raw.statusEmoji || "😊").trim().slice(0, 8) || "😊";
-  const bio = String(raw.bio || "").trim().slice(0, 280);
+  const companionEmoji = String(raw.companionEmoji || "💕").trim().slice(0, 8) || "💕";
+  const bio = String(raw.bio || "").trim().slice(0, 500);
   const layoutIn = Array.isArray(raw.layout) ? raw.layout : [];
   const layout = [];
+  const allowedTypes = new Set([
+    "avatar",
+    "name",
+    "status",
+    "bio",
+    "glass",
+    "pet",
+    "sticker",
+    "text",
+  ]);
   for (const el of layoutIn.slice(0, 48)) {
     if (!el || typeof el !== "object") continue;
     const id = String(el.id || "").trim().slice(0, 64);
-    const type = String(el.type || "sticker").trim().slice(0, 16);
+    let type = String(el.type || "sticker").trim().slice(0, 16).toLowerCase();
+    if (!allowedTypes.has(type)) type = "sticker";
     if (!id) continue;
+    const fontFamilyRaw = String(el.fontFamily || "").trim().toLowerCase();
+    const fontFamily = ["cozy", "playful", "classic"].includes(fontFamilyRaw)
+      ? fontFamilyRaw
+      : null;
+    const fontSizeNum = Number(el.fontSize);
+    const fontSize = Number.isFinite(fontSizeNum)
+      ? Math.min(32, Math.max(8, fontSizeNum))
+      : null;
     layout.push({
       id,
       type,
@@ -2786,11 +2806,13 @@ function sanitizeProfileCanvas(raw) {
       visible: el.visible !== false,
       z: Math.max(0, Math.min(100, Number(el.z) || 10)),
       emoji: String(el.emoji || "").trim().slice(0, 8) || null,
-      text: String(el.text || "").trim().slice(0, 80) || null,
+      text: String(el.text || "").trim().slice(0, 500) || null,
       color: String(el.color || "").trim().slice(0, 16) || null,
+      fontSize,
+      fontFamily,
     });
   }
-  return { themeId, statusEmoji, bio, layout };
+  return { themeId, statusEmoji, companionEmoji, bio, layout };
 }
 
 app.get("/v1/me/profile", (req, res) => {
@@ -2799,6 +2821,7 @@ app.get("/v1/me/profile", (req, res) => {
   const profile = sanitizeProfileCanvas(ctx.user.profileCanvas) || {
     themeId: "meadow",
     statusEmoji: "😊",
+    companionEmoji: "💕",
     bio: "",
     layout: [],
   };
@@ -2833,6 +2856,7 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   const profile = sanitizeProfileCanvas(user.profileCanvas) || {
     themeId: "meadow",
     statusEmoji: "😊",
+    companionEmoji: "💕",
     bio: "",
     layout: [],
   };

@@ -864,7 +864,15 @@ fun LuvAppNav() {
                 colorIndex = colorIndex,
                 editable = true,
                 onClose = { navController.popBackStack() },
-                onEditNickname = { navController.navigate(Routes.NICKNAME) }
+                onEditNickname = { navController.navigate(Routes.NICKNAME) },
+                onOpenShop = {
+                    navController.popBackStack()
+                    tab = 3
+                    scope.launch {
+                        refreshAccount()
+                        syncInventory()
+                    }
+                }
             )
         }
 

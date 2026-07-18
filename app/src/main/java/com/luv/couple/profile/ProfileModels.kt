@@ -3,15 +3,19 @@ package com.luv.couple.profile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+import kotlin.math.abs
 
 enum class ProfileElType {
-    Avatar, Name, Status, Sticker, Text;
+    Avatar, Name, Status, Bio, Glass, Pet, Sticker, Text;
 
     val wire: String
         get() = when (this) {
             Avatar -> "avatar"
             Name -> "name"
             Status -> "status"
+            Bio -> "bio"
+            Glass -> "glass"
+            Pet -> "pet"
             Sticker -> "sticker"
             Text -> "text"
         }
@@ -21,8 +25,25 @@ enum class ProfileElType {
             "avatar" -> Avatar
             "name" -> Name
             "status" -> Status
+            "bio" -> Bio
+            "glass" -> Glass
+            "pet" -> Pet
             "text" -> Text
             else -> Sticker
+        }
+    }
+}
+
+enum class ProfileFont(val wire: String, val label: String) {
+    Cozy("cozy", "Gemütlich"),
+    Playful("playful", "Verspielt"),
+    Classic("classic", "Klassisch");
+
+    companion object {
+        fun fromWire(raw: String?): ProfileFont = when (raw?.lowercase()) {
+            "playful" -> Playful
+            "classic" -> Classic
+            else -> Cozy
         }
     }
 }
@@ -39,7 +60,9 @@ data class ProfileLayoutEl(
     val z: Int = 10,
     val emoji: String? = null,
     val text: String? = null,
-    val color: String? = null
+    val color: String? = null,
+    val fontSize: Float? = null,
+    val fontFamily: ProfileFont? = null
 )
 
 data class ProfileTheme(
@@ -49,17 +72,27 @@ data class ProfileTheme(
     val skyTop: Long,
     val skyBottom: Long,
     val groundTop: Long,
-    val groundBottom: Long
+    val groundBottom: Long,
+    /** rain | snow | stars | none */
+    val effect: String = "none"
+)
+
+data class ProfileMood(
+    val id: String,
+    val label: String,
+    val emoji: String,
+    val free: Boolean = true
 )
 
 data class ProfileState(
     val themeId: String = ProfileCatalog.DEFAULT_THEME_ID,
     val statusEmoji: String = "😊",
     val bio: String = "",
+    val companionEmoji: String = "💕",
     val layout: List<ProfileLayoutEl> = emptyList()
 ) {
     fun normalized(nickname: String): ProfileState {
-        val core = ProfileCatalog.defaultLayout(nickname, statusEmoji)
+        val core = ProfileCatalog.defaultLayout(nickname, statusEmoji, bio, companionEmoji)
         val byType = layout.associateBy { it.type }
         val mergedCore = core.map { def ->
             val saved = byType[def.type]
@@ -70,67 +103,144 @@ data class ProfileState(
                 text = when (def.type) {
                     ProfileElType.Name -> nickname
                     ProfileElType.Status -> statusEmoji
+                    ProfileElType.Bio -> bio
+                    ProfileElType.Pet -> companionEmoji
                     else -> saved.text ?: def.text
+                },
+                emoji = when (def.type) {
+                    ProfileElType.Status -> statusEmoji
+                    ProfileElType.Pet -> companionEmoji
+                    ProfileElType.Avatar -> saved.emoji ?: def.emoji
+                    else -> saved.emoji ?: def.emoji
+                },
+                visible = when (def.type) {
+                    ProfileElType.Bio -> true
+                    else -> saved.visible
                 }
             )
         }
         val decor = layout.filter {
             it.type == ProfileElType.Sticker || it.type == ProfileElType.Text
-        }.take(36)
-        return copy(layout = mergedCore + decor)
+        }.take(ProfileCatalog.MAX_DECOR)
+        return copy(
+            statusEmoji = statusEmoji.ifBlank { "😊" },
+            companionEmoji = companionEmoji.ifBlank { "💕" },
+            bio = bio.take(ProfileCatalog.MAX_BIO),
+            layout = mergedCore + decor
+        )
     }
+
+    fun snapshotKey(): String = ProfileCatalog.encode(this)
 }
 
 object ProfileCatalog {
     const val DEFAULT_THEME_ID = "meadow"
     const val MAX_DECOR = 36
+    const val MAX_BIO = 500
+    const val DECOR_Y_MIN = 52f
+    const val MAX_DECOR_Z = 85
 
-    val THEMES: List<ProfileTheme> = listOf(
-        ProfileTheme(
-            "meadow", "Wiese", "🌿",
-            0xFF64B5F6, 0xFFBBDEFB, 0xFF7CB342, 0xFF33691E
-        ),
-        ProfileTheme(
-            "sunset", "Abendrot", "🌅",
-            0xFFFF8F00, 0xFFFFE0B2, 0xFFBF360C, 0xFF6D4C41
-        ),
-        ProfileTheme(
-            "night", "Nacht", "🌙",
-            0xFF1A237E, 0xFF3949AB, 0xFF263238, 0xFF102027
-        ),
-        ProfileTheme(
-            "snow", "Schnee", "❄️",
-            0xFFB3E5FC, 0xFFE1F5FE, 0xFFECEFF1, 0xFFCFD8DC
-        ),
-        ProfileTheme(
-            "blossom", "Blüte", "🌸",
-            0xFFF8BBD0, 0xFFFCE4EC, 0xFF81C784, 0xFF558B2F
-        ),
-        ProfileTheme(
-            "ocean", "Meer", "🌊",
-            0xFF4FC3F7, 0xFFB3E5FC, 0xFF00838F, 0xFF004D40
-        )
+    val CORE_HIDE_TYPES = setOf(
+        ProfileElType.Avatar,
+        ProfileElType.Name,
+        ProfileElType.Status,
+        ProfileElType.Glass,
+        ProfileElType.Pet
     )
 
-    /** Kostenlose Starter-Sticker für die Profil-Leinwand. */
+    val EDITABLE_TYPES = setOf(
+        ProfileElType.Avatar,
+        ProfileElType.Name,
+        ProfileElType.Glass,
+        ProfileElType.Text,
+        ProfileElType.Bio
+    )
+
+    val TEXT_COLORS: List<String> = listOf(
+        "#FFFFFF", "#FFD54F", "#FF6B8A", "#00B7E4", "#C218A8",
+        "#2E7D32", "#C62828", "#0277BD", "#E65100", "#546E7A"
+    )
+
+    val THEMES: List<ProfileTheme> = listOf(
+        ProfileTheme("meadow", "Wiese", "🌿", 0xFF64B5F6, 0xFFBBDEFB, 0xFF7CB342, 0xFF33691E),
+        ProfileTheme("forest", "Wald", "🌲", 0xFF81C784, 0xFFC8E6C9, 0xFF2E7D32, 0xFF1B5E20),
+        ProfileTheme("sunset", "Abendrot", "🌅", 0xFFFF8F00, 0xFFFFE0B2, 0xFFBF360C, 0xFF6D4C41),
+        ProfileTheme("night", "Nacht", "🌙", 0xFF1A237E, 0xFF3949AB, 0xFF263238, 0xFF102027, "stars"),
+        ProfileTheme("snow", "Schnee", "❄️", 0xFFB3E5FC, 0xFFE1F5FE, 0xFFECEFF1, 0xFFCFD8DC, "snow"),
+        ProfileTheme("blossom", "Blüte", "🌸", 0xFFF8BBD0, 0xFFFCE4EC, 0xFF81C784, 0xFF558B2F),
+        ProfileTheme("ocean", "Meer", "🌊", 0xFF4FC3F7, 0xFFB3E5FC, 0xFF00838F, 0xFF004D40),
+        ProfileTheme("rain", "Regen", "🌧️", 0xFF607D8B, 0xFFB0BEC5, 0xFF455A64, 0xFF263238, "rain"),
+        ProfileTheme("autumn", "Herbst", "🍂", 0xFFFFB74D, 0xFFFFE0B2, 0xFFEF6C00, 0xFF5D4037),
+        ProfileTheme("stars", "Sterne", "✨", 0xFF0D1B2A, 0xFF1B3A4B, 0xFF1B263B, 0xFF0D1B2A, "stars"),
+        ProfileTheme("cabin", "Hütte", "🏠", 0xFFFFCC80, 0xFFFFE0B2, 0xFF6D4C41, 0xFF3E2723),
+        ProfileTheme("lake", "See", "🏞️", 0xFF4DD0E1, 0xFFB2EBF2, 0xFF00897B, 0xFF004D40),
+        ProfileTheme("lavender", "Lavendel", "💜", 0xFFCE93D8, 0xFFF3E5F5, 0xFF7E57C2, 0xFF4527A0),
+        ProfileTheme("hearth", "Kamin", "🔥", 0xFFFFAB91, 0xFFFFE0B2, 0xFFBF360C, 0xFF3E2723)
+    )
+
     val FREE_STICKERS: List<String> = listOf(
         "☀️", "😎", "💌", "🏠", "🐦", "🌳", "🌻", "🦔",
         "🐶", "🐱", "⭐", "✨", "❤️", "🌹", "🌈", "🍀",
-        "🎈", "🎁", "☕", "🎵", "🦋", "🐝", "🌙", "🔥"
+        "🎈", "🎁", "☕", "🎵", "🦋", "🐝", "🌙", "🔥",
+        "💕", "🫶", "✏️", "🎨"
+    )
+
+    val MOODS: List<ProfileMood> = listOf(
+        ProfileMood("m-smile", "Fröhlich", "😊", true),
+        ProfileMood("m-paw", "Pfotenzeit", "🐾", true),
+        ProfileMood("m-leaf", "Natur", "🌿", true),
+        ProfileMood("m-cool", "Cool unterwegs", "😎", true),
+        ProfileMood("m-love", "Verliebt", "🥰", true),
+        ProfileMood("m-kiss", "Kuss", "😘", true),
+        ProfileMood("m-star", "Strahlend", "🤩", true),
+        ProfileMood("m-sleep", "Müde", "😴", true),
+        ProfileMood("m-think", "Nachdenklich", "🤔", true),
+        ProfileMood("m-fire", "Feuer", "🔥", true),
+        ProfileMood("m-party", "Party", "🎉", true),
+        ProfileMood("m-heart", "Herzchen", "💕", true),
+        ProfileMood("m-spark", "Magic", "✨", true),
+        ProfileMood("m-moon", "Nachtmodus", "🌙", true),
+        ProfileMood("m-rainbow", "Regenbogen", "🌈", true)
+    )
+
+    val COMPANIONS: List<String> = listOf(
+        "💕", "💖", "💗", "💘", "❤️", "🧡", "💛", "💚", "💙", "💜",
+        "🐶", "🐱", "🐰", "🐻", "🦊", "🐼", "🦄", "🦋", "🐣", "🐢"
+    )
+
+    val AVATAR_FACES: List<String> = listOf(
+        "", "😊", "🥰", "😎", "😍", "🤗", "😇", "🤠", "😺", "🐶", "🎨", "✏️"
     )
 
     fun theme(id: String): ProfileTheme =
         THEMES.firstOrNull { it.id == id } ?: THEMES.first()
 
-    fun defaultLayout(nickname: String, status: String = "😊"): List<ProfileLayoutEl> = listOf(
-        ProfileLayoutEl("el-avatar", ProfileElType.Avatar, 18f, 22f, 1f, -6f, z = 20),
+    fun defaultLayout(
+        nickname: String,
+        status: String = "😊",
+        bio: String = "",
+        companion: String = "💕"
+    ): List<ProfileLayoutEl> = listOf(
+        ProfileLayoutEl("el-avatar", ProfileElType.Avatar, 22f, 24f, 1f, -4f, z = 20),
         ProfileLayoutEl(
-            "el-name", ProfileElType.Name, 42f, 18f, 1f, -8f,
-            z = 21, text = nickname, color = "#FFFFFF"
+            "el-name", ProfileElType.Name, 48f, 20f, 1f, -8f,
+            z = 21, text = nickname, color = "#FFFFFF", fontSize = 18f, fontFamily = ProfileFont.Playful
         ),
         ProfileLayoutEl(
-            "el-status", ProfileElType.Status, 58f, 28f, 1f, 0f,
+            "el-status", ProfileElType.Status, 72f, 26f, 1f, 0f,
             z = 22, text = status, emoji = status
+        ),
+        ProfileLayoutEl(
+            "el-pet", ProfileElType.Pet, 78f, 70f, 0.9f, 0f,
+            z = 8, emoji = companion, text = companion
+        ),
+        ProfileLayoutEl(
+            "el-glass", ProfileElType.Glass, 20f, 74f, 0.95f, 0f,
+            z = 9, color = "#FFFFFF", fontSize = 11f, fontFamily = ProfileFont.Cozy
+        ),
+        ProfileLayoutEl(
+            "el-bio", ProfileElType.Bio, 50f, 88f, 1f, 0f,
+            z = 13, text = bio, color = "#FFFFFF", fontSize = 12f, fontFamily = ProfileFont.Cozy
         )
     )
 
@@ -141,20 +251,73 @@ object ProfileCatalog {
         return ProfileLayoutEl(
             id = "stk-${UUID.randomUUID()}",
             type = ProfileElType.Sticker,
-            x = (22f + col * 18f).coerceIn(12f, 88f),
-            y = (48f + row * 14f).coerceIn(36f, 88f),
+            x = (24f + col * 16f).coerceIn(12f, 88f),
+            y = (DECOR_Y_MIN + row * 12f).coerceIn(DECOR_Y_MIN, 90f),
             scale = 1f,
-            rotation = 0f,
-            z = (25 + n).coerceAtMost(85),
+            z = (25 + n).coerceAtMost(MAX_DECOR_Z),
             emoji = emoji.take(8)
         )
+    }
+
+    fun newText(color: String, layout: List<ProfileLayoutEl>): ProfileLayoutEl {
+        val n = layout.count { it.type == ProfileElType.Text }
+        return ProfileLayoutEl(
+            id = "txt-${UUID.randomUUID()}",
+            type = ProfileElType.Text,
+            x = 50f,
+            y = (DECOR_Y_MIN + 8f + n * 8f).coerceIn(DECOR_Y_MIN, 88f),
+            scale = 1f,
+            z = (30 + n).coerceAtMost(MAX_DECOR_Z),
+            text = "Dein Text",
+            color = color,
+            fontSize = 14f,
+            fontFamily = ProfileFont.Cozy
+        )
+    }
+
+    fun repairRotation(rotation: Float): Float {
+        var r = rotation
+        while (r > 180f) r -= 360f
+        while (r < -180f) r += 360f
+        return if (abs(r) > 90f) 0f else r
+    }
+
+    fun dragRadius(type: ProfileElType, scale: Float): Float {
+        val base = when (type) {
+            ProfileElType.Avatar -> 7.5f
+            ProfileElType.Glass -> 7f
+            ProfileElType.Pet -> 6.5f
+            ProfileElType.Name -> 11f
+            ProfileElType.Bio -> 13f
+            ProfileElType.Text -> 9f
+            ProfileElType.Sticker -> 3.5f
+            ProfileElType.Status -> 3f
+        }
+        return (base * scale).coerceIn(3f, 18f)
+    }
+
+    fun clampPos(el: ProfileLayoutEl, x: Float, y: Float): Pair<Float, Float> {
+        val r = dragRadius(el.type, el.scale)
+        return x.coerceIn(r, 100f - r) to y.coerceIn(r, 100f - r)
+    }
+
+    fun parseColor(hex: String?, fallback: Long = 0xFFFFFFFF): androidx.compose.ui.graphics.Color {
+        val raw = hex?.trim().orEmpty()
+        if (raw.startsWith("#") && (raw.length == 7 || raw.length == 9)) {
+            return runCatching {
+                val v = android.graphics.Color.parseColor(raw)
+                androidx.compose.ui.graphics.Color(v)
+            }.getOrElse { androidx.compose.ui.graphics.Color(fallback) }
+        }
+        return androidx.compose.ui.graphics.Color(fallback)
     }
 
     fun encode(state: ProfileState): String {
         val o = JSONObject()
             .put("themeId", state.themeId)
             .put("statusEmoji", state.statusEmoji)
-            .put("bio", state.bio.take(280))
+            .put("bio", state.bio.take(MAX_BIO))
+            .put("companionEmoji", state.companionEmoji)
         val arr = JSONArray()
         state.layout.forEach { el ->
             arr.put(
@@ -171,6 +334,8 @@ object ProfileCatalog {
                     .put("emoji", el.emoji)
                     .put("text", el.text)
                     .put("color", el.color)
+                    .put("fontSize", el.fontSize?.toDouble())
+                    .put("fontFamily", el.fontFamily?.wire)
             )
         }
         o.put("layout", arr)
@@ -187,6 +352,10 @@ object ProfileCatalog {
             val layout = buildList {
                 for (i in 0 until arr.length()) {
                     val e = arr.optJSONObject(i) ?: continue
+                    val fontRaw = e.optString("fontFamily").takeIf { it.isNotBlank() && it != "null" }
+                    val fontSize = if (e.has("fontSize") && !e.isNull("fontSize")) {
+                        e.optDouble("fontSize", 14.0).toFloat()
+                    } else null
                     add(
                         ProfileLayoutEl(
                             id = e.optString("id").ifBlank { "el-$i" },
@@ -194,13 +363,15 @@ object ProfileCatalog {
                             x = e.optDouble("x", 50.0).toFloat().coerceIn(0f, 100f),
                             y = e.optDouble("y", 50.0).toFloat().coerceIn(0f, 100f),
                             scale = e.optDouble("scale", 1.0).toFloat().coerceIn(0.35f, 2.5f),
-                            rotation = e.optDouble("rotation", 0.0).toFloat(),
+                            rotation = repairRotation(e.optDouble("rotation", 0.0).toFloat()),
                             flipX = e.optBoolean("flipX", false),
                             visible = e.optBoolean("visible", true),
                             z = e.optInt("z", 10),
                             emoji = e.optString("emoji").takeIf { it.isNotBlank() && it != "null" },
                             text = e.optString("text").takeIf { it.isNotBlank() && it != "null" },
-                            color = e.optString("color").takeIf { it.isNotBlank() && it != "null" }
+                            color = e.optString("color").takeIf { it.isNotBlank() && it != "null" },
+                            fontSize = fontSize?.coerceIn(8f, 32f),
+                            fontFamily = fontRaw?.let { ProfileFont.fromWire(it) }
                         )
                     )
                 }
@@ -208,7 +379,8 @@ object ProfileCatalog {
             ProfileState(
                 themeId = o.optString("themeId", DEFAULT_THEME_ID),
                 statusEmoji = o.optString("statusEmoji", "😊").ifBlank { "😊" },
-                bio = o.optString("bio", "").take(280),
+                bio = o.optString("bio", "").take(MAX_BIO),
+                companionEmoji = o.optString("companionEmoji", "💕").ifBlank { "💕" },
                 layout = layout
             ).normalized(nickname)
         }.getOrElse {
