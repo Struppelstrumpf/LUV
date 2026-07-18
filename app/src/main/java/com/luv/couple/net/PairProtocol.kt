@@ -64,6 +64,7 @@ object PairProtocol {
                     .put("authorId", message.stroke.authorId ?: JSONObject.NULL)
                     .put("gender", message.stroke.gender ?: JSONObject.NULL)
                     .put("emoji", message.stroke.emoji ?: JSONObject.NULL)
+                    .put("colorLocked", message.stroke.colorLocked)
                     .put("points", points)
             }
             is PairMessage.UndoMsg -> JSONObject()
@@ -151,7 +152,8 @@ object PairProtocol {
                             colorIndex = colorIndex,
                             authorId = json.optString("authorId").takeIf { it.isNotBlank() && it != "null" },
                             gender = json.optString("gender").takeIf { it.isNotBlank() && it != "null" },
-                            emoji = json.optString("emoji").takeIf { it.isNotBlank() && it != "null" }?.take(8)
+                            emoji = json.optString("emoji").takeIf { it.isNotBlank() && it != "null" }?.take(8),
+                            colorLocked = json.optBoolean("colorLocked", false)
                         )
                     )
                 }

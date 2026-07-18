@@ -459,6 +459,27 @@ class LockDrawActivity : ComponentActivity() {
             }
         }
         lifecycleScope.launch {
+            var id = lobbyId
+            var tries = 0
+            while (id == null && tries < 20) {
+                kotlinx.coroutines.delay(50)
+                id = lobbyId
+                tries++
+            }
+            val readyId = id ?: return@launch
+            var previousPeers = PairSessionState.peerCount(readyId).value
+            PairSessionState.peerCount(readyId).collectLatest { peers ->
+                // Solo → zu zweit: bisherige Farben einfrieren
+                if (previousPeers <= 1 && peers > 1) {
+                    CanvasStore.lockOwnStrokeColors(readyId)
+                    if (::drawingView.isInitialized) {
+                        drawingView.setStrokes(CanvasStore.snapshot(readyId), animateNew = false)
+                    }
+                }
+                previousPeers = peers
+            }
+        }
+        lifecycleScope.launch {
             while (true) {
                 kotlinx.coroutines.delay(1200)
                 if (LiveProximity.isLobbyHot(lobbyId)) refreshLegend()
@@ -1056,7 +1077,8 @@ class LockDrawActivity : ComponentActivity() {
                 withContext(Dispatchers.IO) { LuvApp.instance.prefs.setColorIndex(safe) }
             }
         }
-        // Immer lokal angleichen — Avatar und Striche bleiben dieselbe Farbe
+        // Solo: nur Pinsel/Hintergrund wechseln — alte Striche behalten Farben.
+        // Zu zweit+: freigegebene (nach Join gemalte) Striche mitumfärben.
         CanvasStore.recolorOwnStrokes(safe, lobbyId, broadcast = sync)
         drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
         if (sync) {

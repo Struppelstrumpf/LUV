@@ -402,6 +402,7 @@ function sanitizeStoredStroke(raw) {
     nickname: String(raw.nickname || "").trim().slice(0, 18) || null,
     colorIndex: Math.max(0, Math.min(31, Number(raw.colorIndex) || 0)),
     authorId: String(raw.authorId || "").trim().slice(0, 64) || null,
+    colorLocked: Boolean(raw.colorLocked),
   };
   if (emoji) out.emoji = emoji;
   return out;
@@ -498,6 +499,7 @@ function strokeFromSocketMessage(json, socket) {
       json?.colorIndex != null ? json.colorIndex : socket?.luvColorIndex || 0,
     authorId,
     emoji: json?.emoji,
+    colorLocked: json?.colorLocked,
   });
   return base;
 }
@@ -5103,6 +5105,7 @@ wss.on("connection", (socket, req) => {
         colorIndex: stored.colorIndex,
         authorId: stored.authorId,
         points: stored.points,
+        colorLocked: Boolean(stored.colorLocked),
       };
       if (stored.emoji) relayPayload.emoji = stored.emoji;
       const relay = JSON.stringify(relayPayload);
@@ -5163,6 +5166,7 @@ wss.on("connection", (socket, req) => {
         authorId: stored.authorId,
         points: stored.points,
         emoji: stored.emoji,
+        colorLocked: Boolean(stored.colorLocked),
       });
       const stickerRelay = JSON.stringify({
         type: "sticker_place",

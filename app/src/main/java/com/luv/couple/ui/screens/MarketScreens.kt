@@ -29,7 +29,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,6 +70,7 @@ import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.ShopPack
 import com.luv.couple.shop.ShopCatalog
+import com.luv.couple.shop.ShopEmoji
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -385,6 +389,7 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
     var tab by remember { mutableIntStateOf(0) }
     val owned by prefs.ownedEmojisFlow.collectAsStateWithLifecycle(initialValue = emptyMap())
     var busyEmoji by remember { mutableStateOf<String?>(null) }
+    var pendingBuy by remember { mutableStateOf<ShopEmoji?>(null) }
 
     LaunchedEffect(Unit) {
         runCatching {
@@ -392,6 +397,83 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
             if (remote.isNotEmpty()) prefs.setOwnedEmojis(remote)
         }
         onRefreshInventory()
+    }
+
+    pendingBuy?.let { item ->
+        AlertDialog(
+            onDismissRequest = { if (busyEmoji == null) pendingBuy = null },
+            containerColor = BgSoft,
+            title = {
+                Text(
+                    "Kaufen?",
+                    fontFamily = DisplayFont,
+                    fontSize = 22.sp,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        item.emoji,
+                        fontSize = 40.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "Für ${item.priceCoins} Coins in dein Inventar legen?",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp
+                    )
+                    Text(
+                        "Du hast ${account?.coins ?: 0} Coins.",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 12.sp
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = busyEmoji == null,
+                    onClick = {
+                        busyEmoji = item.emoji
+                        scope.launch {
+                            runCatching {
+                                val (_, ownedCount) = LuvApiClient.buyEmoji(item.emoji)
+                                val next = owned.toMutableMap()
+                                next[item.emoji] = ownedCount
+                                prefs.setOwnedEmojis(next)
+                                Toast.makeText(
+                                    context,
+                                    "${item.emoji} gekauft (−${item.priceCoins})",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                pendingBuy = null
+                            }.onFailure {
+                                Toast.makeText(
+                                    context,
+                                    it.message ?: "Kauf fehlgeschlagen",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                            busyEmoji = null
+                        }
+                    }
+                ) {
+                    Text("Kaufen", color = AccentRose, fontFamily = DisplayFont)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = busyEmoji == null,
+                    onClick = { pendingBuy = null }
+                ) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -449,27 +531,7 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
                                 .background(BgSoft)
                                 .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(16.dp))
                                 .clickable(enabled = busyEmoji == null) {
-                                    busyEmoji = item.emoji
-                                    scope.launch {
-                                        runCatching {
-                                            val (_, ownedCount) = LuvApiClient.buyEmoji(item.emoji)
-                                            val next = owned.toMutableMap()
-                                            next[item.emoji] = ownedCount
-                                            prefs.setOwnedEmojis(next)
-                                            Toast.makeText(
-                                                context,
-                                                "${item.emoji} gekauft (−${item.priceCoins})",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        }.onFailure {
-                                            Toast.makeText(
-                                                context,
-                                                it.message ?: "Kauf fehlgeschlagen",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        }
-                                        busyEmoji = null
-                                    }
+                                    pendingBuy = item
                                 }
                                 .padding(8.dp)
                         ) {

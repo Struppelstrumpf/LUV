@@ -14,6 +14,7 @@ import com.luv.couple.net.AccountSession
 import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairMessage
 import com.luv.couple.net.PairProtocol
+import com.luv.couple.net.PairSessionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -72,20 +73,28 @@ object CanvasStore {
         cachedColorIndex = colorIndex.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
     }
 
+    /** Allein in der Lobby (≤1 Verbundener) → Mehrfarben ohne Umfärben alter Striche. */
+    fun isSoloLobby(lobbyId: String?): Boolean {
+        val id = resolveLobbyId(lobbyId) ?: return true
+        return PairSessionState.peerCount(id).value <= 1
+    }
+
     /**
-     * Eigene Striche auf [colorIndex] bringen.
-     * [broadcast]=false nur lokal (z. B. beim Öffnen der Leinwand), sonst auch an Peers.
+     * Eigene Striche auf [colorIndex] bringen — nur im Mehrpersonen-Modus und nur
+     * nicht-gesperrte Striche (Solo-Zeichnungen behalten ihre Farben).
      */
     fun recolorOwnStrokes(colorIndex: Int, lobbyId: String? = null, broadcast: Boolean = true) {
         val id = resolveLobbyId(lobbyId) ?: return
         val safe = colorIndex.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
         cachedColorIndex = safe
+        if (isSoloLobby(id)) return
         val nick = cachedNickname
         val c = canvas(id)
         var changed = false
         val updated = c.strokes.map { stroke ->
-            if (stroke.isLocal || stroke.nickname.equals(nick, ignoreCase = true)) {
-                if (stroke.colorIndex != safe) changed = true
+            val mine = stroke.isLocal || stroke.nickname.equals(nick, ignoreCase = true)
+            if (mine && !stroke.colorLocked && stroke.colorIndex != safe) {
+                changed = true
                 stroke.copy(colorIndex = safe, isLocal = stroke.isLocal)
             } else {
                 stroke
@@ -101,14 +110,19 @@ object CanvasStore {
         }
     }
 
-    /** Fremde Umfärbung anwenden (nach Nickname). */
+    /** Fremde Umfärbung anwenden (nach Nickname) — colorLocked bleibt unangetastet. */
     fun recolorByNickname(nickname: String?, colorIndex: Int, lobbyId: String) {
         if (nickname.isNullOrBlank()) return
         val safe = colorIndex.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
         val c = canvas(lobbyId)
         var changed = false
         val updated = c.strokes.map { stroke ->
-            if (!stroke.isLocal && stroke.nickname.equals(nickname, ignoreCase = true)) {
+            if (
+                !stroke.isLocal &&
+                !stroke.colorLocked &&
+                stroke.nickname.equals(nickname, ignoreCase = true) &&
+                stroke.colorIndex != safe
+            ) {
                 changed = true
                 stroke.copy(colorIndex = safe)
             } else {
@@ -119,6 +133,27 @@ object CanvasStore {
         c.strokes.clear()
         c.strokes.addAll(updated)
         bump(lobbyId)
+    }
+
+    /** Beim Wechsel Solo → Mehrpersonen: bisherige eigene Striche farblich einfrieren. */
+    fun lockOwnStrokeColors(lobbyId: String?) {
+        val id = resolveLobbyId(lobbyId) ?: return
+        val nick = cachedNickname
+        val c = canvas(id)
+        var changed = false
+        val updated = c.strokes.map { stroke ->
+            val mine = stroke.isLocal || stroke.nickname.equals(nick, ignoreCase = true)
+            if (mine && !stroke.colorLocked) {
+                changed = true
+                stroke.copy(colorLocked = true)
+            } else {
+                stroke
+            }
+        }
+        if (!changed) return
+        c.strokes.clear()
+        c.strokes.addAll(updated)
+        bump(id)
     }
 
     fun updateKnownLobbies(ids: Collection<String>) {
@@ -232,7 +267,8 @@ object CanvasStore {
             isLocal = true,
             nickname = cachedNickname,
             colorIndex = cachedColorIndex,
-            authorId = AccountSession.account.value?.id?.takeIf { it.isNotBlank() }
+            authorId = AccountSession.account.value?.id?.takeIf { it.isNotBlank() },
+            colorLocked = isSoloLobby(id)
         )
         val c = canvas(id)
         c.strokes.add(stroke)
@@ -274,7 +310,8 @@ object CanvasStore {
             nickname = cachedNickname,
             colorIndex = cachedColorIndex,
             authorId = AccountSession.account.value?.id?.takeIf { it.isNotBlank() },
-            emoji = emojiText
+            emoji = emojiText,
+            colorLocked = isSoloLobby(lobby)
         )
         val c = canvas(lobby)
         if (c.strokes.any { it.id == stroke.id }) return null
@@ -434,7 +471,8 @@ object CanvasStore {
                     authorId = stroke.authorId
                         ?: AccountSession.account.value?.id?.takeIf { it.isNotBlank() },
                     gender = stroke.gender,
-                    emoji = stroke.emoji
+                    emoji = stroke.emoji,
+                    colorLocked = stroke.colorLocked
                 )
                 c.strokes.add(neu)
                 c.localStrokeIds.add(neu.id)
@@ -675,6 +713,7 @@ object CanvasStore {
                         .put("authorId", stroke.authorId)
                         .put("isLocal", stroke.isLocal)
                         .put("emoji", stroke.emoji)
+                        .put("colorLocked", stroke.colorLocked)
                         .put("points", points)
                 )
             }
@@ -726,7 +765,8 @@ object CanvasStore {
                     nickname = nickname,
                     colorIndex = o.optInt("colorIndex", 0),
                     authorId = o.optString("authorId").takeIf { it.isNotBlank() && it != "null" },
-                    emoji = emoji
+                    emoji = emoji,
+                    colorLocked = o.optBoolean("colorLocked", false)
                 )
                 if (target.strokes.any { it.id == stroke.id }) continue
                 target.strokes.add(stroke)

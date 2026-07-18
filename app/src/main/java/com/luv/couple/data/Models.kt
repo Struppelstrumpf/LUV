@@ -185,7 +185,12 @@ data class Stroke(
     /** Legacy — ältere Clients */
     val gender: String? = null,
     /** Wenn gesetzt: Emoji-Zeichnung auf der Leinwand (Punkt = Position). */
-    val emoji: String? = null
+    val emoji: String? = null,
+    /**
+     * Solo-Zeichnung: Farbe bleibt beim Palettenwechsel / Peer-Recolor.
+     * Ab 2 Personen neu gemalte Striche haben false und färben sich mit um.
+     */
+    val colorLocked: Boolean = false
 ) {
     val isEmoji: Boolean get() = !emoji.isNullOrBlank()
 }
