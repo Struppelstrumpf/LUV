@@ -969,6 +969,20 @@ class PairConnectionService : Service() {
                     _events.emit(PairEvent.ReactionReceived(lobby.id, message.emoji, message.nickname))
                 }
             }
+            is PairMessage.StickerPlace -> {
+                scope.launch {
+                    _events.emit(
+                        PairEvent.StickerPlaced(
+                            lobby.id,
+                            message.id,
+                            message.emoji,
+                            message.x,
+                            message.y,
+                            message.nickname
+                        )
+                    )
+                }
+            }
             is PairMessage.GameBoard -> {
                 scope.launch {
                     _events.emit(
@@ -1481,6 +1495,22 @@ class PairConnectionService : Service() {
             dispatchPayload(context, payload, lobbyId ?: CanvasStore.activeLobbyId.value)
         }
 
+        fun sendStickerPlace(
+            context: Context,
+            id: String,
+            emoji: String,
+            x: Float,
+            y: Float,
+            lobbyId: String? = null
+        ) {
+            val nickname = CanvasStore.cachedNickname
+                ?: AccountSession.account.value?.nickname
+            val payload = PairProtocol.encode(
+                PairMessage.StickerPlace(id, emoji, x, y, nickname)
+            )
+            dispatchPayload(context, payload, lobbyId ?: CanvasStore.activeLobbyId.value)
+        }
+
         fun sendGameBoard(
             context: Context,
             game: String,
@@ -1585,6 +1615,14 @@ sealed class PairEvent {
     data class ColorAssigned(val lobbyId: String, val colorIndex: Int) : PairEvent()
     data class RecolorReceived(val lobbyId: String, val nickname: String?, val colorIndex: Int) : PairEvent()
     data class ReactionReceived(val lobbyId: String, val emoji: String, val nickname: String?) : PairEvent()
+    data class StickerPlaced(
+        val lobbyId: String,
+        val id: String,
+        val emoji: String,
+        val x: Float,
+        val y: Float,
+        val nickname: String?
+    ) : PairEvent()
     data class GameBoardReceived(val lobbyId: String, val game: String, val visible: Boolean) : PairEvent()
     data class GameState(
         val lobbyId: String,

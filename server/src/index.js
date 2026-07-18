@@ -60,13 +60,32 @@ const PACKS = {
     coins: 100,
     amountEur: "0.99",
     compareAtEur: "4.99",
-    label: "100 Coins",
+    label: "Säckchen Glück",
     oncePerUserAndIp: true,
     expiresAt: INTRO_EXPIRES_AT,
   },
-  pack_50: { id: "pack_50", coins: 50, amountEur: "2.99", label: "50 Coins" },
-  pack_150: { id: "pack_150", coins: 150, amountEur: "6.99", label: "150 Coins" },
-  pack_400: { id: "pack_400", coins: 400, amountEur: "14.99", label: "400 Coins" },
+  pack_50: { id: "pack_50", coins: 50, amountEur: "2.99", label: "Handvoll Coins" },
+  pack_150: { id: "pack_150", coins: 150, amountEur: "6.99", label: "Beutel voll Coins" },
+  pack_400: { id: "pack_400", coins: 400, amountEur: "14.99", label: "Schatztruhe" },
+};
+
+/** Faire Coin-Preise für Itemshop-Emojis (Client-Katalog muss passen). */
+const EMOJI_SHOP_PRICES = {
+  "👍": 5, "👎": 5, "❌": 5, "❤️": 8, "🧡": 8, "💛": 8, "💚": 8, "💙": 8,
+  "💜": 8, "🖤": 8, "🤍": 8, "💔": 10, "💕": 12, "💖": 12, "💗": 12, "💘": 14,
+  "😂": 8, "🤣": 10, "😊": 6, "🙂": 5, "😉": 6, "😍": 10, "🥰": 12, "😘": 10,
+  "😜": 8, "🤪": 10, "😎": 12, "🤩": 12, "😱": 8, "😨": 8, "😰": 8, "😥": 8,
+  "😢": 8, "😭": 10, "😡": 8, "🤬": 12, "😤": 8, "😳": 8, "🥺": 12, "😴": 6,
+  "🤔": 8, "🙄": 8, "😬": 8, "🤐": 8, "🫡": 10, "🤝": 10, "🙏": 8, "💪": 10,
+  "🔥": 10, "✨": 8, "⭐": 8, "🌟": 10, "💯": 12, "🎉": 10, "🎊": 10, "🎈": 8,
+  "🎁": 12, "🌹": 12, "🌸": 8, "🍀": 8, "🌈": 10, "☀️": 6, "🌙": 6, "⚡": 8,
+  "💥": 10, "🎯": 10, "🏆": 14, "👑": 16, "💎": 18, "🐱": 12, "🐶": 12, "🐻": 12,
+  "🐼": 14, "🦊": 14, "🐰": 12, "🦄": 18, "🐸": 10, "🐧": 12, "🦋": 10, "🐝": 8,
+  "🍕": 8, "🍩": 8, "☕": 6, "🍷": 10, "🍺": 8, "🧁": 8, "🍓": 6, "🍑": 10,
+  "🎵": 8, "🎶": 8, "📱": 6, "💡": 6, "📎": 5, "✏️": 5, "📌": 5, "🔔": 8,
+  "👀": 8, "💀": 12, "👻": 12, "🤖": 14, "👽": 14, "💩": 10, "🤡": 12, "😈": 14,
+  "😇": 12, "🫠": 12, "🫢": 10, "🫣": 10, "🫶": 14, "🫰": 12, "✌️": 8,
+  "🤞": 8, "🤟": 8, "🤘": 8, "👏": 8, "🙌": 10, "👋": 6,
 };
 
 /** @type {Map<string, any>} */
@@ -2723,6 +2742,69 @@ app.get("/v1/shop/packs", (req, res) => {
   res.json({
     enabled: Boolean(MOLLIE_API_KEY),
     packs: listShopPacks(ctx?.user || null, ip),
+  });
+});
+
+/** Itemshop: Emoji für Coins kaufen (Mehrfachkauf erlaubt). */
+app.post("/v1/shop/buy-emoji", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const emoji = String(req.body?.emoji || "").trim().slice(0, 8);
+  if (!emoji || !EMOJI_SHOP_PRICES[emoji]) {
+    return res.status(400).json({
+      error: "unknown_item",
+      message: "Dieses Emoji gibt es im Shop nicht.",
+    });
+  }
+  const price = Number(EMOJI_SHOP_PRICES[emoji]) || 0;
+  if (price < 1) {
+    return res.status(400).json({ error: "bad_price" });
+  }
+  if ((ctx.user.coins || 0) < price) {
+    return res.status(402).json({
+      error: "no_coins",
+      message: "Nicht genug Coins.",
+      need: price,
+      coins: ctx.user.coins || 0,
+    });
+  }
+  applyLedger(ctx.user.id, -price, "buy_emoji", emoji);
+  if (!ctx.user.inventory || typeof ctx.user.inventory !== "object") {
+    ctx.user.inventory = { emojis: {} };
+  }
+  if (!ctx.user.inventory.emojis || typeof ctx.user.inventory.emojis !== "object") {
+    ctx.user.inventory.emojis = {};
+  }
+  const prev = Number(ctx.user.inventory.emojis[emoji]) || 0;
+  ctx.user.inventory.emojis[emoji] = prev + 1;
+  scheduleSave();
+  return res.json({
+    ok: true,
+    emoji,
+    owned: ctx.user.inventory.emojis[emoji],
+    price,
+    user: publicUser(ctx.user),
+  });
+});
+
+app.get("/v1/me/inventory", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const inv = ctx.user.inventory && typeof ctx.user.inventory === "object"
+    ? ctx.user.inventory
+    : { emojis: {} };
+  const emojis = inv.emojis && typeof inv.emojis === "object" ? inv.emojis : {};
+  // Starter-Set für Reaktionsleiste immer mindestens 1×
+  const starter = ["👍", "❌", "❤️", "😂", "😱", "😡", "😭"];
+  for (const e of starter) {
+    if (!emojis[e] || emojis[e] < 1) emojis[e] = Math.max(1, Number(emojis[e]) || 0);
+  }
+  ctx.user.inventory = { ...inv, emojis };
+  return res.json({
+    ok: true,
+    emojis,
+    gear: Array.isArray(inv.gear) ? inv.gear : [],
+    pets: Array.isArray(inv.pets) ? inv.pets : [],
   });
 });
 

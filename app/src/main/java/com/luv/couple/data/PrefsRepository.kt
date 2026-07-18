@@ -44,6 +44,10 @@ class PrefsRepository(private val context: Context) {
     private val joinAnnouncedKey = stringPreferencesKey("join_announced_json")
     /** Ruhezeiten Mo–So: JSON { "1":[{"s":1320,"e":420},…], … } */
     private val quietHoursKey = stringPreferencesKey("quiet_hours_json")
+    /** Reaktionsleiste: JSON-Array von Emoji-Strings */
+    private val emojiBarKey = stringPreferencesKey("emoji_bar_json")
+    /** Lokaler Cache Inventar-Emojis: JSON { "👍": 2, … } */
+    private val ownedEmojisKey = stringPreferencesKey("owned_emojis_json")
 
     // Legacy keys — Migration
     private val genderKey = stringPreferencesKey("gender")
@@ -95,6 +99,14 @@ class PrefsRepository(private val context: Context) {
 
     val quietHoursFlow: Flow<QuietHoursSchedule> = context.dataStore.data.map { prefs ->
         parseQuietHours(prefs[quietHoursKey])
+    }
+
+    val emojiBarFlow: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        parseEmojiBar(prefs[emojiBarKey])
+    }
+
+    val ownedEmojisFlow: Flow<Map<String, Int>> = context.dataStore.data.map { prefs ->
+        parseOwnedEmojis(prefs[ownedEmojisKey])
     }
 
     data class LastPublicCanvas(
@@ -450,6 +462,33 @@ class PrefsRepository(private val context: Context) {
         return parseQuietHours(prefs[quietHoursKey]).also { QuietHoursGate.update(it) }
     }
 
+    suspend fun emojiBar(): List<String> {
+        val prefs = context.dataStore.data.first()
+        return parseEmojiBar(prefs[emojiBarKey])
+    }
+
+    suspend fun setEmojiBar(emojis: List<String>) {
+        val clean = emojis.map { it.trim() }.filter { it.isNotBlank() }.take(12)
+        context.dataStore.edit { prefs ->
+            prefs[emojiBarKey] = JSONArray(clean).toString()
+        }
+    }
+
+    suspend fun ownedEmojis(): Map<String, Int> {
+        val prefs = context.dataStore.data.first()
+        return parseOwnedEmojis(prefs[ownedEmojisKey])
+    }
+
+    suspend fun setOwnedEmojis(map: Map<String, Int>) {
+        context.dataStore.edit { prefs ->
+            val o = JSONObject()
+            map.forEach { (k, v) ->
+                if (k.isNotBlank() && v > 0) o.put(k, v)
+            }
+            prefs[ownedEmojisKey] = o.toString()
+        }
+    }
+
     suspend fun removeLobby(lobbyId: String) {
         context.dataStore.edit { prefs ->
             val list = parseLobbies(prefs[lobbiesKey]).filterNot { it.id == lobbyId }
@@ -673,6 +712,31 @@ class PrefsRepository(private val context: Context) {
                 }
                 QuietHoursSchedule(byDay)
             }.getOrDefault(QuietHoursSchedule.EMPTY)
+        }
+
+        fun parseEmojiBar(raw: String?): List<String> {
+            if (raw.isNullOrBlank()) return com.luv.couple.shop.ShopCatalog.DEFAULT_BAR
+            return runCatching {
+                val arr = JSONArray(raw)
+                buildList {
+                    for (i in 0 until arr.length()) {
+                        arr.optString(i).trim().takeIf { it.isNotBlank() }?.let { add(it) }
+                    }
+                }.ifEmpty { com.luv.couple.shop.ShopCatalog.DEFAULT_BAR }
+            }.getOrDefault(com.luv.couple.shop.ShopCatalog.DEFAULT_BAR)
+        }
+
+        fun parseOwnedEmojis(raw: String?): Map<String, Int> {
+            val starter = com.luv.couple.shop.ShopCatalog.DEFAULT_BAR.associateWith { 1 }.toMutableMap()
+            if (raw.isNullOrBlank()) return starter
+            return runCatching {
+                val o = JSONObject(raw)
+                o.keys().forEach { key ->
+                    val n = o.optInt(key, 0)
+                    if (key.isNotBlank() && n > 0) starter[key] = n
+                }
+                starter
+            }.getOrDefault(starter)
         }
 
         fun encodeQuietHours(schedule: QuietHoursSchedule): String {

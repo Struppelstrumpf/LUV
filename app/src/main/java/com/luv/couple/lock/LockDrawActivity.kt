@@ -9,7 +9,9 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.util.Base64
 import android.util.TypedValue
+import android.os.SystemClock
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
@@ -22,6 +24,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.platform.ComposeView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -42,6 +45,8 @@ import com.luv.couple.net.PairEvent
 import com.luv.couple.net.PairSessionState
 import com.luv.couple.net.PublicVoteEvent
 import com.luv.couple.notify.LiveProximity
+import com.luv.couple.shop.ShopCatalog
+import com.luv.couple.ui.screens.EmojiBarEditorDialog
 import com.luv.couple.update.AppUpdater
 import com.luv.couple.update.UpdateUiState
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +56,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.math.min
 import kotlin.math.sin
@@ -73,8 +79,14 @@ class LockDrawActivity : ComponentActivity() {
     private lateinit var reactionPanel: View
     private lateinit var btnReactionToggle: TextView
     private lateinit var reactionFlyout: View
+    private lateinit var reactionEmojiList: LinearLayout
+    private lateinit var btnEmojiEdit: TextView
+    private lateinit var stickerOverlay: FrameLayout
     private var reactionExpanded = false
     private var eraserOn = false
+    private var emojiEditorHost: FrameLayout? = null
+    private val placedStickers = linkedMapOf<String, TextView>()
+    private var draftStickerId: String? = null
     private lateinit var gameHud: LinearLayout
     private lateinit var gameHudTitle: TextView
     private lateinit var gameHudSubtitle: TextView
@@ -157,6 +169,9 @@ class LockDrawActivity : ComponentActivity() {
         reactionPanel = findViewById(R.id.reactionPanel)
         btnReactionToggle = findViewById(R.id.btnReactionToggle)
         reactionFlyout = findViewById(R.id.reactionFlyout)
+        reactionEmojiList = findViewById(R.id.reactionEmojiList)
+        btnEmojiEdit = findViewById(R.id.btnEmojiEdit)
+        stickerOverlay = findViewById(R.id.stickerOverlay)
         gamePlayOverlay = findViewById(R.id.gamePlayOverlay)
         gamePlayOverlay.onAction = { action, payload ->
             PairConnectionService.sendGameAction(this, action, payload, lobbyId)
@@ -208,20 +223,12 @@ class LockDrawActivity : ComponentActivity() {
         btnReactionToggle.setOnClickListener {
             reactionExpanded = !reactionExpanded
             reactionFlyout.visibility = if (reactionExpanded) View.VISIBLE else View.GONE
+            if (reactionExpanded) bindReactionBar()
         }
-
-        listOf(
-            R.id.emoji0 to "👍",
-            R.id.emoji1 to "❌",
-            R.id.emoji2 to "❤️",
-            R.id.emoji3 to "😂",
-            R.id.emoji4 to "😱",
-            R.id.emoji5 to "😡",
-            R.id.emoji6 to "😭"
-        ).forEach { (viewId, emoji) ->
-            findViewById<TextView>(viewId).setOnClickListener {
-                sendReaction(emoji)
-            }
+        btnEmojiEdit.setOnClickListener { openEmojiBarEditor() }
+        bindReactionBar()
+        stickerOverlay.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            relayoutCommittedStickers()
         }
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
@@ -250,10 +257,15 @@ class LockDrawActivity : ComponentActivity() {
             // Leinwand und Avatare enden über dem Button-Kasten
             bottomDock.post {
                 val dockH = bottomDock.height
+                val canvasH = (root.height - dockH).coerceAtLeast(1)
                 val drawLp = drawingView.layoutParams as FrameLayout.LayoutParams
-                drawLp.height = (root.height - dockH).coerceAtLeast(1)
+                drawLp.height = canvasH
                 drawLp.bottomMargin = 0
                 drawingView.layoutParams = drawLp
+                val stickerLp = stickerOverlay.layoutParams as FrameLayout.LayoutParams
+                stickerLp.height = canvasH
+                stickerLp.bottomMargin = 0
+                stickerOverlay.layoutParams = stickerLp
                 val legendScroll = findViewById<View>(R.id.legendScroll)
                 val lp = legendScroll.layoutParams as FrameLayout.LayoutParams
                 lp.bottomMargin = dockH + (6 * dp).toInt()
@@ -352,6 +364,7 @@ class LockDrawActivity : ComponentActivity() {
                     }
                     is PairEvent.Cleared -> if (event.lobbyId == id) {
                         drawingView.clearCanvas()
+                        clearAllStickers()
                         stopAllGamesLocal()
                     }
                     is PairEvent.RecolorReceived -> if (event.lobbyId == id) {
@@ -360,6 +373,9 @@ class LockDrawActivity : ComponentActivity() {
                     }
                     is PairEvent.ReactionReceived -> if (event.lobbyId == id) {
                         showReaction(event.emoji)
+                    }
+                    is PairEvent.StickerPlaced -> if (event.lobbyId == id) {
+                        upsertCommittedSticker(event.id, event.emoji, event.x, event.y)
                     }
                     is PairEvent.GameBoardReceived -> if (event.lobbyId == id) {
                         applyOverlayBoard(event.game, event.visible)
@@ -520,6 +536,234 @@ class LockDrawActivity : ComponentActivity() {
             }
         }
     }
+
+    private fun bindReactionBar() {
+        lifecycleScope.launch {
+            val bar = withContext(Dispatchers.IO) {
+                runCatching { LuvApp.instance.prefs.emojiBar() }.getOrDefault(ShopCatalog.DEFAULT_BAR)
+            }
+            reactionEmojiList.removeAllViews()
+            val dp = resources.displayMetrics.density
+            bar.forEachIndexed { index, emoji ->
+                val tv = TextView(this@LockDrawActivity).apply {
+                    text = emoji
+                    gravity = Gravity.CENTER
+                    textSize = 22f
+                    layoutParams = LinearLayout.LayoutParams(
+                        (44 * dp).toInt(),
+                        (40 * dp).toInt()
+                    ).apply {
+                        topMargin = if (index == 0) (4 * dp).toInt() else 0
+                        bottomMargin = (3 * dp).toInt()
+                    }
+                    setBackgroundResource(R.drawable.lock_emoji_btn)
+                }
+                attachEmojiGesture(tv, emoji)
+                reactionEmojiList.addView(tv)
+            }
+        }
+    }
+
+    private fun attachEmojiGesture(view: TextView, emoji: String) {
+        var downAt = 0L
+        var longFired = false
+        val longPress = Runnable {
+            if (view.isPressed && !longFired) {
+                longFired = true
+                beginDraftSticker(emoji)
+            }
+        }
+        view.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downAt = SystemClock.uptimeMillis()
+                    longFired = false
+                    v.isPressed = true
+                    v.postDelayed(longPress, 1000L)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.isPressed = false
+                    v.removeCallbacks(longPress)
+                    if (!longFired && event.actionMasked == MotionEvent.ACTION_UP) {
+                        if (SystemClock.uptimeMillis() - downAt < 1000L) sendReaction(emoji)
+                    }
+                    true
+                }
+                else -> true
+            }
+        }
+    }
+
+    private fun openEmojiBarEditor() {
+        val root = rootView ?: return
+        if (emojiEditorHost != null) return
+        val host = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            elevation = 40f
+            setBackgroundColor(0x99000000.toInt())
+            isClickable = true
+        }
+        val compose = ComposeView(this).apply {
+            setContent {
+                EmojiBarEditorDialog(
+                    onDismiss = {
+                        root.removeView(host)
+                        emojiEditorHost = null
+                        bindReactionBar()
+                    }
+                )
+            }
+        }
+        host.addView(
+            compose,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        root.addView(host)
+        emojiEditorHost = host
+    }
+
+    private fun stickerSizePx(): Int =
+        (56f * resources.displayMetrics.density).toInt()
+
+    private fun beginDraftSticker(emoji: String) {
+        val existing = draftStickerId?.let { placedStickers[it] }
+        if (existing != null) {
+            stickerOverlay.removeView(existing)
+            placedStickers.remove(draftStickerId)
+        }
+        val id = UUID.randomUUID().toString()
+        draftStickerId = id
+        val size = stickerSizePx()
+        val tv = TextView(this).apply {
+            text = emoji
+            gravity = Gravity.CENTER
+            textSize = 36f
+            alpha = 0.92f
+            elevation = 18f
+            setShadowLayer(10f, 0f, 3f, 0x66000000)
+            tag = StickerTag(id, emoji, 0.5f, 0.45f, drafting = true)
+        }
+        val lp = FrameLayout.LayoutParams(size, size)
+        stickerOverlay.addView(tv, lp)
+        placedStickers[id] = tv
+        positionStickerView(tv, 0.5f, 0.45f)
+        enableDraftDrag(tv)
+        Toast.makeText(this, "Ziehen & tippen zum Platzieren", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun enableDraftDrag(view: TextView) {
+        var lastX = 0f
+        var lastY = 0f
+        var moved = false
+        view.setOnTouchListener { v, event ->
+            val tag = v.tag as? StickerTag ?: return@setOnTouchListener false
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    lastX = event.rawX
+                    lastY = event.rawY
+                    moved = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - lastX
+                    val dy = event.rawY - lastY
+                    if (dx * dx + dy * dy > 16f) moved = true
+                    lastX = event.rawX
+                    lastY = event.rawY
+                    val w = stickerOverlay.width.coerceAtLeast(1)
+                    val h = stickerOverlay.height.coerceAtLeast(1)
+                    val nx = ((v.x + dx + v.width / 2f) / w).coerceIn(0.05f, 0.95f)
+                    val ny = ((v.y + dy + v.height / 2f) / h).coerceIn(0.05f, 0.95f)
+                    v.tag = tag.copy(x = nx, y = ny)
+                    positionStickerView(v as TextView, nx, ny)
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!moved && tag.drafting) {
+                        commitDraftSticker(v as TextView)
+                    }
+                    true
+                }
+                else -> true
+            }
+        }
+    }
+
+    private fun commitDraftSticker(view: TextView) {
+        val tag = view.tag as? StickerTag ?: return
+        if (!tag.drafting) return
+        view.tag = tag.copy(drafting = false)
+        view.alpha = 1f
+        view.setOnTouchListener(null)
+        draftStickerId = null
+        PairConnectionService.sendStickerPlace(
+            this,
+            tag.id,
+            tag.emoji,
+            tag.x,
+            tag.y,
+            lobbyId
+        )
+        Toast.makeText(this, "Emoji platziert", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun upsertCommittedSticker(id: String, emoji: String, x: Float, y: Float) {
+        if (id == draftStickerId) return
+        val existing = placedStickers[id]
+        val tv = existing ?: TextView(this).apply {
+            gravity = Gravity.CENTER
+            textSize = 36f
+            elevation = 12f
+            setShadowLayer(10f, 0f, 3f, 0x66000000)
+            layoutParams = FrameLayout.LayoutParams(stickerSizePx(), stickerSizePx())
+            stickerOverlay.addView(this)
+            placedStickers[id] = this
+        }
+        tv.text = emoji
+        tv.alpha = 1f
+        tv.tag = StickerTag(id, emoji, x, y, drafting = false)
+        tv.setOnTouchListener(null)
+        positionStickerView(tv, x, y)
+    }
+
+    private fun positionStickerView(view: TextView, x: Float, y: Float) {
+        val w = stickerOverlay.width
+        val h = stickerOverlay.height
+        if (w <= 0 || h <= 0) {
+            view.post { positionStickerView(view, x, y) }
+            return
+        }
+        view.x = x * w - view.width / 2f
+        view.y = y * h - view.height / 2f
+    }
+
+    private fun relayoutCommittedStickers() {
+        placedStickers.values.forEach { tv ->
+            val tag = tv.tag as? StickerTag ?: return@forEach
+            positionStickerView(tv, tag.x, tag.y)
+        }
+    }
+
+    private fun clearAllStickers() {
+        stickerOverlay.removeAllViews()
+        placedStickers.clear()
+        draftStickerId = null
+    }
+
+    private data class StickerTag(
+        val id: String,
+        val emoji: String,
+        val x: Float,
+        val y: Float,
+        val drafting: Boolean
+    )
 
     private fun sendReaction(emoji: String) {
         showReaction(emoji)

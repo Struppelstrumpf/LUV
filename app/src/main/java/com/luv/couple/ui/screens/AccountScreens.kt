@@ -56,7 +56,6 @@ import com.luv.couple.data.AccountInfo
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.PublicReportInfo
-import com.luv.couple.net.ShopPack
 import com.luv.couple.net.VoucherInfo
 import com.luv.couple.update.AppChangelog
 import com.luv.couple.update.AppUpdater
@@ -79,12 +78,9 @@ fun AccountHomeScreen(
     account: AccountInfo?,
     colorIndex: Int,
     message: String?,
-    shopEnabled: Boolean,
-    packs: List<ShopPack>,
     onOpenSettings: () -> Unit,
     onOpenRedeem: () -> Unit,
     onOpenAdmin: () -> Unit,
-    onBuyPack: (ShopPack) -> Unit,
     onReplayTutorial: () -> Unit = {},
     googleEnabled: Boolean = false,
     googleBusy: Boolean = false,
@@ -178,25 +174,6 @@ fun AccountHomeScreen(
                 MenuButton("Admin", Color(0xFF3A2430), onOpenAdmin)
             }
             MenuButton("Abmelden", BgSoft, { confirmLogout = true }, bordered = true)
-
-            Spacer(modifier = Modifier.height(4.dp))
-            Text("Shop", fontFamily = DisplayFont, fontSize = 22.sp, color = TextPrimary)
-            if (!shopEnabled) {
-                Text(
-                    "Shop bald mit Mollie — bis dahin reichen Tagesbonus & Gutscheine völlig.",
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 13.sp
-                )
-            }
-            packs.forEach { pack ->
-                ShopPackButton(
-                    pack = pack,
-                    accent = accent,
-                    enabled = shopEnabled,
-                    onClick = { if (shopEnabled) onBuyPack(pack) }
-                )
-            }
 
             Spacer(modifier = Modifier.height(8.dp))
             Row(
@@ -798,67 +775,6 @@ fun SoftInput(
 }
 
 @Composable
-private fun ShopPackButton(
-    pack: ShopPack,
-    accent: Color,
-    enabled: Boolean,
-    onClick: () -> Unit
-) {
-    val compare = pack.compareAtEur
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(if (compare != null) 64.dp else 54.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (enabled) accent else BgSoft)
-            .then(
-                if (!enabled) Modifier.border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(16.dp))
-                else Modifier
-            )
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 16.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        if (compare != null) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    pack.label,
-                    color = if (enabled) TextPrimary else TextMuted,
-                    fontFamily = DisplayFont,
-                    fontSize = 16.sp
-                )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        "${compare.replace('.', ',')} €",
-                        color = if (enabled) TextPrimary.copy(alpha = 0.65f) else TextMuted,
-                        fontFamily = BodyFont,
-                        fontSize = 13.sp,
-                        textDecoration = TextDecoration.LineThrough
-                    )
-                    Text(
-                        "${pack.amountEur.replace('.', ',')} €",
-                        color = if (enabled) TextPrimary else TextMuted,
-                        fontFamily = DisplayFont,
-                        fontSize = 18.sp
-                    )
-                }
-            }
-        } else {
-            Text(
-                "${pack.label} · ${pack.amountEur.replace('.', ',')} €",
-                color = if (enabled) TextPrimary else TextMuted,
-                fontFamily = DisplayFont,
-                fontSize = 16.sp,
-                textAlign = TextAlign.Center
-            )
-        }
-    }
-}
-
-@Composable
 fun MenuButton(
     label: String,
     color: Color,
@@ -894,12 +810,13 @@ fun SimpleBottomBar(
     selected: Int,
     onSelect: (Int) -> Unit
 ) {
-    val labels = listOf("Home", "Galerie", "Konto")
+    // Home · Galerie · Inventar · Markt · Zahnrad (Konto)
+    val labels = listOf("Home", "Galerie", "Inventar", "Markt", "⚙")
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {
         Row(
@@ -908,8 +825,8 @@ fun SimpleBottomBar(
                 .clip(RoundedCornerShape(28.dp))
                 .background(Color(0xEE171C24))
                 .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(28.dp))
-                .padding(6.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             labels.forEachIndexed { index, label ->
                 val active = selected == index
@@ -919,30 +836,17 @@ fun SimpleBottomBar(
                         .clip(RoundedCornerShape(22.dp))
                         .background(if (active) AccentRose.copy(alpha = 0.22f) else Color.Transparent)
                         .clickable { onSelect(index) }
-                        .padding(vertical = 12.dp),
+                        .padding(vertical = 11.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        if (active) {
-                            Box(
-                                modifier = Modifier
-                                    .size(7.dp)
-                                    .clip(CircleShape)
-                                    .background(AccentRose)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                        }
-                        Text(
-                            label,
-                            color = if (active) TextPrimary else TextMuted,
-                            fontFamily = DisplayFont,
-                            fontSize = 15.sp,
-                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal
-                        )
-                    }
+                    Text(
+                        label,
+                        color = if (active) TextPrimary else TextMuted,
+                        fontFamily = DisplayFont,
+                        fontSize = if (label == "⚙") 18.sp else 12.sp,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1
+                    )
                 }
             }
         }

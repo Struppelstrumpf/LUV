@@ -472,6 +472,25 @@ object LuvApiClient {
         json.optBoolean("banned", false)
     }
 
+    suspend fun buyEmoji(emoji: String): Pair<AccountInfo, Int> = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("emoji", emoji.trim().take(8)).toString()
+        val json = authedPost("/v1/shop/buy-emoji", body)
+        val user = AccountInfo.fromApi(json.getJSONObject("user"))
+        AccountSession.setAccount(user)
+        user to json.optInt("owned", 1)
+    }
+
+    suspend fun fetchInventory(): Map<String, Int> = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/me/inventory")
+        val o = json.optJSONObject("emojis") ?: return@withContext emptyMap()
+        buildMap {
+            o.keys().forEach { key ->
+                val n = o.optInt(key, 0)
+                if (key.isNotBlank() && n > 0) put(key, n)
+            }
+        }
+    }
+
     suspend fun shopPacks(): Pair<Boolean, List<ShopPack>> = withContext(Dispatchers.IO) {
         val request = authedRequestBuilder("/v1/shop/packs").get().build()
         http.newCall(request).execute().use { response ->

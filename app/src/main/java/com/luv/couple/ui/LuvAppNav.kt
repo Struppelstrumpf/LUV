@@ -59,7 +59,10 @@ import com.luv.couple.ui.screens.HostShareScreen
 import com.luv.couple.ui.screens.InviteLobbyDialog
 import com.luv.couple.ui.screens.JoinPreviewScreen
 import com.luv.couple.ui.screens.JoinScreen
+import com.luv.couple.ui.screens.EmojiBarEditorDialog
+import com.luv.couple.ui.screens.InventoryScreen
 import com.luv.couple.ui.screens.LobbiesScreen
+import com.luv.couple.ui.screens.MarketScreen
 import com.luv.couple.ui.screens.NicknameScreen
 import com.luv.couple.ui.screens.QuietHoursScreen
 import com.luv.couple.ui.screens.SettingsScreen
@@ -118,6 +121,8 @@ fun LuvAppNav() {
     var busy by remember { mutableStateOf(false) }
     var colorIndex by remember { mutableIntStateOf(0) }
     var tab by remember { mutableIntStateOf(0) }
+    var openMarketCoinShop by remember { mutableStateOf(false) }
+    var showEmojiBarEditor by remember { mutableStateOf(false) }
     var shopEnabled by remember { mutableStateOf(false) }
     var packs by remember { mutableStateOf<List<ShopPack>>(emptyList()) }
     var vouchers by remember { mutableStateOf<List<VoucherInfo>>(emptyList()) }
@@ -415,8 +420,16 @@ fun LuvAppNav() {
     }
 
     fun openShopTab() {
-        tab = 1
+        tab = 3 // Markt
+        openMarketCoinShop = true
         scope.launch { refreshAccount() }
+    }
+
+    suspend fun syncInventory() {
+        runCatching {
+            val remote = LuvApiClient.fetchInventory()
+            if (remote.isNotEmpty()) prefs.setOwnedEmojis(remote)
+        }
     }
 
     fun buySeat(lobby: Lobby) {
@@ -548,7 +561,8 @@ fun LuvAppNav() {
     LaunchedEffect(startDestination, pendingShopReturn) {
         if (startDestination != Routes.MAIN) return@LaunchedEffect
         if (!PendingShopReturn.consume()) return@LaunchedEffect
-        tab = 1
+        tab = 3
+        openMarketCoinShop = true
         refreshAccount()
         // Webhook kann kurz brauchen
         kotlinx.coroutines.delay(1200)
@@ -747,12 +761,33 @@ fun LuvAppNav() {
                             onUpdateApp = { startAppUpdate() }
                         )
                         1 -> GalleryScreen()
+                        2 -> InventoryScreen(onOpenEmojiEditor = { showEmojiBarEditor = true })
+                        3 -> MarketScreen(
+                            shopEnabled = shopEnabled,
+                            packs = packs,
+                            startInCoinShop = openMarketCoinShop,
+                            onStartInCoinShopConsumed = { openMarketCoinShop = false },
+                            onRefreshInventory = { syncInventory() },
+                            onBuyPack = { pack ->
+                                scope.launch {
+                                    runCatching {
+                                        val url = LuvApiClient.checkout(pack.id)
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    }.onFailure {
+                                        accountMessage = it.message
+                                        Toast.makeText(
+                                            context,
+                                            it.message ?: "Shop nicht erreichbar",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }
+                            }
+                        )
                         else -> AccountHomeScreen(
                             account = account,
                             colorIndex = colorIndex,
                             message = accountMessage,
-                            shopEnabled = shopEnabled,
-                            packs = packs,
                             updateState = updateState,
                             onUpdateApp = { startAppUpdate() },
                             googleEnabled = googleEnabled,
@@ -773,32 +808,33 @@ fun LuvAppNav() {
                                         .getOrDefault(emptyList())
                                     navController.navigate(Routes.ADMIN)
                                 }
-                            },
-                            onBuyPack = { pack ->
-                                scope.launch {
-                                    runCatching {
-                                        val url = LuvApiClient.checkout(pack.id)
-                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                    }.onFailure {
-                                        accountMessage = it.message
-                                    }
-                                }
                             }
                         )
                     }
                 }
+                if (showEmojiBarEditor) {
+                    EmojiBarEditorDialog(onDismiss = { showEmojiBarEditor = false })
+                }
                 SimpleBottomBar(
                     selected = tab,
                     onSelect = { next ->
-                        if (next == 2) accountMessage = null
+                        if (next == 4) accountMessage = null
                         tab = next
                         scope.launch {
-                            if (next == 2) {
-                                googleEnabled = runCatching {
-                                    LuvApiClient.authConfig().googleEnabled
-                                }.getOrDefault(googleEnabled)
+                            when (next) {
+                                2 -> syncInventory()
+                                3 -> {
+                                    refreshAccount()
+                                    syncInventory()
+                                }
+                                4 -> {
+                                    googleEnabled = runCatching {
+                                        LuvApiClient.authConfig().googleEnabled
+                                    }.getOrDefault(googleEnabled)
+                                    refreshAccount()
+                                }
+                                else -> refreshAccount()
                             }
-                            refreshAccount()
                         }
                     }
                 )

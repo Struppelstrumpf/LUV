@@ -12,6 +12,15 @@
         android:layout_height="match_parent"
         android:layout_gravity="top" />
 
+    <!-- Platzierte Emoji-Sticker (normierte Positionen) -->
+    <FrameLayout
+        android:id="@+id/stickerOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="top"
+        android:clipChildren="false"
+        android:clipToPadding="false" />
+
     <TextView
         android:id="@+id/lobbyTitle"
         android:layout_width="wrap_content"
@@ -62,69 +71,22 @@
             android:orientation="vertical"
             android:visibility="gone">
 
-            <!-- width/height explizit: LuvEmojiBtn hat 0dp+weight (nur für horizontale Leiste) -->
-            <TextView
-                android:id="@+id/emoji0"
-                style="@style/LuvEmojiBtn"
-                android:layout_width="44dp"
-                android:layout_height="40dp"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="3dp"
-                android:layout_weight="0"
-                android:text="👍" />
+            <LinearLayout
+                android:id="@+id/reactionEmojiList"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical" />
 
             <TextView
-                android:id="@+id/emoji1"
-                style="@style/LuvEmojiBtn"
+                android:id="@+id/btnEmojiEdit"
                 android:layout_width="44dp"
                 android:layout_height="40dp"
-                android:layout_marginBottom="3dp"
-                android:layout_weight="0"
-                android:text="❌" />
-
-            <TextView
-                android:id="@+id/emoji2"
-                style="@style/LuvEmojiBtn"
-                android:layout_width="44dp"
-                android:layout_height="40dp"
-                android:layout_marginBottom="3dp"
-                android:layout_weight="0"
-                android:text="❤️" />
-
-            <TextView
-                android:id="@+id/emoji3"
-                style="@style/LuvEmojiBtn"
-                android:layout_width="44dp"
-                android:layout_height="40dp"
-                android:layout_marginBottom="3dp"
-                android:layout_weight="0"
-                android:text="😂" />
-
-            <TextView
-                android:id="@+id/emoji4"
-                style="@style/LuvEmojiBtn"
-                android:layout_width="44dp"
-                android:layout_height="40dp"
-                android:layout_marginBottom="3dp"
-                android:layout_weight="0"
-                android:text="😱" />
-
-            <TextView
-                android:id="@+id/emoji5"
-                style="@style/LuvEmojiBtn"
-                android:layout_width="44dp"
-                android:layout_height="40dp"
-                android:layout_marginBottom="3dp"
-                android:layout_weight="0"
-                android:text="😡" />
-
-            <TextView
-                android:id="@+id/emoji6"
-                style="@style/LuvEmojiBtn"
-                android:layout_width="44dp"
-                android:layout_height="40dp"
-                android:layout_weight="0"
-                android:text="😭" />
+                android:layout_marginTop="2dp"
+                android:gravity="center"
+                android:text="✎"
+                android:textColor="@color/ink_white"
+                android:textSize="18sp" />
         </LinearLayout>
     </LinearLayout>
 

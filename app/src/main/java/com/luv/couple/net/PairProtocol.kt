@@ -21,6 +21,13 @@ sealed class PairMessage {
     data class Note(val text: String) : PairMessage()
     data class Recolor(val nickname: String?, val colorIndex: Int) : PairMessage()
     data class Reaction(val emoji: String, val nickname: String?) : PairMessage()
+    data class StickerPlace(
+        val id: String,
+        val emoji: String,
+        val x: Float,
+        val y: Float,
+        val nickname: String?
+    ) : PairMessage()
     data class GameBoard(val game: String, val visible: Boolean) : PairMessage()
     data object Clear : PairMessage()
     data class ClearPropose(val nickname: String?) : PairMessage()
@@ -78,6 +85,13 @@ object PairProtocol {
             is PairMessage.Reaction -> JSONObject()
                 .put("type", "reaction")
                 .put("emoji", message.emoji.take(8))
+                .put("nickname", message.nickname ?: JSONObject.NULL)
+            is PairMessage.StickerPlace -> JSONObject()
+                .put("type", "sticker_place")
+                .put("id", message.id)
+                .put("emoji", message.emoji.take(8))
+                .put("x", message.x.toDouble())
+                .put("y", message.y.toDouble())
                 .put("nickname", message.nickname ?: JSONObject.NULL)
             is PairMessage.GameBoard -> JSONObject()
                 .put("type", "game_board")
@@ -161,6 +175,13 @@ object PairProtocol {
                 )
                 "reaction" -> PairMessage.Reaction(
                     emoji = json.optString("emoji").take(8),
+                    nickname = json.optString("nickname").takeIf { it.isNotBlank() && it != "null" }
+                )
+                "sticker_place" -> PairMessage.StickerPlace(
+                    id = json.optString("id").ifBlank { java.util.UUID.randomUUID().toString() },
+                    emoji = json.optString("emoji").take(8),
+                    x = json.optDouble("x", 0.5).toFloat().coerceIn(0f, 1f),
+                    y = json.optDouble("y", 0.5).toFloat().coerceIn(0f, 1f),
                     nickname = json.optString("nickname").takeIf { it.isNotBlank() && it != "null" }
                 )
                 "game_board" -> PairMessage.GameBoard(
