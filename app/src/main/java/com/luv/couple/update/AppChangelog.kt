@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.88",
+            listOf(
+                "App-Start: kein langes Schwarzbild mehr vor dem Ladebild",
+            )
+        ),
+        Entry(
             "1.9.87",
             listOf(
                 "Vorlage zeichnen: Schwamm-Radierer wie auf der Leinwand",

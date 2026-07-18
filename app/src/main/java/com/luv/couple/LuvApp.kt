@@ -11,6 +11,7 @@ import com.luv.couple.lock.MidnightClear
 import com.luv.couple.lock.UnlockMonitor
 import com.luv.couple.notify.LuvAlertNotifier
 import com.luv.couple.notify.MoodNudgeScheduler
+import com.luv.couple.ui.PublicSplashCache
 import com.luv.couple.update.AppUpdater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +36,11 @@ class LuvApp : Application() {
         AppUpdater.ensureChannel(this)
         MidnightClear.checkAndClearIfNewDay(this)
         MoodNudgeScheduler.ensureScheduled(this)
+        // Splash-Bild früh in den Cache — kein Schwarzbild beim nächsten Start
+        appScope.launch {
+            runCatching { PublicSplashCache.loadLast(this@LuvApp) }
+            runCatching { PublicSplashCache.warmup(this@LuvApp) }
+        }
         appScope.launch {
             prefs.quietHoursFlow.collectLatest { QuietHoursGate.update(it) }
         }

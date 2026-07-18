@@ -151,7 +151,12 @@ fun LuvAppNav() {
     var publicReports by remember { mutableStateOf<List<PublicReportInfo>>(emptyList()) }
     var showNoCoins by remember { mutableStateOf(false) }
     var inviteLobby by remember { mutableStateOf<Lobby?>(null) }
-    var showPublicSplash by remember { mutableStateOf(false) }
+    // Sofort Splash — nicht erst nach Prefs/Nav, sonst Sekunden Schwarzbild
+    var showPublicSplash by remember {
+        mutableStateOf(
+            !PendingSplashSkip.peek() && PendingJoin.peek().isNullOrBlank()
+        )
+    }
     var tutorialReplay by remember { mutableStateOf(false) }
     fun shareText(text: String) {
         val send = Intent(Intent.ACTION_SEND).apply {
@@ -737,10 +742,17 @@ fun LuvAppNav() {
     }
 
     LaunchedEffect(startDestination) {
-        if (startDestination != Routes.MAIN) return@LaunchedEffect
-        if (PendingSplashSkip.consume()) return@LaunchedEffect
-        if (!PendingJoin.peek().isNullOrBlank()) return@LaunchedEffect
-        showPublicSplash = true
+        when (startDestination) {
+            null -> Unit
+            Routes.MAIN -> {
+                if (PendingSplashSkip.consume() || !PendingJoin.peek().isNullOrBlank()) {
+                    showPublicSplash = false
+                } else {
+                    showPublicSplash = true
+                }
+            }
+            else -> showPublicSplash = false
+        }
     }
 
     NoCoinsUi.Dialog(
@@ -783,16 +795,19 @@ fun LuvAppNav() {
         )
     }
 
-    val destination = startDestination ?: return
+    val destination = startDestination
 
     // Bei jeder Menü-/Screen-Navigation auf Updates prüfen (throttled)
     val navRoute = navController.currentBackStackEntryAsState().value?.destination?.route
-    LaunchedEffect(navRoute, tab) {
+    LaunchedEffect(navRoute, tab, destination) {
+        if (destination == null) return@LaunchedEffect
         if (destination != Routes.MAIN && navRoute == null) return@LaunchedEffect
         runCatching { AppUpdater.checkOnNavigate(context) }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+    // Splash liegt über allem und bleibt während Prefs/Nav gemountet (kein Remount-Schwarz)
+    if (destination != null) {
     NavHost(navController = navController, startDestination = destination) {
         composable(Routes.TUTORIAL) {
             val googleReady =
@@ -1371,6 +1386,7 @@ fun LuvAppNav() {
             )
         }
     }
+    } // destination != null
 
     if (showPublicSplash) {
         PublicCanvasSplash(onFinished = { showPublicSplash = false })

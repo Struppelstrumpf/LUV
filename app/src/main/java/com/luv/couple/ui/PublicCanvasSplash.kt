@@ -1,11 +1,10 @@
 package com.luv.couple.ui
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -37,79 +36,76 @@ import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.luv.couple.LuvApp
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.PublicCanvasPreview
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
+import com.luv.couple.ui.theme.LuvWordmark
 import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
 /**
- * 2s Splash beim normalen App-Öffnen: random öffentliche Leinwand,
- * Namen sofort sichtbar, weiße Glow-Linie am Rand.
+ * Splash beim normalen App-Öffnen: random öffentliche Leinwand.
+ * Zeigt sofort das zuletzt gecachte Bild (kein Schwarzbild), lädt parallel neu.
  */
 @Composable
 fun PublicCanvasSplash(
     onFinished: () -> Unit
 ) {
+    val context = LocalContext.current.applicationContext
     var preview by remember { mutableStateOf<PublicCanvasPreview?>(null) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     var ready by remember { mutableStateOf(false) }
     val progress = remember { Animatable(0f) }
 
     LaunchedEffect(Unit) {
+        // 1) Sofort Cache (Memory/Disk) — verhindert schwarze Sekunden
+        val cached = PublicSplashCache.memoryEntry()
+            ?: PublicSplashCache.loadLast(context)
+        if (cached != null) {
+            preview = cached.preview
+            bitmap = cached.bitmap
+            ready = true
+        }
+
+        // 2) Parallel neues Random laden (Anzeige oder nächster Start)
         val fetched = withContext(Dispatchers.IO) {
             LuvApiClient.fetchRandomPublicCanvas()
         }
-        if (fetched == null) {
-            onFinished()
-            return@LaunchedEffect
-        }
-        preview = fetched
-        withContext(Dispatchers.IO) {
-            runCatching {
-                LuvApp.instance.prefs.setLastPublicCanvas(
-                    id = fetched.id,
-                    nameLine = fetched.nameLine.ifBlank { fetched.hostNickname },
-                    imageUrl = fetched.imageUrl,
-                    hostNickname = fetched.hostNickname
-                )
+        val freshBmp = if (fetched != null) {
+            async(Dispatchers.IO) {
+                PublicSplashCache.downloadBitmap(fetched.imageUrl)
+            }.await()
+        } else null
+
+        if (fetched != null && freshBmp != null) {
+            PublicSplashCache.save(context, fetched, freshBmp)
+            if (!ready) {
+                preview = fetched
+                bitmap = freshBmp
+                ready = true
+            } else if (fetched.id != preview?.id && progress.value < 0.4f) {
+                // Frühe Phase: auf frisches Bild wechseln
+                preview = fetched
+                bitmap = freshBmp
             }
         }
-        bitmap = withContext(Dispatchers.IO) {
-            runCatching {
-                val url = if (fetched.imageUrl.startsWith("http")) {
-                    fetched.imageUrl
-                } else {
-                    LuvApiClient.baseUrl().trimEnd('/') + fetched.imageUrl
-                }
-                val client = OkHttpClient.Builder()
-                    .connectTimeout(8, TimeUnit.SECONDS)
-                    .readTimeout(12, TimeUnit.SECONDS)
-                    .build()
-                client.newCall(Request.Builder().url(url).get().build()).execute().use { resp ->
-                    if (!resp.isSuccessful) return@runCatching null
-                    resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
-                }
-            }.getOrNull()
-        }
-        if (bitmap == null) {
+
+        if (!ready || bitmap == null || preview == null) {
             onFinished()
             return@LaunchedEffect
         }
-        ready = true
+
         progress.snapTo(0f)
         progress.animateTo(1f, animationSpec = tween(1900, easing = LinearEasing))
         delay(120)
@@ -117,7 +113,15 @@ fun PublicCanvasSplash(
     }
 
     if (!ready || bitmap == null || preview == null) {
-        Box(Modifier.fillMaxSize().background(Color(0xFF0B0E14)))
+        // Kurz nur beim allerersten Start ohne Cache — Brand statt Schwarz
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFF0B0E14)),
+            contentAlignment = Alignment.Center
+        ) {
+            LuvWordmark(fontSize = 42.sp)
+        }
         return
     }
 
@@ -155,7 +159,6 @@ fun PublicCanvasSplash(
         Canvas(Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
-            // Weißer Glow fährt am Rand: unten links → hoch → oben → rechts runter
             val inset = 10.dp.toPx()
             val left = inset
             val top = inset
