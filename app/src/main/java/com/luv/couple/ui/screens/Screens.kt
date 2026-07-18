@@ -1775,7 +1775,8 @@ internal fun PrimaryButton(
                 if (bordered) Modifier.border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(18.dp))
                 else Modifier
             )
-            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier.alpha(0.7f)),
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier.alpha(0.7f))
+            .padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -1783,7 +1784,9 @@ internal fun PrimaryButton(
             color = TextPrimary,
             fontFamily = DisplayFont,
             fontSize = 17.sp,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }

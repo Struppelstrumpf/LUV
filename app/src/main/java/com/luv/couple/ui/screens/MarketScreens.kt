@@ -583,7 +583,7 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("Ausstattung", "Begleiter", "Emojis").forEachIndexed { index, label ->
+                    listOf("Ausstattung", "Begleiter", "Emojis").forEachIndexed { index, label ->
                 val active = tab == index
                 Box(
                     modifier = Modifier
@@ -591,7 +591,7 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
                         .clip(RoundedCornerShape(14.dp))
                         .background(if (active) AccentRose.copy(0.28f) else BgSoft)
                         .clickable { tab = index }
-                        .padding(vertical = 10.dp),
+                        .padding(horizontal = 10.dp, vertical = 10.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -600,7 +600,8 @@ private fun ItemShopContent(onRefreshInventory: suspend () -> Unit) {
                         fontFamily = if (active) DisplayFont else BodyFont,
                         fontSize = 13.sp,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center
                     )
                 }
             }

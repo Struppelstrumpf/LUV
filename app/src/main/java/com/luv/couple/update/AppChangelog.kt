@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.46",
+            listOf(
+                "Inventar & Menüs: mehr Abstand im Button-Text, bessere Anpassung an kleine Displays",
+            )
+        ),
+        Entry(
             "1.9.45",
             listOf(
                 "Sozial: Plus-Kachel zum Freunde-Suchen per Spitzname",

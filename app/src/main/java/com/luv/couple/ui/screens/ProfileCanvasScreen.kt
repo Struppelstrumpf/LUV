@@ -1833,10 +1833,17 @@ private fun ProfileEditSheet(
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(if (on) AccentRose.copy(0.25f) else BgSoft)
                                 .clickable { draft = draft.copy(fontFamily = f) }
-                                .padding(vertical = 10.dp),
+                                .padding(horizontal = 8.dp, vertical = 10.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(f.label, color = TextPrimary, fontFamily = BodyFont, fontSize = 12.sp)
+                            Text(
+                                f.label,
+                                color = TextPrimary,
+                                fontFamily = BodyFont,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }

@@ -17,6 +17,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.luv.couple.update.UpdateUiState
@@ -97,10 +99,18 @@ fun UpdateBanner(
                     .clip(RoundedCornerShape(14.dp))
                     .background(AccentRose)
                     .clickable(onClick = onUpdate)
-                    .padding(vertical = 12.dp),
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(action, color = TextPrimary, fontFamily = DisplayFont, fontSize = 15.sp)
+                Text(
+                    action,
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

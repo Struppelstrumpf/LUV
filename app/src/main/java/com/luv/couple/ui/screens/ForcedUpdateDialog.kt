@@ -225,14 +225,17 @@ fun ForcedUpdateDialog(
                             .clip(RoundedCornerShape(16.dp))
                             .background(AccentRose)
                             .clickable(onClick = onUpdate)
-                            .padding(vertical = 14.dp),
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             actionLabel,
                             color = TextPrimary,
                             fontFamily = DisplayFont,
-                            fontSize = 16.sp
+                            fontSize = 16.sp,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }

@@ -36,6 +36,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -120,7 +122,7 @@ fun ProfileInventoryPanel(
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val scale = (maxWidth / RefInventoryWidth).coerceIn(0.72f, 1f)
+        val scale = (maxWidth / RefInventoryWidth).coerceIn(0.62f, 1f)
         fun s(dp: Dp): Dp = dp * scale
         fun ts(sp: TextUnit): TextUnit = (sp.value * scale).sp
 
@@ -134,9 +136,9 @@ fun ProfileInventoryPanel(
                             Brush.verticalGradient(listOf(Color(0xFF1C2433), BgDeep))
                         )
                         .border(1.dp, Color.White.copy(0.10f), RoundedCornerShape(s(28.dp)))
-                        .padding(s(16.dp))
+                        .padding(horizontal = s(14.dp), vertical = s(14.dp))
                 } else {
-                    Modifier.padding(horizontal = s(4.dp))
+                    Modifier.padding(horizontal = s(8.dp))
                 }
             )
 
@@ -175,7 +177,7 @@ fun ProfileInventoryPanel(
             Spacer(modifier = Modifier.height(s(12.dp)))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(s(4.dp))
+                horizontalArrangement = Arrangement.spacedBy(s(6.dp))
             ) {
                 tabs.forEachIndexed { i, invTab ->
                     val on = tab == i
@@ -188,7 +190,7 @@ fun ProfileInventoryPanel(
                                 tab = i
                                 onTabChange(i)
                             }
-                            .padding(vertical = s(9.dp), horizontal = s(2.dp)),
+                            .padding(vertical = s(9.dp), horizontal = s(8.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -196,7 +198,9 @@ fun ProfileInventoryPanel(
                             color = TextPrimary,
                             fontFamily = if (on) DisplayFont else BodyFont,
                             fontSize = ts(11.sp),
-                            maxLines = 1
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
@@ -451,7 +455,7 @@ fun ProfileChestDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.78f)
-                .padding(horizontal = 14.dp)
+                .padding(horizontal = 16.dp)
                 .navigationBarsPadding(),
             showCardChrome = true
         )
@@ -469,12 +473,24 @@ private fun InvEmptyHint(
     fun s(dp: Dp): Dp = dp * scale
     fun ts(sp: TextUnit): TextUnit = (sp.value * scale).sp
     Column(
-        modifier = modifier.padding(s(12.dp)),
+        modifier = modifier.padding(horizontal = s(16.dp), vertical = s(12.dp)),
         verticalArrangement = Arrangement.spacedBy(s(10.dp)),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(title, color = TextPrimary, fontFamily = DisplayFont, fontSize = ts(16.sp))
-        Text(body, color = TextMuted, fontFamily = BodyFont, fontSize = ts(13.sp))
+        Text(
+            title,
+            color = TextPrimary,
+            fontFamily = DisplayFont,
+            fontSize = ts(16.sp),
+            textAlign = TextAlign.Center
+        )
+        Text(
+            body,
+            color = TextMuted,
+            fontFamily = BodyFont,
+            fontSize = ts(13.sp),
+            textAlign = TextAlign.Center
+        )
         ShopLinkChip(label = "Zum Itemshop", onClick = onOpenItemShop, scale = scale)
     }
 }
@@ -487,16 +503,35 @@ private fun ShopLinkChip(
     scale: Float = 1f
 ) {
     fun s(dp: Dp): Dp = dp * scale
-    fun ts(sp: TextUnit): TextUnit = (sp.value * scale).sp
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(s(14.dp)))
             .background(AccentRose.copy(0.16f))
             .border(1.dp, AccentRose.copy(0.35f), RoundedCornerShape(s(14.dp)))
             .clickable(onClick = onClick)
-            .padding(vertical = s(12.dp)),
+            .padding(horizontal = s(12.dp), vertical = s(11.dp)),
         contentAlignment = Alignment.Center
     ) {
-        Text(label, color = TextPrimary, fontFamily = BodyFont, fontSize = ts(13.sp), maxLines = 1)
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            val base = 13f * scale
+            val fontSp = when {
+                maxWidth < 68.dp -> (base * 0.78f).sp
+                maxWidth < 92.dp -> (base * 0.88f).sp
+                else -> base.sp
+            }
+            Text(
+                label,
+                color = TextPrimary,
+                fontFamily = BodyFont,
+                fontSize = fontSp,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }

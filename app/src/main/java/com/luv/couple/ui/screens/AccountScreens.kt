@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.luv.couple.data.AccountInfo
@@ -798,7 +799,8 @@ fun MenuButton(
                 if (bordered) Modifier.border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(16.dp))
                 else Modifier
             )
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -806,7 +808,9 @@ fun MenuButton(
             color = if (enabled) TextPrimary else TextMuted,
             fontFamily = DisplayFont,
             fontSize = 16.sp,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -844,7 +848,8 @@ fun SimpleBottomBar(
                         .fillMaxHeight()
                         .clip(RoundedCornerShape(22.dp))
                         .background(if (active) AccentRose.copy(alpha = 0.22f) else Color.Transparent)
-                        .clickable { onSelect(index) },
+                        .clickable { onSelect(index) }
+                        .padding(horizontal = 4.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     if (label == null) {
@@ -860,6 +865,7 @@ fun SimpleBottomBar(
                             fontSize = 12.sp,
                             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
                             maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             textAlign = TextAlign.Center
                         )
                     }
