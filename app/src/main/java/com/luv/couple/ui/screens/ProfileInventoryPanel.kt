@@ -98,6 +98,7 @@ fun ProfileInventoryPanel(
     onBio: () -> Unit = {},
     onOpenMarketplace: () -> Unit,
     onOpenItemShop: () -> Unit,
+    onOpenGallery: (() -> Unit)? = null,
     selectedTab: Int = 0,
     onTabChange: (Int) -> Unit = {},
     onDismiss: (() -> Unit)? = null,
@@ -167,6 +168,9 @@ fun ProfileInventoryPanel(
             Row(horizontalArrangement = Arrangement.spacedBy(s(8.dp))) {
                 ShopLinkChip("🛒 Marktplatz", onOpenMarketplace, Modifier.weight(1f), scale)
                 ShopLinkChip("✨ Mehr Sticker", onOpenItemShop, Modifier.weight(1f), scale)
+                if (onOpenGallery != null) {
+                    ShopLinkChip("🖼️ Galerie", onOpenGallery, Modifier.weight(1f), scale)
+                }
             }
             Spacer(modifier = Modifier.height(s(12.dp)))
             Row(

@@ -54,7 +54,6 @@ import com.luv.couple.ui.screens.AccountHomeScreen
 import com.luv.couple.ui.screens.AdminScreen
 import com.luv.couple.ui.screens.CreateLobbyScreen
 import com.luv.couple.ui.screens.ForcedUpdateDialog
-import com.luv.couple.ui.screens.GalleryScreen
 import com.luv.couple.ui.screens.HostShareScreen
 import com.luv.couple.ui.screens.InviteLobbyDialog
 import com.luv.couple.ui.screens.JoinPreviewScreen
@@ -72,6 +71,7 @@ import com.luv.couple.ui.screens.SettingsScreen
 import com.luv.couple.ui.screens.RedeemScreen
 import com.luv.couple.ui.screens.RenameLobbyScreen
 import com.luv.couple.ui.screens.SimpleBottomBar
+import com.luv.couple.ui.screens.SocialScreen
 import com.luv.couple.ui.screens.TutorialFlow
 import com.luv.couple.update.AppUpdater
 import com.luv.couple.update.UpdateUiState
@@ -89,6 +89,8 @@ object Routes {
     const val ADMIN = "admin"
     const val NICKNAME = "nickname"
     const val PROFILE = "profile"
+    const val PEER_PROFILE = "peer_profile/{userId}"
+    fun peerProfile(userId: String) = "peer_profile/$userId"
     const val SETTINGS = "settings"
     const val QUIET_HOURS = "quiet_hours"
     const val RENAME = "rename/{lobbyId}"
@@ -775,7 +777,14 @@ fun LuvAppNav() {
                             updateState = updateState,
                             onUpdateApp = { startAppUpdate() }
                         )
-                        1 -> GalleryScreen()
+                        1 -> SocialScreen(
+                            onOpenFriendProfile = { userId, nick ->
+                                navController.currentBackStackEntry
+                                    ?.savedStateHandle
+                                    ?.set("peer_nick", nick)
+                                navController.navigate(Routes.peerProfile(userId))
+                            }
+                        )
                         2 -> InventoryScreen(
                             nickname = nickname ?: "Du",
                             selectedTab = inventorySubTab,
@@ -937,6 +946,24 @@ fun LuvAppNav() {
                         syncInventory()
                     }
                 }
+            )
+        }
+
+        composable(
+            route = Routes.PEER_PROFILE,
+            arguments = listOf(navArgument("userId") { type = NavType.StringType })
+        ) { entry ->
+            val peerId = entry.arguments?.getString("userId").orEmpty()
+            val peerNick = navController.previousBackStackEntry
+                ?.savedStateHandle
+                ?.get<String>("peer_nick")
+                ?: "Jemand"
+            ProfileCanvasScreen(
+                nickname = peerNick,
+                colorIndex = PeerPalette.indexFor(peerNick),
+                editable = false,
+                userId = peerId,
+                onClose = { navController.popBackStack() }
             )
         }
 

@@ -581,7 +581,10 @@ object LuvApiClient {
     data class PeerProfile(
         val nickname: String,
         val state: com.luv.couple.profile.ProfileState,
-        val coins: Int
+        val coins: Int,
+        val petEmoji: String = "🐣",
+        val friendStatus: String = "none",
+        val canPetKraul: Boolean = true
     )
 
     suspend fun fetchUserProfileCanvas(userId: String): PeerProfile? =
@@ -592,10 +595,18 @@ object LuvApiClient {
                 val json = authedGet("/v1/users/${uid.encodeURL()}/profile")
                 val nick = json.optString("nickname", "Jemand")
                 val raw = json.optJSONObject("profile")?.toString()
+                val pet = json.optString("petEmoji", "🐣").trim().ifBlank { "🐣" }
+                var state = com.luv.couple.profile.ProfileCatalog.decode(raw, nick)
+                if (state.companionEmoji.isBlank()) {
+                    state = state.copy(companionEmoji = pet)
+                }
                 PeerProfile(
                     nickname = nick,
-                    state = com.luv.couple.profile.ProfileCatalog.decode(raw, nick),
-                    coins = json.optInt("coins", 0)
+                    state = state,
+                    coins = json.optInt("coins", 0),
+                    petEmoji = pet,
+                    friendStatus = json.optString("friendStatus", "none"),
+                    canPetKraul = json.optBoolean("canPetKraul", true)
                 )
             }.getOrNull()
         }
@@ -605,6 +616,115 @@ object LuvApiClient {
         val toCoins: Int,
         val from: AccountInfo?
     )
+
+    data class FriendCard(
+        val userId: String,
+        val nickname: String,
+        val petEmoji: String
+    )
+
+    data class FriendsBag(
+        val friends: List<FriendCard>,
+        val incoming: List<FriendCard>,
+        val outgoing: List<FriendCard>
+    )
+
+    data class PetKraulResult(
+        val petEmoji: String,
+        val toCoins: Int,
+        val amount: Int
+    )
+
+    private fun parseFriendCard(o: JSONObject?): FriendCard? {
+        if (o == null) return null
+        val id = o.optString("userId").trim()
+        if (id.isBlank()) return null
+        return FriendCard(
+            userId = id,
+            nickname = o.optString("nickname", "Jemand").trim().ifBlank { "Jemand" },
+            petEmoji = o.optString("petEmoji", "🐣").trim().ifBlank { "🐣" }
+        )
+    }
+
+    private fun parseFriendCards(arr: org.json.JSONArray?): List<FriendCard> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                parseFriendCard(arr.optJSONObject(i))?.let { add(it) }
+            }
+        }
+    }
+
+    suspend fun fetchFriends(): FriendsBag = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/me/friends")
+        FriendsBag(
+            friends = parseFriendCards(json.optJSONArray("friends")),
+            incoming = parseFriendCards(json.optJSONArray("incoming")),
+            outgoing = parseFriendCards(json.optJSONArray("outgoing"))
+        )
+    }
+
+    suspend fun sendFriendRequest(userId: String): String = withContext(Dispatchers.IO) {
+        val uid = userId.trim()
+        val json = authedPost("/v1/users/${uid.encodeURL()}/friend-request", "{}")
+        json.optString("friendStatus", "outgoing")
+    }
+
+    suspend fun acceptFriend(userId: String): FriendCard? = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("userId", userId.trim()).toString()
+        val json = authedPost("/v1/me/friends/accept", body)
+        parseFriendCard(json.optJSONObject("friend"))
+    }
+
+    suspend fun declineFriend(userId: String) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("userId", userId.trim()).toString()
+        authedPost("/v1/me/friends/decline", body)
+        Unit
+    }
+
+    suspend fun removeFriend(userId: String) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("userId", userId.trim()).toString()
+        authedPost("/v1/me/friends/remove", body)
+        Unit
+    }
+
+    suspend fun reorderFriends(userIds: List<String>): List<FriendCard> =
+        withContext(Dispatchers.IO) {
+            val arr = org.json.JSONArray()
+            userIds.forEach { arr.put(it) }
+            val body = JSONObject().put("userIds", arr).toString()
+            val json = authedPut("/v1/me/friends/order", body)
+            parseFriendCards(json.optJSONArray("friends"))
+        }
+
+    suspend fun petKraul(userId: String): PetKraulResult = withContext(Dispatchers.IO) {
+        val uid = userId.trim()
+        val request = authedRequestBuilder("/v1/users/${uid.encodeURL()}/pet-kraul")
+            .post("{}".toRequestBody(jsonMedia))
+            .build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            val json = runCatching { JSONObject(raw) }.getOrNull()
+            if (!response.isSuccessful) {
+                val err = json?.optString("error").orEmpty()
+                throw LuvApiException(
+                    when (err) {
+                        "already_krault" -> "Heute schon gekrault (Reset 0 Uhr MEZ)"
+                        "self_kraul" -> "Eigener Begleiter"
+                        else -> json?.optString("message")?.takeIf { it.isNotBlank() }
+                            ?: "Kraulen fehlgeschlagen"
+                    },
+                    error = err.ifBlank { null }
+                )
+            }
+            val body = json ?: throw LuvApiException("Ungültige Server-Antwort")
+            PetKraulResult(
+                petEmoji = body.optString("petEmoji", "🐣").ifBlank { "🐣" },
+                toCoins = body.optInt("toCoins", 0),
+                amount = body.optInt("amount", 1)
+            )
+        }
+    }
 
     /** 1 Coin ins Münzglas spenden (max. 10/Tag, 0:00 Berlin). */
     suspend fun tipGlass(userId: String): GlassTipResult = withContext(Dispatchers.IO) {

@@ -746,6 +746,7 @@ fun InventoryScreen(
     var barFullEmoji by remember { mutableStateOf<String?>(null) }
     var replacePickFor by remember { mutableStateOf<String?>(null) }
     var showBarEditor by remember { mutableStateOf(false) }
+    var showGallery by remember { mutableStateOf(false) }
 
     LaunchedEffect(nickname) {
         runCatching {
@@ -847,11 +848,21 @@ fun InventoryScreen(
                 },
                 onOpenMarketplace = onOpenMarketplace,
                 onOpenItemShop = onOpenItemShop,
+                onOpenGallery = { showGallery = true },
                 selectedTab = selectedTab,
                 onTabChange = onTabChange,
                 modifier = Modifier.fillMaxSize(),
                 showCardChrome = true
             )
+        }
+    }
+
+    if (showGallery) {
+        Dialog(
+            onDismissRequest = { showGallery = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            GalleryScreen(onClose = { showGallery = false })
         }
     }
 

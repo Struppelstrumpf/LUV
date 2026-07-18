@@ -812,8 +812,8 @@ fun SimpleBottomBar(
     selected: Int,
     onSelect: (Int) -> Unit
 ) {
-    // Home · Galerie · Inventar · Markt · Zahnrad (Konto)
-    val labels = listOf("Home", "Galerie", "Inventar", "Markt", null)
+    // Home · Sozial · Inventar · Markt · Zahnrad (Konto)
+    val labels = listOf("Home", "Sozial", "Inventar", "Markt", null)
     Box(
         modifier = Modifier
             .fillMaxWidth()

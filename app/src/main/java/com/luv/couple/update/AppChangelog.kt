@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.36",
+            listOf(
+                "Sozial: Freunde, Anfragen, Reihenfolge — Galerie im Inventar",
+                "Begleiter kraulen auf Fremdprofilen: süße Animation, +1 Coin/Tag",
+            )
+        ),
+        Entry(
             "1.9.35",
             listOf(
                 "Inventar-Emojis füllen die Reaktionsleiste (auch Ersetzen bei 8)",

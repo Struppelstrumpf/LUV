@@ -1,6 +1,7 @@
 package com.luv.couple.ui.screens
 
 import android.widget.Toast
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -155,6 +156,11 @@ fun ProfileCanvasScreen(
     var confirmDiscard by remember { mutableStateOf(false) }
     var displayCoins by remember { mutableIntStateOf(myCoins) }
     var tipPopIds by remember { mutableStateOf<List<Long>>(emptyList()) }
+    var friendStatus by remember { mutableStateOf("none") }
+    var canPetKraul by remember { mutableStateOf(false) }
+    var peerPetEmoji by remember { mutableStateOf("🐣") }
+    var showPetKraul by remember { mutableStateOf(false) }
+    var petKraulBusy by remember { mutableStateOf(false) }
     // Fremdprofil: kein Default-Flash — erst Loader, dann fertiges Layout
     var profileReady by remember(userId, editable) {
         mutableStateOf(editable)
@@ -215,10 +221,16 @@ fun ProfileCanvasScreen(
                 loadedNick = remote.nickname
                 state = remote.state.normalized(remote.nickname)
                 displayCoins = remote.coins
+                friendStatus = remote.friendStatus
+                canPetKraul = remote.canPetKraul
+                peerPetEmoji = remote.petEmoji.ifBlank { remote.state.companionEmoji.ifBlank { "🐣" } }
             } else {
                 loadedNick = nickname
                 state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname)).normalized(nickname)
                 displayCoins = 0
+                friendStatus = "none"
+                canPetKraul = false
+                peerPetEmoji = "🐣"
             }
             savedSnapshot = state.snapshotKey()
             val minMs = 1100L
@@ -255,6 +267,34 @@ fun ProfileCanvasScreen(
                     Toast.LENGTH_SHORT
                 ).show()
             }
+        }
+    }
+
+    fun startPetKraul() {
+        val uid = userId ?: return
+        if (editable || !canPetKraul || petKraulBusy) return
+        showPetKraul = true
+    }
+
+    fun finishPetKraulAfterAnim() {
+        val uid = userId ?: return
+        if (petKraulBusy) return
+        petKraulBusy = true
+        scope.launch {
+            try {
+                val result = LuvApiClient.petKraul(uid)
+                displayCoins = result.toCoins
+                peerPetEmoji = result.petEmoji
+                canPetKraul = false
+            } catch (e: Exception) {
+                Toast.makeText(
+                    context,
+                    e.message ?: "Kraulen fehlgeschlagen",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            showPetKraul = false
+            petKraulBusy = false
         }
     }
 
@@ -487,6 +527,11 @@ fun ProfileCanvasScreen(
                         { tipGlassOnce() }
                     } else {
                         null
+                    },
+                    onPetKraul = if (!editable && !userId.isNullOrBlank() && canPetKraul) {
+                        { startPetKraul() }
+                    } else {
+                        null
                     }
                 )
                 tipPopIds.forEach { popId ->
@@ -570,19 +615,173 @@ fun ProfileCanvasScreen(
                     )
                 }
                 Spacer(modifier = Modifier.height(12.dp))
-            } else if (state.bio.isNotBlank()) {
-                Text(
-                    state.bio,
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 14.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(BgSoft)
-                        .padding(14.dp)
-                )
+            } else {
+                if (state.bio.isNotBlank()) {
+                    Text(
+                        state.bio,
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 14.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(BgSoft)
+                            .padding(14.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+                if (!userId.isNullOrBlank()) {
+                    when (friendStatus) {
+                        "friends" -> Text(
+                            "Ihr seid Freunde 💛",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 14.sp,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center
+                        )
+                        "outgoing" -> Text(
+                            "Freundschaftsanfrage gesendet…",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 14.sp,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center
+                        )
+                        "incoming" -> {
+                            Text(
+                                "Möchte befreundet sein",
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 15.sp,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(46.dp)
+                                        .clip(RoundedCornerShape(23.dp))
+                                        .background(AccentRose.copy(0.28f))
+                                        .clickable {
+                                            val uid = userId ?: return@clickable
+                                            scope.launch {
+                                                runCatching { LuvApiClient.acceptFriend(uid) }
+                                                    .onSuccess { friendStatus = "friends" }
+                                                    .onFailure {
+                                                        Toast.makeText(
+                                                            context,
+                                                            it.message ?: "Fehler",
+                                                            Toast.LENGTH_SHORT
+                                                        ).show()
+                                                    }
+                                            }
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("Annehmen", color = AccentRose, fontFamily = DisplayFont)
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(46.dp)
+                                        .clip(RoundedCornerShape(23.dp))
+                                        .background(BgSoft)
+                                        .clickable {
+                                            val uid = userId ?: return@clickable
+                                            scope.launch {
+                                                runCatching { LuvApiClient.declineFriend(uid) }
+                                                    .onSuccess { friendStatus = "none" }
+                                                    .onFailure {
+                                                        Toast.makeText(
+                                                            context,
+                                                            it.message ?: "Fehler",
+                                                            Toast.LENGTH_SHORT
+                                                        ).show()
+                                                    }
+                                            }
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("Ablehnen", color = TextMuted, fontFamily = BodyFont)
+                                }
+                            }
+                        }
+                        else -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .clip(RoundedCornerShape(24.dp))
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            listOf(AccentRose, FemalePurple.copy(0.85f))
+                                        )
+                                    )
+                                    .clickable {
+                                        val uid = userId ?: return@clickable
+                                        scope.launch {
+                                            runCatching { LuvApiClient.sendFriendRequest(uid) }
+                                                .onSuccess { friendStatus = it }
+                                                .onFailure {
+                                                    Toast.makeText(
+                                                        context,
+                                                        it.message ?: "Anfrage fehlgeschlagen",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "Freundschaftsanfrage senden",
+                                    color = Color.White,
+                                    fontFamily = DisplayFont,
+                                    fontSize = 15.sp
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                            .clip(RoundedCornerShape(26.dp))
+                            .background(
+                                if (canPetKraul) Color(0xFFFFF0F4) else BgSoft
+                            )
+                            .border(
+                                1.dp,
+                                if (canPetKraul) AccentRose.copy(0.45f) else Color.White.copy(0.08f),
+                                RoundedCornerShape(26.dp)
+                            )
+                            .clickable(enabled = canPetKraul && !petKraulBusy) { startPetKraul() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            if (canPetKraul) "$peerPetEmoji  Begleiter kraulen"
+                            else "$peerPetEmoji  Heute schon gekrault",
+                            color = if (canPetKraul) Color(0xFF5A3040) else TextMuted,
+                            fontFamily = DisplayFont,
+                            fontSize = 16.sp
+                        )
+                    }
+                }
             }
+        }
+
+        if (showPetKraul) {
+            PetKraulOverlay(
+                petEmoji = peerPetEmoji.ifBlank { state.companionEmoji.ifBlank { "🐣" } },
+                onFinished = { finishPetKraulAfterAnim() }
+            )
         }
 
         if (showChest && editable) {
@@ -700,6 +899,154 @@ private fun TipCoinPop(modifier: Modifier = Modifier) {
 }
 
 @Composable
+private fun PetKraulOverlay(
+    petEmoji: String,
+    onFinished: () -> Unit
+) {
+    val infinite = rememberInfiniteTransition(label = "kraul")
+    val handBob by infinite.animateFloat(
+        initialValue = -10f,
+        targetValue = 14f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(480, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "handBob"
+    )
+    val petBounce by infinite.animateFloat(
+        initialValue = 0.92f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(520, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "petBounce"
+    )
+    val heartPulse by infinite.animateFloat(
+        initialValue = 0.7f,
+        targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(700, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "heartPulse"
+    )
+    var showCoin by remember { mutableStateOf(false) }
+    val coinAlpha by animateFloatAsState(
+        targetValue = if (showCoin) 1f else 0f,
+        animationSpec = tween(400),
+        label = "coinAlpha"
+    )
+    val coinRise by animateFloatAsState(
+        targetValue = if (showCoin) -28f else 8f,
+        animationSpec = tween(500),
+        label = "coinRise"
+    )
+
+    LaunchedEffect(Unit) {
+        delay(2400)
+        showCoin = true
+        delay(800)
+        onFinished()
+    }
+
+    Dialog(
+        onDismissRequest = {},
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xCC1A1420)),
+            contentAlignment = Alignment.Center
+        ) {
+            // Weiche Glow-Fläche
+            Box(
+                modifier = Modifier
+                    .size(260.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            listOf(Color(0x66FF8FAB), Color.Transparent)
+                        )
+                    )
+            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        "💕",
+                        fontSize = 28.sp,
+                        modifier = Modifier
+                            .offset(x = (-58).dp, y = (-40).dp)
+                            .graphicsLayer {
+                                scaleX = heartPulse
+                                scaleY = heartPulse
+                                alpha = 0.85f
+                            }
+                    )
+                    Text(
+                        "💖",
+                        fontSize = 22.sp,
+                        modifier = Modifier
+                            .offset(x = 62.dp, y = (-28).dp)
+                            .graphicsLayer {
+                                scaleX = heartPulse * 0.9f
+                                scaleY = heartPulse * 0.9f
+                                alpha = 0.75f
+                            }
+                    )
+                    Text(
+                        "✨",
+                        fontSize = 20.sp,
+                        modifier = Modifier
+                            .offset(x = 48.dp, y = 36.dp)
+                            .graphicsLayer { alpha = 0.8f }
+                    )
+                    Text(
+                        petEmoji,
+                        fontSize = 72.sp,
+                        modifier = Modifier.graphicsLayer {
+                            scaleX = petBounce
+                            scaleY = petBounce
+                        }
+                    )
+                    Text(
+                        "🤚",
+                        fontSize = 40.sp,
+                        modifier = Modifier
+                            .offset(x = 36.dp, y = handBob.dp)
+                            .graphicsLayer {
+                                rotationZ = -18f + handBob * 0.6f
+                            }
+                    )
+                }
+                Spacer(modifier = Modifier.height(18.dp))
+                Text(
+                    "Kraul… kraul…",
+                    color = Color.White.copy(0.9f),
+                    fontFamily = DisplayFont,
+                    fontSize = 20.sp
+                )
+                Text(
+                    "+1 Coin",
+                    color = AccentRose,
+                    fontFamily = DisplayFont,
+                    fontSize = 26.sp,
+                    modifier = Modifier
+                        .padding(top = 10.dp)
+                        .offset(y = coinRise.dp)
+                        .alpha(coinAlpha)
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun ProfileCanvasBoard(
     state: ProfileState,
     nickname: String,
@@ -711,7 +1058,8 @@ private fun ProfileCanvasBoard(
     onLayoutChange: (List<ProfileLayoutEl>) -> Unit,
     onOpenChest: () -> Unit,
     onEdit: (String) -> Unit,
-    onTipGlass: (() -> Unit)? = null
+    onTipGlass: (() -> Unit)? = null,
+    onPetKraul: (() -> Unit)? = null
 ) {
     val theme = ProfileCatalog.theme(state.themeId)
     BoxWithConstraints(
@@ -793,7 +1141,8 @@ private fun ProfileCanvasBoard(
                     onSelect(null)
                 },
                 onEdit = { onEdit(el.id) },
-                onTipGlass = if (el.type == ProfileElType.Glass) onTipGlass else null
+                onTipGlass = if (el.type == ProfileElType.Glass) onTipGlass else null,
+                onPetKraul = if (el.type == ProfileElType.Pet) onPetKraul else null
             )
         }
 
@@ -875,7 +1224,8 @@ private fun ProfileElementView(
     onChange: (ProfileLayoutEl) -> Unit,
     onRemove: () -> Unit,
     onEdit: () -> Unit,
-    onTipGlass: (() -> Unit)? = null
+    onTipGlass: (() -> Unit)? = null,
+    onPetKraul: (() -> Unit)? = null
 ) {
     val density = LocalDensity.current
     var dragEl by remember(el.id) { mutableStateOf(el) }
@@ -964,10 +1314,16 @@ private fun ProfileElementView(
                 transformOrigin = TransformOrigin(0.5f, 0.5f)
             }
             .clickable(
-                enabled = editable || (el.type == ProfileElType.Glass && onTipGlass != null)
+                enabled = editable ||
+                    (el.type == ProfileElType.Glass && onTipGlass != null) ||
+                    (el.type == ProfileElType.Pet && onPetKraul != null)
             ) {
                 if (editable) onSelect()
-                else onTipGlass?.invoke()
+                else when (el.type) {
+                    ProfileElType.Glass -> onTipGlass?.invoke()
+                    ProfileElType.Pet -> onPetKraul?.invoke()
+                    else -> Unit
+                }
             }
     ) {
         Box(

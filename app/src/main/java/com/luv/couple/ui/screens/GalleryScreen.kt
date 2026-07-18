@@ -76,7 +76,9 @@ private val PublishedBlue = Color(0xFF2563EB)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun GalleryScreen() {
+fun GalleryScreen(
+    onClose: (() -> Unit)? = null
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -135,7 +137,30 @@ fun GalleryScreen() {
                 .padding(horizontal = 24.dp)
                 .padding(top = 20.dp, bottom = 8.dp)
         ) {
-            Text("Galerie", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Galerie",
+                    fontFamily = DisplayFont,
+                    fontSize = 34.sp,
+                    color = TextPrimary,
+                    modifier = Modifier.weight(1f)
+                )
+                if (onClose != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(0.1f))
+                            .clickable(onClick = onClose),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("✕", color = TextMuted, fontSize = 16.sp)
+                    }
+                }
+            }
             if (selecting && selectedIds.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(

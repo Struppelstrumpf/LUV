@@ -160,6 +160,62 @@ function userPetEmoji(user) {
   return String(inv.equippedPet || DEFAULT_PET).slice(0, 8) || DEFAULT_PET;
 }
 
+function ensureFriends(user) {
+  if (!user.friends || typeof user.friends !== "object") {
+    user.friends = {};
+  }
+  const f = user.friends;
+  if (!Array.isArray(f.list)) f.list = [];
+  if (!Array.isArray(f.incoming)) f.incoming = [];
+  if (!Array.isArray(f.outgoing)) f.outgoing = [];
+  if (!Array.isArray(f.petKraulTargets)) f.petKraulTargets = [];
+  f.list = f.list.map((id) => String(id || "").trim()).filter(Boolean);
+  f.incoming = f.incoming.map((id) => String(id || "").trim()).filter(Boolean);
+  f.outgoing = f.outgoing.map((id) => String(id || "").trim()).filter(Boolean);
+  user.friends = f;
+  return f;
+}
+
+function friendPublicCard(user) {
+  if (!user) return null;
+  ensureCoinBuckets(user);
+  return {
+    userId: user.id,
+    nickname: String(user.nickname || "Jemand").trim().slice(0, 18) || "Jemand",
+    petEmoji: userPetEmoji(user),
+  };
+}
+
+function friendRelation(me, otherId) {
+  const f = ensureFriends(me);
+  if (f.list.includes(otherId)) return "friends";
+  if (f.outgoing.includes(otherId)) return "outgoing";
+  if (f.incoming.includes(otherId)) return "incoming";
+  return "none";
+}
+
+function canPetKraulToday(me, targetId) {
+  const f = ensureFriends(me);
+  const day = todayKey();
+  if (f.petKraulDay !== day) {
+    f.petKraulDay = day;
+    f.petKraulTargets = [];
+  }
+  return !f.petKraulTargets.includes(targetId);
+}
+
+function markPetKraul(me, targetId) {
+  const f = ensureFriends(me);
+  const day = todayKey();
+  if (f.petKraulDay !== day) {
+    f.petKraulDay = day;
+    f.petKraulTargets = [];
+  }
+  if (!f.petKraulTargets.includes(targetId)) {
+    f.petKraulTargets.push(targetId);
+  }
+}
+
 /** @type {Map<string, any>} */
 const rooms = new Map();
 
@@ -1218,6 +1274,7 @@ const PAID_CREDIT_REASONS = new Set([
   "admin_grant",
   "public_share_reward",
   "glass_tip_recv",
+  "pet_kraul_recv",
 ]);
 
 const PUBLIC_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -2940,15 +2997,189 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   const profile = sanitizeProfileCanvas(user.profileCanvas) || {
     themeId: "meadow",
     statusEmoji: "😊",
-    companionEmoji: "💕",
+    companionEmoji: DEFAULT_PET,
     bio: "",
     layout: [],
   };
+  const petEmoji = userPetEmoji(user);
+  if (!profile.companionEmoji) profile.companionEmoji = petEmoji;
+  const isSelf = uid === ctx.user.id;
   return res.json({
     nickname: user.nickname || "Jemand",
     userId: user.id,
     coins: user.coins || 0,
     profile,
+    petEmoji,
+    friendStatus: isSelf ? "self" : friendRelation(ctx.user, uid),
+    canPetKraul: !isSelf && canPetKraulToday(ctx.user, uid),
+  });
+});
+
+/** Freundesliste + Anfragen */
+app.get("/v1/me/friends", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const f = ensureFriends(ctx.user);
+  // Verwaiste IDs bereinigen
+  f.list = f.list.filter((id) => db.users?.[id]);
+  f.incoming = f.incoming.filter((id) => db.users?.[id]);
+  f.outgoing = f.outgoing.filter((id) => db.users?.[id]);
+  scheduleSave();
+  return res.json({
+    ok: true,
+    friends: f.list.map((id) => friendPublicCard(db.users[id])).filter(Boolean),
+    incoming: f.incoming.map((id) => friendPublicCard(db.users[id])).filter(Boolean),
+    outgoing: f.outgoing.map((id) => friendPublicCard(db.users[id])).filter(Boolean),
+  });
+});
+
+app.post("/v1/users/:userId/friend-request", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const toId = String(req.params.userId || "").trim();
+  if (!toId || toId === ctx.user.id) {
+    return res.status(400).json({ error: "invalid_user" });
+  }
+  const db = getDb();
+  const target = db.users?.[toId];
+  if (!target) return res.status(404).json({ error: "not_found" });
+  const mine = ensureFriends(ctx.user);
+  const theirs = ensureFriends(target);
+  if (mine.list.includes(toId)) {
+    return res.json({ ok: true, friendStatus: "friends", already: true });
+  }
+  // Gegenanfrage → sofort Freunde
+  if (mine.incoming.includes(toId)) {
+    mine.incoming = mine.incoming.filter((id) => id !== toId);
+    theirs.outgoing = theirs.outgoing.filter((id) => id !== ctx.user.id);
+    if (!mine.list.includes(toId)) mine.list.push(toId);
+    if (!theirs.list.includes(ctx.user.id)) theirs.list.push(ctx.user.id);
+    scheduleSave();
+    return res.json({ ok: true, friendStatus: "friends" });
+  }
+  if (mine.outgoing.includes(toId)) {
+    return res.json({ ok: true, friendStatus: "outgoing", already: true });
+  }
+  mine.outgoing.push(toId);
+  if (!theirs.incoming.includes(ctx.user.id)) theirs.incoming.push(ctx.user.id);
+  scheduleSave();
+  return res.json({ ok: true, friendStatus: "outgoing" });
+});
+
+app.post("/v1/me/friends/accept", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const fromId = String(req.body?.userId || "").trim();
+  if (!fromId) return res.status(400).json({ error: "invalid_user" });
+  const db = getDb();
+  const other = db.users?.[fromId];
+  if (!other) return res.status(404).json({ error: "not_found" });
+  const mine = ensureFriends(ctx.user);
+  const theirs = ensureFriends(other);
+  if (!mine.incoming.includes(fromId)) {
+    return res.status(400).json({ error: "no_request" });
+  }
+  mine.incoming = mine.incoming.filter((id) => id !== fromId);
+  theirs.outgoing = theirs.outgoing.filter((id) => id !== ctx.user.id);
+  if (!mine.list.includes(fromId)) mine.list.push(fromId);
+  if (!theirs.list.includes(ctx.user.id)) theirs.list.push(ctx.user.id);
+  scheduleSave();
+  return res.json({ ok: true, friend: friendPublicCard(other) });
+});
+
+app.post("/v1/me/friends/decline", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const fromId = String(req.body?.userId || "").trim();
+  if (!fromId) return res.status(400).json({ error: "invalid_user" });
+  const db = getDb();
+  const other = db.users?.[fromId];
+  const mine = ensureFriends(ctx.user);
+  mine.incoming = mine.incoming.filter((id) => id !== fromId);
+  if (other) {
+    const theirs = ensureFriends(other);
+    theirs.outgoing = theirs.outgoing.filter((id) => id !== ctx.user.id);
+  }
+  scheduleSave();
+  return res.json({ ok: true });
+});
+
+app.post("/v1/me/friends/remove", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const otherId = String(req.body?.userId || "").trim();
+  if (!otherId) return res.status(400).json({ error: "invalid_user" });
+  const db = getDb();
+  const mine = ensureFriends(ctx.user);
+  mine.list = mine.list.filter((id) => id !== otherId);
+  mine.outgoing = mine.outgoing.filter((id) => id !== otherId);
+  mine.incoming = mine.incoming.filter((id) => id !== otherId);
+  const other = db.users?.[otherId];
+  if (other) {
+    const theirs = ensureFriends(other);
+    theirs.list = theirs.list.filter((id) => id !== ctx.user.id);
+    theirs.outgoing = theirs.outgoing.filter((id) => id !== ctx.user.id);
+    theirs.incoming = theirs.incoming.filter((id) => id !== ctx.user.id);
+  }
+  scheduleSave();
+  return res.json({ ok: true });
+});
+
+app.put("/v1/me/friends/order", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const raw = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
+  const f = ensureFriends(ctx.user);
+  const want = raw.map((id) => String(id || "").trim()).filter(Boolean);
+  const set = new Set(f.list);
+  const next = [];
+  for (const id of want) {
+    if (set.has(id) && !next.includes(id)) next.push(id);
+  }
+  for (const id of f.list) {
+    if (!next.includes(id)) next.push(id);
+  }
+  f.list = next;
+  scheduleSave();
+  return res.json({
+    ok: true,
+    friends: next
+      .map((id) => friendPublicCard(getDb().users?.[id]))
+      .filter(Boolean),
+  });
+});
+
+/** Begleiter kraulen — Empfänger +1 Coin, 1× pro Person / Tag (0:00 Berlin). */
+app.post("/v1/users/:userId/pet-kraul", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const toId = String(req.params.userId || "").trim();
+  if (!toId) return res.status(400).json({ error: "invalid_user" });
+  if (toId === ctx.user.id) {
+    return res.status(400).json({ error: "self_kraul" });
+  }
+  const db = getDb();
+  const target = db.users?.[toId];
+  if (!target) return res.status(404).json({ error: "not_found" });
+  ensureCoinBuckets(ctx.user);
+  ensureCoinBuckets(target);
+  if (!canPetKraulToday(ctx.user, toId)) {
+    return res.status(400).json({
+      error: "already_krault",
+      message: "Diesen Begleiter hast du heute schon gekrault.",
+    });
+  }
+  applyLedger(toId, 1, "pet_kraul_recv", ctx.user.id);
+  markPetKraul(ctx.user, toId);
+  scheduleSave();
+  const petEmoji = userPetEmoji(target);
+  return res.json({
+    ok: true,
+    petEmoji,
+    toCoins: target.coins || 0,
+    amount: 1,
+    canPetKraul: false,
   });
 });
 
