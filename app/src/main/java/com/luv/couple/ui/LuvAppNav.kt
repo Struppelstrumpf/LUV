@@ -51,7 +51,9 @@ import com.luv.couple.net.VoucherInfo
 import com.luv.couple.ui.NoCoinsUi
 import com.luv.couple.ui.PublicCanvasSplash
 import com.luv.couple.ui.screens.AccountHomeScreen
-import com.luv.couple.ui.screens.AdminScreen
+import com.luv.couple.ui.screens.AdminHubScreen
+import com.luv.couple.ui.screens.LiveNoticePopup
+import com.luv.couple.net.LiveNoticeBus
 import com.luv.couple.ui.screens.CreateLobbyScreen
 import com.luv.couple.ui.screens.ForcedUpdateDialog
 import com.luv.couple.ui.screens.HostShareScreen
@@ -75,6 +77,7 @@ import com.luv.couple.ui.screens.SocialScreen
 import com.luv.couple.ui.screens.TutorialFlow
 import com.luv.couple.update.AppUpdater
 import com.luv.couple.update.UpdateUiState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -860,12 +863,7 @@ fun LuvAppNav() {
                                 navController.navigate(Routes.TUTORIAL)
                             },
                             onOpenAdmin = {
-                                scope.launch {
-                                    vouchers = runCatching { LuvApiClient.listVouchers() }.getOrDefault(emptyList())
-                                    publicReports = runCatching { LuvApiClient.listPublicReports() }
-                                        .getOrDefault(emptyList())
-                                    navController.navigate(Routes.ADMIN)
-                                }
+                                navController.navigate(Routes.ADMIN)
                             }
                         )
                     }
@@ -1136,24 +1134,15 @@ fun LuvAppNav() {
                             val result = LuvApiClient.redeem(code)
                             prefs.updateAccount(result.user)
                             AccountSession.setAccount(result.user)
-                            if (result.type == "admin") {
-                                Toast.makeText(context, "Admin freigeschaltet", Toast.LENGTH_SHORT).show()
-                                accountMessage = null
-                                vouchers = runCatching { LuvApiClient.listVouchers() }.getOrDefault(emptyList())
-                                navController.navigate(Routes.ADMIN) {
-                                    popUpTo(Routes.REDEEM) { inclusive = true }
-                                }
-                            } else {
-                                Toast.makeText(
-                                    context,
-                                    "+${result.coins} Coins eingelöst",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                                accountMessage = null
-                                refreshAccount()
-                                navController.popBackStack()
-                                tab = 1
-                            }
+                            Toast.makeText(
+                                context,
+                                "+${result.coins} Coins eingelöst",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            accountMessage = null
+                            refreshAccount()
+                            navController.popBackStack()
+                            tab = 2
                         }.onFailure {
                             accountMessage = it.message
                         }
@@ -1164,57 +1153,17 @@ fun LuvAppNav() {
         }
 
         composable(Routes.ADMIN) {
-            AdminScreen(
-                vouchers = vouchers,
-                reports = publicReports,
-                message = accountMessage,
-                onCreate = { draft ->
-                    scope.launch {
-                        accountMessage = null
-                        runCatching {
-                            val v = LuvApiClient.createVoucher(
-                                coins = draft.coins,
-                                maxRedeems = draft.maxPeople,
-                                validDays = draft.validDays,
-                                forever = draft.forever,
-                                code = draft.code
-                            )
-                            vouchers = listOf(v) + vouchers
-                            Toast.makeText(context, "Code ${v.code} erstellt", Toast.LENGTH_SHORT).show()
-                        }.onFailure { accountMessage = it.message }
-                    }
-                },
-                onKeepReport = { report ->
-                    scope.launch {
-                        runCatching {
-                            LuvApiClient.keepPublicReport(report.id)
-                            publicReports = publicReports.filterNot { it.id == report.id }
-                            Toast.makeText(context, "Bild behalten", Toast.LENGTH_SHORT).show()
-                        }.onFailure {
-                            accountMessage = it.message
-                        }
-                    }
-                },
-                onDeleteReport = { report ->
-                    scope.launch {
-                        runCatching {
-                            val banned = LuvApiClient.deletePublicReport(report.id)
-                            publicReports = publicReports.filterNot {
-                                it.id == report.id || it.publicId == report.publicId
-                            }
-                            Toast.makeText(
-                                context,
-                                if (banned) "Bild gelöscht — Host-Konto gesperrt" else "Bild gelöscht",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }.onFailure {
-                            accountMessage = it.message
-                        }
-                    }
-                },
+            AdminHubScreen(
+                account = account,
                 onBack = {
                     accountMessage = null
                     navController.popBackStack()
+                },
+                onOpenProfile = { userId, nick ->
+                    navController.currentBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("peer_nick", nick)
+                    navController.navigate(Routes.peerProfile(userId))
                 }
             )
         }
@@ -1254,5 +1203,18 @@ fun LuvAppNav() {
     if (showPublicSplash) {
         PublicCanvasSplash(onFinished = { showPublicSplash = false })
     }
+
+    // Live-Hinweise vom Team (WS + Poll)
+    LaunchedEffect(Unit) {
+        while (true) {
+            if (!LuvApiClient.sessionToken.isNullOrBlank()) {
+                runCatching {
+                    LuvApiClient.fetchLiveNotice()?.let { LiveNoticeBus.offer(it) }
+                }
+            }
+            delay(4000)
+        }
+    }
+    LiveNoticePopup()
     }
 }

@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.37",
+            listOf(
+                "Admin-Hub wie Nasebär: Mods, Rechte, Meldungen, Nutzer, Codes",
+                "Live-Hinweis-Popup (5 Sekunden) für Admin & Moderatoren",
+            )
+        ),
+        Entry(
             "1.9.36",
             listOf(
                 "Sozial: Freunde, Anfragen, Reihenfolge — Galerie im Inventar",

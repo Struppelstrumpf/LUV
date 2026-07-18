@@ -970,9 +970,14 @@ data class AccountInfo(
     val googleLinked: Boolean,
     /** Nur in der API-Antwort gesetzt — nicht persistieren. */
     val dailyGrantedJustNow: Boolean = false,
-    val lastDailyGrantDate: String? = null
+    val lastDailyGrantDate: String? = null,
+    val isStaff: Boolean = false,
+    val permissions: Set<String> = emptySet(),
+    val googleEmail: String? = null
 ) {
     val isAdmin: Boolean get() = role == "admin"
+    val isModerator: Boolean get() = role == "mod"
+    fun hasPerm(id: String): Boolean = isAdmin || id in permissions
 
     fun toJson(): String = JSONObject()
         .put("id", id)
@@ -991,6 +996,9 @@ data class AccountInfo(
         .put("canClaimDaily", canClaimDaily)
         .put("googleLinked", googleLinked)
         .put("lastDailyGrantDate", lastDailyGrantDate)
+        .put("isStaff", isStaff || isAdmin || isModerator)
+        .put("permissions", org.json.JSONArray(permissions.toList()))
+        .put("googleEmail", googleEmail)
         .toString()
 
     companion object {
@@ -1001,24 +1009,47 @@ data class AccountInfo(
             }.getOrNull()
         }
 
-        fun fromApi(o: JSONObject): AccountInfo = AccountInfo(
-            id = o.getString("id"),
-            nickname = o.optString("nickname", "Luv"),
-            coins = o.optInt("coins", 0),
-            role = o.optString("role", "user"),
-            freeSessionsLeft = o.optInt("freeSessionsLeft", 0),
-            freeSessionsPerDay = o.optInt("freeSessionsPerDay", 5),
-            dailyCoins = o.optInt("dailyCoins", 10),
-            sessionCost = o.optInt("sessionCost", 1),
-            clearCost = o.optInt("clearCost", 1),
-            lobbyCreateCost = o.optInt("lobbyCreateCost", PeerPalette.LOBBY_CREATE_COST),
-            slotCost = o.optInt("slotCost", PeerPalette.SLOT_COST),
-            gameCost = o.optInt("gameCost", PeerPalette.GAME_COST),
-            canCreateFreeLobby = o.optBoolean("canCreateFreeLobby", true),
-            canClaimDaily = o.optBoolean("canClaimDaily", false),
-            googleLinked = o.optBoolean("googleLinked", false),
-            dailyGrantedJustNow = o.optBoolean("dailyGrantedJustNow", false),
-            lastDailyGrantDate = o.optString("lastDailyGrantDate").takeIf { it.isNotBlank() }
-        )
+        fun fromApi(o: JSONObject): AccountInfo {
+            val role = o.optString("role", "user")
+            val perms = buildSet {
+                val arr = o.optJSONObject("permissions")
+                if (arr != null) {
+                    arr.keys().forEach { key ->
+                        if (arr.optBoolean(key, false)) add(key)
+                    }
+                } else {
+                    val list = o.optJSONArray("permissions")
+                    if (list != null) {
+                        for (i in 0 until list.length()) {
+                            list.optString(i).takeIf { it.isNotBlank() }?.let { add(it) }
+                        }
+                    }
+                }
+            }
+            val staff = o.optBoolean("isStaff", false) ||
+                role == "admin" || role == "mod"
+            return AccountInfo(
+                id = o.getString("id"),
+                nickname = o.optString("nickname", "Luv"),
+                coins = o.optInt("coins", 0),
+                role = role,
+                freeSessionsLeft = o.optInt("freeSessionsLeft", 0),
+                freeSessionsPerDay = o.optInt("freeSessionsPerDay", 5),
+                dailyCoins = o.optInt("dailyCoins", 10),
+                sessionCost = o.optInt("sessionCost", 1),
+                clearCost = o.optInt("clearCost", 1),
+                lobbyCreateCost = o.optInt("lobbyCreateCost", PeerPalette.LOBBY_CREATE_COST),
+                slotCost = o.optInt("slotCost", PeerPalette.SLOT_COST),
+                gameCost = o.optInt("gameCost", PeerPalette.GAME_COST),
+                canCreateFreeLobby = o.optBoolean("canCreateFreeLobby", true),
+                canClaimDaily = o.optBoolean("canClaimDaily", false),
+                googleLinked = o.optBoolean("googleLinked", false),
+                dailyGrantedJustNow = o.optBoolean("dailyGrantedJustNow", false),
+                lastDailyGrantDate = o.optString("lastDailyGrantDate").takeIf { it.isNotBlank() },
+                isStaff = staff,
+                permissions = perms,
+                googleEmail = o.optString("googleEmail").takeIf { it.isNotBlank() && it != "null" }
+            )
+        }
     }
 }

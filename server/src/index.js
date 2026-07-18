@@ -19,9 +19,81 @@ const ROOM_TTL_MS = Number(process.env.ROOM_TTL_MS || 24 * 60 * 60 * 1000);
 const PUBLIC_JOIN_BASE =
   process.env.PUBLIC_JOIN_BASE || "https://reineke.pro/luv/j";
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 30 * 24 * 60 * 60 * 1000);
-const ADMIN_BOOTSTRAP_CODE =
-  process.env.ADMIN_BOOTSTRAP_CODE || "Warehouse295?";
 const MOLLIE_API_KEY = process.env.MOLLIE_API_KEY || "";
+/** Feste Super-Admins per Google-E-Mail (nicht Spitzname). Komma-getrennt via Env erweiterbar. */
+const SUPER_ADMIN_EMAILS = new Set(
+  String(process.env.SUPER_ADMIN_EMAILS || "xstruppelstrumpf@gmail.com")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+const ALL_MOD_PERMISSION_IDS = [
+  "reports.view",
+  "reports.act",
+  "codes.view",
+  "codes.edit",
+  "codes.revoke",
+  "gm.search",
+  "gm.editCoins",
+  "gm.editNick",
+  "gm.block",
+  "gm.delete",
+  "live.notify",
+];
+
+const DEFAULT_MOD_PERMISSIONS = {
+  "reports.view": true,
+  "reports.act": true,
+  "gm.search": true,
+  "gm.editCoins": true,
+  "gm.block": true,
+  "live.notify": true,
+};
+
+const MOD_PERMISSION_GROUPS = [
+  {
+    id: "reports",
+    icon: "🚩",
+    label: "Meldungen",
+    description: "Öffentliche Bilder & Lobby-Meldungen",
+    permissions: [
+      { id: "reports.view", label: "Meldungen sehen" },
+      { id: "reports.act", label: "Behalten / Löschen" },
+    ],
+  },
+  {
+    id: "codes",
+    icon: "🎟️",
+    label: "Codes",
+    description: "Gutscheincodes verwalten",
+    permissions: [
+      { id: "codes.view", label: "Codes sehen" },
+      { id: "codes.edit", label: "Codes erstellen" },
+      { id: "codes.revoke", label: "Codes widerrufen" },
+    ],
+  },
+  {
+    id: "gamemaster",
+    icon: "🎮",
+    label: "Nutzer",
+    description: "Spieler suchen und Konten verwalten",
+    permissions: [
+      { id: "gm.search", label: "Nutzer suchen" },
+      { id: "gm.editCoins", label: "Coins anpassen" },
+      { id: "gm.editNick", label: "Spitzname ändern" },
+      { id: "gm.block", label: "Sperren / Entsperren" },
+      { id: "gm.delete", label: "Konto löschen" },
+    ],
+  },
+  {
+    id: "live",
+    icon: "📣",
+    label: "Live-Hinweis",
+    description: "Kurze In-App-Nachricht an alle",
+    permissions: [{ id: "live.notify", label: "Live-Hinweis senden" }],
+  },
+];
 const MOLLIE_WEBHOOK_URL =
   process.env.MOLLIE_WEBHOOK_URL || "https://reineke.pro/luv/v1/webhooks/mollie";
 const PUBLIC_SHOP_REDIRECT =
@@ -1537,16 +1609,21 @@ function rewardPublicShare(room, code, proposalId) {
 
 function publicUser(user) {
   const dailyGrantedJustNow = ensureDailyGrant(user);
+  ensureStaffFields(user);
   const day = todayKey();
   const freeLeft = Math.max(0, FREE_SESSIONS_PER_DAY - (user.sessionsByDay?.[day] || 0));
   const canCreateFree = evaluateCanCreateFreeLobby(user);
+  const role = user.role || "user";
   return {
     id: user.id,
     nickname: user.nickname,
     coins: user.coins,
     paidCoins: user.paidCoins || 0,
     dailyBalance: user.dailyBalance || 0,
-    role: user.role || "user",
+    role,
+    isStaff: role === "admin" || role === "mod",
+    permissions: staffPermissions(user),
+    googleEmail: user.googleEmail || null,
     banned: Boolean(user.banned),
     publicDeletedCount: Math.max(0, Number(user.publicDeletedCount) || 0),
     freeSessionsLeft: freeLeft,
@@ -1880,14 +1957,144 @@ function listShopPacks(user, ip) {
   return packs;
 }
 
+function applySuperAdmin(user) {
+  if (!user) return user;
+  const email = String(user.googleEmail || "")
+    .trim()
+    .toLowerCase();
+  if (email && SUPER_ADMIN_EMAILS.has(email)) {
+    user.role = "admin";
+  }
+  return user;
+}
+
+function ensureStaffFields(user) {
+  if (!user) return user;
+  applySuperAdmin(user);
+  if (user.role === "mod") {
+    if (!user.modPermissions || typeof user.modPermissions !== "object") {
+      user.modPermissions = { ...DEFAULT_MOD_PERMISSIONS };
+    }
+  } else if (user.role !== "admin") {
+    user.modPermissions = {};
+  }
+  return user;
+}
+
+function staffPermissions(user) {
+  ensureStaffFields(user);
+  if (user.role === "admin") {
+    const all = {};
+    for (const id of ALL_MOD_PERMISSION_IDS) all[id] = true;
+    return all;
+  }
+  if (user.role === "mod") {
+    const out = {};
+    for (const id of ALL_MOD_PERMISSION_IDS) {
+      out[id] = Boolean(user.modPermissions?.[id]);
+    }
+    return out;
+  }
+  return {};
+}
+
+function isStaff(user) {
+  ensureStaffFields(user);
+  return user.role === "admin" || user.role === "mod";
+}
+
+function hasStaffPerm(user, perm) {
+  if (!perm) return isStaff(user);
+  ensureStaffFields(user);
+  if (user.role === "admin") return true;
+  if (user.role !== "mod") return false;
+  return Boolean(user.modPermissions?.[perm]);
+}
+
 function requireAdmin(req, res) {
   const ctx = requireAuth(req, res);
   if (!ctx) return null;
+  ensureStaffFields(ctx.user);
   if (ctx.user.role !== "admin") {
-    res.status(403).json({ error: "forbidden" });
+    res.status(403).json({ error: "forbidden", message: "Nur für Admins." });
     return null;
   }
   return ctx;
+}
+
+function requireStaff(req, res, perm) {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return null;
+  ensureStaffFields(ctx.user);
+  if (!isStaff(ctx.user)) {
+    res.status(403).json({ error: "forbidden", message: "Kein Staff-Zugang." });
+    return null;
+  }
+  if (perm && !hasStaffPerm(ctx.user, perm)) {
+    res.status(403).json({
+      error: "forbidden",
+      message: "Keine Berechtigung für diese Aktion.",
+    });
+    return null;
+  }
+  return ctx;
+}
+
+function staffUserCard(user) {
+  if (!user) return null;
+  ensureStaffFields(user);
+  return {
+    userId: user.id,
+    nickname: String(user.nickname || "Jemand").trim().slice(0, 18) || "Jemand",
+    email: user.googleEmail || null,
+    role: user.role || "user",
+    coins: user.coins || 0,
+    banned: Boolean(user.banned),
+    googleLinked: Boolean(user.googleSub),
+    createdAt: user.createdAt || null,
+    publicDeletedCount: Math.max(0, Number(user.publicDeletedCount) || 0),
+    petEmoji: userPetEmoji(user),
+    permissions: user.role === "mod" ? staffPermissions(user) : undefined,
+    modSince: user.modSince || null,
+  };
+}
+
+function getLiveNotice() {
+  const db = getDb();
+  const n = db.liveNotice;
+  if (!n || typeof n !== "object" || !n.message) return null;
+  if ((Number(n.expiresAt) || 0) < Date.now()) {
+    db.liveNotice = null;
+    scheduleSave();
+    return null;
+  }
+  return {
+    id: n.id,
+    message: String(n.message).slice(0, 160),
+    authorNickname: n.authorNickname || "Team",
+    createdAt: n.createdAt || Date.now(),
+    expiresAt: n.expiresAt,
+  };
+}
+
+function broadcastLiveNotice(notice) {
+  if (!notice) return;
+  const payload = JSON.stringify({
+    type: "live_notice",
+    id: notice.id,
+    message: notice.message,
+    authorNickname: notice.authorNickname,
+    createdAt: notice.createdAt,
+  });
+  for (const room of rooms.values()) {
+    for (const sock of room.sockets.values()) {
+      try {
+        if (sock.readyState === 1) sock.send(payload);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 }
 
 function userFromSessionToken(sessionToken) {
@@ -2807,6 +3014,7 @@ app.post("/v1/auth/google", async (req, res) => {
     }
     authed.user.googleSub = profile.sub;
     authed.user.googleEmail = profile.email;
+    applySuperAdmin(authed.user);
     // Nickname bewusst nicht aus Google übernehmen — Nutzer wählt selbst.
     user = authed.user;
     linked = true;
@@ -2815,6 +3023,7 @@ app.post("/v1/auth/google", async (req, res) => {
   } else if (existingByGoogle) {
     user = existingByGoogle;
     if (profile.email) user.googleEmail = profile.email;
+    applySuperAdmin(user);
     scheduleSave();
   } else {
     user = {
@@ -2834,6 +3043,7 @@ app.post("/v1/auth/google", async (req, res) => {
       googleEmail: profile.email,
       hostedRooms: {},
     };
+    applySuperAdmin(user);
     db.users[user.id] = user;
     db.ledger.push({
       id: newId("led"),
@@ -3280,17 +3490,6 @@ app.post("/v1/redeem", (req, res) => {
   const code = String(req.body?.code || "").trim();
   if (!code) return res.status(400).json({ error: "invalid_code" });
 
-  // Admin bootstrap — only validated server-side against env secret
-  if (code === ADMIN_BOOTSTRAP_CODE) {
-    ctx.user.role = "admin";
-    scheduleSave();
-    return res.json({
-      type: "admin",
-      message: "Admin freigeschaltet",
-      user: publicUser(ctx.user),
-    });
-  }
-
   const normalized = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const db = getDb();
   const voucher =
@@ -3320,8 +3519,255 @@ app.post("/v1/redeem", (req, res) => {
   });
 });
 
-app.get("/v1/admin/vouchers", (req, res) => {
+app.get("/v1/admin/overview", (req, res) => {
+  const ctx = requireStaff(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const users = Object.values(db.users || {});
+  const openPublic = Object.values(publicReports()).filter(
+    (r) => (r.status || "open") === "open"
+  ).length;
+  const openPeer = Object.values(peerReports()).filter(
+    (r) => (r.status || "open") === "open"
+  ).length;
+  const mods = users.filter((u) => {
+    ensureStaffFields(u);
+    return u.role === "mod";
+  }).length;
+  return res.json({
+    ok: true,
+    users: users.length,
+    rooms: rooms.size,
+    openPublicReports: openPublic,
+    openPeerReports: openPeer,
+    moderators: mods,
+    vouchers: Object.keys(db.vouchers || {}).length,
+    me: publicUser(ctx.user),
+    permissionGroups: MOD_PERMISSION_GROUPS,
+  });
+});
+
+app.get("/v1/admin/moderators", (req, res) => {
   const ctx = requireAdmin(req, res);
+  if (!ctx) return;
+  const list = Object.values(getDb().users || {})
+    .filter((u) => {
+      ensureStaffFields(u);
+      return u.role === "mod";
+    })
+    .map((u) => staffUserCard(u))
+    .sort((a, b) =>
+      String(a.nickname).localeCompare(String(b.nickname), "de", {
+        sensitivity: "base",
+      })
+    );
+  return res.json({
+    ok: true,
+    moderators: list,
+    permissionGroups: MOD_PERMISSION_GROUPS,
+  });
+});
+
+app.get("/v1/admin/users/search", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.search");
+  if (!ctx) return;
+  const q = String(req.query?.q || "")
+    .trim()
+    .toLowerCase();
+  if (q.length < 1) return res.json({ ok: true, users: [] });
+  const list = Object.values(getDb().users || {})
+    .filter((u) => {
+      const nick = String(u.nickname || "").toLowerCase();
+      const email = String(u.googleEmail || "").toLowerCase();
+      const id = String(u.id || "").toLowerCase();
+      return nick.includes(q) || email.includes(q) || id.includes(q);
+    })
+    .slice(0, 30)
+    .map((u) => staffUserCard(u));
+  return res.json({ ok: true, users: list });
+});
+
+app.post("/v1/admin/moderators/invite", (req, res) => {
+  const ctx = requireAdmin(req, res);
+  if (!ctx) return;
+  const q = String(req.body?.query || req.body?.nickname || "")
+    .trim()
+    .toLowerCase();
+  if (!q) return res.status(400).json({ error: "invalid_query" });
+  const db = getDb();
+  const target =
+    Object.values(db.users || {}).find((u) => {
+      const nick = String(u.nickname || "").toLowerCase();
+      const email = String(u.googleEmail || "").toLowerCase();
+      return nick === q || email === q || u.id === q;
+    }) ||
+    Object.values(db.users || {}).find((u) => {
+      const nick = String(u.nickname || "").toLowerCase();
+      const email = String(u.googleEmail || "").toLowerCase();
+      return nick.includes(q) || email.includes(q);
+    });
+  if (!target) return res.status(404).json({ error: "not_found" });
+  ensureStaffFields(target);
+  if (target.role === "admin" || SUPER_ADMIN_EMAILS.has(String(target.googleEmail || "").toLowerCase())) {
+    return res.status(400).json({ error: "is_admin", message: "Admins brauchen keine Mod-Rolle." });
+  }
+  target.role = "mod";
+  target.modPermissions = { ...DEFAULT_MOD_PERMISSIONS };
+  target.modSince = target.modSince || Date.now();
+  scheduleSave();
+  return res.json({ ok: true, moderator: staffUserCard(target) });
+});
+
+app.put("/v1/admin/moderators/:userId/permissions", (req, res) => {
+  const ctx = requireAdmin(req, res);
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const target = getDb().users?.[uid];
+  if (!target) return res.status(404).json({ error: "not_found" });
+  ensureStaffFields(target);
+  if (target.role !== "mod") {
+    return res.status(400).json({ error: "not_mod" });
+  }
+  const raw = req.body?.permissions && typeof req.body.permissions === "object"
+    ? req.body.permissions
+    : {};
+  const next = {};
+  for (const id of ALL_MOD_PERMISSION_IDS) {
+    next[id] = Boolean(raw[id]);
+  }
+  target.modPermissions = next;
+  scheduleSave();
+  return res.json({ ok: true, moderator: staffUserCard(target) });
+});
+
+app.post("/v1/admin/moderators/:userId/remove", (req, res) => {
+  const ctx = requireAdmin(req, res);
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const target = getDb().users?.[uid];
+  if (!target) return res.status(404).json({ error: "not_found" });
+  if (target.role === "admin") {
+    return res.status(400).json({ error: "is_admin" });
+  }
+  target.role = "user";
+  target.modPermissions = {};
+  scheduleSave();
+  return res.json({ ok: true });
+});
+
+app.post("/v1/admin/users/:userId/coins", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.editCoins");
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const target = getDb().users?.[uid];
+  if (!target) return res.status(404).json({ error: "not_found" });
+  const delta = Math.trunc(Number(req.body?.delta) || 0);
+  if (!delta || Math.abs(delta) > 5000) {
+    return res.status(400).json({ error: "bad_delta" });
+  }
+  applyLedger(uid, delta, delta > 0 ? "admin_grant" : "admin_grant", ctx.user.id);
+  // negative admin_grant still works via applyLedger
+  scheduleSave();
+  return res.json({ ok: true, user: staffUserCard(target) });
+});
+
+app.post("/v1/admin/users/:userId/nickname", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.editNick");
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const target = getDb().users?.[uid];
+  if (!target) return res.status(404).json({ error: "not_found" });
+  const nick = String(req.body?.nickname || "")
+    .trim()
+    .slice(0, 18);
+  if (nick.length < 2) return res.status(400).json({ error: "bad_nick" });
+  target.nickname = nick;
+  scheduleSave();
+  return res.json({ ok: true, user: staffUserCard(target) });
+});
+
+app.post("/v1/admin/users/:userId/ban", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.block");
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const target = getDb().users?.[uid];
+  if (!target) return res.status(404).json({ error: "not_found" });
+  ensureStaffFields(target);
+  if (target.role === "admin" || SUPER_ADMIN_EMAILS.has(String(target.googleEmail || "").toLowerCase())) {
+    return res.status(400).json({ error: "cannot_ban_admin" });
+  }
+  const banned = req.body?.banned !== false;
+  target.banned = banned;
+  target.bannedAt = banned ? Date.now() : null;
+  target.bannedReason = banned
+    ? String(req.body?.reason || "staff_ban").slice(0, 80)
+    : null;
+  if (banned) {
+    const db = getDb();
+    for (const [token, session] of Object.entries(db.sessions || {})) {
+      if (session?.userId === target.id) delete db.sessions[token];
+    }
+  }
+  scheduleSave();
+  return res.json({ ok: true, user: staffUserCard(target) });
+});
+
+app.post("/v1/admin/users/:userId/delete", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.delete");
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  if (uid === ctx.user.id) {
+    return res.status(400).json({ error: "self_delete" });
+  }
+  const db = getDb();
+  const target = db.users?.[uid];
+  if (!target) return res.status(404).json({ error: "not_found" });
+  ensureStaffFields(target);
+  if (target.role === "admin" || SUPER_ADMIN_EMAILS.has(String(target.googleEmail || "").toLowerCase())) {
+    return res.status(400).json({ error: "cannot_delete_admin" });
+  }
+  for (const [token, session] of Object.entries(db.sessions || {})) {
+    if (session?.userId === uid) delete db.sessions[token];
+  }
+  delete db.users[uid];
+  scheduleSave();
+  return res.json({ ok: true });
+});
+
+app.get("/v1/live-notice", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  return res.json({ ok: true, notice: getLiveNotice() });
+});
+
+app.post("/v1/admin/live-notice", (req, res) => {
+  const ctx = requireStaff(req, res, "live.notify");
+  if (!ctx) return;
+  const message = String(req.body?.message || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 160);
+  if (message.length < 2) {
+    return res.status(400).json({ error: "empty", message: "Nachricht zu kurz." });
+  }
+  const now = Date.now();
+  const notice = {
+    id: newId("ln"),
+    message,
+    authorNickname: String(ctx.user.nickname || "Team").slice(0, 18),
+    authorId: ctx.user.id,
+    createdAt: now,
+    // Clients haben Zeit zum Abholen; Popup selbst läuft 5s
+    expiresAt: now + 60_000,
+  };
+  getDb().liveNotice = notice;
+  scheduleSave();
+  broadcastLiveNotice(notice);
+  return res.json({ ok: true, notice: getLiveNotice() });
+});
+
+app.get("/v1/admin/vouchers", (req, res) => {
+  const ctx = requireStaff(req, res, "codes.view");
   if (!ctx) return;
   const list = Object.values(getDb().vouchers)
     .sort((a, b) => b.createdAt - a.createdAt)
@@ -3340,7 +3786,7 @@ app.get("/v1/admin/vouchers", (req, res) => {
 });
 
 app.post("/v1/admin/vouchers", (req, res) => {
-  const ctx = requireAdmin(req, res);
+  const ctx = requireStaff(req, res, "codes.edit");
   if (!ctx) return;
   const coins = Math.min(10000, Math.max(1, Number(req.body?.coins) || 0));
   // maxRedeems = how many different people may redeem; each person only once
@@ -3374,7 +3820,7 @@ app.post("/v1/admin/vouchers", (req, res) => {
 });
 
 app.post("/v1/admin/vouchers/:code/revoke", (req, res) => {
-  const ctx = requireAdmin(req, res);
+  const ctx = requireStaff(req, res, "codes.revoke");
   if (!ctx) return;
   const code = String(req.params.code || "").toUpperCase();
   const voucher = getDb().vouchers[code];
@@ -3942,7 +4388,7 @@ app.post("/v1/rooms/:code/report-peer", (req, res) => {
 });
 
 app.get("/v1/admin/peer-reports", (req, res) => {
-  const ctx = requireAdmin(req, res);
+  const ctx = requireStaff(req, res, "reports.view");
   if (!ctx) return;
   const list = Object.values(peerReports())
     .filter((r) => (r.status || "open") === "open")
@@ -3953,7 +4399,7 @@ app.get("/v1/admin/peer-reports", (req, res) => {
 });
 
 app.get("/v1/admin/peer-reports/:id/image", (req, res) => {
-  const ctx = requireAdmin(req, res);
+  const ctx = requireStaff(req, res, "reports.view");
   if (!ctx) return;
   const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
   const report = peerReports()[id];
@@ -3966,7 +4412,7 @@ app.get("/v1/admin/peer-reports/:id/image", (req, res) => {
 });
 
 app.post("/v1/admin/peer-reports/:id/keep", (req, res) => {
-  const ctx = requireAdmin(req, res);
+  const ctx = requireStaff(req, res, "reports.act");
   if (!ctx) return;
   const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
   const report = peerReports()[id];
@@ -3979,7 +4425,7 @@ app.post("/v1/admin/peer-reports/:id/keep", (req, res) => {
 });
 
 app.post("/v1/admin/peer-reports/:id/delete", (req, res) => {
-  const ctx = requireAdmin(req, res);
+  const ctx = requireStaff(req, res, "reports.act");
   if (!ctx) return;
   const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
   const report = peerReports()[id];
@@ -4347,7 +4793,7 @@ app.post("/v1/public-canvases/:id/report", (req, res) => {
 });
 
 app.get("/v1/admin/public-reports", (req, res) => {
-  const ctx = requireAdmin(req, res);
+  const ctx = requireStaff(req, res, "reports.view");
   if (!ctx) return;
   const list = Object.values(publicReports())
     .filter((r) => (r.status || "open") === "open")
@@ -4358,7 +4804,7 @@ app.get("/v1/admin/public-reports", (req, res) => {
 });
 
 app.post("/v1/admin/public-reports/:id/keep", (req, res) => {
-  const ctx = requireAdmin(req, res);
+  const ctx = requireStaff(req, res, "reports.act");
   if (!ctx) return;
   const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
   const report = publicReports()[id];
@@ -4371,7 +4817,7 @@ app.post("/v1/admin/public-reports/:id/keep", (req, res) => {
 });
 
 app.post("/v1/admin/public-reports/:id/delete", (req, res) => {
-  const ctx = requireAdmin(req, res);
+  const ctx = requireStaff(req, res, "reports.act");
   if (!ctx) return;
   const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
   const report = publicReports()[id];

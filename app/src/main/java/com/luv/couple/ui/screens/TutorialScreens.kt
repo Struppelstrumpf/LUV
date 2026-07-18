@@ -357,7 +357,7 @@ private fun TutorialGalleryPreview() {
             TutorialHintChip("Auswählen")
             TutorialHintChip("Löschen")
             Text(
-                "Home · Galerie · Konto",
+                "Home · Sozial · Inventar · Markt",
                 color = TextMuted,
                 fontFamily = BodyFont,
                 fontSize = 12.sp,

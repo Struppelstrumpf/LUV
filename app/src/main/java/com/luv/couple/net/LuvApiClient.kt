@@ -90,6 +90,45 @@ data class PublicReportInfo(
     val reportedAt: Long
 )
 
+data class PeerReportInfo(
+    val id: String,
+    val targetNickname: String,
+    val reporterNickname: String,
+    val lobbyName: String,
+    val imageUrl: String?,
+    val reportedAt: Long
+)
+
+data class StaffUserCard(
+    val userId: String,
+    val nickname: String,
+    val email: String?,
+    val role: String,
+    val coins: Int,
+    val banned: Boolean,
+    val petEmoji: String,
+    val permissions: Map<String, Boolean> = emptyMap(),
+    val modSince: Long? = null
+)
+
+data class StaffPermGroup(
+    val id: String,
+    val icon: String,
+    val label: String,
+    val description: String,
+    val permissions: List<Pair<String, String>>
+)
+
+data class StaffOverview(
+    val users: Int,
+    val rooms: Int,
+    val openPublicReports: Int,
+    val openPeerReports: Int,
+    val moderators: Int,
+    val vouchers: Int,
+    val permissionGroups: List<StaffPermGroup>
+)
+
 data class VoucherInfo(
     val code: String,
     val coins: Int,
@@ -471,6 +510,217 @@ object LuvApiClient {
     suspend fun deletePublicReport(reportId: String): Boolean = withContext(Dispatchers.IO) {
         val json = authedPost("/v1/admin/public-reports/${reportId.encodeURL()}/delete", "{}")
         json.optBoolean("banned", false)
+    }
+
+    private fun parseStaffUserCard(o: JSONObject?): StaffUserCard? {
+        if (o == null) return null
+        val id = o.optString("userId").ifBlank { o.optString("id") }
+        if (id.isBlank()) return null
+        val perms = buildMap {
+            val p = o.optJSONObject("permissions")
+            if (p != null) {
+                p.keys().forEach { key -> put(key, p.optBoolean(key, false)) }
+            }
+        }
+        return StaffUserCard(
+            userId = id,
+            nickname = o.optString("nickname", "Jemand"),
+            email = o.optString("email").takeIf { it.isNotBlank() && it != "null" },
+            role = o.optString("role", "user"),
+            coins = o.optInt("coins", 0),
+            banned = o.optBoolean("banned", false),
+            petEmoji = o.optString("petEmoji", "🐣").ifBlank { "🐣" },
+            permissions = perms,
+            modSince = o.optLong("modSince").takeIf { it > 0L }
+        )
+    }
+
+    private fun parsePermGroups(arr: org.json.JSONArray?): List<StaffPermGroup> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val g = arr.optJSONObject(i) ?: continue
+                val perms = buildList {
+                    val pa = g.optJSONArray("permissions")
+                    if (pa != null) {
+                        for (j in 0 until pa.length()) {
+                            val p = pa.optJSONObject(j) ?: continue
+                            val id = p.optString("id")
+                            val label = p.optString("label", id)
+                            if (id.isNotBlank()) add(id to label)
+                        }
+                    }
+                }
+                add(
+                    StaffPermGroup(
+                        id = g.optString("id"),
+                        icon = g.optString("icon", "•"),
+                        label = g.optString("label"),
+                        description = g.optString("description"),
+                        permissions = perms
+                    )
+                )
+            }
+        }
+    }
+
+    suspend fun fetchStaffOverview(): StaffOverview = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/admin/overview")
+        val me = json.optJSONObject("me")
+        if (me != null) AccountSession.setAccount(AccountInfo.fromApi(me))
+        StaffOverview(
+            users = json.optInt("users", 0),
+            rooms = json.optInt("rooms", 0),
+            openPublicReports = json.optInt("openPublicReports", 0),
+            openPeerReports = json.optInt("openPeerReports", 0),
+            moderators = json.optInt("moderators", 0),
+            vouchers = json.optInt("vouchers", 0),
+            permissionGroups = parsePermGroups(json.optJSONArray("permissionGroups"))
+        )
+    }
+
+    suspend fun listModerators(): Pair<List<StaffUserCard>, List<StaffPermGroup>> =
+        withContext(Dispatchers.IO) {
+            val json = authedGet("/v1/admin/moderators")
+            val mods = buildList {
+                val arr = json.optJSONArray("moderators") ?: return@buildList
+                for (i in 0 until arr.length()) {
+                    parseStaffUserCard(arr.optJSONObject(i))?.let { add(it) }
+                }
+            }
+            mods to parsePermGroups(json.optJSONArray("permissionGroups"))
+        }
+
+    suspend fun inviteModerator(query: String): StaffUserCard = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("query", query.trim()).toString()
+        val json = authedPost("/v1/admin/moderators/invite", body)
+        parseStaffUserCard(json.optJSONObject("moderator"))
+            ?: throw LuvApiException("Einladen fehlgeschlagen")
+    }
+
+    suspend fun setModeratorPermissions(
+        userId: String,
+        permissions: Map<String, Boolean>
+    ): StaffUserCard = withContext(Dispatchers.IO) {
+        val po = JSONObject()
+        permissions.forEach { (k, v) -> po.put(k, v) }
+        val body = JSONObject().put("permissions", po).toString()
+        val json = authedPut(
+            "/v1/admin/moderators/${userId.trim().encodeURL()}/permissions",
+            body
+        )
+        parseStaffUserCard(json.optJSONObject("moderator"))
+            ?: throw LuvApiException("Rechte speichern fehlgeschlagen")
+    }
+
+    suspend fun removeModerator(userId: String) = withContext(Dispatchers.IO) {
+        authedPost("/v1/admin/moderators/${userId.trim().encodeURL()}/remove", "{}")
+        Unit
+    }
+
+    suspend fun searchStaffUsers(query: String): List<StaffUserCard> =
+        withContext(Dispatchers.IO) {
+            val q = query.trim().encodeURL()
+            val json = authedGet("/v1/admin/users/search?q=$q")
+            buildList {
+                val arr = json.optJSONArray("users") ?: return@buildList
+                for (i in 0 until arr.length()) {
+                    parseStaffUserCard(arr.optJSONObject(i))?.let { add(it) }
+                }
+            }
+        }
+
+    suspend fun adjustUserCoins(userId: String, delta: Int): StaffUserCard =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("delta", delta).toString()
+            val json = authedPost("/v1/admin/users/${userId.encodeURL()}/coins", body)
+            parseStaffUserCard(json.optJSONObject("user"))
+                ?: throw LuvApiException("Coins anpassen fehlgeschlagen")
+        }
+
+    suspend fun setUserNickname(userId: String, nickname: String): StaffUserCard =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("nickname", nickname.trim().take(18)).toString()
+            val json = authedPost("/v1/admin/users/${userId.encodeURL()}/nickname", body)
+            parseStaffUserCard(json.optJSONObject("user"))
+                ?: throw LuvApiException("Name ändern fehlgeschlagen")
+        }
+
+    suspend fun setUserBanned(userId: String, banned: Boolean, reason: String? = null): StaffUserCard =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject()
+                .put("banned", banned)
+                .put("reason", reason ?: "staff_ban")
+                .toString()
+            val json = authedPost("/v1/admin/users/${userId.encodeURL()}/ban", body)
+            parseStaffUserCard(json.optJSONObject("user"))
+                ?: throw LuvApiException("Sperren fehlgeschlagen")
+        }
+
+    suspend fun deleteStaffUser(userId: String) = withContext(Dispatchers.IO) {
+        authedPost("/v1/admin/users/${userId.encodeURL()}/delete", "{}")
+        Unit
+    }
+
+    suspend fun listPeerReports(): List<PeerReportInfo> = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/admin/peer-reports")
+        val arr = json.optJSONArray("reports") ?: return@withContext emptyList()
+        buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                add(
+                    PeerReportInfo(
+                        id = o.getString("id"),
+                        targetNickname = o.optString("targetNickname", "Jemand"),
+                        reporterNickname = o.optString("reporterNickname", "Jemand"),
+                        lobbyName = o.optString("lobbyName", "Lobby"),
+                        imageUrl = o.optString("imageUrl").takeIf { it.isNotBlank() },
+                        reportedAt = o.optLong("reportedAt")
+                    )
+                )
+            }
+        }
+    }
+
+    suspend fun keepPeerReport(reportId: String) = withContext(Dispatchers.IO) {
+        authedPost("/v1/admin/peer-reports/${reportId.encodeURL()}/keep", "{}")
+        Unit
+    }
+
+    suspend fun deletePeerReport(reportId: String) = withContext(Dispatchers.IO) {
+        authedPost("/v1/admin/peer-reports/${reportId.encodeURL()}/delete", "{}")
+        Unit
+    }
+
+    suspend fun revokeVoucher(code: String) = withContext(Dispatchers.IO) {
+        authedPost("/v1/admin/vouchers/${code.trim().encodeURL()}/revoke", "{}")
+        Unit
+    }
+
+    suspend fun fetchLiveNotice(): LiveNotice? = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/live-notice")
+        val o = json.optJSONObject("notice") ?: return@withContext null
+        val id = o.optString("id")
+        val message = o.optString("message")
+        if (id.isBlank() || message.isBlank()) return@withContext null
+        LiveNotice(
+            id = id,
+            message = message,
+            authorNickname = o.optString("authorNickname", "Team"),
+            createdAt = o.optLong("createdAt", System.currentTimeMillis())
+        )
+    }
+
+    suspend fun sendLiveNotice(message: String): LiveNotice = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("message", message.trim().take(160)).toString()
+        val json = authedPost("/v1/admin/live-notice", body)
+        val o = json.optJSONObject("notice") ?: throw LuvApiException("Senden fehlgeschlagen")
+        LiveNotice(
+            id = o.optString("id"),
+            message = o.optString("message"),
+            authorNickname = o.optString("authorNickname", "Team"),
+            createdAt = o.optLong("createdAt", System.currentTimeMillis())
+        )
     }
 
     data class InventoryBag(

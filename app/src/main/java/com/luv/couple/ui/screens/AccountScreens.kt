@@ -172,8 +172,12 @@ fun AccountHomeScreen(
             MenuButton("Einstellungen", BgSoft, onOpenSettings, bordered = true)
             MenuButton("Code einlösen", BgSoft, onOpenRedeem, bordered = true)
             MenuButton("Tutorial ansehen", BgSoft, onReplayTutorial, bordered = true)
-            if (account?.isAdmin == true) {
-                MenuButton("Admin", Color(0xFF3A2430), onOpenAdmin)
+            if (account?.isStaff == true || account?.isAdmin == true) {
+                MenuButton(
+                    if (account?.isAdmin == true) "Admin" else "Moderator",
+                    Color(0xFF3A2430),
+                    onOpenAdmin
+                )
             }
             MenuButton("Abmelden", BgSoft, { confirmLogout = true }, bordered = true)
 
@@ -430,7 +434,7 @@ fun RedeemScreen(
                 Text("Code einl\u00F6sen", fontFamily = DisplayFont, fontSize = 32.sp, color = TextPrimary)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "Gutschein einfügen. (Admin-Zugang nur über Server — nicht in der App gespeichert.)",
+                    "Gutscheincode einfügen — Coins landen sofort auf deinem Konto.",
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 14.sp

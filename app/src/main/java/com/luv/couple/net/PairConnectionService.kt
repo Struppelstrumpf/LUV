@@ -29,6 +29,7 @@ import com.luv.couple.lock.LockScreenWidgetProvider
 import com.luv.couple.notify.LuvAlertNotifier
 import com.luv.couple.notify.MoodLines
 import androidx.core.app.NotificationManagerCompat
+// LiveNotice / LiveNoticeBus same package
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -477,6 +478,20 @@ class PairConnectionService : Service() {
         runCatching {
             val json = JSONObject(text)
             when (json.optString("type")) {
+                "live_notice" -> {
+                    val id = json.optString("id").trim()
+                    val message = json.optString("message").trim()
+                    if (id.isNotBlank() && message.isNotBlank()) {
+                        LiveNoticeBus.offer(
+                            LiveNotice(
+                                id = id,
+                                message = message,
+                                authorNickname = json.optString("authorNickname", "Team"),
+                                createdAt = json.optLong("createdAt", System.currentTimeMillis())
+                            )
+                        )
+                    }
+                }
                 "welcome", "peers" -> {
                     val peers = json.optInt("peers", json.optInt("count", 0))
                     val capacity = json.optInt("capacity", 0).takeIf { it > 0 }
