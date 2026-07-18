@@ -4,6 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 import kotlin.math.abs
+import kotlin.math.min
 
 enum class ProfileElType {
     Avatar, Name, Status, Bio, Glass, Pet, Sticker, Text, Spouse, Engaged;
@@ -356,6 +357,40 @@ object ProfileCatalog {
     }
 
     /**
+     * Referenz-Kurzseite der Profil-Leinwand in dp.
+     * Elementgrößen und Schriften skalieren mit [min(boardW, boardH)],
+     * damit Layouts auf Phone/Tablet und Hoch-/Querformat gleich wirken.
+     * Kalibriert an ~Tablet-Kurzseite: bisherige dp-Größen bleiben dort gleich.
+     */
+    const val BOARD_REF_SHORT_DP = 640f
+
+    fun boardShortPx(boardW: Float, boardH: Float): Float =
+        min(boardW.coerceAtLeast(1f), boardH.coerceAtLeast(1f))
+
+    /** Faktor relativ zur Referenz-Kurzseite (dichtebereinigt). */
+    fun boardFactor(boardW: Float, boardH: Float, density: Float): Float {
+        val shortDp = boardShortPx(boardW, boardH) / density.coerceAtLeast(0.01f)
+        return (shortDp / BOARD_REF_SHORT_DP).coerceIn(0.35f, 2.8f)
+    }
+
+    /** Basisbreite/-höhe in px — Anteil der Board-Kurzseite, nicht feste dp. */
+    fun baseSizePx(type: ProfileElType, boardW: Float, boardH: Float): Float {
+        val short = boardShortPx(boardW, boardH)
+        val ref = BOARD_REF_SHORT_DP
+        return short * when (type) {
+            ProfileElType.Bio -> 120f / ref
+            ProfileElType.Glass -> 72f / ref
+            ProfileElType.Pet, ProfileElType.Spouse, ProfileElType.Engaged -> 64f / ref
+            ProfileElType.Avatar -> 56f / ref
+            ProfileElType.Name -> 40f / ref
+            else -> 52f / ref
+        }
+    }
+
+    fun padPx(boardW: Float, boardH: Float, refDp: Float = 20f): Float =
+        boardShortPx(boardW, boardH) * (refDp / BOARD_REF_SHORT_DP)
+
+    /**
      * Begrenzt die Mittelpunkt-%-Position so, dass die visuelle Kante
      * (baseSize × scale) genau am Canvas-Rand anliegen kann.
      * Für [Name] zusätzlich etwas Luft, damit der ganze Name sichtbar bleibt.
@@ -367,7 +402,8 @@ object ProfileCatalog {
         boardW: Float,
         boardH: Float,
         baseSizePx: Float,
-        nameText: String? = null
+        nameText: String? = null,
+        nameFontPx: Float? = null
     ): Pair<Float, Float> {
         val w = boardW.coerceAtLeast(1f)
         val h = boardH.coerceAtLeast(1f)
@@ -377,7 +413,7 @@ object ProfileCatalog {
         var halfY = (visual / 2f) / h * 100f
 
         if (el.type == ProfileElType.Name) {
-            val fontPx = (el.fontSize ?: 18f) * s
+            val fontPx = (nameFontPx ?: (el.fontSize ?: 18f)) * s
             halfY = ((fontPx * 1.2f).coerceAtLeast(visual * 0.35f) / 2f) / h * 100f
         }
 

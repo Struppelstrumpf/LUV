@@ -970,7 +970,7 @@ fun ProfileCanvasScreen(
                             Text(
                                 if (totalHint > 0) "💍  Heiraten · ab $totalHint Coins"
                                 else "💍  Heiraten",
-                                color = Color(0xFF5A4030),
+                                color = Color.White,
                                 fontFamily = DisplayFont
                             )
                         }
@@ -1859,39 +1859,29 @@ private fun ProfileElementView(
         ProfileFont.Classic -> FontFamily.Serif
         else -> BodyFont
     }
-    val nameSp = (el.fontSize ?: 18f).coerceIn(8f, 28f)
-    // Name-Box nur so breit wie der Text (+ Padding), nicht 78 % der Leinwand
-    val baseW = with(density) {
-        when (el.type) {
-            ProfileElType.Bio -> 120.dp.toPx()
-            ProfileElType.Name -> {
-                val measured = textMeasurer.measure(
-                    text = nameLabel,
-                    style = TextStyle(fontFamily = nameFont, fontSize = nameSp.sp),
-                    maxLines = 1,
-                    softWrap = false
-                ).size.width.toFloat()
-                (measured + 20.dp.toPx()).coerceIn(48.dp.toPx(), boardW * 0.92f)
-            }
-            ProfileElType.Glass -> 72.dp.toPx()
-            ProfileElType.Pet -> 64.dp.toPx()
-            ProfileElType.Avatar -> 56.dp.toPx()
-            else -> 52.dp.toPx()
+    // Größen relativ zur Board-Kurzseite — Phone/Tablet/Orientierung gleich
+    val factor = ProfileCatalog.boardFactor(boardW, boardH, density.density)
+    val nameSp = ((el.fontSize ?: 18f).coerceIn(8f, 28f) * factor)
+    val baseSquare = ProfileCatalog.baseSizePx(el.type, boardW, boardH)
+    val namePad = ProfileCatalog.padPx(boardW, boardH, 20f)
+    val nameMinW = ProfileCatalog.padPx(boardW, boardH, 48f)
+    val baseW = when (el.type) {
+        ProfileElType.Name -> {
+            val measured = textMeasurer.measure(
+                text = nameLabel,
+                style = TextStyle(fontFamily = nameFont, fontSize = nameSp.sp),
+                maxLines = 1,
+                softWrap = false
+            ).size.width.toFloat()
+            (measured + namePad).coerceIn(nameMinW, boardW * 0.92f)
         }
+        else -> baseSquare
     }
-    val baseH = with(density) {
-        when (el.type) {
-            ProfileElType.Bio -> 120.dp.toPx()
-            ProfileElType.Name -> 40.dp.toPx()
-            ProfileElType.Glass -> 72.dp.toPx()
-            ProfileElType.Pet -> 64.dp.toPx()
-            ProfileElType.Avatar -> 56.dp.toPx()
-            else -> 52.dp.toPx()
-        }
-    }
-    val dash = with(density) { 8.dp.toPx() }
-    val gap = with(density) { 5.dp.toPx() }
-    val strokeW = with(density) { 2.dp.toPx() }
+    val baseH = baseSquare
+    val nameFontPx = with(density) { nameSp.sp.toPx() }
+    val dash = ProfileCatalog.padPx(boardW, boardH, 8f)
+    val gap = ProfileCatalog.padPx(boardW, boardH, 5f)
+    val strokeW = ProfileCatalog.padPx(boardW, boardH, 2f).coerceAtLeast(1f)
     val canEdit = el.type in ProfileCatalog.EDITABLE_TYPES
     val canRemove = el.type != ProfileElType.Avatar && el.type != ProfileElType.Name
     val invScale = 1f / dragEl.scale.coerceIn(0.35f, 2.5f)
@@ -1931,7 +1921,8 @@ private fun ProfileElementView(
                                 val ny = origY + accY / boardH * 100f
                                 val (cx, cy) = ProfileCatalog.clampPos(
                                     dragEl, nx, ny, boardW, boardH, baseW,
-                                    nameText = nickname
+                                    nameText = nickname,
+                                    nameFontPx = nameFontPx
                                 )
                                 val next = dragEl.copy(x = cx, y = cy)
                                 dragEl = next
@@ -1983,7 +1974,14 @@ private fun ProfileElementView(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            ElementContent(dragEl, nickname, colorIndex, coins, companionEmoji)
+            ElementContent(
+                el = dragEl,
+                nickname = nickname,
+                colorIndex = colorIndex,
+                coins = coins,
+                companionEmoji = companionEmoji,
+                boardFactor = factor
+            )
         }
 
         if (selected && editable) {
@@ -2098,7 +2096,8 @@ private fun ElementContent(
     nickname: String,
     colorIndex: Int,
     coins: Int,
-    companionEmoji: String = "🐣"
+    companionEmoji: String = "🐣",
+    boardFactor: Float = 1f
 ) {
     val font = when (el.fontFamily) {
         ProfileFont.Playful -> DisplayFont
@@ -2106,12 +2105,17 @@ private fun ElementContent(
         else -> BodyFont
     }
     val color = ProfileCatalog.parseColor(el.color)
-    val sizeSp = (el.fontSize ?: when (el.type) {
-        ProfileElType.Name -> 18f
-        ProfileElType.Bio -> 12f
-        ProfileElType.Glass -> 11f
-        else -> 14f
-    }).sp
+    val f = boardFactor.coerceIn(0.35f, 2.8f)
+    fun sp(ref: Float) = (ref * f).sp
+    val sizeSp = sp(
+        el.fontSize ?: when (el.type) {
+            ProfileElType.Name -> 18f
+            ProfileElType.Bio -> 12f
+            ProfileElType.Glass -> 11f
+            else -> 14f
+        }
+    )
+    val padH = (6f * f).dp
 
     when (el.type) {
         ProfileElType.Avatar -> {
@@ -2124,10 +2128,10 @@ private fun ElementContent(
                     .fillMaxSize(0.88f)
                     .clip(CircleShape)
                     .background(fill)
-                    .border(2.dp, Color.White.copy(0.9f), CircleShape),
+                    .border((2f * f).dp, Color.White.copy(0.9f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text(pet, fontSize = 28.sp)
+                Text(pet, fontSize = sp(28f))
             }
         }
         ProfileElType.Name -> {
@@ -2143,7 +2147,7 @@ private fun ElementContent(
                 softWrap = false
             )
         }
-        ProfileElType.Status -> Text(el.emoji ?: el.text ?: "😊", fontSize = 30.sp)
+        ProfileElType.Status -> Text(el.emoji ?: el.text ?: "😊", fontSize = sp(30f))
         ProfileElType.Bio -> {
             val body = el.text.orEmpty()
             if (body.isBlank()) {
@@ -2158,7 +2162,7 @@ private fun ElementContent(
                     textAlign = TextAlign.Center,
                     maxLines = 4,
                     overflow = TextOverflow.Clip,
-                    modifier = Modifier.padding(horizontal = 6.dp)
+                    modifier = Modifier.padding(horizontal = padH)
                 )
             }
         }
@@ -2168,15 +2172,15 @@ private fun ElementContent(
                     .fillMaxSize(0.9f)
                     .clip(CircleShape)
                     .background(Color.White.copy(0.18f))
-                    .border(1.dp, Color.White.copy(0.35f), CircleShape),
+                    .border((1f * f).dp, Color.White.copy(0.35f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text(el.emoji ?: "💕", fontSize = 32.sp)
+                Text(el.emoji ?: "💕", fontSize = sp(32f))
             }
         }
         ProfileElType.Glass -> {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("🏺", fontSize = 28.sp)
+                Text("🏺", fontSize = sp(28f))
                 Text(
                     "$coins",
                     color = color,
@@ -2184,12 +2188,17 @@ private fun ElementContent(
                     fontSize = sizeSp,
                     maxLines = 1
                 )
-                Text("Coins", color = color.copy(0.85f), fontFamily = BodyFont, fontSize = 9.sp)
+                Text(
+                    "Coins",
+                    color = color.copy(0.85f),
+                    fontFamily = BodyFont,
+                    fontSize = sp(9f)
+                )
             }
         }
         ProfileElType.Spouse -> {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("💍", fontSize = 26.sp)
+                Text("💍", fontSize = sp(26f))
                 Text(
                     el.text ?: "Ehepartner",
                     color = Color(0xFFFFD54F),
@@ -2202,7 +2211,7 @@ private fun ElementContent(
         }
         ProfileElType.Engaged -> {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("💝", fontSize = 26.sp)
+                Text("💝", fontSize = sp(26f))
                 Text(
                     el.text ?: "Verlobte:r",
                     color = AccentRose,
@@ -2213,7 +2222,7 @@ private fun ElementContent(
                 )
             }
         }
-        ProfileElType.Sticker -> Text(el.emoji ?: "✨", fontSize = 34.sp)
+        ProfileElType.Sticker -> Text(el.emoji ?: "✨", fontSize = sp(34f))
         ProfileElType.Text -> Text(
             el.text ?: "",
             color = color,
