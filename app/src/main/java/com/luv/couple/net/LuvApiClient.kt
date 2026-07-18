@@ -149,6 +149,29 @@ data class StaffOverview(
     val permissionGroups: List<StaffPermGroup>
 )
 
+data class StaffLobbyMember(
+    val userId: String,
+    val nickname: String,
+    val online: Boolean
+)
+
+data class StaffLobbyCard(
+    val code: String,
+    val name: String,
+    val capacity: Int,
+    val isFree: Boolean,
+    val online: Int,
+    val memberCount: Int,
+    val members: List<StaffLobbyMember>,
+    val active: Boolean,
+    val live: Boolean,
+    val createdAt: Long?,
+    val lastActiveAt: Long?,
+    val invite: String,
+    val hostUserId: String?,
+    val hostNickname: String
+)
+
 data class VoucherInfo(
     val code: String,
     val coins: Int,
@@ -831,6 +854,71 @@ object LuvApiClient {
     suspend fun deleteStaffUser(userId: String) = withContext(Dispatchers.IO) {
         authedPost("/v1/admin/users/${userId.encodeURL()}/delete", "{}")
         Unit
+    }
+
+    suspend fun listUserLobbies(userId: String): List<StaffLobbyCard> =
+        withContext(Dispatchers.IO) {
+            val json = authedGet("/v1/admin/users/${userId.trim().encodeURL()}/lobbies")
+            parseStaffLobbyList(json.optJSONArray("lobbies"))
+        }
+
+    suspend fun fetchStaffLobby(code: String): StaffLobbyCard = withContext(Dispatchers.IO) {
+        val clean = normalizeCode(code) ?: code.trim().uppercase()
+        val json = authedGet("/v1/admin/rooms/${clean.encodeURL()}")
+        parseStaffLobbyCard(json.optJSONObject("lobby"))
+            ?: throw LuvApiException("Lobby nicht gefunden")
+    }
+
+    suspend fun forceDeleteStaffLobby(code: String) = withContext(Dispatchers.IO) {
+        val clean = normalizeCode(code) ?: code.trim().uppercase()
+        authedPost("/v1/admin/rooms/${clean.encodeURL()}/force-delete", "{}")
+        Unit
+    }
+
+    private fun parseStaffLobbyList(arr: org.json.JSONArray?): List<StaffLobbyCard> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                parseStaffLobbyCard(arr.optJSONObject(i))?.let { add(it) }
+            }
+        }
+    }
+
+    private fun parseStaffLobbyCard(o: JSONObject?): StaffLobbyCard? {
+        if (o == null) return null
+        val code = o.optString("code").trim().uppercase()
+        if (code.isBlank()) return null
+        val members = buildList {
+            val arr = o.optJSONArray("members") ?: return@buildList
+            for (i in 0 until arr.length()) {
+                val m = arr.optJSONObject(i) ?: continue
+                val id = m.optString("userId")
+                if (id.isBlank()) continue
+                add(
+                    StaffLobbyMember(
+                        userId = id,
+                        nickname = m.optString("nickname", "Jemand"),
+                        online = m.optBoolean("online", false)
+                    )
+                )
+            }
+        }
+        return StaffLobbyCard(
+            code = code,
+            name = o.optString("name", "Lobby"),
+            capacity = o.optInt("capacity", 2),
+            isFree = o.optBoolean("isFree", false),
+            online = o.optInt("online", 0),
+            memberCount = o.optInt("memberCount", members.size),
+            members = members,
+            active = o.optBoolean("active", false),
+            live = o.optBoolean("live", false),
+            createdAt = o.optLong("createdAt").takeIf { it > 0L },
+            lastActiveAt = o.optLong("lastActiveAt").takeIf { it > 0L },
+            invite = o.optString("invite", ""),
+            hostUserId = o.optString("hostUserId").takeIf { it.isNotBlank() },
+            hostNickname = o.optString("hostNickname", "Host")
+        )
     }
 
     suspend fun listPeerReports(): List<PeerReportInfo> = withContext(Dispatchers.IO) {

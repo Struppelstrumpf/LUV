@@ -60,6 +60,7 @@ import com.luv.couple.net.LiveNoticeBus
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.PeerReportInfo
 import com.luv.couple.net.PublicReportInfo
+import com.luv.couple.net.StaffLobbyCard
 import com.luv.couple.net.StaffPermGroup
 import com.luv.couple.net.StaffUserCard
 import com.luv.couple.net.VoucherInfo
@@ -138,6 +139,9 @@ fun AdminHubScreen(
     var userQuery by remember { mutableStateOf("") }
     var userHits by remember { mutableStateOf<List<StaffUserCard>>(emptyList()) }
     var selectedUser by remember { mutableStateOf<StaffUserCard?>(null) }
+    var userLobbies by remember { mutableStateOf<List<StaffLobbyCard>>(emptyList()) }
+    var selectedLobby by remember { mutableStateOf<StaffLobbyCard?>(null) }
+    var confirmDeleteLobby by remember { mutableStateOf<StaffLobbyCard?>(null) }
     var nickEdit by remember { mutableStateOf("") }
     var coinDelta by remember { mutableStateOf("10") }
 
@@ -147,6 +151,14 @@ fun AdminHubScreen(
 
     fun toast(msg: String) =
         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+
+    fun loadUserLobbies(userId: String) {
+        scope.launch {
+            userLobbies = runCatching { LuvApiClient.listUserLobbies(userId) }
+                .onFailure { toast(it.message ?: "Lobbys laden fehlgeschlagen") }
+                .getOrDefault(emptyList())
+        }
+    }
 
     fun reloadOverview() {
         scope.launch {
@@ -489,107 +501,288 @@ fun AdminHubScreen(
                     }
 
                     AdminTab.Users -> {
-                        AdminCard {
-                            Text("Spieler suchen", fontFamily = DisplayFont, color = TextPrimary, fontSize = 18.sp)
-                            AdminField(userQuery, { userQuery = it }, "Spitzname oder E-Mail …")
-                            AdminPrimaryBtn("Suchen", enabled = userQuery.isNotBlank() && !busy) {
-                                busy = true
-                                scope.launch {
-                                    userHits = runCatching {
-                                        LuvApiClient.searchStaffUsers(userQuery)
-                                    }.getOrDefault(emptyList())
-                                    selectedUser = null
-                                    busy = false
+                        val lobbyView = selectedLobby
+                        if (lobbyView != null) {
+                            AdminCard {
+                                Text(
+                                    "Zurück",
+                                    color = TextMuted,
+                                    fontFamily = BodyFont,
+                                    modifier = Modifier
+                                        .clickable {
+                                            selectedLobby = null
+                                            selectedUser?.userId?.let { loadUserLobbies(it) }
+                                        }
+                                        .padding(vertical = 4.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    lobbyView.name,
+                                    fontFamily = DisplayFont,
+                                    color = TextPrimary,
+                                    fontSize = 22.sp
+                                )
+                                Text(
+                                    "Code ${lobbyView.code} · Host ${lobbyView.hostNickname}",
+                                    color = TextMuted,
+                                    fontFamily = BodyFont,
+                                    fontSize = 13.sp
+                                )
+                                Text(
+                                    buildString {
+                                        append(if (lobbyView.live) "Live" else if (lobbyView.active) "Gespeichert" else "Inaktiv")
+                                        append(" · ${lobbyView.online} online")
+                                        append(" · ${lobbyView.memberCount}/${lobbyView.capacity} Plätze")
+                                        append(if (lobbyView.isFree) " · gratis" else " · bezahlt")
+                                    },
+                                    color = TextPrimary,
+                                    fontFamily = BodyFont,
+                                    fontSize = 13.sp
+                                )
+                                if (lobbyView.invite.isNotBlank()) {
+                                    Text(
+                                        lobbyView.invite,
+                                        color = TextMuted,
+                                        fontFamily = BodyFont,
+                                        fontSize = 12.sp,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text("Mitglieder", fontFamily = DisplayFont, color = TextPrimary, fontSize = 16.sp)
+                                if (lobbyView.members.isEmpty()) {
+                                    Text(
+                                        "Keine Mitglieder in der Liste.",
+                                        color = TextMuted,
+                                        fontFamily = BodyFont,
+                                        fontSize = 13.sp
+                                    )
+                                } else {
+                                    lobbyView.members.forEach { m ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                if (m.online) "●" else "○",
+                                                color = if (m.online) AccentRose else TextMuted,
+                                                fontSize = 12.sp
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                m.nickname,
+                                                color = TextPrimary,
+                                                fontFamily = BodyFont,
+                                                fontSize = 14.sp,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Text(
+                                                if (m.online) "online" else "offline",
+                                                color = TextMuted,
+                                                fontFamily = BodyFont,
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                                AdminDangerBtn("Lobby löschen") {
+                                    confirmDeleteLobby = lobbyView
+                                }
+                                AdminGhostBtn("Aktualisieren") {
+                                    scope.launch {
+                                        runCatching { LuvApiClient.fetchStaffLobby(lobbyView.code) }
+                                            .onSuccess { selectedLobby = it }
+                                            .onFailure { toast(it.message ?: "Fehler") }
+                                    }
                                 }
                             }
-                        }
-                        userHits.forEach { u ->
+                        } else {
                             AdminCard {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            selectedUser = u
-                                            nickEdit = u.nickname
-                                        },
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(u.petEmoji, fontSize = 22.sp)
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(u.nickname, color = TextPrimary, fontFamily = DisplayFont)
+                                Text("Spieler suchen", fontFamily = DisplayFont, color = TextPrimary, fontSize = 18.sp)
+                                AdminField(userQuery, { userQuery = it }, "Spitzname oder E-Mail …")
+                                AdminPrimaryBtn("Suchen", enabled = userQuery.isNotBlank() && !busy) {
+                                    busy = true
+                                    scope.launch {
+                                        userHits = runCatching {
+                                            LuvApiClient.searchStaffUsers(userQuery)
+                                        }.getOrDefault(emptyList())
+                                        selectedUser = null
+                                        selectedLobby = null
+                                        userLobbies = emptyList()
+                                        busy = false
+                                    }
+                                }
+                            }
+                            if (selectedUser == null) {
+                                userHits.forEach { u ->
+                                    AdminCard {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    selectedUser = u
+                                                    nickEdit = u.nickname
+                                                    selectedLobby = null
+                                                    loadUserLobbies(u.userId)
+                                                },
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(u.petEmoji, fontSize = 22.sp)
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(u.nickname, color = TextPrimary, fontFamily = DisplayFont)
+                                                Text(
+                                                    "${u.coins} Coins · ${u.role}${if (u.banned) " · gesperrt" else ""}",
+                                                    color = TextMuted,
+                                                    fontFamily = BodyFont,
+                                                    fontSize = 12.sp
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            selectedUser?.let { u ->
+                                AdminCard {
+                                    Text(
+                                        "Zurück zur Suche",
+                                        color = TextMuted,
+                                        fontFamily = BodyFont,
+                                        modifier = Modifier
+                                            .clickable {
+                                                selectedUser = null
+                                                userLobbies = emptyList()
+                                                selectedLobby = null
+                                            }
+                                            .padding(vertical = 4.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(u.nickname, fontFamily = DisplayFont, color = TextPrimary, fontSize = 20.sp)
+                                    Text(u.email ?: u.userId, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
+                                    if (can("gm.editNick")) {
+                                        AdminField(nickEdit, { nickEdit = it.take(18) }, "Spitzname")
+                                        AdminGhostBtn("Name speichern") {
+                                            scope.launch {
+                                                runCatching {
+                                                    LuvApiClient.setUserNickname(u.userId, nickEdit)
+                                                }.onSuccess {
+                                                    selectedUser = it
+                                                    toast("Gespeichert")
+                                                }.onFailure { toast(it.message ?: "Fehler") }
+                                            }
+                                        }
+                                    }
+                                    if (can("gm.editCoins")) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Box(modifier = Modifier.weight(1f)) {
+                                                AdminField(coinDelta, {
+                                                    coinDelta = it.filter { c -> c == '-' || c.isDigit() }.take(5)
+                                                }, "Δ Coins")
+                                            }
+                                            AdminPrimaryBtn("Anwenden") {
+                                                val d = coinDelta.toIntOrNull() ?: return@AdminPrimaryBtn
+                                                scope.launch {
+                                                    runCatching {
+                                                        LuvApiClient.adjustUserCoins(u.userId, d)
+                                                    }.onSuccess {
+                                                        selectedUser = it
+                                                        toast("Coins: ${it.coins}")
+                                                    }.onFailure { toast(it.message ?: "Fehler") }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        if (can("gm.block")) {
+                                            AdminGhostBtn(if (u.banned) "Entsperren" else "Sperren") {
+                                                scope.launch {
+                                                    runCatching {
+                                                        LuvApiClient.setUserBanned(u.userId, !u.banned)
+                                                    }.onSuccess {
+                                                        selectedUser = it
+                                                        toast(if (it.banned) "Gesperrt" else "Entsperrt")
+                                                    }.onFailure { toast(it.message ?: "Fehler") }
+                                                }
+                                            }
+                                        }
+                                        AdminGhostBtn("Profil") { onOpenProfile(u.userId, u.nickname) }
+                                        if (can("gm.delete")) {
+                                            AdminDangerBtn("Löschen") {
+                                                scope.launch {
+                                                    runCatching { LuvApiClient.deleteStaffUser(u.userId) }
+                                                        .onSuccess {
+                                                            selectedUser = null
+                                                            userLobbies = emptyList()
+                                                            userHits = userHits.filterNot { it.userId == u.userId }
+                                                            toast("Konto gelöscht")
+                                                        }
+                                                        .onFailure { toast(it.message ?: "Fehler") }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                AdminCard {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
-                                            "${u.coins} Coins · ${u.role}${if (u.banned) " · gesperrt" else ""}",
+                                            "Lobbys (Host)",
+                                            fontFamily = DisplayFont,
+                                            color = TextPrimary,
+                                            fontSize = 18.sp,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        AdminGhostBtn("Aktualisieren") { loadUserLobbies(u.userId) }
+                                    }
+                                    if (userLobbies.isEmpty()) {
+                                        Text(
+                                            "Keine gehosteten Lobbys.",
                                             color = TextMuted,
                                             fontFamily = BodyFont,
-                                            fontSize = 12.sp
+                                            fontSize = 13.sp
                                         )
-                                    }
-                                }
-                            }
-                        }
-                        selectedUser?.let { u ->
-                            AdminCard {
-                                Text(u.nickname, fontFamily = DisplayFont, color = TextPrimary, fontSize = 20.sp)
-                                Text(u.email ?: u.userId, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
-                                if (can("gm.editNick")) {
-                                    AdminField(nickEdit, { nickEdit = it.take(18) }, "Spitzname")
-                                    AdminGhostBtn("Name speichern") {
-                                        scope.launch {
-                                            runCatching {
-                                                LuvApiClient.setUserNickname(u.userId, nickEdit)
-                                            }.onSuccess {
-                                                selectedUser = it
-                                                toast("Gespeichert")
-                                            }.onFailure { toast(it.message ?: "Fehler") }
-                                        }
-                                    }
-                                }
-                                if (can("gm.editCoins")) {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Box(modifier = Modifier.weight(1f)) {
-                                            AdminField(coinDelta, {
-                                                coinDelta = it.filter { c -> c == '-' || c.isDigit() }.take(5)
-                                            }, "Δ Coins")
-                                        }
-                                        AdminPrimaryBtn("Anwenden") {
-                                            val d = coinDelta.toIntOrNull() ?: return@AdminPrimaryBtn
-                                            scope.launch {
-                                                runCatching {
-                                                    LuvApiClient.adjustUserCoins(u.userId, d)
-                                                }.onSuccess {
-                                                    selectedUser = it
-                                                    toast("Coins: ${it.coins}")
-                                                }.onFailure { toast(it.message ?: "Fehler") }
-                                            }
-                                        }
-                                    }
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    if (can("gm.block")) {
-                                        AdminGhostBtn(if (u.banned) "Entsperren" else "Sperren") {
-                                            scope.launch {
-                                                runCatching {
-                                                    LuvApiClient.setUserBanned(u.userId, !u.banned)
-                                                }.onSuccess {
-                                                    selectedUser = it
-                                                    toast(if (it.banned) "Gesperrt" else "Entsperrt")
-                                                }.onFailure { toast(it.message ?: "Fehler") }
-                                            }
-                                        }
-                                    }
-                                    AdminGhostBtn("Profil") { onOpenProfile(u.userId, u.nickname) }
-                                    if (can("gm.delete")) {
-                                        AdminDangerBtn("Löschen") {
-                                            scope.launch {
-                                                runCatching { LuvApiClient.deleteStaffUser(u.userId) }
-                                                    .onSuccess {
-                                                        selectedUser = null
-                                                        userHits = userHits.filterNot { it.userId == u.userId }
-                                                        toast("Konto gelöscht")
+                                    } else {
+                                        userLobbies.forEach { lobby ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(Color.White.copy(0.04f))
+                                                    .clickable {
+                                                        scope.launch {
+                                                            runCatching {
+                                                                LuvApiClient.fetchStaffLobby(lobby.code)
+                                                            }.onSuccess { selectedLobby = it }
+                                                                .onFailure {
+                                                                    selectedLobby = lobby
+                                                                    toast(it.message ?: "Detail nicht geladen")
+                                                                }
+                                                        }
                                                     }
-                                                    .onFailure { toast(it.message ?: "Fehler") }
+                                                    .padding(12.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        lobby.name,
+                                                        color = TextPrimary,
+                                                        fontFamily = DisplayFont,
+                                                        fontSize = 16.sp
+                                                    )
+                                                    Text(
+                                                        "${lobby.code} · ${lobby.online} online · ${lobby.memberCount}/${lobby.capacity}" +
+                                                            if (lobby.live) " · live" else "",
+                                                        color = TextMuted,
+                                                        fontFamily = BodyFont,
+                                                        fontSize = 12.sp
+                                                    )
+                                                }
+                                                Text("›", color = TextMuted, fontSize = 20.sp)
                                             }
+                                            Spacer(modifier = Modifier.height(8.dp))
                                         }
                                     }
                                 }
@@ -697,6 +890,53 @@ fun AdminHubScreen(
             dismissButton = {
                 TextButton(onClick = { permEdit = null }) {
                     Text("Abbrechen", color = TextMuted)
+                }
+            }
+        )
+    }
+
+    confirmDeleteLobby?.let { lobby ->
+        AlertDialog(
+            onDismissRequest = { confirmDeleteLobby = null },
+            containerColor = BgSoft,
+            title = {
+                Text(
+                    "Lobby löschen?",
+                    fontFamily = DisplayFont,
+                    color = TextPrimary,
+                    fontSize = 22.sp
+                )
+            },
+            text = {
+                Text(
+                    "„${lobby.name}“ (${lobby.code}) wird sofort aufgelöst. Alle Online-Spieler werden rausgeworfen — ohne Erstattung.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val code = lobby.code
+                    confirmDeleteLobby = null
+                    scope.launch {
+                        runCatching { LuvApiClient.forceDeleteStaffLobby(code) }
+                            .onSuccess {
+                                selectedLobby = null
+                                userLobbies = userLobbies.filterNot { it.code == code }
+                                toast("Lobby gelöscht")
+                                selectedUser?.userId?.let { loadUserLobbies(it) }
+                                reloadOverview()
+                            }
+                            .onFailure { toast(it.message ?: "Löschen fehlgeschlagen") }
+                    }
+                }) {
+                    Text("Ja, löschen", color = Color(0xFFFF5A6A), fontFamily = DisplayFont)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteLobby = null }) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
                 }
             }
         )

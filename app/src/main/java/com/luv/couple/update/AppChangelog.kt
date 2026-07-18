@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.52",
+            listOf(
+                "Admin: Nutzer-Lobbys ansehen, Detail mit Zurück, Lobby für alle auflösen",
+            )
+        ),
+        Entry(
             "1.9.51",
             listOf(
                 "Admin: Moderator einladen/Rechte — verständliche Fehler statt API 400",

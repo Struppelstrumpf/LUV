@@ -2675,6 +2675,109 @@ function dissolveEmptyLobby(room, code) {
   return true;
 }
 
+/**
+ * Admin/Staff: Lobby sofort auflösen — alle raus, Ownership weg, RAM+Disk weg.
+ */
+function forceDissolveLobby(codeRaw) {
+  const code = String(codeRaw || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  if (!code) return { ok: false, reason: "bad_code" };
+  let room = rooms.get(code);
+  if (!room) {
+    const saved = getDb().rooms?.[code];
+    if (saved && typeof saved === "object") {
+      room = hydrateRoom(code, saved);
+      rooms.set(code, room);
+    }
+  }
+  cancelEmptyFreeLobbyTimer(code);
+  cancelHostFailoverTimer(code);
+  if (room) {
+    for (const sock of [...room.sockets.values()]) {
+      try {
+        sock.close(4000, "room_closed");
+      } catch {
+        /* ignore */
+      }
+    }
+    room.sockets.clear();
+    const memberIds = Array.isArray(room.memberUserIds) ? [...room.memberUserIds] : [];
+    const hostId = room.hostUserId;
+    rooms.delete(code);
+    if (getDb().rooms?.[code]) delete getDb().rooms[code];
+    if (hostId) releaseHostedRoom(code, hostId);
+    for (const uid of memberIds) {
+      const u = getDb().users?.[uid];
+      if (u) {
+        forgetJoinedLobby(u, code);
+        releaseHostedRoom(code, uid);
+      }
+    }
+  } else {
+    // Nur Ownership bereinigen (Geister-Eintrag)
+    for (const u of Object.values(getDb().users || {})) {
+      if (!u) continue;
+      ensureHostedRooms(u);
+      ensureJoinedRooms(u);
+      if (u.hostedRooms?.[code]) delete u.hostedRooms[code];
+      if (u.joinedRooms?.[code]) delete u.joinedRooms[code];
+    }
+    if (getDb().rooms?.[code]) delete getDb().rooms[code];
+  }
+  persistRooms();
+  scheduleSave();
+  console.log(`force-dissolved lobby ${code}`);
+  return { ok: true, code };
+}
+
+function staffLobbyCard(code, meta, hostUser) {
+  const clean = String(code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  const live = rooms.get(clean);
+  const saved = !live ? getDb().rooms?.[clean] : null;
+  const src = live || saved || meta || {};
+  const memberIds = Array.isArray(src.memberUserIds) ? src.memberUserIds : [];
+  const members = memberIds.map((id) => {
+    const u = getDb().users?.[id];
+    return {
+      userId: id,
+      nickname: String(u?.nickname || "Jemand").trim().slice(0, 18) || "Jemand",
+      online: Boolean(live && [...(live.sockets?.values() || [])].some((s) => s.luvUserId === id)),
+    };
+  });
+  const online = live
+    ? [...live.sockets.values()].filter((s) => s.luvUserId).length
+    : 0;
+  const capacity = Math.min(
+    MAX_PEERS,
+    Math.max(
+      1,
+      Number(src.capacity) ||
+        Number(meta?.capacity) ||
+        defaultLobbyCapacity(Boolean(src.isFree ?? meta?.isFree))
+    )
+  );
+  return {
+    code: clean,
+    name: String(src.name || meta?.name || "Lobby").slice(0, MAX_LOBBY_NAME_LENGTH),
+    capacity,
+    isFree: Boolean(src.isFree ?? meta?.isFree),
+    online,
+    memberCount: members.length || online,
+    members,
+    active: Boolean(live) || Boolean(saved),
+    live: Boolean(live),
+    createdAt: Number(meta?.createdAt || src.createdAt) || null,
+    lastActiveAt: Number(src.lastActiveAt) || null,
+    invite: `${PUBLIC_JOIN_BASE}/${clean}`,
+    hostUserId: hostUser?.id || src.hostUserId || null,
+    hostNickname:
+      String(hostUser?.nickname || src.hostNickname || "Host").trim().slice(0, 18) || "Host",
+  };
+}
+
 function dissolveEmptyFreeLobby(room, code) {
   if (!room?.isFree) return false;
   return dissolveEmptyLobby(room, code);
@@ -4194,6 +4297,79 @@ app.get("/v1/admin/users/search", (req, res) => {
     .slice(0, 30)
     .map((u) => staffUserCard(u));
   return res.json({ ok: true, users: list });
+});
+
+/** Gehostete Lobbys eines Nutzers (Admin/Staff). */
+app.get("/v1/admin/users/:userId/lobbies", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.search");
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const user = getDb().users?.[uid];
+  if (!user) {
+    return res.status(404).json({ error: "not_found", message: "Nutzer nicht gefunden." });
+  }
+  reconcileAbandonedLobbyOwnership(user);
+  ensureHostedRooms(user);
+  const lobbies = Object.entries(user.hostedRooms || {}).map(([code, meta]) =>
+    staffLobbyCard(code, meta, user)
+  );
+  lobbies.sort((a, b) => {
+    if (a.live !== b.live) return a.live ? -1 : 1;
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    return String(a.name).localeCompare(String(b.name), "de");
+  });
+  return res.json({
+    ok: true,
+    userId: uid,
+    nickname: user.nickname || "Jemand",
+    lobbies,
+  });
+});
+
+/** Lobby-Detail für Staff. */
+app.get("/v1/admin/rooms/:code", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.search");
+  if (!ctx) return;
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  let hostUser = null;
+  for (const u of Object.values(getDb().users || {})) {
+    if (u?.hostedRooms?.[code]) {
+      hostUser = u;
+      break;
+    }
+  }
+  const meta = hostUser?.hostedRooms?.[code] || null;
+  const live = rooms.get(code);
+  const saved = getDb().rooms?.[code];
+  if (!live && !saved && !meta) {
+    return res.status(404).json({ error: "not_found", message: "Lobby nicht gefunden." });
+  }
+  return res.json({
+    ok: true,
+    lobby: staffLobbyCard(code, meta || {}, hostUser),
+  });
+});
+
+/** Lobby sofort auflösen — alle raus. */
+app.post("/v1/admin/rooms/:code/force-delete", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.search");
+  if (!ctx) return;
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  if (!code) {
+    return res.status(400).json({ error: "bad_code", message: "Ungültiger Lobby-Code." });
+  }
+  const result = forceDissolveLobby(code);
+  if (!result.ok) {
+    return res.status(400).json({
+      error: result.reason || "failed",
+      message: "Lobby konnte nicht gelöscht werden.",
+    });
+  }
+  return res.json({ ok: true, code: result.code, deleted: true });
 });
 
 function findUserForStaffQuery(qRaw) {
