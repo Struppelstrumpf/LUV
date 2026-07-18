@@ -15,15 +15,17 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -100,13 +102,21 @@ fun BrushStudioSheet(
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() },
                     onClick = onDismiss
-                ),
+                )
+                .windowInsetsPadding(WindowInsets.navigationBars),
             contentAlignment = Alignment.BottomCenter
         ) {
-            val sheetMaxH = maxHeight * 0.86f
+            // Kleine/kurze Displays: mehr Anteil, damit „Fertig“ nie abgeschnitten wird
+            val shortScreen = maxHeight < 640.dp
+            val veryShort = maxHeight < 560.dp
+            val sheetFrac = when {
+                veryShort -> 0.94f
+                shortScreen -> 0.90f
+                else -> 0.86f
+            }
             val sidePad = when {
-                maxWidth < 340.dp -> 12.dp
-                maxWidth < 400.dp -> 16.dp
+                maxWidth < 340.dp -> 10.dp
+                maxWidth < 400.dp -> 14.dp
                 else -> 20.dp
             }
             val cols = when {
@@ -115,19 +125,22 @@ fun BrushStudioSheet(
                 else -> 6
             }
             val previewH = when {
-                maxHeight < 620.dp -> 72.dp
+                veryShort -> 56.dp
+                shortScreen -> 68.dp
                 maxHeight < 740.dp -> 88.dp
                 else -> 104.dp
             }
+            val titleSize = if (veryShort) 22.sp else 26.sp
+            val innerPadV = if (veryShort) 10.dp else 14.dp
+            val doneH = if (veryShort) 44.dp else 48.dp
 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 440.dp)
+                    .fillMaxHeight(sheetFrac)
                     .padding(horizontal = sidePad)
-                    .padding(bottom = 10.dp)
-                    .heightIn(max = sheetMaxH)
-                    .navigationBarsPadding()
+                    .padding(bottom = 8.dp)
                     .shadow(28.dp, RoundedCornerShape(28.dp), clip = false)
                     .clip(RoundedCornerShape(28.dp))
                     .background(
@@ -145,9 +158,10 @@ fun BrushStudioSheet(
                         interactionSource = remember { MutableInteractionSource() },
                         onClick = {}
                     )
-                    .padding(horizontal = 18.dp, vertical = 14.dp),
+                    .padding(horizontal = 18.dp, vertical = innerPadV),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // Fester Kopf
                 Box(
                     modifier = Modifier
                         .width(40.dp)
@@ -155,28 +169,33 @@ fun BrushStudioSheet(
                         .clip(CircleShape)
                         .background(Color.White.copy(0.22f))
                 )
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(if (veryShort) 8.dp else 12.dp))
                 Text(
                     "Pinsel",
                     color = TextPrimary,
                     fontFamily = DisplayFont,
-                    fontSize = 26.sp
+                    fontSize = titleSize
                 )
-                Text(
-                    "Farbe wählen · Dicke einstellen",
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 2.dp, bottom = 12.dp)
-                )
+                if (!veryShort) {
+                    Text(
+                        "Farbe wählen · Dicke einstellen",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 10.dp)
+                    )
+                } else {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
 
+                // Scrollbarer Inhalt — nimmt nur den Platz ZWISCHEN Kopf und Fertig
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = (sheetMaxH - 150.dp).coerceAtLeast(180.dp))
+                        .weight(1f, fill = true)
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    verticalArrangement = Arrangement.spacedBy(if (veryShort) 10.dp else 14.dp)
                 ) {
                     BrushPreviewCard(
                         color = strokeColor,
@@ -199,6 +218,7 @@ fun BrushStudioSheet(
                     ThicknessControl(
                         width = width,
                         color = strokeColor,
+                        compact = veryShort,
                         onChange = {
                             width = it
                             onBrushWidthChange(it)
@@ -208,11 +228,12 @@ fun BrushStudioSheet(
                     Spacer(modifier = Modifier.height(4.dp))
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                // „Fertig“ immer sichtbar unter dem Scroll-Bereich
+                Spacer(modifier = Modifier.height(if (veryShort) 8.dp else 12.dp))
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .height(doneH)
                         .clip(RoundedCornerShape(16.dp))
                         .background(
                             Brush.horizontalGradient(
@@ -226,7 +247,7 @@ fun BrushStudioSheet(
                         "Fertig",
                         color = Color.White,
                         fontFamily = DisplayFont,
-                        fontSize = 17.sp
+                        fontSize = if (veryShort) 16.sp else 17.sp
                     )
                 }
             }
@@ -372,11 +393,13 @@ private fun ColorSwatchGrid(
 private fun ThicknessControl(
     width: Float,
     color: Color,
+    compact: Boolean = false,
     onChange: (Float) -> Unit
 ) {
     val presets = listOf(8f, 14f, 22f, 32f)
     val labels = listOf("Fein", "Mittel", "Kräftig", "Bold")
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val chipH = if (compact) 36.dp else 40.dp
+    Column(verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -386,7 +409,7 @@ private fun ThicknessControl(
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .height(40.dp)
+                        .height(chipH)
                         .clip(RoundedCornerShape(12.dp))
                         .background(
                             if (active) color.copy(alpha = 0.22f)
@@ -405,7 +428,7 @@ private fun ThicknessControl(
                         labels[i],
                         color = if (active) TextPrimary else TextMuted,
                         fontFamily = if (active) DisplayFont else BodyFont,
-                        fontSize = 12.sp,
+                        fontSize = if (compact) 11.sp else 12.sp,
                         maxLines = 1
                     )
                 }
@@ -415,6 +438,7 @@ private fun ThicknessControl(
         BrushWidthSlider(
             value = width,
             color = color,
+            compact = compact,
             onChange = onChange
         )
 
@@ -432,13 +456,14 @@ private fun ThicknessControl(
 private fun BrushWidthSlider(
     value: Float,
     color: Color,
+    compact: Boolean = false,
     onChange: (Float) -> Unit
 ) {
     val density = LocalDensity.current
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .height(if (compact) 40.dp else 44.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(Color.White.copy(0.05f))
             .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(16.dp))
