@@ -327,9 +327,9 @@ fun PlayerMarketScreen(
                         val cats = categories.ifEmpty {
                             listOf(
                                 LuvApiClient.MarketCategory("all", "Alle", "📦"),
-                                LuvApiClient.MarketCategory("pets", "Begleiter", "🐣"),
                                 LuvApiClient.MarketCategory("stickers", "Sticker", "🎀"),
                                 LuvApiClient.MarketCategory("themes", "Hintergründe", "🖼️"),
+                                LuvApiClient.MarketCategory("pets", "Begleiter", "🐣"),
                                 LuvApiClient.MarketCategory("emojis", "Emojis", "😊")
                             )
                         }
@@ -891,10 +891,11 @@ private fun MyListingRow(
     }
 }
 
+/** Gleiche Reihenfolge wie Itemshop & Inventar. */
 private val CreateInventoryTabs: List<Pair<String, String>> = listOf(
-    "pets" to "Begleiter",
     "stickers" to "Sticker",
     "themes" to "Hintergründe",
+    "pets" to "Begleiter",
     "emojis" to "Emojis"
 )
 
@@ -913,7 +914,7 @@ private fun CreateListingDialog(
         mutableStateOf(
             when (categoryFilter) {
                 "pets", "stickers", "themes", "emojis" -> categoryFilter
-                else -> "pets"
+                else -> "stickers"
             }
         )
     }
@@ -1233,9 +1234,9 @@ private fun TradeOfferDialog(
 }
 
 private fun categoryLabel(category: String): String = when (category) {
-    "pets" -> "Begleiter"
     "stickers" -> "Sticker"
     "themes" -> "Hintergründe"
+    "pets" -> "Begleiter"
     "emojis" -> "Emojis"
     "all" -> "Alle"
     else -> "Artikel"

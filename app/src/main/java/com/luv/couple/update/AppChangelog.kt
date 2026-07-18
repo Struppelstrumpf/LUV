@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.70",
+            listOf(
+                "Marktplatz: gleiche Tab-Namen wie Itemshop & Inventar",
+            )
+        ),
+        Entry(
             "1.9.69",
             listOf(
                 "Sicherheit: Kein Schummeln von Items ins Inventar",

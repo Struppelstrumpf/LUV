@@ -5,11 +5,12 @@
 
 const crypto = require("crypto");
 
+// Gleiche Reihenfolge/Namen wie Itemshop & Inventar
 const CATEGORIES = [
-  { id: "all", label: "Alle Artikel", emoji: "📦" },
-  { id: "pets", label: "Begleiter", emoji: "🐣" },
+  { id: "all", label: "Alle", emoji: "📦" },
   { id: "stickers", label: "Sticker", emoji: "🎀" },
   { id: "themes", label: "Hintergründe", emoji: "🖼️" },
+  { id: "pets", label: "Begleiter", emoji: "🐣" },
   { id: "emojis", label: "Emojis", emoji: "😊" },
 ];
 

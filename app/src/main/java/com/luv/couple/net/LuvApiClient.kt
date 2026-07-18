@@ -1617,10 +1617,10 @@ object LuvApiClient {
         MarketBrowseResult(
             categories = categories.ifEmpty {
                 listOf(
-                    MarketCategory("all", "Alle Artikel", "📦"),
-                    MarketCategory("pets", "Begleiter", "🐣"),
+                    MarketCategory("all", "Alle", "📦"),
                     MarketCategory("stickers", "Sticker", "🎀"),
                     MarketCategory("themes", "Hintergründe", "🖼️"),
+                    MarketCategory("pets", "Begleiter", "🐣"),
                     MarketCategory("emojis", "Emojis", "😊")
                 )
             },
