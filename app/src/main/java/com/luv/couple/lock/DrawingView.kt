@@ -196,7 +196,10 @@ class DrawingView @JvmOverloads constructor(
             }
             val color = CanvasStore.strokeColor(stroke)
             paint.color = Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
-            paint.strokeWidth = stroke.width
+            paint.strokeWidth = CanvasStore.strokeWidthPx(
+                stroke,
+                min(width, height).toFloat().coerceAtLeast(1f)
+            )
             canvas.drawPath(pathFrom(stroke.points), paint)
         }
         if (eraserEnabled) {

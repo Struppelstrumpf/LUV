@@ -33,6 +33,13 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.min
 
 object CanvasStore {
+    /**
+     * Strichdicke wird relativ zur kürzeren Leinwandseite gespeichert
+     * (Einheit: Pixel bei Referenzbreite [WIDTH_REF]), damit Sync, Screenshots
+     * und Veröffentlichungen auf jedem Display gleich aussehen.
+     */
+    const val WIDTH_REF = 1000f
+
     private sealed class LocalUndo {
         data class Stroke(val id: String) : LocalUndo()
     }
@@ -77,6 +84,19 @@ object CanvasStore {
 
     fun updateBrushWidth(width: Float) {
         cachedBrushWidth = width.coerceIn(6f, 40f)
+    }
+
+    /** View-Pixel → speicher-/sync-fähige Referenzdicke. */
+    fun toStoredWidth(widthPx: Float, shortSidePx: Float): Float {
+        val short = shortSidePx.coerceAtLeast(1f)
+        return (widthPx / short * WIDTH_REF).coerceIn(3f, 48f)
+    }
+
+    /** Gespeicherte Referenzdicke → Pixel auf aktueller Zeichenfläche. */
+    fun strokeWidthPx(stroke: Stroke, shortSidePx: Float): Float {
+        if (stroke.isEmoji) return 0f
+        val short = shortSidePx.coerceAtLeast(1f)
+        return (stroke.width / WIDTH_REF * short).coerceIn(1f, short * 0.25f)
     }
 
     /** Allein in der Lobby (≤1 Verbundener) → Mehrfarben ohne Umfärben alter Striche. */
@@ -262,14 +282,21 @@ object CanvasStore {
     fun addLocalStroke(
         points: List<StrokePoint>,
         width: Float = cachedBrushWidth,
-        lobbyId: String? = null
+        lobbyId: String? = null,
+        /** Wenn gesetzt: [width] ist View-Pixel und wird relativ gespeichert. */
+        shortSidePx: Float? = null
     ) {
         if (points.size < 2) return
         val id = resolveLobbyId(lobbyId) ?: return
+        val storedWidth = if (shortSidePx != null && shortSidePx > 0f) {
+            toStoredWidth(width, shortSidePx)
+        } else {
+            width.coerceIn(4f, 48f)
+        }
         val stroke = Stroke(
             id = UUID.randomUUID().toString(),
             points = points,
-            width = width,
+            width = storedWidth,
             isLocal = true,
             nickname = cachedNickname,
             colorIndex = cachedColorIndex,
@@ -367,7 +394,7 @@ object CanvasStore {
         while (c.localUndo.size > 200) c.localUndo.removeAt(0)
     }
 
-    fun addLocalDot(x: Float, y: Float, lobbyId: String? = null) {
+    fun addLocalDot(x: Float, y: Float, lobbyId: String? = null, shortSidePx: Float = WIDTH_REF) {
         val r = 0.006f
         val points = buildList {
             for (i in 0..10) {
@@ -380,7 +407,9 @@ object CanvasStore {
                 )
             }
         }
-        addLocalStroke(points, width = 16f, lobbyId = lobbyId)
+        // Punkt etwas feiner als aktueller Pinsel, relativ skaliert
+        val tip = (cachedBrushWidth * 0.85f).coerceIn(8f, 22f)
+        addLocalStroke(points, width = tip, lobbyId = lobbyId, shortSidePx = shortSidePx)
     }
 
     fun addRemoteStroke(stroke: Stroke, lobbyId: String) {
@@ -652,7 +681,7 @@ object CanvasStore {
             }
             if (stroke.points.isEmpty()) return@forEach
             paint.color = strokeColor(stroke)
-            paint.strokeWidth = stroke.width
+            paint.strokeWidth = strokeWidthPx(stroke, min(width, height).toFloat())
             val path = Path()
             val first = stroke.points.first()
             path.moveTo(first.x * width, first.y * height)

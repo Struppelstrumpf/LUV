@@ -396,9 +396,10 @@ function sanitizeStoredStroke(raw) {
   const out = {
     id,
     points,
+    // Dicke: Referenz-Pixel (kurze Seite ≈ 1000) — Float beibehalten für feine Pinsel
     width: emoji
       ? Math.min(48, Math.max(0, Number(raw.width) || 0))
-      : Math.min(48, Math.max(4, Number(raw.width) || 18)),
+      : Math.min(48, Math.max(3, Number(raw.width) || 18)),
     nickname: String(raw.nickname || "").trim().slice(0, 18) || null,
     colorIndex: Math.max(0, Math.min(31, Number(raw.colorIndex) || 0)),
     authorId: String(raw.authorId || "").trim().slice(0, 64) || null,

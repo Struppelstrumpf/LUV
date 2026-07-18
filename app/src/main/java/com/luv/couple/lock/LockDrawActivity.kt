@@ -304,10 +304,14 @@ class LockDrawActivity : ComponentActivity() {
         observeForcedUpdates()
 
         drawingView.onStrokeFinished = { points ->
+            val shortSide = min(drawingView.width, drawingView.height)
+                .toFloat()
+                .coerceAtLeast(1f)
             CanvasStore.addLocalStroke(
                 points,
                 width = drawingView.myBrushWidth,
-                lobbyId = lobbyId
+                lobbyId = lobbyId,
+                shortSidePx = shortSide
             )
             // Kein Fade: eigener Strich sofort sichtbar (sonst wirkt die Leinwand kurz „schwarz“)
             drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
@@ -320,7 +324,15 @@ class LockDrawActivity : ComponentActivity() {
             }
         }
         drawingView.onDotPlaced = { point ->
-            CanvasStore.addLocalDot(point.x, point.y, lobbyId = lobbyId)
+            val shortSide = min(drawingView.width, drawingView.height)
+                .toFloat()
+                .coerceAtLeast(1f)
+            CanvasStore.addLocalDot(
+                point.x,
+                point.y,
+                lobbyId = lobbyId,
+                shortSidePx = shortSide
+            )
             drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
         }
         drawingView.onErasePath = { brush ->

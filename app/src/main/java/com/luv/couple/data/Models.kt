@@ -177,6 +177,10 @@ data class StrokePoint(val x: Float, val y: Float)
 data class Stroke(
     val id: String,
     val points: List<StrokePoint>,
+    /**
+     * Strichdicke in Referenz-Pixeln (bezogen auf kurze Seite = 1000).
+     * Wird beim Zeichnen/Screenshot proportional skaliert — Sync bleibt konsistent.
+     */
     val width: Float = 18f,
     val isLocal: Boolean = true,
     val nickname: String? = null,
