@@ -67,10 +67,13 @@ class LockDrawActivity : ComponentActivity() {
     private lateinit var btnSave: TextView
     private lateinit var btnGame: TextView
     private lateinit var btnClear: TextView
-    private lateinit var btnPublic: TextView
     private lateinit var btnEraser: TextView
     private lateinit var btnColor: TextView
     private lateinit var bottomDock: View
+    private lateinit var reactionPanel: View
+    private lateinit var btnReactionToggle: TextView
+    private lateinit var reactionFlyout: View
+    private var reactionExpanded = false
     private var eraserOn = false
     private lateinit var gameHud: LinearLayout
     private lateinit var gameHudTitle: TextView
@@ -148,10 +151,12 @@ class LockDrawActivity : ComponentActivity() {
         btnSave = findViewById(R.id.btnSave)
         btnGame = findViewById(R.id.btnGame)
         btnClear = findViewById(R.id.btnClear)
-        btnPublic = findViewById(R.id.btnPublic)
         btnEraser = findViewById(R.id.btnEraser)
         btnColor = findViewById(R.id.btnColor)
         bottomDock = findViewById(R.id.bottomDock)
+        reactionPanel = findViewById(R.id.reactionPanel)
+        btnReactionToggle = findViewById(R.id.btnReactionToggle)
+        reactionFlyout = findViewById(R.id.reactionFlyout)
         gamePlayOverlay = findViewById(R.id.gamePlayOverlay)
         gamePlayOverlay.onAction = { action, payload ->
             PairConnectionService.sendGameAction(this, action, payload, lobbyId)
@@ -174,7 +179,6 @@ class LockDrawActivity : ComponentActivity() {
         drawingView.canvasBackground = bg
         drawingView.myColorIndex = CanvasStore.cachedColorIndex
         drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
-        paintColorButton()
         paintEraserButton()
 
         btnBack.setOnClickListener { finish() }
@@ -196,19 +200,24 @@ class LockDrawActivity : ComponentActivity() {
         }
         btnGame.setOnClickListener { openGameMenu() }
         btnClear.setOnClickListener { confirmClearCanvas() }
-        btnPublic.setOnClickListener { confirmPublicShare() }
         btnGuess.setOnClickListener {
             CanvasGameUi.showGuessDialog(this) { text ->
                 PairConnectionService.sendGameGuess(this, text, lobbyId)
             }
         }
+        btnReactionToggle.setOnClickListener {
+            reactionExpanded = !reactionExpanded
+            reactionFlyout.visibility = if (reactionExpanded) View.VISIBLE else View.GONE
+        }
 
         listOf(
-            R.id.emoji0 to "👍",
-            R.id.emoji1 to "😮",
-            R.id.emoji2 to "😍",
-            R.id.emoji3 to "😢",
-            R.id.emoji4 to "❤️"
+            R.id.emoji0 to "✔️",
+            R.id.emoji1 to "❌",
+            R.id.emoji2 to "❤️",
+            R.id.emoji3 to "😂",
+            R.id.emoji4 to "😱",
+            R.id.emoji5 to "😡",
+            R.id.emoji6 to "😭"
         ).forEach { (viewId, emoji) ->
             findViewById<TextView>(viewId).setOnClickListener {
                 sendReaction(emoji)
@@ -223,6 +232,10 @@ class LockDrawActivity : ComponentActivity() {
                 topMargin = bars.top + pad
                 lobbyTitle.layoutParams = this
             }
+            (reactionPanel.layoutParams as FrameLayout.LayoutParams).apply {
+                topMargin = bars.top + (8 * dp).toInt()
+                reactionPanel.layoutParams = this
+            }
             (gameHud.layoutParams as FrameLayout.LayoutParams).apply {
                 topMargin = bars.top + (48 * dp).toInt()
                 gameHud.layoutParams = this
@@ -234,21 +247,16 @@ class LockDrawActivity : ComponentActivity() {
                 bars.bottom + (8 * dp).toInt()
             )
             statusView.visibility = View.GONE
-            val emojiRow = findViewById<LinearLayout>(R.id.emojiRow)
-            val per = (resources.displayMetrics.widthPixels - (40 * dp).toInt()) / 5f
-            val emojiSize = when {
-                per < 42 * dp -> 15f
-                per < 50 * dp -> 16f
-                else -> 17f
-            }
-            for (i in 0 until emojiRow.childCount) {
-                (emojiRow.getChildAt(i) as? TextView)?.setTextSize(TypedValue.COMPLEX_UNIT_SP, emojiSize)
-            }
-            // Avatare dynamisch über dem Dock halten (kleine Screens)
+            // Leinwand und Avatare enden über dem Button-Kasten
             bottomDock.post {
+                val dockH = bottomDock.height
+                val drawLp = drawingView.layoutParams as FrameLayout.LayoutParams
+                drawLp.height = (root.height - dockH).coerceAtLeast(1)
+                drawLp.bottomMargin = 0
+                drawingView.layoutParams = drawLp
                 val legendScroll = findViewById<View>(R.id.legendScroll)
                 val lp = legendScroll.layoutParams as FrameLayout.LayoutParams
-                lp.bottomMargin = bottomDock.height + (6 * dp).toInt()
+                lp.bottomMargin = dockH + (6 * dp).toInt()
                 legendScroll.layoutParams = lp
             }
             insets
@@ -825,16 +833,6 @@ class LockDrawActivity : ComponentActivity() {
         }
     }
 
-    private fun paintColorButton() {
-        val color = PeerPalette.strokeColor(CanvasStore.cachedColorIndex)
-        val dp = resources.displayMetrics.density
-        btnColor.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(color)
-            setStroke((2.5f * dp).toInt(), 0xFFFFFFFF.toInt())
-        }
-    }
-
     private fun setEraserEnabled(on: Boolean) {
         eraserOn = on
         drawingView.eraserEnabled = on
@@ -864,7 +862,6 @@ class LockDrawActivity : ComponentActivity() {
         val bg = CanvasStore.backgroundFor(safe)
         rootView?.setBackgroundColor(bg)
         drawingView.canvasBackground = bg
-        paintColorButton()
         if (persist) {
             lifecycleScope.launch {
                 withContext(Dispatchers.IO) { LuvApp.instance.prefs.setColorIndex(safe) }
@@ -904,10 +901,6 @@ class LockDrawActivity : ComponentActivity() {
 
     private fun confirmClearCanvas() {
         showConfirmClearDialog()
-    }
-
-    private fun confirmPublicShare() {
-        showConfirmPublicDialog()
     }
 
     private fun showConfirmPublicDialog() {

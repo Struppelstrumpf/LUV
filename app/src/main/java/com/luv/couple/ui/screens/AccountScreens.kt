@@ -409,10 +409,19 @@ Manipulation, Mehrfach-Konten zur Umgehung von Limits oder Missbrauch des Shops 
 7. Haftung
 Für leicht fahrlässige Pflichtverletzungen haften wir nur bei Verletzung wesentlicher Vertragspflichten und begrenzt auf den typischen vorhersehbaren Schaden. Unberührt bleiben Haftung bei Vorsatz, grober Fahrlässigkeit, Verletzung von Leben, Körper oder Gesundheit sowie zwingende gesetzliche Ansprüche.
 
-8. Änderungen
+8. Öffentliche Bilder / nutzergenerierte Inhalte
+Du kannst gespeicherte Momente in LUV öffentlich veröffentlichen. Mit der Veröffentlichung erklärst du dich mit diesen AGB einverstanden und sicherst zu, dass du zur Veröffentlichung berechtigt bist (insbesondere eigene Rechte am Bild bzw. Einwilligung aller abgebildeten bzw. mitzeichnenden Personen).
+
+Veröffentlichte Bilder können anderen Nutzer:innen zufällig beim App-Start angezeigt werden und etwa 30 Tage gespeichert bleiben; sie können Namen/Nicknames der Beteiligten enthalten. Du kannst deine Veröffentlichung in der App wieder zurücknehmen, soweit technisch verfügbar.
+
+Du verpflichtest dich, keine Inhalte zu veröffentlichen, die Rechte Dritter verletzen (u. a. Urheber-, Marken-, Persönlichkeits- und Datenschutzrechte), die gegen geltendes Recht verstoßen oder die beleidigend, diskriminierend, pornografisch, gewaltverherrlichend oder sonst unzulässig sind. Das Veröffentlichen von Bildern anderer gegen deren Willen ist untersagt.
+
+Wir prüfen Inhalte nicht vorab vollständig. Für von Nutzer:innen veröffentlichte Inhalte sind die jeweiligen Nutzer:innen verantwortlich. Soweit gesetzlich zulässig, haften wir nicht für Urheberrechtsverletzungen, Persönlichkeitsrechtsverletzungen oder sonstige Ansprüche Dritter, die aus der Veröffentlichung durch Nutzer:innen entstehen — insbesondere nicht, wenn ein Bild ohne Einwilligung einer beteiligten Person veröffentlicht wird. Wir können Inhalte sperren, entfernen oder Konten einschränken, wenn Hinweise auf Rechtsverstöße oder Missbrauch vorliegen. Melde- und Prüfprozesse dienen der Missbrauchsbekämpfung und begründen keinen Anspruch auf bestimmte Prüfung oder Verfügbarkeit.
+
+9. Änderungen
 Wir können diese AGB mit Wirkung für die Zukunft anpassen, soweit dies erforderlich ist und dich nicht unangemessen benachteiligt. Die jeweils aktuelle Fassung findest du in der App.
 
-9. Schlussbestimmungen
+10. Schlussbestimmungen
 Es gilt das Recht der Bundesrepublik Deutschland unter Ausschluss des UN-Kaufrechts. Verbraucherschutzvorschriften am Wohnsitz bleiben unberührt. Sollten einzelne Klauseln unwirksam sein, bleibt der Rest wirksam.
 """.trimIndent()
 

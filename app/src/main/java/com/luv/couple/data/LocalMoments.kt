@@ -21,13 +21,16 @@ data class LocalMoment(
     val id: String,
     val file: File,
     val name: String,
-    val dateAddedSec: Long
+    val dateAddedSec: Long,
+    /** Server-Public-ID, wenn dieses Moment veröffentlicht ist */
+    val publicId: String? = null
 )
 
 object LocalMoments {
     private const val DIR = "moments"
     private const val LEGACY_FOLDER = "LUV"
     private const val TOMBSTONE_FILE = ".deleted_names"
+    private const val PUBLIC_MAP_FILE = ".public_ids.json"
 
     fun momentsDir(context: Context): File {
         val dir = File(context.filesDir, DIR)
@@ -57,6 +60,7 @@ object LocalMoments {
         importLegacyMediaStoreIfPossible(context)
         val dir = momentsDir(context)
         val blocked = loadTombstones(context)
+        val pubMap = loadPublicMap(context)
         dir.listFiles { f ->
             f.isFile &&
                 f.name.endsWith(".png", ignoreCase = true) &&
@@ -69,9 +73,50 @@ object LocalMoments {
                     id = file.name,
                     file = file,
                     name = file.name,
-                    dateAddedSec = (file.lastModified() / 1000L).coerceAtLeast(0L)
+                    dateAddedSec = (file.lastModified() / 1000L).coerceAtLeast(0L),
+                    publicId = pubMap[file.name]
                 )
             }
+    }
+
+    suspend fun setPublicId(context: Context, momentId: String, publicId: String?) =
+        withContext(Dispatchers.IO) {
+            val map = loadPublicMap(context).toMutableMap()
+            if (publicId.isNullOrBlank()) map.remove(momentId) else map[momentId] = publicId.trim()
+            savePublicMap(context, map)
+        }
+
+    suspend fun publicIdOf(context: Context, momentId: String): String? =
+        withContext(Dispatchers.IO) { loadPublicMap(context)[momentId] }
+
+    private fun publicMapFile(context: Context): File =
+        File(momentsDir(context), PUBLIC_MAP_FILE)
+
+    private fun loadPublicMap(context: Context): Map<String, String> {
+        val f = publicMapFile(context)
+        if (!f.exists()) return emptyMap()
+        return runCatching {
+            val o = org.json.JSONObject(f.readText())
+            buildMap {
+                val keys = o.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    val v = o.optString(k).trim()
+                    if (k.isNotBlank() && v.isNotBlank()) put(k, v)
+                }
+            }
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun savePublicMap(context: Context, map: Map<String, String>) {
+        val f = publicMapFile(context)
+        if (map.isEmpty()) {
+            f.delete()
+            return
+        }
+        val o = org.json.JSONObject()
+        map.forEach { (k, v) -> o.put(k, v) }
+        f.writeText(o.toString())
     }
 
     /** Ohne Rechte: nur eigene Beiträge aus Pictures/LUV in den App-Ordner kopieren. */
@@ -142,12 +187,16 @@ object LocalMoments {
     suspend fun delete(context: Context, moments: Collection<LocalMoment>): Int =
         withContext(Dispatchers.IO) {
             var n = 0
+            val pubMap = loadPublicMap(context).toMutableMap()
             moments.forEach { m ->
                 val gone = !m.file.exists() || m.file.delete()
                 deleteMediaStoreByName(context, m.name)
                 addTombstone(context, m.name)
+                pubMap.remove(m.id)
+                pubMap.remove(m.name)
                 if (gone) n += 1
             }
+            savePublicMap(context, pubMap)
             n
         }
 

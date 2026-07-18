@@ -376,6 +376,55 @@ object LuvApiClient {
         json.optBoolean("ok", true)
     }
 
+    suspend fun publishPublicCanvas(
+        imageBase64: String,
+        memberNicknames: List<String> = emptyList(),
+        lobbyName: String = "Galerie"
+    ): PublicCanvasPreview = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("imageBase64", imageBase64)
+            .put("lobbyName", lobbyName.trim().take(40))
+        if (memberNicknames.isNotEmpty()) {
+            body.put(
+                "memberNicknames",
+                org.json.JSONArray(memberNicknames.map { it.trim().take(18) }.filter { it.isNotBlank() })
+            )
+        }
+        val json = authedPost("/v1/public-canvases/publish", body.toString())
+        val id = json.optString("id").ifBlank { throw LuvApiException("Veröffentlichen fehlgeschlagen.") }
+        PublicCanvasPreview(
+            id = id,
+            lobbyName = lobbyName,
+            hostNickname = "",
+            memberNicknames = memberNicknames,
+            nameLine = json.optString("nameLine"),
+            imageUrl = json.optString("imageUrl")
+        )
+    }
+
+    suspend fun unpublishPublicCanvas(publicId: String): Boolean = withContext(Dispatchers.IO) {
+        val clean = publicId.trim()
+        if (clean.isBlank()) throw LuvApiException("Keine Veröffentlichung.")
+        val json = authedPost("/v1/public-canvases/${clean.encodeURL()}/unpublish", "{}")
+        json.optBoolean("ok", true)
+    }
+
+    suspend fun publicCanvasStatus(publicId: String): Boolean = withContext(Dispatchers.IO) {
+        val clean = publicId.trim()
+        if (clean.isBlank()) return@withContext false
+        runCatching {
+            val request = Request.Builder()
+                .url("${baseUrl()}/v1/public-canvases/${clean.encodeURL()}")
+                .get()
+                .build()
+            http.newCall(request).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                if (!response.isSuccessful) return@use false
+                JSONObject(raw).optBoolean("available", false)
+            }
+        }.getOrDefault(false)
+    }
+
     suspend fun reportPeer(
         lobbyCode: String,
         userId: String?,

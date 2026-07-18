@@ -2,6 +2,7 @@ package com.luv.couple.ui.screens
 
 import android.content.Intent
 import android.graphics.Bitmap
+import android.util.Base64
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -55,16 +56,23 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.luv.couple.data.LocalMoment
 import com.luv.couple.data.LocalMoments
+import com.luv.couple.net.AccountSession
+import com.luv.couple.net.LuvApiClient
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgSoft
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private val PublishedBlue = Color(0xFF2563EB)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -79,6 +87,9 @@ fun GalleryScreen() {
     var selecting by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var confirmDelete by remember { mutableStateOf<List<LocalMoment>?>(null) }
+    var confirmPublish by remember { mutableStateOf<LocalMoment?>(null) }
+    var publishedInfo by remember { mutableStateOf<LocalMoment?>(null) }
+    var busy by remember { mutableStateOf(false) }
 
     fun reload() {
         scope.launch {
@@ -86,6 +97,18 @@ fun GalleryScreen() {
             moments = runCatching { LocalMoments.list(context) }.getOrDefault(emptyList())
             selectedIds = selectedIds.intersect(moments.map { it.id }.toSet())
             if (selectedIds.isEmpty()) selecting = false
+            // Abgelaufene Veröffentlichungen lokal bereinigen
+            moments.filter { !it.publicId.isNullOrBlank() }.forEach { m ->
+                val still = runCatching {
+                    LuvApiClient.publicCanvasStatus(m.publicId!!)
+                }.getOrDefault(true)
+                if (!still) {
+                    LocalMoments.setPublicId(context, m.id, null)
+                }
+            }
+            moments = runCatching { LocalMoments.list(context) }.getOrDefault(emptyList())
+            preview = preview?.let { p -> moments.firstOrNull { it.id == p.id } }
+            publishedInfo = publishedInfo?.let { p -> moments.firstOrNull { it.id == p.id } }
             loading = false
         }
     }
@@ -112,51 +135,16 @@ fun GalleryScreen() {
                 .padding(horizontal = 24.dp)
                 .padding(top = 20.dp, bottom = 8.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Galerie", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
-                if (moments.isNotEmpty()) {
-                    Text(
-                        text = when {
-                            selecting && selectedIds.isNotEmpty() -> "Fertig"
-                            selecting -> "Abbrechen"
-                            else -> "Auswählen"
-                        },
-                        color = AccentRose,
-                        fontFamily = DisplayFont,
-                        fontSize = 15.sp,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable {
-                                if (selecting) {
-                                    selecting = false
-                                    selectedIds = emptySet()
-                                } else {
-                                    selecting = true
-                                }
-                            }
-                            .padding(horizontal = 8.dp, vertical = 6.dp)
-                    )
-                }
+            Text("Galerie", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
+            if (selecting && selectedIds.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "${selectedIds.size} ausgewählt",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp
+                )
             }
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                if (selecting) {
-                    if (selectedIds.isEmpty()) {
-                        "Tippe auf Bilder zum Auswählen."
-                    } else {
-                        "${selectedIds.size} ausgewählt"
-                    }
-                } else {
-                    "Gespeicherte Momente — tippen zum Ansehen, lange tippen zum Auswählen."
-                },
-                color = TextMuted,
-                fontFamily = BodyFont,
-                fontSize = 14.sp
-            )
             Spacer(modifier = Modifier.height(16.dp))
 
             when {
@@ -184,7 +172,7 @@ fun GalleryScreen() {
                                 fontSize = 20.sp
                             )
                             Text(
-                                "Auf der Leinwand speichern — dann erscheinen sie hier in der App-Galerie.",
+                                "Auf der Leinwand speichern — dann erscheinen sie hier.",
                                 color = TextMuted,
                                 fontFamily = BodyFont,
                                 fontSize = 14.sp
@@ -216,6 +204,9 @@ fun GalleryScreen() {
                                 onLongClick = {
                                     selecting = true
                                     selectedIds = selectedIds + moment.id
+                                },
+                                onPublishedBadge = {
+                                    publishedInfo = moment
                                 }
                             )
                         }
@@ -240,10 +231,141 @@ fun GalleryScreen() {
     if (open != null) {
         GalleryDetailDialog(
             moment = open,
-            onDismiss = { preview = null },
+            busy = busy,
+            onDismiss = { if (!busy) preview = null },
             onShare = { shareMoment(context, open) },
-            onDelete = {
-                confirmDelete = listOf(open)
+            onPublish = { confirmPublish = open },
+            onPublishedBadge = { publishedInfo = open }
+        )
+    }
+
+    val publishTarget = confirmPublish
+    if (publishTarget != null) {
+        AlertDialog(
+            onDismissRequest = { if (!busy) confirmPublish = null },
+            containerColor = BgSoft,
+            title = {
+                Text("Veröffentlichen?", color = TextPrimary, fontFamily = DisplayFont, fontSize = 20.sp)
+            },
+            text = {
+                Text(
+                    "Das Bild kann zufällig beim App-Start anderen LUV-Nutzer:innen gezeigt werden " +
+                        "(mit Namen der Beteiligten), etwa 30 Tage lang.\n\n" +
+                        "Mit „Veröffentlichen“ bestätigst du, dass du die AGB akzeptierst und " +
+                        "berechtigt bist, dieses Bild öffentlich zu teilen.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        if (busy) return@TextButton
+                        busy = true
+                        scope.launch {
+                            runCatching {
+                                val bmp = LocalMoments.loadFull(publishTarget)
+                                    ?: error("Bild konnte nicht geladen werden")
+                                val b64 = withContext(Dispatchers.IO) {
+                                    val out = ByteArrayOutputStream()
+                                    bmp.compress(Bitmap.CompressFormat.PNG, 92, out)
+                                    Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+                                }
+                                val nick = AccountSession.account.value?.nickname?.trim().orEmpty()
+                                val result = LuvApiClient.publishPublicCanvas(
+                                    imageBase64 = b64,
+                                    memberNicknames = listOfNotNull(nick.takeIf { it.isNotBlank() }),
+                                    lobbyName = "Galerie"
+                                )
+                                LocalMoments.setPublicId(context, publishTarget.id, result.id)
+                                result
+                            }.onSuccess {
+                                confirmPublish = null
+                                Toast.makeText(context, "Veröffentlicht", Toast.LENGTH_SHORT).show()
+                                reload()
+                            }.onFailure {
+                                Toast.makeText(
+                                    context,
+                                    it.message ?: "Veröffentlichen fehlgeschlagen",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                            busy = false
+                        }
+                    }
+                ) {
+                    Text(
+                        if (busy) "…" else "Veröffentlichen",
+                        color = AccentRose,
+                        fontFamily = DisplayFont
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !busy, onClick = { confirmPublish = null }) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
+    }
+
+    val pub = publishedInfo
+    if (pub != null && !pub.publicId.isNullOrBlank()) {
+        AlertDialog(
+            onDismissRequest = { if (!busy) publishedInfo = null },
+            containerColor = BgSoft,
+            title = {
+                Text("Veröffentlicht", color = TextPrimary, fontFamily = DisplayFont, fontSize = 20.sp)
+            },
+            text = {
+                Text(
+                    "Dieses Bild ist öffentlich und kann beim App-Start anderen gezeigt werden " +
+                        "(ca. 30 Tage). Du kannst die Veröffentlichung jederzeit zurücknehmen.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        if (busy) return@TextButton
+                        busy = true
+                        scope.launch {
+                            runCatching {
+                                LuvApiClient.unpublishPublicCanvas(pub.publicId!!)
+                                LocalMoments.setPublicId(context, pub.id, null)
+                            }.onSuccess {
+                                publishedInfo = null
+                                Toast.makeText(context, "Zurückgenommen", Toast.LENGTH_SHORT).show()
+                                reload()
+                            }.onFailure {
+                                Toast.makeText(
+                                    context,
+                                    it.message ?: "Zurücknehmen fehlgeschlagen",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                            busy = false
+                        }
+                    }
+                ) {
+                    Text(
+                        if (busy) "…" else "Zurücknehmen",
+                        color = AccentRose,
+                        fontFamily = DisplayFont
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !busy, onClick = { publishedInfo = null }) {
+                    Text("Schließen", color = TextMuted, fontFamily = BodyFont)
+                }
             }
         )
     }
@@ -311,7 +433,8 @@ private fun GalleryThumb(
     selecting: Boolean,
     selected: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    onPublishedBadge: () -> Unit
 ) {
     val context = LocalContext.current
     var thumb by remember(moment.id) { mutableStateOf<Bitmap?>(null) }
@@ -363,6 +486,14 @@ private fun GalleryThumb(
                 .background(Color.Black.copy(alpha = 0.45f))
                 .padding(horizontal = 10.dp, vertical = 8.dp)
         )
+        if (!moment.publicId.isNullOrBlank() && !selecting) {
+            PublishedBadge(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+                    .clickable(onClick = onPublishedBadge)
+            )
+        }
         if (selecting) {
             Box(
                 modifier = Modifier
@@ -383,13 +514,30 @@ private fun GalleryThumb(
 }
 
 @Composable
+private fun PublishedBadge(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(26.dp)
+            .clip(CircleShape)
+            .background(PublishedBlue)
+            .border(1.5.dp, Color.White.copy(alpha = 0.9f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Text("✓", color = Color.White, fontSize = 14.sp, fontFamily = DisplayFont)
+    }
+}
+
+@Composable
 private fun GalleryDetailDialog(
     moment: LocalMoment,
+    busy: Boolean,
     onDismiss: () -> Unit,
     onShare: () -> Unit,
-    onDelete: () -> Unit
+    onPublish: () -> Unit,
+    onPublishedBadge: () -> Unit
 ) {
     var full by remember(moment.id) { mutableStateOf<Bitmap?>(null) }
+    val published = !moment.publicId.isNullOrBlank()
 
     LaunchedEffect(moment.id) {
         full = LocalMoments.loadFull(moment)
@@ -422,6 +570,13 @@ private fun GalleryDetailDialog(
                         fontSize = 13.sp
                     )
                 }
+                if (published) {
+                    PublishedBadge(
+                        modifier = Modifier
+                            .padding(end = 10.dp)
+                            .clickable(onClick = onPublishedBadge)
+                    )
+                }
                 Text(
                     text = "Schließen",
                     color = TextMuted,
@@ -429,38 +584,26 @@ private fun GalleryDetailDialog(
                     fontSize = 15.sp,
                     modifier = Modifier
                         .clip(RoundedCornerShape(12.dp))
-                        .clickable(onClick = onDismiss)
+                        .clickable(enabled = !busy, onClick = onDismiss)
                         .padding(8.dp)
                 )
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Aktionen oben — immer im sichtbaren Bereich, nicht unter der Systemleiste
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Box(modifier = Modifier.weight(1.35f)) {
+                Box(modifier = Modifier.weight(1f)) {
                     PrimaryButton("Teilen", AccentRose, onShare)
                 }
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(56.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(BgSoft)
-                        .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(18.dp))
-                        .clickable(onClick = onDelete),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "Löschen",
-                        color = TextPrimary,
-                        fontFamily = DisplayFont,
-                        fontSize = 16.sp,
-                        textAlign = TextAlign.Center
-                    )
+                Box(modifier = Modifier.weight(1f)) {
+                    if (published) {
+                        PrimaryButton("Veröffentlicht", PublishedBlue, onPublishedBadge)
+                    } else {
+                        PrimaryButton("Veröffentlichen", AccentRose, onPublish)
+                    }
                 }
             }
 

@@ -3332,6 +3332,138 @@ app.get("/v1/public-canvases/random", (_req, res) => {
   });
 });
 
+/** Galerie → öffentlich veröffentlichen (ohne Lobby-Abstimmung) */
+app.post("/v1/public-canvases/publish", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  if (ctx.user.banned) {
+    return res.status(403).json({
+      error: "banned",
+      message: "Dein Konto darf keine Bilder veröffentlichen.",
+    });
+  }
+  const b64 = String(req.body?.imageBase64 || "").replace(/^data:image\/\w+;base64,/, "");
+  if (!b64 || b64.length < 80 || b64.length > 6_000_000) {
+    return res.status(400).json({
+      error: "bad_image",
+      message: "Bild fehlt oder ist zu groß.",
+    });
+  }
+  let imageBuf;
+  try {
+    imageBuf = Buffer.from(b64, "base64");
+  } catch {
+    return res.status(400).json({
+      error: "bad_image",
+      message: "Bild ungültig.",
+    });
+  }
+  if (imageBuf.length < 64 || imageBuf.length > 4_500_000) {
+    return res.status(400).json({
+      error: "bad_image",
+      message: "Bild ungültig.",
+    });
+  }
+  ensurePublicDir();
+  const publicId = newId("pub");
+  const fileName = `${publicId}.png`;
+  fs.writeFileSync(path.join(PUBLIC_DIR, fileName), imageBuf);
+  const nicknames = Array.isArray(req.body?.memberNicknames)
+    ? req.body.memberNicknames
+        .map((n) => String(n || "").trim().slice(0, 18))
+        .filter(Boolean)
+        .slice(0, 12)
+    : [];
+  const hostNick =
+    String(ctx.user.nickname || "").trim().slice(0, 18) || "Jemand";
+  if (!nicknames.some((n) => n.toLowerCase() === hostNick.toLowerCase())) {
+    nicknames.unshift(hostNick);
+  }
+  const entry = {
+    file: fileName,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + PUBLIC_TTL_MS,
+    lobbyCode: null,
+    lobbyName: String(req.body?.lobbyName || "Galerie").trim().slice(0, 40) || "Galerie",
+    hostNickname: hostNick,
+    hostUserId: ctx.user.id,
+    memberNicknames: nicknames,
+    memberUserIds: [ctx.user.id],
+    nameLine: "",
+    source: "gallery",
+  };
+  entry.nameLine = splashNameLine(entry);
+  publicCanvases()[publicId] = entry;
+  scheduleSave();
+  return res.status(201).json({
+    ok: true,
+    id: publicId,
+    nameLine: entry.nameLine,
+    imageUrl: `/v1/public-canvases/${publicId}/image`,
+    expiresAt: entry.expiresAt,
+  });
+});
+
+/** Veröffentlichung zurücknehmen (nur eigener Upload) */
+app.post("/v1/public-canvases/:id/unpublish", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const publicId = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  if (!publicId) return res.status(400).json({ error: "bad_id" });
+  const entry = publicCanvases()[publicId];
+  if (!entry) {
+    return res.status(404).json({
+      error: "not_found",
+      message: "Veröffentlichung nicht gefunden.",
+    });
+  }
+  if (entry.hostUserId && entry.hostUserId !== ctx.user.id) {
+    return res.status(403).json({
+      error: "forbidden",
+      message: "Nur du kannst deine Veröffentlichung zurücknehmen.",
+    });
+  }
+  try {
+    const filePath = path.join(PUBLIC_DIR, path.basename(entry.file || ""));
+    if (entry.file && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {
+    /* ignore */
+  }
+  delete publicCanvases()[publicId];
+  // Offene Meldungen zu diesem Bild schließen
+  const reports = publicReports();
+  for (const [rid, report] of Object.entries(reports)) {
+    if (report?.publicId === publicId && (report.status || "open") === "open") {
+      report.status = "removed";
+      report.resolvedAt = Date.now();
+    }
+  }
+  scheduleSave();
+  return res.json({ ok: true, id: publicId });
+});
+
+app.get("/v1/public-canvases/:id", (req, res) => {
+  const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  if (!id) return res.status(404).json({ available: false });
+  const entry = publicCanvases()[id];
+  if (!entry?.file) return res.json({ available: false });
+  const created = Number(entry.createdAt) || 0;
+  if (created > 0 && Date.now() - created > PUBLIC_TTL_MS) {
+    return res.json({ available: false });
+  }
+  return res.json({
+    available: true,
+    id,
+    lobbyName: entry.lobbyName || "Lobby",
+    hostNickname: entry.hostNickname || "Jemand",
+    memberNicknames: Array.isArray(entry.memberNicknames) ? entry.memberNicknames : [],
+    nameLine: entry.nameLine || splashNameLine(entry),
+    imageUrl: `/v1/public-canvases/${id}/image`,
+    createdAt: entry.createdAt,
+    expiresAt: entry.expiresAt || created + PUBLIC_TTL_MS,
+  });
+});
+
 app.get("/v1/public-canvases/:id/image", (req, res) => {
   const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
   if (!id) return res.status(404).end();
