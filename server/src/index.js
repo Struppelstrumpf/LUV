@@ -5738,7 +5738,12 @@ app.post("/v1/rooms/:code/slots", (req, res) => {
       message: `Weiterer Platz kostet ${SLOT_COST} Coins.`,
     });
   }
-  applyLedger(ctx.user.id, -SLOT_COST, "lobby_slot", code);
+  if (!applyLedger(ctx.user.id, -SLOT_COST, "lobby_slot", code)) {
+    return res.status(402).json({
+      error: "no_coins",
+      message: `Weiterer Platz kostet ${SLOT_COST} Coins.`,
+    });
+  }
   room.capacity = capacity + 1;
   touchRoom(room);
   if (room.hostUserId) {

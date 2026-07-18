@@ -12,7 +12,7 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
-            "1.9.67",
+            "1.9.68",
             listOf(
                 "Sicherheit: Käufe, Tausch & Inventar serverseitig abgesichert",
             )
