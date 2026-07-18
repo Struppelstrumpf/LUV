@@ -818,7 +818,8 @@ fun MenuButton(
 @Composable
 fun SimpleBottomBar(
     selected: Int,
-    onSelect: (Int) -> Unit
+    onSelect: (Int) -> Unit,
+    sozialBadge: Boolean = false
 ) {
     // Home · Sozial · Inventar · Markt · Zahnrad (Konto)
     val labels = listOf("Home", "Sozial", "Inventar", "Markt", null)
@@ -864,9 +865,18 @@ fun SimpleBottomBar(
                             fontFamily = DisplayFont,
                             fontSize = 12.sp,
                             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            softWrap = false,
                             textAlign = TextAlign.Center
+                        )
+                    }
+                    if (index == 1 && sozialBadge) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 6.dp, end = 10.dp)
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(AccentRose)
                         )
                     }
                 }

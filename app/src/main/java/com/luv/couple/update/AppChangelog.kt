@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.66",
+            listOf(
+                "Erfolge & Tagesaufgaben: Coins selbst abholen — Punkt bei Sozial",
+                "Itemshop & Marktplatz: Vorschau für alle Items",
+            )
+        ),
+        Entry(
             "1.9.65",
             listOf(
                 "Sozial: Freunde und Erfolge als Tabs unter der Überschrift",

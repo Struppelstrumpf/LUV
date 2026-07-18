@@ -488,44 +488,98 @@ private fun ItemShopContent(
             is ShopPendingBuy.Sticker -> pending.item.priceCoins
             is ShopPendingBuy.Pet -> pending.item.priceCoins
         }
-        val label = when (pending) {
+        val titleLabel = when (pending) {
+            is ShopPendingBuy.Emoji -> "Emoji $preview"
+            is ShopPendingBuy.Theme -> pending.item.label
+            is ShopPendingBuy.Sticker -> "Sticker $preview"
+            is ShopPendingBuy.Pet -> pending.item.label
+        }
+        val kindLabel = when (pending) {
             is ShopPendingBuy.Emoji -> "dieses Emoji"
             is ShopPendingBuy.Theme -> "den Hintergrund „${pending.item.label}“"
             is ShopPendingBuy.Sticker -> "diesen Sticker"
             is ShopPendingBuy.Pet -> "den Begleiter „${pending.item.label}“"
         }
+        val alreadyOwned = when (pending) {
+            is ShopPendingBuy.Theme -> pending.item.id in ownedThemes
+            is ShopPendingBuy.Pet -> pending.item.emoji in ownedPets
+            else -> false
+        }
         AlertDialog(
             onDismissRequest = { if (busyKey == null) pendingBuy = null },
             containerColor = BgSoft,
             title = {
-                Text("Kaufen?", fontFamily = DisplayFont, fontSize = 22.sp, color = TextPrimary)
+                Text(
+                    if (alreadyOwned) "Vorschau" else "Vorschau · Kaufen?",
+                    fontFamily = DisplayFont,
+                    fontSize = 22.sp,
+                    color = TextPrimary
+                )
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    when (pending) {
+                        is ShopPendingBuy.Theme -> ThemePreviewCard(
+                            themeId = pending.item.id,
+                            emoji = pending.item.emoji,
+                            label = pending.item.label
+                        )
+                        else -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(140.dp)
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(BgDeep)
+                                    .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(18.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(preview, fontSize = 72.sp)
+                            }
+                        }
+                    }
                     Text(
-                        preview,
-                        fontSize = 40.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
+                        titleLabel,
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 18.sp,
+                        textAlign = TextAlign.Center
                     )
-                    Text(
-                        if (price <= 0) "Kostenlos in dein Inventar legen?"
-                        else "Für $price Coins $label in dein Inventar legen?",
-                        color = TextMuted,
-                        fontFamily = BodyFont,
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp
-                    )
-                    Text(
-                        "Du hast ${account?.coins ?: 0} Coins.",
-                        color = TextMuted,
-                        fontFamily = BodyFont,
-                        fontSize = 12.sp
-                    )
+                    if (!alreadyOwned) {
+                        Text(
+                            if (price <= 0) "Kostenlos in dein Inventar legen?"
+                            else "Für $price Coins $kindLabel in dein Inventar legen?",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            "Du hast ${account?.coins ?: 0} Coins.",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 12.sp
+                        )
+                    } else {
+                        Text(
+                            "Schon in deinem Inventar.",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 14.sp
+                        )
+                    }
                 }
             },
             confirmButton = {
-                TextButton(
+                if (alreadyOwned) {
+                    TextButton(onClick = { pendingBuy = null }) {
+                        Text("Schließen", color = AccentRose, fontFamily = DisplayFont)
+                    }
+                } else TextButton(
                     enabled = busyKey == null,
                     onClick = {
                         busyKey = preview
@@ -637,6 +691,7 @@ private fun ItemShopContent(
                         emoji = item.emoji,
                         price = item.priceCoins,
                         ownedLabel = if (count > 0) "×$count" else null,
+                        themeId = null,
                         enabled = busyKey == null,
                         onClick = { pendingBuy = ShopPendingBuy.Sticker(item) }
                     )
@@ -655,7 +710,8 @@ private fun ItemShopContent(
                         emoji = item.emoji,
                         price = item.priceCoins,
                         ownedLabel = if (have) "✓" else null,
-                        enabled = busyKey == null && !have,
+                        themeId = item.id,
+                        enabled = busyKey == null,
                         onClick = { pendingBuy = ShopPendingBuy.Theme(item) }
                     )
                 }
@@ -673,7 +729,8 @@ private fun ItemShopContent(
                         emoji = item.emoji,
                         price = item.priceCoins,
                         ownedLabel = if (have) "✓" else null,
-                        enabled = busyKey == null && !have,
+                        themeId = null,
+                        enabled = busyKey == null,
                         onClick = { pendingBuy = ShopPendingBuy.Pet(item) }
                     )
                 }
@@ -691,6 +748,7 @@ private fun ItemShopContent(
                         emoji = item.emoji,
                         price = item.priceCoins,
                         ownedLabel = if (count > 0) "×$count" else null,
+                        themeId = null,
                         enabled = busyKey == null,
                         onClick = { pendingBuy = ShopPendingBuy.Emoji(item) }
                     )
@@ -701,10 +759,50 @@ private fun ItemShopContent(
 }
 
 @Composable
+private fun ThemePreviewCard(themeId: String, emoji: String, label: String) {
+    val theme = ProfileCatalog.theme(themeId)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(160.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(18.dp))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color(theme.skyTop),
+                            Color(theme.skyBottom),
+                            Color(theme.groundTop),
+                            Color(theme.groundBottom)
+                        )
+                    )
+                )
+        )
+        Column(
+            modifier = Modifier.align(Alignment.Center),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(emoji, fontSize = 48.sp)
+            Text(
+                label,
+                color = Color.White,
+                fontFamily = DisplayFont,
+                fontSize = 16.sp
+            )
+        }
+    }
+}
+
+@Composable
 private fun ShopGridCell(
     emoji: String,
     price: Int,
     ownedLabel: String?,
+    themeId: String?,
     enabled: Boolean,
     onClick: () -> Unit
 ) {
@@ -712,7 +810,21 @@ private fun ShopGridCell(
         modifier = Modifier
             .aspectRatio(1f)
             .clip(RoundedCornerShape(16.dp))
-            .background(BgSoft)
+            .then(
+                if (themeId != null) {
+                    val theme = ProfileCatalog.theme(themeId)
+                    Modifier.background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color(theme.skyTop),
+                                Color(theme.groundBottom)
+                            )
+                        )
+                    )
+                } else {
+                    Modifier.background(BgSoft)
+                }
+            )
             .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(16.dp))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(8.dp)
@@ -720,7 +832,7 @@ private fun ShopGridCell(
         Text(emoji, fontSize = 32.sp, modifier = Modifier.align(Alignment.Center))
         Text(
             if (price <= 0) "frei" else "$price",
-            color = AccentRose,
+            color = if (themeId != null) Color.White else AccentRose,
             fontFamily = DisplayFont,
             fontSize = 12.sp,
             modifier = Modifier.align(Alignment.BottomStart)
@@ -728,7 +840,7 @@ private fun ShopGridCell(
         if (ownedLabel != null) {
             Text(
                 ownedLabel,
-                color = TextMuted,
+                color = if (themeId != null) Color.White.copy(0.9f) else TextMuted,
                 fontFamily = BodyFont,
                 fontSize = 11.sp,
                 modifier = Modifier.align(Alignment.BottomEnd)

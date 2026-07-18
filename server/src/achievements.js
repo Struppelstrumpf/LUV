@@ -154,6 +154,12 @@ function ensureAchievements(user) {
   if (typeof a.streak !== "number") a.streak = 0;
   if (typeof a.coinsEarnedToday !== "number") a.coinsEarnedToday = 0;
   if (typeof a.totalAchCoins !== "number") a.totalAchCoins = 0;
+  // Migration: früher auto-gutgeschriebene Erfolge gelten als abgeholt
+  for (const u of Object.values(a.unlocked)) {
+    if (u && typeof u === "object" && u.claimed === undefined) {
+      u.claimed = true;
+    }
+  }
   return a;
 }
 
@@ -203,10 +209,22 @@ function remainingAchCoinsToday(user, dayKey) {
   return Math.max(0, ACHIEVEMENT_DAILY_CAP - (a.coinsEarnedToday || 0));
 }
 
+function unlockAchievementEntry(a, def) {
+  if (a.unlocked[def.id]) return false;
+  // Coins erst beim Abholen — einmalig pro Erfolg/Konto
+  a.unlocked[def.id] = {
+    at: Date.now(),
+    coins: def.coins,
+    claimed: false,
+  };
+  return true;
+}
+
 /**
  * @returns {{ unlocked: object[], coinsGranted: number, dailyJustCompleted: boolean, streak: number }}
  */
 function bumpMetric(user, metric, amount, dayKey, applyLedgerFn) {
+  void applyLedgerFn; // Coins nur noch über claim*
   const a = ensureDaily(user, dayKey);
   const add = Math.max(0, Number(amount) || 0);
   if (add <= 0) {
@@ -214,7 +232,7 @@ function bumpMetric(user, metric, amount, dayKey, applyLedgerFn) {
   }
   a.progress[metric] = (Number(a.progress[metric]) || 0) + add;
 
-  // Daily tasks
+  // Daily tasks — Abschluss ohne Auto-Coins (Abholen in der App)
   let dailyJustCompleted = false;
   if (a.daily && !a.daily.completed) {
     for (const t of a.daily.tasks) {
@@ -223,9 +241,9 @@ function bumpMetric(user, metric, amount, dayKey, applyLedgerFn) {
         if (t.progress >= t.target) t.done = true;
       }
     }
-    if (a.daily.tasks.every((t) => t.done) && !a.daily.rewardClaimed) {
+    if (a.daily.tasks.every((t) => t.done)) {
       a.daily.completed = true;
-      a.daily.rewardClaimed = true;
+      a.daily.rewardClaimed = false;
       dailyJustCompleted = true;
       const prev = a.lastDailyCompleteDate;
       if (prev) {
@@ -246,60 +264,80 @@ function bumpMetric(user, metric, amount, dayKey, applyLedgerFn) {
   a.progress.daily_streak = Math.max(Number(a.progress.daily_streak) || 0, a.streak || 0);
 
   const unlockedNow = [];
-  let coinsGranted = 0;
-  if (dailyJustCompleted) {
-    const room = remainingAchCoinsToday(user, dayKey);
-    const grant = Math.min(1, room);
-    if (grant > 0 && applyLedgerFn) {
-      applyLedgerFn(user.id, grant, "daily_tasks", dayKey);
-      a.coinsEarnedToday += grant;
-      a.totalAchCoins += grant;
-      coinsGranted += grant;
-    }
-  }
-  for (const def of ACHIEVEMENTS) {
-    if (a.unlocked[def.id]) continue;
-    const cur = Number(a.progress[def.metric]) || 0;
-    if (cur < def.target) continue;
-    const room = remainingAchCoinsToday(user, dayKey);
-    const grant = Math.min(def.coins, room);
-    a.unlocked[def.id] = { at: Date.now(), coins: grant };
-    unlockedNow.push({ ...def, coinsGranted: grant });
-    if (grant > 0 && applyLedgerFn) {
-      applyLedgerFn(user.id, grant, "achievement", def.id);
-      a.coinsEarnedToday += grant;
-      a.totalAchCoins += grant;
-      coinsGranted += grant;
-    }
-  }
-  a.progress.achievements_unlocked = Object.keys(a.unlocked).length;
-  a.progress.ach_coins_earned = a.totalAchCoins;
-
-  // Meta achievements may unlock in cascade
-  for (const def of ACHIEVEMENTS) {
-    if (a.unlocked[def.id]) continue;
-    const cur = Number(a.progress[def.metric]) || 0;
-    if (cur < def.target) continue;
-    const room = remainingAchCoinsToday(user, dayKey);
-    const grant = Math.min(def.coins, room);
-    a.unlocked[def.id] = { at: Date.now(), coins: grant };
-    unlockedNow.push({ ...def, coinsGranted: grant });
-    if (grant > 0 && applyLedgerFn) {
-      applyLedgerFn(user.id, grant, "achievement", def.id);
-      a.coinsEarnedToday += grant;
-      a.totalAchCoins += grant;
-      coinsGranted += grant;
+  const tryUnlockAll = () => {
+    for (const def of ACHIEVEMENTS) {
+      if (a.unlocked[def.id]) continue;
+      const cur = Number(a.progress[def.metric]) || 0;
+      if (cur < def.target) continue;
+      if (unlockAchievementEntry(a, def)) {
+        unlockedNow.push({ ...def, coinsGranted: 0, claimable: true });
+      }
     }
     a.progress.achievements_unlocked = Object.keys(a.unlocked).length;
-    a.progress.ach_coins_earned = a.totalAchCoins;
-  }
+  };
+  tryUnlockAll();
+  // Meta-Erfolge (z. B. achievements_unlocked) in zweitem Durchlauf
+  tryUnlockAll();
 
   return {
     unlocked: unlockedNow,
-    coinsGranted,
+    coinsGranted: 0,
     dailyJustCompleted,
     streak: a.streak,
   };
+}
+
+/**
+ * Einmalig Coins für einen freigeschalteten Erfolg abholen.
+ */
+function claimAchievement(user, achievementId, dayKey, applyLedgerFn) {
+  const a = ensureDaily(user, dayKey);
+  const id = String(achievementId || "").trim();
+  const def = ACHIEVEMENTS.find((d) => d.id === id);
+  if (!def) return { ok: false, error: "not_found", message: "Erfolg unbekannt." };
+  const entry = a.unlocked[id];
+  if (!entry) {
+    return { ok: false, error: "locked", message: "Noch nicht freigeschaltet." };
+  }
+  if (entry.claimed) {
+    return { ok: false, error: "already_claimed", message: "Coins schon abgeholt." };
+  }
+  const room = remainingAchCoinsToday(user, dayKey);
+  const grant = Math.min(def.coins, room);
+  entry.claimed = true;
+  entry.claimedAt = Date.now();
+  entry.coins = grant;
+  if (grant > 0 && applyLedgerFn) {
+    applyLedgerFn(user.id, grant, "achievement", id);
+    a.coinsEarnedToday += grant;
+    a.totalAchCoins += grant;
+  }
+  a.progress.ach_coins_earned = a.totalAchCoins;
+  return { ok: true, coinsGranted: grant, achievementId: id };
+}
+
+/**
+ * Tagesaufgaben-Belohnung (+1 Coin) einmalig abholen.
+ */
+function claimDailyReward(user, dayKey, applyLedgerFn) {
+  const a = ensureDaily(user, dayKey);
+  if (!a.daily?.completed) {
+    return { ok: false, error: "incomplete", message: "Tagesaufgaben noch nicht fertig." };
+  }
+  if (a.daily.rewardClaimed) {
+    return { ok: false, error: "already_claimed", message: "Tagesbelohnung schon abgeholt." };
+  }
+  const room = remainingAchCoinsToday(user, dayKey);
+  const grant = Math.min(1, room);
+  a.daily.rewardClaimed = true;
+  a.daily.claimedAt = Date.now();
+  if (grant > 0 && applyLedgerFn) {
+    applyLedgerFn(user.id, grant, "daily_tasks", dayKey);
+    a.coinsEarnedToday += grant;
+    a.totalAchCoins += grant;
+  }
+  a.progress.ach_coins_earned = a.totalAchCoins;
+  return { ok: true, coinsGranted: grant };
 }
 
 function setMetricAtLeast(user, metric, value, dayKey, applyLedgerFn) {
@@ -315,14 +353,47 @@ function setMetricAtLeast(user, metric, value, dayKey, applyLedgerFn) {
 function publicAchievementsState(user, dayKey) {
   const a = ensureDaily(user, dayKey);
   const unlockedIds = new Set(Object.keys(a.unlocked));
+  const dailyClaimable =
+    Boolean(a.daily?.completed) && !Boolean(a.daily?.rewardClaimed);
+  const achievements = ACHIEVEMENTS.map((def) => {
+    const u = a.unlocked[def.id];
+    const progress = Number(a.progress[def.metric]) || 0;
+    const claimed = Boolean(u?.claimed);
+    const claimable = Boolean(u) && !claimed;
+    return {
+      id: def.id,
+      title: def.title,
+      desc: def.desc,
+      category: def.category,
+      target: def.target,
+      progress: Math.min(progress, def.target),
+      coins: def.coins,
+      unlocked: Boolean(u),
+      unlockedAt: u?.at || null,
+      claimed,
+      claimable,
+    };
+  });
+  // Abholbare Erfolge immer ganz oben
+  achievements.sort((x, y) => {
+    if (x.claimable !== y.claimable) return x.claimable ? -1 : 1;
+    if (x.unlocked !== y.unlocked) return x.unlocked ? -1 : 1;
+    return 0;
+  });
+  const claimableAchievements = achievements.filter((x) => x.claimable).length;
+  const hasClaimable = dailyClaimable || claimableAchievements > 0;
   return {
     streak: a.streak || 0,
     coinsEarnedToday: a.coinsEarnedToday || 0,
     coinsCapToday: ACHIEVEMENT_DAILY_CAP,
     coinsRemainingToday: remainingAchCoinsToday(user, dayKey),
+    hasClaimable,
+    claimableCount: claimableAchievements + (dailyClaimable ? 1 : 0),
     daily: {
       date: a.daily.date,
       completed: Boolean(a.daily.completed),
+      rewardClaimed: Boolean(a.daily.rewardClaimed),
+      claimable: dailyClaimable,
       tasks: a.daily.tasks.map((t) => ({
         id: t.id,
         title: t.title,
@@ -331,21 +402,7 @@ function publicAchievementsState(user, dayKey) {
         done: Boolean(t.done),
       })),
     },
-    achievements: ACHIEVEMENTS.map((def) => {
-      const u = a.unlocked[def.id];
-      const progress = Number(a.progress[def.metric]) || 0;
-      return {
-        id: def.id,
-        title: def.title,
-        desc: def.desc,
-        category: def.category,
-        target: def.target,
-        progress: Math.min(progress, def.target),
-        coins: def.coins,
-        unlocked: Boolean(u),
-        unlockedAt: u?.at || null,
-      };
-    }),
+    achievements,
     unlockedCount: unlockedIds.size,
     totalCount: ACHIEVEMENTS.length,
   };
@@ -358,6 +415,8 @@ module.exports = {
   ensureDaily,
   bumpMetric,
   setMetricAtLeast,
+  claimAchievement,
+  claimDailyReward,
   publicAchievementsState,
   remainingAchCoinsToday,
 };

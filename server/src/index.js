@@ -5077,6 +5077,54 @@ app.post("/v1/me/achievements/ping", (req, res) => {
   });
 });
 
+app.post("/v1/me/achievements/daily/claim", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const result = ach.claimDailyReward(
+    ctx.user,
+    todayKey(),
+    (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref)
+  );
+  if (!result.ok) {
+    return res.status(400).json({
+      error: result.error,
+      message: result.message,
+    });
+  }
+  scheduleSave();
+  return res.json({
+    ok: true,
+    coinsGranted: result.coinsGranted,
+    state: ach.publicAchievementsState(ctx.user, todayKey()),
+    user: publicUser(ctx.user),
+  });
+});
+
+app.post("/v1/me/achievements/:id/claim", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const result = ach.claimAchievement(
+    ctx.user,
+    req.params.id,
+    todayKey(),
+    (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref)
+  );
+  if (!result.ok) {
+    return res.status(400).json({
+      error: result.error,
+      message: result.message,
+    });
+  }
+  scheduleSave();
+  return res.json({
+    ok: true,
+    coinsGranted: result.coinsGranted,
+    achievementId: result.achievementId,
+    state: ach.publicAchievementsState(ctx.user, todayKey()),
+    user: publicUser(ctx.user),
+  });
+});
+
 /** —— Spieler-Marktplatz (Nasebär-Stil) —— */
 function marketItemMeta(kind, itemId) {
   const id = String(itemId || "").trim();

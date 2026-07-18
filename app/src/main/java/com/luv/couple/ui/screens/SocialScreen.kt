@@ -51,8 +51,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.net.AccountSession
+import com.luv.couple.net.AchievementsBadge
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgSoft
@@ -68,9 +70,11 @@ fun SocialScreen(
 ) {
     val scope = rememberCoroutineScope()
     var tab by remember { mutableIntStateOf(0) }
+    val hasClaimable by AchievementsBadge.hasClaimable.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         runCatching { LuvApiClient.pingAchievement("social_opens") }
+        AchievementsBadge.refresh()
     }
 
     MenuBackdrop(includeNavigationBars = false) {
@@ -104,6 +108,16 @@ fun SocialScreen(
                             fontSize = 14.sp,
                             softWrap = false
                         )
+                        if (index == 1 && hasClaimable) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(top = 4.dp, end = 10.dp)
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(AccentRose)
+                            )
+                        }
                     }
                 }
             }

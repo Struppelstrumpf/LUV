@@ -38,6 +38,7 @@ import com.luv.couple.lock.CanvasStore
 import com.luv.couple.lock.LockDrawActivity
 import com.luv.couple.lock.LockScreenWidgetProvider
 import com.luv.couple.net.AccountSession
+import com.luv.couple.net.AchievementsBadge
 import com.luv.couple.net.GoogleAuth
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.LuvApiException
@@ -118,6 +119,7 @@ fun LuvAppNav() {
     val lobbyStates by PairConnectionService.lobbyStates.collectAsStateWithLifecycle()
     val reconnectUi by PairConnectionService.reconnectUi.collectAsStateWithLifecycle()
     val account by AccountSession.account.collectAsStateWithLifecycle()
+    val sozialClaimable by AchievementsBadge.hasClaimable.collectAsStateWithLifecycle()
     val pendingJoin by PendingJoin.code.collectAsStateWithLifecycle()
     val pendingShopReturn by PendingShopReturn.pending.collectAsStateWithLifecycle()
     val pendingShop by PendingShop.open.collectAsStateWithLifecycle()
@@ -728,6 +730,12 @@ fun LuvAppNav() {
         com.luv.couple.lock.CanvasMemoryKeeper.checkAndNotify(context.applicationContext)
     }
 
+    LaunchedEffect(startDestination, account?.id) {
+        if (startDestination != Routes.MAIN) return@LaunchedEffect
+        if (account?.id.isNullOrBlank()) return@LaunchedEffect
+        AchievementsBadge.refresh()
+    }
+
     LaunchedEffect(startDestination) {
         if (startDestination != Routes.MAIN) return@LaunchedEffect
         if (PendingSplashSkip.consume()) return@LaunchedEffect
@@ -1026,6 +1034,7 @@ fun LuvAppNav() {
                 }
                 SimpleBottomBar(
                     selected = tab,
+                    sozialBadge = sozialClaimable,
                     onSelect = { next ->
                         if (next == 4) accountMessage = null
                         tab = next
@@ -1033,6 +1042,7 @@ fun LuvAppNav() {
                             // Update-Check bei Tab-Wechsel (Käufe/API laufen weiter)
                             runCatching { AppUpdater.checkOnNavigate(context) }
                             when (next) {
+                                1 -> AchievementsBadge.refresh()
                                 2 -> syncInventory()
                                 3 -> {
                                     refreshAccount()

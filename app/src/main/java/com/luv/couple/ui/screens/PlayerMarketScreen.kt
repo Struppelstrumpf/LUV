@@ -39,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -96,6 +97,7 @@ fun PlayerMarketScreen(
     var showMine by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
     var tradeTarget by remember { mutableStateOf<LuvApiClient.MarketItem?>(null) }
+    var previewItem by remember { mutableStateOf<LuvApiClient.MarketItem?>(null) }
     var friends by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
 
     val ownedEmojis by prefs.ownedEmojisFlow.collectAsStateWithLifecycle(initialValue = emptyMap())
@@ -405,6 +407,7 @@ fun PlayerMarketScreen(
                                             item = item,
                                             busy = busyId == item.listingId,
                                             ui = ui,
+                                            onPreview = { previewItem = item },
                                             onBuy = {
                                                 busyId = item.listingId
                                                 scope.launch {
@@ -520,6 +523,39 @@ fun PlayerMarketScreen(
             }
         )
     }
+
+    previewItem?.let { item ->
+        MarketItemPreviewDialog(
+            item = item,
+            busy = busyId == item.listingId,
+            onDismiss = { previewItem = null },
+            onBuy = {
+                busyId = item.listingId
+                scope.launch {
+                    runCatching {
+                        LuvApiClient.buyMarketListing(item.listingId)
+                        syncInventory()
+                    }.onSuccess {
+                        Toast.makeText(context, "${item.label} gekauft", Toast.LENGTH_SHORT).show()
+                        previewItem = null
+                        reloadMarket()
+                        reloadMine()
+                    }.onFailure {
+                        Toast.makeText(
+                            context,
+                            it.message ?: "Kauf fehlgeschlagen",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    busyId = null
+                }
+            },
+            onTrade = {
+                previewItem = null
+                tradeTarget = item
+            }
+        )
+    }
 }
 
 @Composable
@@ -583,10 +619,107 @@ private fun MarketPillButton(
 }
 
 @Composable
+private fun MarketItemPreviewDialog(
+    item: LuvApiClient.MarketItem,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onBuy: () -> Unit,
+    onTrade: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        containerColor = MarketCream,
+        title = {
+            Text("Vorschau", fontFamily = DisplayFont, color = MarketBrown)
+        },
+        text = {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (item.category == "themes" || item.kind == "themes") {
+                    val theme = ProfileCatalog.theme(item.itemId)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(150.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color(theme.skyTop),
+                                        Color(theme.skyBottom),
+                                        Color(theme.groundBottom)
+                                    )
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(item.emoji, fontSize = 48.sp)
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(MarketCard)
+                            .border(1.dp, MarketBrownMuted.copy(0.25f), RoundedCornerShape(16.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(item.emoji, fontSize = 72.sp)
+                    }
+                }
+                Text(
+                    item.label,
+                    color = MarketBrown,
+                    fontFamily = DisplayFont,
+                    fontSize = 18.sp
+                )
+                Text(
+                    "${categoryLabel(item.category)} · ${item.sellerNickname}",
+                    color = MarketBrownMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp
+                )
+                Text(
+                    if (item.allowTrade && item.priceCoins <= 0) "Tausch möglich"
+                    else if (item.allowTrade) "${item.priceCoins} Coins · Tausch möglich"
+                    else "${item.priceCoins} Coins",
+                    color = MarketGold,
+                    fontFamily = DisplayFont,
+                    fontSize = 14.sp
+                )
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!item.isMine && item.priceCoins > 0) {
+                    TextButton(enabled = !busy, onClick = onBuy) {
+                        Text(if (busy) "…" else "Kaufen", color = MarketGold, fontFamily = DisplayFont)
+                    }
+                }
+                if (!item.isMine && item.allowTrade) {
+                    TextButton(enabled = !busy, onClick = onTrade) {
+                        Text("Tausch", color = MarketBrown, fontFamily = BodyFont)
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(enabled = !busy, onClick = onDismiss) {
+                Text("Schließen", color = MarketBrownMuted, fontFamily = BodyFont)
+            }
+        }
+    )
+}
+
+@Composable
 private fun MarketItemRow(
     item: LuvApiClient.MarketItem,
     busy: Boolean,
     ui: UiScale,
+    onPreview: () -> Unit,
     onBuy: () -> Unit,
     onTrade: () -> Unit
 ) {
@@ -596,6 +729,7 @@ private fun MarketItemRow(
             .clip(RoundedCornerShape(ui.s(14.dp)))
             .background(MarketCard)
             .border(1.dp, MarketBrownMuted.copy(0.2f), RoundedCornerShape(ui.s(14.dp)))
+            .clickable(onClick = onPreview)
             .padding(ui.s(10.dp)),
         verticalArrangement = Arrangement.spacedBy(ui.s(8.dp))
     ) {
@@ -607,7 +741,18 @@ private fun MarketItemRow(
                 modifier = Modifier
                     .size(ui.s(44.dp))
                     .clip(RoundedCornerShape(ui.s(10.dp)))
-                    .background(MarketCreamDeep),
+                    .then(
+                        if (item.category == "themes" || item.kind == "themes") {
+                            val theme = ProfileCatalog.theme(item.itemId)
+                            Modifier.background(
+                                Brush.verticalGradient(
+                                    listOf(Color(theme.skyTop), Color(theme.groundBottom))
+                                )
+                            )
+                        } else {
+                            Modifier.background(MarketCreamDeep)
+                        }
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Text(item.emoji, fontSize = ui.ts(24.sp))

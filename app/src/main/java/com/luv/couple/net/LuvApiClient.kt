@@ -1311,6 +1311,8 @@ object LuvApiClient {
     data class AchievementDaily(
         val date: String,
         val completed: Boolean,
+        val rewardClaimed: Boolean = false,
+        val claimable: Boolean = false,
         val tasks: List<AchievementDailyTask>
     )
 
@@ -1323,7 +1325,9 @@ object LuvApiClient {
         val progress: Int,
         val coins: Int,
         val unlocked: Boolean,
-        val unlockedAt: Long?
+        val unlockedAt: Long?,
+        val claimed: Boolean = false,
+        val claimable: Boolean = false
     )
 
     data class AchievementsState(
@@ -1331,6 +1335,8 @@ object LuvApiClient {
         val coinsEarnedToday: Int,
         val coinsCapToday: Int,
         val coinsRemainingToday: Int,
+        val hasClaimable: Boolean = false,
+        val claimableCount: Int = 0,
         val daily: AchievementDaily,
         val achievements: List<AchievementItem>,
         val unlockedCount: Int,
@@ -1433,9 +1439,13 @@ object LuvApiClient {
             coinsEarnedToday = json.optInt("coinsEarnedToday", 0),
             coinsCapToday = json.optInt("coinsCapToday", 25),
             coinsRemainingToday = json.optInt("coinsRemainingToday", 0),
+            hasClaimable = json.optBoolean("hasClaimable", false),
+            claimableCount = json.optInt("claimableCount", 0),
             daily = AchievementDaily(
                 date = dailyJson.optString("date"),
                 completed = dailyJson.optBoolean("completed", false),
+                rewardClaimed = dailyJson.optBoolean("rewardClaimed", false),
+                claimable = dailyJson.optBoolean("claimable", false),
                 tasks = tasks
             ),
             achievements = achievements,
@@ -1454,7 +1464,9 @@ object LuvApiClient {
             progress = o.optInt("progress", 0),
             coins = o.optInt("coins", 0),
             unlocked = o.optBoolean("unlocked", false),
-            unlockedAt = o.optLong("unlockedAt").takeIf { it > 0L }
+            unlockedAt = o.optLong("unlockedAt").takeIf { it > 0L },
+            claimed = o.optBoolean("claimed", false),
+            claimable = o.optBoolean("claimable", false)
         )
 
     private fun parseMarketListing(o: JSONObject): MarketListing? {
@@ -1508,8 +1520,33 @@ object LuvApiClient {
 
     suspend fun fetchAchievements(): AchievementsState = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/me/achievements")
-        parseAchievementsState(json)
+        parseAchievementsState(json).also { AchievementsBadge.updateFrom(it) }
     }
+
+    suspend fun claimAchievementReward(achievementId: String): Pair<Int, AchievementsState> =
+        withContext(Dispatchers.IO) {
+            val json = authedPost(
+                "/v1/me/achievements/${achievementId.trim().encodeURL()}/claim",
+                "{}"
+            )
+            val coins = json.optInt("coinsGranted", 0)
+            val state = json.optJSONObject("state")?.let { parseAchievementsState(it) }
+                ?: fetchAchievements()
+            AchievementsBadge.updateFrom(state)
+            json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
+            coins to state
+        }
+
+    suspend fun claimDailyAchievementReward(): Pair<Int, AchievementsState> =
+        withContext(Dispatchers.IO) {
+            val json = authedPost("/v1/me/achievements/daily/claim", "{}")
+            val coins = json.optInt("coinsGranted", 0)
+            val state = json.optJSONObject("state")?.let { parseAchievementsState(it) }
+                ?: fetchAchievements()
+            AchievementsBadge.updateFrom(state)
+            json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
+            coins to state
+        }
 
     suspend fun pingAchievement(metric: String, amount: Int = 1): AchievementPingResult =
         withContext(Dispatchers.IO) {
@@ -1528,13 +1565,15 @@ object LuvApiClient {
                     }
                 }
             }
+            val state = json.optJSONObject("state")?.let { parseAchievementsState(it) }
+                ?: parseAchievementsState(json)
+            AchievementsBadge.updateFrom(state)
             AchievementPingResult(
                 coinsGranted = json.optInt("coinsGranted", 0),
                 dailyJustCompleted = json.optBoolean("dailyJustCompleted", false),
                 streak = json.optInt("streak", 0),
                 unlocked = unlocked,
-                state = json.optJSONObject("state")?.let { parseAchievementsState(it) }
-                    ?: parseAchievementsState(json),
+                state = state,
                 user = json.optJSONObject("user")?.let { AccountInfo.fromApi(it) }
             )
         }
