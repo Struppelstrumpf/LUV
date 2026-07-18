@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.23",
+            listOf(
+                "Profil: Auswahl-Handles sitzen mittig auf den Ecken des Rahmens",
+            )
+        ),
+        Entry(
             "1.9.22",
             listOf(
                 "Pinsel-Menü: „Fertig“ auf Pixel/Samsung nicht mehr unter der Gesture-Leiste",

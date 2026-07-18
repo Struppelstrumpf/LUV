@@ -796,16 +796,19 @@ private fun ProfileElementView(
         }
 
         if (selected && editable) {
-            // Handles gegen Element-Scale gegenrechnen, damit sie bedienbar bleiben
+            // Handles gegen Element-Scale gegenrechnen; Offset so, dass Mitte auf der Ecke sitzt
             val handleMod = Modifier.graphicsLayer {
                 scaleX = invScale * (if (dragEl.flipX) -1f else 1f)
                 scaleY = invScale
                 transformOrigin = TransformOrigin(0.5f, 0.5f)
             }
+            // Halbe Handle-Größe in Parent-Koordinaten (Parent ist skaliert)
+            val cornerPad = 14.dp * invScale
 
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
+                    .offset(x = -cornerPad, y = -cornerPad)
                     .then(handleMod)
                     .size(28.dp)
                     .clip(CircleShape)
@@ -830,6 +833,7 @@ private fun ProfileElementView(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
+                        .offset(x = cornerPad, y = -cornerPad)
                         .then(handleMod)
                         .size(28.dp)
                         .clip(CircleShape)
@@ -843,6 +847,7 @@ private fun ProfileElementView(
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
+                        .offset(x = -cornerPad, y = cornerPad)
                         .then(handleMod)
                         .size(28.dp)
                         .clip(CircleShape)
@@ -854,6 +859,7 @@ private fun ProfileElementView(
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
+                        .offset(x = -cornerPad, y = cornerPad)
                         .then(handleMod)
                         .size(28.dp)
                         .clip(CircleShape)
@@ -870,6 +876,7 @@ private fun ProfileElementView(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
+                    .offset(x = cornerPad, y = cornerPad)
                     .then(handleMod)
                     .size(28.dp)
                     .clip(CircleShape)
@@ -878,7 +885,6 @@ private fun ProfileElementView(
                     .pointerInput(el.id) {
                         detectDragGestures { change, drag ->
                             change.consume()
-                            // Gegen parent-scale: Drag-Delta optisch stabil halten
                             val next = dragEl.copy(
                                 scale = (dragEl.scale + drag.x * 0.008f * invScale)
                                     .coerceIn(0.35f, 2.5f)
