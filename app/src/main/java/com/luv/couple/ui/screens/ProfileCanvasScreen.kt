@@ -669,6 +669,8 @@ fun ProfileCanvasScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             Box(modifier = Modifier.fillMaxWidth()) {
+                val isMarriedProfile = !spouseExtraName.isNullOrBlank() ||
+                    state.layout.any { it.type == ProfileElType.Spouse }
                 ProfileCanvasBoard(
                     state = state,
                     nickname = loadedNick,
@@ -676,6 +678,7 @@ fun ProfileCanvasScreen(
                     coins = displayCoins,
                     editable = editable,
                     selectedId = selectedId,
+                    marriageCelebration = isMarriedProfile,
                     onSelect = { selectedId = it },
                     onLayoutChange = { applyLayoutWithStickerStock(it) },
                     onOpenChest = { if (editable) showChest = true },
@@ -821,7 +824,18 @@ fun ProfileCanvasScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                 }
-                if (!userId.isNullOrBlank()) {
+                val viewingSelf = friendStatus == "self" ||
+                    (!userId.isNullOrBlank() && userId == AccountSession.account.value?.id)
+                if (!userId.isNullOrBlank() && viewingSelf) {
+                    Text(
+                        "So sehen andere dich",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 14.sp,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center
+                    )
+                } else if (!userId.isNullOrBlank()) {
                     when (friendStatus) {
                         "friends" -> Text(
                             "Ihr seid Freunde 💛",
@@ -1759,6 +1773,7 @@ private fun ProfileCanvasBoard(
     coins: Int,
     editable: Boolean,
     selectedId: String?,
+    marriageCelebration: Boolean = false,
     onSelect: (String?) -> Unit,
     onLayoutChange: (List<ProfileLayoutEl>) -> Unit,
     onOpenChest: () -> Unit,
@@ -1780,7 +1795,8 @@ private fun ProfileCanvasBoard(
 
         ProfileThemeBackdrop(
             themeId = state.themeId,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            marriageCelebration = marriageCelebration
         )
 
         if (editable) {

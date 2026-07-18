@@ -9,6 +9,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -16,7 +18,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.sp
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -27,18 +33,21 @@ import kotlin.random.Random
 @Composable
 fun ProfileThemeBackdrop(
     themeId: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    marriageCelebration: Boolean = false
 ) {
     ProfileThemeBackdrop(
         theme = ProfileCatalog.theme(themeId),
-        modifier = modifier
+        modifier = modifier,
+        marriageCelebration = marriageCelebration
     )
 }
 
 @Composable
 fun ProfileThemeBackdrop(
     theme: ProfileTheme,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    marriageCelebration: Boolean = false
 ) {
     Box(modifier = modifier) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -58,8 +67,87 @@ fun ProfileThemeBackdrop(
             )
         }
         ThemeFxOverlay(theme.effect)
+        if (marriageCelebration) {
+            WeddingBlessingRain()
+        }
     }
 }
+
+/** Herzen, Ringe & Funken — nur bei verheirateten Profilen. */
+@Composable
+private fun WeddingBlessingRain() {
+    val t = rememberInfiniteTransition(label = "weddingRain")
+    val phase by t.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            tween(7200, easing = LinearEasing),
+            RepeatMode.Restart
+        ),
+        label = "wPhase"
+    )
+    val glyphs = remember {
+        listOf("💕", "💍", "❤️", "💒", "✨", "💗", "💍", "💖", "🤍", "💞")
+    }
+    val flakes = remember {
+        List(22) { i ->
+            val rnd = Random(i * 41 + 7)
+            WeddingFlake(
+                glyph = glyphs[i % glyphs.size],
+                xFrac = rnd.nextFloat(),
+                speed = 0.55f + rnd.nextFloat() * 0.7f,
+                drift = (rnd.nextFloat() - 0.5f) * 0.12f,
+                sizeSp = 12f + rnd.nextFloat() * 10f,
+                wobble = rnd.nextFloat() * 6.28f,
+                delay = rnd.nextFloat()
+            )
+        }
+    }
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val w = constraints.maxWidth.toFloat().coerceAtLeast(1f)
+        val h = constraints.maxHeight.toFloat().coerceAtLeast(1f)
+        flakes.forEach { flake ->
+            val p = ((phase * flake.speed) + flake.delay) % 1f
+            val xN = (flake.xFrac + flake.drift * p +
+                sin((phase + flake.wobble) * 4.0).toFloat() * 0.035f).let {
+                var v = it
+                while (v < 0f) v += 1f
+                while (v > 1f) v -= 1f
+                v
+            }
+            val alpha = when {
+                p < 0.08f -> p / 0.08f
+                p > 0.88f -> (1f - p) / 0.12f
+                else -> 0.88f
+            }.coerceIn(0f, 0.92f)
+            Text(
+                flake.glyph,
+                fontSize = flake.sizeSp.sp,
+                modifier = Modifier
+                    .graphicsLayer {
+                        this.alpha = alpha
+                        rotationZ = sin((phase + flake.wobble) * 5.0).toFloat() * 18f
+                    }
+                    .offset {
+                        IntOffset(
+                            x = (xN * w - 10f).roundToInt(),
+                            y = (p * h - 8f).roundToInt()
+                        )
+                    }
+            )
+        }
+    }
+}
+
+private data class WeddingFlake(
+    val glyph: String,
+    val xFrac: Float,
+    val speed: Float,
+    val drift: Float,
+    val sizeSp: Float,
+    val wobble: Float,
+    val delay: Float
+)
 
 @Composable
 private fun ThemeFxOverlay(effect: String) {

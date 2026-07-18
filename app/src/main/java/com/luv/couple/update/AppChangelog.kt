@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.9927",
+            listOf(
+                "Verheiratet: Herzen & Ringe regnen auf dem Profil",
+                "Eigenes Profil: keine Freundschafts-/Kraul-Buttons mehr",
+            )
+        ),
+        Entry(
             "1.9.9926",
             listOf(
                 "Tutorial neu gestaltet — inkl. Heirat & voller Hochzeitsleinwand",
