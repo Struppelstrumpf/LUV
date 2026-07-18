@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.24",
+            listOf(
+                "Pinsel-Menü ohne Scrollen — skaliert nach Bildschirmgröße",
+            )
+        ),
+        Entry(
             "1.9.23",
             listOf(
                 "Profil: Auswahl-Handles sitzen mittig auf den Ecken des Rahmens",
