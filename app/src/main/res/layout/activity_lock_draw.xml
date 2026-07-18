@@ -334,10 +334,8 @@
                     android:focusable="true"
                     android:gravity="center"
                     android:contentDescription="@string/eraser_toggle"
-                    android:text="▮"
-                    android:textColor="@color/ink_white"
-                    android:textSize="15sp"
-                    android:textStyle="bold" />
+                    android:text="🧽"
+                    android:textSize="18sp" />
 
                 <TextView
                     android:id="@+id/btnColor"
