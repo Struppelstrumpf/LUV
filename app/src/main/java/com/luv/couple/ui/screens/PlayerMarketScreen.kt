@@ -105,7 +105,6 @@ fun PlayerMarketScreen(
     var offersList by remember { mutableStateOf<List<LuvApiClient.MarketListing>>(emptyList()) }
     var offersLoading by remember { mutableStateOf(false) }
     var previewListing by remember { mutableStateOf<LuvApiClient.MarketListing?>(null) }
-    var tradeListing by remember { mutableStateOf<LuvApiClient.MarketListing?>(null) }
     var friends by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
 
     fun openOffers(item: LuvApiClient.MarketItem) {
@@ -231,7 +230,6 @@ fun PlayerMarketScreen(
         offersItem = null
         offersList = emptyList()
         previewListing = null
-        tradeListing = null
         reloadMarket()
     }
 
@@ -262,7 +260,7 @@ fun PlayerMarketScreen(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                "LUV TAUSCHPLATZ · COMMUNITY-HANDEL",
+                "LUV MARKTPLATZ · COMMUNITY-HANDEL",
                 fontFamily = BodyFont,
                 fontSize = ui.ts(11.sp),
                 color = MarketBrownMuted,
@@ -275,14 +273,18 @@ fun PlayerMarketScreen(
                 horizontalArrangement = Arrangement.spacedBy(ui.s(8.dp))
             ) {
                 MarketPillButton(
-                    label = "Meine Angebote",
-                    badge = myListings.size.takeIf { it > 0 },
+                    label = if (showMine) "Zurück" else "Meine Angebote",
+                    badge = if (showMine) null else myListings.size.takeIf { it > 0 },
                     filled = showMine,
                     ui = ui,
                     modifier = Modifier.weight(1f),
                     onClick = {
-                        showMine = !showMine
-                        if (showMine) reloadMine()
+                        if (showMine) {
+                            showMine = false
+                        } else {
+                            showMine = true
+                            reloadMine()
+                        }
                     }
                 )
                 MarketPillButton(
@@ -557,23 +559,6 @@ fun PlayerMarketScreen(
         )
     }
 
-    tradeListing?.let { target ->
-        TradeOfferDialog(
-            target = target,
-            inventory = inventoryPicks(),
-            onDismiss = { tradeListing = null },
-            onTraded = {
-                tradeListing = null
-                previewListing = null
-                refreshOffersIfOpen()
-                reloadMarket()
-                reloadMine()
-                scope.launch { syncInventory() }
-                Toast.makeText(context, "Tausch abgeschlossen", Toast.LENGTH_SHORT).show()
-            }
-        )
-    }
-
     previewListing?.let { listing ->
         MarketListingPreviewDialog(
             listing = listing,
@@ -600,10 +585,6 @@ fun PlayerMarketScreen(
                     }
                     busyId = null
                 }
-            },
-            onTrade = {
-                previewListing = null
-                tradeListing = listing
             }
         )
     }
@@ -792,14 +773,7 @@ private fun MarketOfferRow(
             )
             Text(
                 buildString {
-                    when {
-                        offer.allowTrade && offer.priceCoins <= 0 -> append("Nur Tausch")
-                        offer.allowTrade -> append("${offer.priceCoins} Coins · Tausch möglich")
-                        else -> append("${offer.priceCoins} Coins")
-                    }
-                    if (offer.allowTrade && !offer.tradeWantLabel.isNullOrBlank()) {
-                        append(" · sucht ${offer.tradeWantLabel}")
-                    }
+                    append("${offer.priceCoins} Coins")
                     if (offer.isMine) append(" · dein Angebot")
                 },
                 color = MarketGold,
@@ -817,8 +791,7 @@ private fun MarketListingPreviewDialog(
     listing: LuvApiClient.MarketListing,
     busy: Boolean,
     onDismiss: () -> Unit,
-    onBuy: () -> Unit,
-    onTrade: () -> Unit
+    onBuy: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
@@ -879,36 +852,17 @@ private fun MarketListingPreviewDialog(
                     fontSize = 13.sp
                 )
                 Text(
-                    when {
-                        listing.allowTrade && listing.priceCoins <= 0 -> "Tausch möglich"
-                        listing.allowTrade -> "${listing.priceCoins} Coins · Tausch möglich"
-                        else -> "${listing.priceCoins} Coins"
-                    },
+                    "${listing.priceCoins} Coins",
                     color = MarketGold,
                     fontFamily = DisplayFont,
                     fontSize = 14.sp
                 )
-                if (listing.allowTrade && !listing.tradeWantLabel.isNullOrBlank()) {
-                    Text(
-                        "Gesucht: ${listing.tradeWantLabel}",
-                        color = MarketBrownMuted,
-                        fontFamily = BodyFont,
-                        fontSize = 12.sp
-                    )
-                }
             }
         },
         confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (!listing.isMine && listing.priceCoins > 0) {
-                    TextButton(enabled = !busy, onClick = onBuy) {
-                        Text(if (busy) "…" else "Kaufen", color = MarketGold, fontFamily = DisplayFont)
-                    }
-                }
-                if (!listing.isMine && listing.allowTrade) {
-                    TextButton(enabled = !busy, onClick = onTrade) {
-                        Text("Tausch", color = MarketBrown, fontFamily = BodyFont)
-                    }
+            if (!listing.isMine && listing.priceCoins > 0) {
+                TextButton(enabled = !busy, onClick = onBuy) {
+                    Text(if (busy) "…" else "Kaufen", color = MarketGold, fontFamily = DisplayFont)
                 }
             }
         },
@@ -990,12 +944,8 @@ private fun MarketItemRow(
             )
             Text(
                 buildString {
-                    when {
-                        item.priceCoins > 0 -> append("ab ${item.priceCoins} 🪙")
-                        item.allowTrade -> append("Tausch")
-                        else -> append("Angebote")
-                    }
-                    if (item.allowTrade && item.priceCoins > 0) append(" · Tausch")
+                    if (item.priceCoins > 0) append("ab ${item.priceCoins} 🪙")
+                    else append("Angebote")
                     append("  ·  ")
                     append(item.offerCount)
                     append(if (item.offerCount == 1) " Angebot" else " Angebote")
@@ -1038,8 +988,7 @@ private fun MyListingRow(
                 fontSize = 11.sp
             )
             Text(
-                if (listing.allowTrade && listing.priceCoins <= 0) "Tausch"
-                else "${listing.priceCoins} 🪙",
+                "${listing.priceCoins} 🪙",
                 color = MarketGold,
                 fontFamily = DisplayFont,
                 fontSize = 12.sp
@@ -1087,344 +1036,295 @@ private fun CreateListingDialog(
         )
     }
     var pick by remember { mutableStateOf<InventoryPick?>(null) }
+    var picking by remember { mutableStateOf(false) }
     var priceText by remember { mutableStateOf("5") }
-    var allowTrade by remember { mutableStateOf(false) }
     var isPrivate by remember { mutableStateOf(false) }
     var targetFriend by remember { mutableStateOf<LuvApiClient.FriendCard?>(null) }
-    var tradeWant by remember { mutableStateOf<InventoryPick?>(null) }
     var busy by remember { mutableStateOf(false) }
 
     val activeKind = if (showInventarTabs) inventarTab else categoryFilter
     val sellInventory = remember(inventory, activeKind) {
         inventory.filter { it.kind == activeKind }
     }
-    LaunchedEffect(activeKind) {
-        if (pick != null && pick?.kind != activeKind) pick = null
-        if (tradeWant != null && tradeWant?.kind == pick?.kind && tradeWant?.itemId == pick?.itemId) {
-            tradeWant = null
-        }
-    }
 
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         containerColor = MarketCream,
         title = {
-            Text("Angebot erstellen", fontFamily = DisplayFont, color = MarketBrown)
+            Text(
+                if (picking) "Item wählen" else "Angebot erstellen",
+                fontFamily = DisplayFont,
+                color = MarketBrown
+            )
         },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(360.dp)
+                    .heightIn(max = 420.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(
+                if (picking) {
                     if (showInventarTabs) {
-                        "Artikel aus Inventar"
-                    } else {
-                        "Nur ${categoryLabel(categoryFilter)} aus deinem Inventar"
-                    },
-                    color = MarketBrownMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 12.sp
-                )
-                if (showInventarTabs) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        CreateInventoryTabs.chunked(2).forEach { row ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                row.forEach { (id, label) ->
-                                    val on = inventarTab == id
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(if (on) MarketGold.copy(0.2f) else MarketCard)
-                                            .clickable { inventarTab = id }
-                                            .padding(vertical = 8.dp, horizontal = 6.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            label,
-                                            color = MarketBrown,
-                                            fontFamily = if (on) DisplayFont else BodyFont,
-                                            fontSize = 12.sp,
-                                            softWrap = false
-                                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            CreateInventoryTabs.chunked(2).forEach { row ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    row.forEach { (id, label) ->
+                                        val on = inventarTab == id
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(if (on) MarketGold.copy(0.2f) else MarketCard)
+                                                .clickable { inventarTab = id }
+                                                .padding(vertical = 8.dp, horizontal = 6.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                label,
+                                                color = MarketBrown,
+                                                fontFamily = if (on) DisplayFont else BodyFont,
+                                                fontSize = 12.sp,
+                                                softWrap = false
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
-                if (sellInventory.isEmpty()) {
-                    Text(
-                        if (inventory.isEmpty()) {
-                            "Nichts Verkaufbares im Inventar."
-                        } else {
-                            "Keine ${categoryLabel(activeKind)} im Inventar."
-                        },
-                        color = MarketBrownMuted,
-                        fontFamily = BodyFont
-                    )
+                    if (sellInventory.isEmpty()) {
+                        Text(
+                            if (inventory.isEmpty()) {
+                                "Nichts Verkaufbares im Inventar."
+                            } else {
+                                "Keine ${categoryLabel(activeKind)} im Inventar."
+                            },
+                            color = MarketBrownMuted,
+                            fontFamily = BodyFont
+                        )
+                    } else {
+                        sellInventory.forEach { item ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(MarketCard)
+                                    .clickable {
+                                        pick = item
+                                        picking = false
+                                    }
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(item.emoji, fontSize = 22.sp)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        item.label,
+                                        color = MarketBrown,
+                                        fontFamily = BodyFont,
+                                        fontSize = 13.sp
+                                    )
+                                    Text(
+                                        "×${item.count}",
+                                        color = MarketBrownMuted,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
                 } else {
-                    sellInventory.forEach { item ->
-                        val selected = pick?.kind == item.kind && pick?.itemId == item.itemId
-                        Row(
+                    val selected = pick
+                    if (selected == null) {
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (selected) MarketGold.copy(0.15f) else MarketCard)
-                                .clickable { pick = item }
-                                .padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MarketGold.copy(0.18f))
+                                .border(1.dp, MarketGold.copy(0.45f), RoundedCornerShape(12.dp))
+                                .clickable { picking = true }
+                                .padding(vertical = 16.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Text(item.emoji, fontSize = 22.sp)
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(item.label, color = MarketBrown, fontFamily = BodyFont, fontSize = 13.sp)
-                                Text("×${item.count}", color = MarketBrownMuted, fontSize = 11.sp)
-                            }
-                        }
-                    }
-                }
-                Text("Preis (Coins)", color = MarketBrownMuted, fontFamily = BodyFont, fontSize = 12.sp)
-                BasicTextField(
-                    value = priceText,
-                    onValueChange = { priceText = it.filter { ch -> ch.isDigit() }.take(3) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    textStyle = TextStyle(color = MarketBrown, fontFamily = BodyFont, fontSize = 16.sp),
-                    cursorBrush = SolidColor(MarketGold),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MarketCard)
-                        .padding(10.dp)
-                )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clickable { allowTrade = !allowTrade }
-                ) {
-                    Text(if (allowTrade) "☑" else "☐", color = MarketGold)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Tausch erlauben", color = MarketBrown, fontFamily = BodyFont)
-                }
-                if (allowTrade) {
-                    Text("Gewünschter Tausch (optional)", color = MarketBrownMuted, fontFamily = BodyFont, fontSize = 12.sp)
-                    // Tausch-Wunsch: gesamtes Inventar (nicht nur Verkaufs-Tab)
-                    inventory.filter {
-                        it.kind != pick?.kind || it.itemId != pick?.itemId
-                    }.forEach { item ->
-                        val selected =
-                            tradeWant?.kind == item.kind && tradeWant?.itemId == item.itemId
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (selected) MarketGold.copy(0.12f) else Color.Transparent)
-                                .clickable { tradeWant = item }
-                                .padding(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(item.emoji, fontSize = 18.sp)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(item.label, color = MarketBrown, fontFamily = BodyFont, fontSize = 12.sp)
-                        }
-                    }
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clickable { isPrivate = !isPrivate }
-                ) {
-                    Text(if (isPrivate) "☑" else "☐", color = MarketGold)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Privates Angebot", color = MarketBrown, fontFamily = BodyFont)
-                }
-                if (isPrivate) {
-                    friends.forEach { friend ->
-                        val selected = targetFriend?.userId == friend.userId
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (selected) MarketGold.copy(0.12f) else Color.Transparent)
-                                .clickable { targetFriend = friend }
-                                .padding(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(friend.petEmoji, fontSize = 18.sp)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(friend.nickname, color = MarketBrown, fontFamily = BodyFont)
-                        }
-                    }
-                    if (friends.isEmpty()) {
-                        Text("Keine Freunde — erst Freund hinzufügen.", color = MarketBrownMuted, fontFamily = BodyFont, fontSize = 12.sp)
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = !busy && pick != null && (!isPrivate || targetFriend != null),
-                onClick = {
-                    val selected = pick ?: return@TextButton
-                    val price = priceText.toIntOrNull() ?: 0
-                    if (!allowTrade && price < 1) {
-                        Toast.makeText(context, "Preis mind. 1 Coin oder Tausch", Toast.LENGTH_SHORT).show()
-                        return@TextButton
-                    }
-                    if (allowTrade && tradeWant == null) {
-                        Toast.makeText(context, "Beim Tausch Gesuch auswählen", Toast.LENGTH_SHORT).show()
-                        return@TextButton
-                    }
-                    busy = true
-                    scope.launch {
-                        runCatching {
-                            LuvApiClient.listMarketItem(
-                                kind = selected.kind,
-                                itemId = selected.itemId,
-                                priceCoins = price,
-                                allowTrade = allowTrade,
-                                isPrivate = isPrivate,
-                                targetUserId = targetFriend?.userId,
-                                tradeWantKind = tradeWant?.kind,
-                                tradeWantItemId = tradeWant?.itemId,
-                                tradeWantLabel = tradeWant?.label
+                            Text(
+                                "Item wählen",
+                                color = MarketBrown,
+                                fontFamily = DisplayFont,
+                                fontSize = 16.sp
                             )
-                        }.onSuccess { onCreated() }
-                            .onFailure {
-                                Toast.makeText(
-                                    context,
-                                    it.message ?: "Erstellen fehlgeschlagen",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MarketCard)
+                                .border(1.dp, MarketGold.copy(0.35f), RoundedCornerShape(12.dp))
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(selected.emoji, fontSize = 36.sp)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Ausgewählt",
+                                    color = MarketBrownMuted,
+                                    fontFamily = BodyFont,
+                                    fontSize = 11.sp
+                                )
+                                Text(
+                                    selected.label,
+                                    color = MarketBrown,
+                                    fontFamily = DisplayFont,
+                                    fontSize = 16.sp
+                                )
+                                Text(
+                                    "${categoryLabel(selected.kind)} · ×${selected.count}",
+                                    color = MarketBrownMuted,
+                                    fontFamily = BodyFont,
+                                    fontSize = 12.sp
+                                )
                             }
-                        busy = false
+                            Text(
+                                "Ändern",
+                                color = MarketGold,
+                                fontFamily = DisplayFont,
+                                fontSize = 12.sp,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { picking = true }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            )
+                        }
                     }
-                }
-            ) {
-                Text(if (busy) "…" else "Einstellen", color = MarketGold, fontFamily = DisplayFont)
-            }
-        },
-        dismissButton = {
-            TextButton(enabled = !busy, onClick = onDismiss) {
-                Text("Abbrechen", color = MarketBrownMuted, fontFamily = BodyFont)
-            }
-        }
-    )
-}
-
-@Composable
-private fun TradeOfferDialog(
-    target: LuvApiClient.MarketListing,
-    inventory: List<InventoryPick>,
-    onDismiss: () -> Unit,
-    onTraded: () -> Unit
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var pick by remember { mutableStateOf<InventoryPick?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    val wanted = remember(target, inventory) {
-        if (target.tradeWantKind.isNullOrBlank() || target.tradeWantItemId.isNullOrBlank()) {
-            inventory
-        } else {
-            inventory.filter {
-                it.kind == target.tradeWantKind && it.itemId == target.tradeWantItemId
-            }
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        containerColor = MarketCream,
-        title = {
-            Text("Tausch anbieten", fontFamily = DisplayFont, color = MarketBrown)
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "Du bekommst: ${target.emoji} ${target.label}",
-                    color = MarketBrown,
-                    fontFamily = BodyFont
-                )
-                if (!target.tradeWantLabel.isNullOrBlank()) {
                     Text(
-                        "Gesucht: ${target.tradeWantLabel}",
-                        color = MarketGold,
+                        "Preis (Coins)",
+                        color = MarketBrownMuted,
                         fontFamily = BodyFont,
                         fontSize = 12.sp
                     )
-                }
-                Text("Dein Angebot:", color = MarketBrownMuted, fontFamily = BodyFont, fontSize = 12.sp)
-                wanted.forEach { item ->
-                    val selected = pick == item
-                    Row(
+                    BasicTextField(
+                        value = priceText,
+                        onValueChange = { priceText = it.filter { ch -> ch.isDigit() }.take(3) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        textStyle = TextStyle(
+                            color = MarketBrown,
+                            fontFamily = BodyFont,
+                            fontSize = 16.sp
+                        ),
+                        cursorBrush = SolidColor(MarketGold),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (selected) MarketGold.copy(0.12f) else MarketCard)
-                            .clickable { pick = item }
-                            .padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(item.emoji, fontSize = 20.sp)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(item.label, color = MarketBrown, fontFamily = BodyFont)
-                    }
-                }
-                if (wanted.isEmpty()) {
-                    Text(
-                        if (target.tradeWantLabel != null) {
-                            "Du hast „${target.tradeWantLabel}“ nicht im Inventar."
-                        } else {
-                            "Nichts zum Tauschen im Inventar."
-                        },
-                        color = MarketBrownMuted,
-                        fontFamily = BodyFont
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MarketCard)
+                            .padding(10.dp)
                     )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable { isPrivate = !isPrivate }
+                    ) {
+                        Text(if (isPrivate) "☑" else "☐", color = MarketGold)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Privates Angebot", color = MarketBrown, fontFamily = BodyFont)
+                    }
+                    if (isPrivate) {
+                        friends.forEach { friend ->
+                            val on = targetFriend?.userId == friend.userId
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (on) MarketGold.copy(0.12f) else Color.Transparent)
+                                    .clickable { targetFriend = friend }
+                                    .padding(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(friend.petEmoji, fontSize = 18.sp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(friend.nickname, color = MarketBrown, fontFamily = BodyFont)
+                            }
+                        }
+                        if (friends.isEmpty()) {
+                            Text(
+                                "Keine Freunde — erst Freund hinzufügen.",
+                                color = MarketBrownMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
                 }
             }
         },
         confirmButton = {
-            TextButton(
-                enabled = !busy && pick != null,
-                onClick = {
-                    val offer = pick ?: return@TextButton
-                    busy = true
-                    scope.launch {
-                        runCatching {
-                            LuvApiClient.tradeMarketListing(
-                                listingId = target.id,
-                                kind = offer.kind,
-                                itemId = offer.itemId
-                            )
-                        }.onSuccess { onTraded() }
-                            .onFailure {
-                                Toast.makeText(
-                                    context,
-                                    it.message ?: "Tausch fehlgeschlagen",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        busy = false
-                    }
+            if (picking) {
+                TextButton(enabled = !busy, onClick = { picking = false }) {
+                    Text("Zurück", color = MarketBrownMuted, fontFamily = BodyFont)
                 }
-            ) {
-                Text("Tauschen", color = MarketGold, fontFamily = DisplayFont)
+            } else {
+                TextButton(
+                    enabled = !busy && pick != null && (!isPrivate || targetFriend != null),
+                    onClick = {
+                        val selected = pick ?: return@TextButton
+                        val price = priceText.toIntOrNull() ?: 0
+                        if (price < 1) {
+                            Toast.makeText(context, "Preis mind. 1 Coin", Toast.LENGTH_SHORT).show()
+                            return@TextButton
+                        }
+                        busy = true
+                        scope.launch {
+                            runCatching {
+                                LuvApiClient.listMarketItem(
+                                    kind = selected.kind,
+                                    itemId = selected.itemId,
+                                    priceCoins = price,
+                                    allowTrade = false,
+                                    isPrivate = isPrivate,
+                                    targetUserId = targetFriend?.userId,
+                                    tradeWantKind = null,
+                                    tradeWantItemId = null,
+                                    tradeWantLabel = null
+                                )
+                            }.onSuccess { onCreated() }
+                                .onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        it.message ?: "Erstellen fehlgeschlagen",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            busy = false
+                        }
+                    }
+                ) {
+                    Text(if (busy) "…" else "Einstellen", color = MarketGold, fontFamily = DisplayFont)
+                }
             }
         },
         dismissButton = {
-            TextButton(enabled = !busy, onClick = onDismiss) {
-                Text("Abbrechen", color = MarketBrownMuted, fontFamily = BodyFont)
+            TextButton(
+                enabled = !busy,
+                onClick = {
+                    if (picking) picking = false else onDismiss()
+                }
+            ) {
+                Text(
+                    if (picking) "Abbrechen" else "Schließen",
+                    color = MarketBrownMuted,
+                    fontFamily = BodyFont
+                )
             }
         }
     )
 }
+
 
 private fun categoryLabel(category: String): String = when (category) {
     "stickers" -> "Sticker"

@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.84",
+            listOf(
+                "Marktplatz: Angebot über Item wählen + Preis, ohne Tausch",
+                "Meine Angebote: Zurück zur Übersicht",
+            )
+        ),
+        Entry(
             "1.9.83",
             listOf(
                 "Viele neue Hintergründe mit Animationen (Nordlicht, Vulkan, Sakura …)",
