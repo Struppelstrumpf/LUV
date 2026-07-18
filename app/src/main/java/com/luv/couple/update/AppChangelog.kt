@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.54",
+            listOf(
+                "Itemshop: Begleiter Eule und Tiger",
+            )
+        ),
+        Entry(
             "1.9.53",
             listOf(
                 "Galerie: veröffentlichte Bilder erscheinen auf allen Geräten mit demselben Konto",

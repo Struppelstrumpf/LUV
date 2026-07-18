@@ -193,7 +193,7 @@ object ProfileCatalog {
     /** Nur Tiere — Anzeige am Avatar; Besitz über Itemshop. */
     val COMPANIONS: List<String> = listOf(
         "🐣", "🐦", "🐔", "🐸", "🐶", "🐱", "🐰", "🐹", "🐻", "🦊",
-        "🐼", "🐨", "🐯", "🦁", "🐮", "🐷", "🐧", "🐢", "🦋", "🦄"
+        "🐼", "🐨", "🦉", "🐯", "🦁", "🐮", "🐷", "🐧", "🐢", "🦋", "🦄"
     )
 
     val AVATAR_FACES: List<String> = listOf(

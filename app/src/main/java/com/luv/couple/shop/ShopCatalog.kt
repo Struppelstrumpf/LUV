@@ -87,6 +87,7 @@ object ShopCatalog {
         ShopPet("🦊", "Fuchs", 26),
         ShopPet("🐼", "Panda", 28),
         ShopPet("🐨", "Koala", 26),
+        ShopPet("🦉", "Eule", 24),
         ShopPet("🐯", "Tiger", 30),
         ShopPet("🦁", "Löwe", 32),
         ShopPet("🐮", "Kuh", 20),
