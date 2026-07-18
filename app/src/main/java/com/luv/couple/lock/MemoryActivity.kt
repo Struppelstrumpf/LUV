@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Bundle
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -68,6 +69,7 @@ import java.util.concurrent.TimeUnit
 class MemoryActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val lobbyCode = intent.getStringExtra(EXTRA_LOBBY_CODE).orEmpty()
         val lobbyName = intent.getStringExtra(EXTRA_LOBBY_NAME).orEmpty().ifBlank { "Lobby" }
         val imageUrl = intent.getStringExtra(EXTRA_IMAGE_URL).orEmpty()

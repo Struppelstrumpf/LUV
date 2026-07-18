@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.33",
+            listOf(
+                "Bildschirm bleibt an, solange die App offen ist",
+            )
+        ),
+        Entry(
             "1.9.32",
             listOf(
                 "Inventar: Emojis-Tab, Zurück aus Markt behält Kontext",
