@@ -491,6 +491,8 @@ class PairConnectionService : Service() {
             val json = JSONObject(text)
             when (json.optString("type")) {
                 "canvas_taken" -> {
+                    // Nur wenn diese Leinwand wirklich im Vordergrund offen ist
+                    if (!LockDrawActivity.isCanvasForeground(lobby.id)) return
                     val message = json.optString("message").trim()
                         .ifBlank { "Ein anderes Gerät hat die Leinwand betreten." }
                     scope.launch {

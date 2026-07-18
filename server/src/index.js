@@ -2635,8 +2635,8 @@ function uniqueConnectedCount(room) {
 }
 
 /**
- * Ein Konto, eine Leinwand: andere Geräte desselben Users nur aus der Leinwand holen
- * (Lobby-WS bleibt offen — kein 4002-Kick mehr).
+ * Ein Konto, eine Leinwand: nur Geräte die wirklich auf der Leinwand sind
+ * (luvCanvasActive) bekommen canvas_taken — Lobby-WS / Hintergrund bleibt still.
  */
 function kickOtherCanvasSockets(room, userId, exceptSocket) {
   if (!userId || !room) return 0;
@@ -2648,7 +2648,8 @@ function kickOtherCanvasSockets(room, userId, exceptSocket) {
   for (const sock of room.sockets.values()) {
     if (sock === exceptSocket) continue;
     if (sock.luvUserId !== userId) continue;
-    const wasActive = Boolean(sock.luvCanvasActive);
+    // Nur wer die Leinwand offen hat — nicht jedes Gerät mit Lobby-Verbindung
+    if (!sock.luvCanvasActive) continue;
     sock.luvCanvasActive = false;
     if (sock.readyState === 1) {
       try {
@@ -2658,23 +2659,21 @@ function kickOtherCanvasSockets(room, userId, exceptSocket) {
       }
     }
     n += 1;
-    if (wasActive) {
-      const presenceOff = JSON.stringify({
-        type: "presence",
-        active: false,
-        userId,
-        peerKey: userId,
-        nickname: sock.luvNickname || "Jemand",
-        colorIndex: Number.isFinite(Number(sock.luvColorIndex)) ? sock.luvColorIndex : 0,
-      });
-      for (const peer of room.sockets.values()) {
-        if (peer === sock || peer === exceptSocket) continue;
-        if (peer.readyState === 1) {
-          try {
-            peer.send(presenceOff);
-          } catch {
-            /* ignore */
-          }
+    const presenceOff = JSON.stringify({
+      type: "presence",
+      active: false,
+      userId,
+      peerKey: userId,
+      nickname: sock.luvNickname || "Jemand",
+      colorIndex: Number.isFinite(Number(sock.luvColorIndex)) ? sock.luvColorIndex : 0,
+    });
+    for (const peer of room.sockets.values()) {
+      if (peer === sock || peer === exceptSocket) continue;
+      if (peer.readyState === 1) {
+        try {
+          peer.send(presenceOff);
+        } catch {
+          /* ignore */
         }
       }
     }
