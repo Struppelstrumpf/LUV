@@ -140,7 +140,7 @@ object ProfileCatalog {
     const val MAX_DECOR_Z = 85
 
     val EDITABLE_TYPES = setOf(
-        ProfileElType.Avatar,
+        // Avatar zeigt nur den Begleiter — kein „Avatar gestalten“ mehr
         ProfileElType.Name,
         ProfileElType.Glass,
         ProfileElType.Bio

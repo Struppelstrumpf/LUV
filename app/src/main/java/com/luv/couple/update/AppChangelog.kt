@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.44",
+            listOf(
+                "Profil: „Avatar gestalten“ entfernt — Avatar zeigt nur den Begleiter",
+            )
+        ),
+        Entry(
             "1.9.43",
             listOf(
                 "Lobby-Kacheln: „Verbunden“ flackert nicht mehr bei kurzen Netz-Blips",

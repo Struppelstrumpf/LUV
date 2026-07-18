@@ -1787,7 +1787,6 @@ private fun ProfileEditSheet(
         ) {
             Text(
                 when (el.type) {
-                    ProfileElType.Avatar -> "Avatar gestalten"
                     ProfileElType.Name -> "Name gestalten"
                     ProfileElType.Glass -> "Münzglas gestalten"
                     ProfileElType.Bio -> "Bio auf der Leinwand"
@@ -1799,31 +1798,6 @@ private fun ProfileEditSheet(
                 fontSize = 20.sp
             )
             Spacer(modifier = Modifier.height(12.dp))
-
-            if (el.type == ProfileElType.Avatar) {
-                Text("Gesicht (optional)", color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ProfileCatalog.AVATAR_FACES.forEach { face ->
-                        val on = (draft.emoji ?: "") == face
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(if (on) AccentRose.copy(0.3f) else BgSoft)
-                                .clickable {
-                                    draft = draft.copy(emoji = face.ifBlank { null })
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(if (face.isBlank()) nickname.take(1).uppercase() else face, fontSize = 18.sp, color = TextPrimary)
-                        }
-                    }
-                }
-            }
 
             if (el.type == ProfileElType.Text || el.type == ProfileElType.Bio) {
                 BasicTextField(
@@ -1843,7 +1817,11 @@ private fun ProfileEditSheet(
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
-            if (el.type != ProfileElType.Avatar) {
+            if (el.type == ProfileElType.Name ||
+                el.type == ProfileElType.Glass ||
+                el.type == ProfileElType.Bio ||
+                el.type == ProfileElType.Text
+            ) {
                 Text("Schrift", color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
