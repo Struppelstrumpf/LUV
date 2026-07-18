@@ -6,7 +6,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,7 +25,9 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -61,6 +62,7 @@ import kotlin.math.min
 private val SheetBg = Color(0xFF121824)
 private val CardBg = Color(0xFF1C2433)
 private val Accent = Color(0xFF2EE6A8)
+private val Danger = Color(0xFFFF6B7A)
 
 @Composable
 fun TemplatesBrowserSheet(
@@ -72,6 +74,7 @@ fun TemplatesBrowserSheet(
     onDelete: (DrawTemplate) -> Unit,
     onDismiss: () -> Unit
 ) {
+    var pendingDelete by remember { mutableStateOf<DrawTemplate?>(null) }
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -94,13 +97,22 @@ fun TemplatesBrowserSheet(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "Vorlagen",
-                    color = TextPrimary,
-                    fontFamily = DisplayFont,
-                    fontSize = 26.sp,
-                    modifier = Modifier.weight(1f)
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Vorlagen",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 26.sp
+                    )
+                    if (templates.isNotEmpty()) {
+                        Text(
+                            "Tippen = platzieren · Papierkorb = löschen",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
                 Box(
                     modifier = Modifier
                         .size(42.dp)
@@ -166,12 +178,48 @@ fun TemplatesBrowserSheet(
                         TemplateThumb(
                             template = tpl,
                             onClick = { onSelect(tpl) },
-                            onLongClick = { onDelete(tpl) }
+                            onDelete = { pendingDelete = tpl }
                         )
                     }
                 }
             }
         }
+    }
+    pendingDelete?.let { tpl ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = {
+                Text(
+                    "Vorlage löschen?",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 20.sp
+                )
+            },
+            text = {
+                Text(
+                    "Die Vorlage wird geräteübergreifend entfernt.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingDelete = null
+                        onDelete(tpl)
+                    }
+                ) {
+                    Text("Löschen", color = Danger, fontFamily = DisplayFont)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
     }
 }
 
@@ -179,7 +227,7 @@ fun TemplatesBrowserSheet(
 private fun TemplateThumb(
     template: DrawTemplate,
     onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onDelete: () -> Unit
 ) {
     Box(
         modifier = Modifier
@@ -188,18 +236,26 @@ private fun TemplateThumb(
             .clip(RoundedCornerShape(18.dp))
             .background(CardBg)
             .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(18.dp))
-            .pointerInput(template.id) {
-                detectTapGestures(
-                    onTap = { onClick() },
-                    onLongPress = { onLongClick() }
-                )
-            }
-            .padding(8.dp)
     ) {
         TemplatePreviewCanvas(
             parts = template.strokes,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(onClick = onClick)
+                .padding(8.dp)
         )
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(6.dp)
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(0.45f))
+                .clickable(onClick = onDelete),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("🗑", fontSize = 14.sp)
+        }
     }
 }
 
