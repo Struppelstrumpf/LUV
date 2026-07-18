@@ -49,20 +49,31 @@ fun UpdateUiState.requiresForcedUpdate(): Boolean = when (this) {
 }
 
 @Composable
-private fun ApplyDialogBackdropBlur(radiusPx: Int = 48) {
+private fun ApplyDialogBackdropBlur(radiusPx: Int = 72) {
     val view = LocalView.current
     DisposableEffect(radiusPx) {
         val window = (view.parent as? DialogWindowProvider)?.window
         if (window != null) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            window.setDimAmount(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) 0.28f else 0.62f)
+            // Kein schwarzes Dim — weißer Frost liegt im Compose-Scrim
+            window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            window.setDimAmount(0f)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
                 window.setBackgroundBlurRadius(radiusPx)
+                runCatching {
+                    window.attributes = window.attributes.apply {
+                        blurBehindRadius = radiusPx
+                    }
+                }
             }
         }
         onDispose {
             if (window != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 runCatching { window.setBackgroundBlurRadius(0) }
+                runCatching {
+                    window.attributes = window.attributes.apply { blurBehindRadius = 0 }
+                }
+                window.clearFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
             }
         }
     }
@@ -97,14 +108,13 @@ fun ForcedUpdateDialog(
         )
     ) {
         ApplyDialogBackdropBlur()
+        // Weißer Frost: Hintergrund verschwimmt / ist kaum noch lesbar
+        val frostAlpha =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) 0.78f else 0.90f
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Color.Black.copy(
-                        alpha = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) 0.22f else 0.55f
-                    )
-                ),
+                .background(Color.White.copy(alpha = frostAlpha)),
             contentAlignment = Alignment.Center
         ) {
             Column(

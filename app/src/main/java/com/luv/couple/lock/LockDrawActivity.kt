@@ -1732,11 +1732,24 @@ class LockDrawActivity : ComponentActivity() {
                     .create()
                 dialog.setCanceledOnTouchOutside(false)
                 dialog.setOnShowListener {
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                        dialog.window?.setBackgroundBlurRadius(48)
-                        dialog.window?.setDimAmount(0.28f)
-                    } else {
-                        dialog.window?.setDimAmount(0.62f)
+                    dialog.window?.let { win ->
+                        // Weißer Frost statt schwarzem Dim
+                        win.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                        win.setDimAmount(0f)
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                            win.addFlags(android.view.WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+                            win.setBackgroundBlurRadius(72)
+                            runCatching {
+                                win.attributes = win.attributes.apply { blurBehindRadius = 72 }
+                            }
+                        }
+                        win.decorView.setBackgroundColor(
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                                0xC7FFFFFF.toInt()
+                            } else {
+                                0xE6FFFFFF.toInt()
+                            }
+                        )
                     }
                     dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                         if (AppUpdater.state.value is UpdateUiState.Downloading) return@setOnClickListener
