@@ -55,6 +55,7 @@ import kotlin.math.roundToInt
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenQuietHours: () -> Unit,
+    onOpenHelp: () -> Unit,
     onDeleteAccount: () -> Unit
 ) {
     val accent = PeerPalette.menuAccent()
@@ -91,6 +92,7 @@ fun SettingsScreen(
             )
 
             MenuButton("Ruhezeiten", BgSoft, onOpenQuietHours, bordered = true)
+            MenuButton("Hilfe", BgSoft, onOpenHelp, bordered = true)
 
             SettingsToggleRow(
                 title = if (partnerNotify) "Glocke an" else "Glocke aus",

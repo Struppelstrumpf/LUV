@@ -121,6 +121,14 @@ data class PeerReportInfo(
     val reportedAt: Long
 )
 
+data class HelpMessageInfo(
+    val id: String,
+    val message: String,
+    val nickname: String,
+    val userId: String?,
+    val createdAt: Long
+)
+
 data class StaffUserCard(
     val userId: String,
     val nickname: String,
@@ -146,6 +154,7 @@ data class StaffOverview(
     val rooms: Int,
     val openPublicReports: Int,
     val openPeerReports: Int,
+    val openHelpMessages: Int = 0,
     val moderators: Int,
     val vouchers: Int,
     val permissionGroups: List<StaffPermGroup>
@@ -756,6 +765,34 @@ object LuvApiClient {
         json.optBoolean("banned", false)
     }
 
+    suspend fun submitHelpMessage(message: String) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("message", message.trim().take(800)).toString()
+        authedPost("/v1/help-messages", body)
+    }
+
+    suspend fun listHelpMessages(): List<HelpMessageInfo> = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/admin/help-messages")
+        val arr = json.optJSONArray("messages") ?: return@withContext emptyList()
+        buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                add(
+                    HelpMessageInfo(
+                        id = o.getString("id"),
+                        message = o.optString("message"),
+                        nickname = o.optString("nickname", "Jemand"),
+                        userId = o.optString("userId").takeIf { it.isNotBlank() && it != "null" },
+                        createdAt = o.optLong("createdAt")
+                    )
+                )
+            }
+        }
+    }
+
+    suspend fun deleteHelpMessage(messageId: String) = withContext(Dispatchers.IO) {
+        authedPost("/v1/admin/help-messages/${messageId.encodeURL()}/delete", "{}")
+    }
+
     private fun parseStaffUserCard(o: JSONObject?): StaffUserCard? {
         if (o == null) return null
         val id = o.optString("userId").ifBlank { o.optString("id") }
@@ -817,6 +854,7 @@ object LuvApiClient {
             rooms = json.optInt("rooms", 0),
             openPublicReports = json.optInt("openPublicReports", 0),
             openPeerReports = json.optInt("openPeerReports", 0),
+            openHelpMessages = json.optInt("openHelpMessages", 0),
             moderators = json.optInt("moderators", 0),
             vouchers = json.optInt("vouchers", 0),
             permissionGroups = parsePermGroups(json.optJSONArray("permissionGroups"))

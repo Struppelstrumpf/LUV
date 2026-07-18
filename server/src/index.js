@@ -1738,6 +1738,25 @@ function peerReports() {
   return db.peerReports;
 }
 
+function helpMessages() {
+  const db = getDb();
+  if (!db.helpMessages || typeof db.helpMessages !== "object") {
+    db.helpMessages = {};
+  }
+  return db.helpMessages;
+}
+
+function helpMessageView(msg) {
+  return {
+    id: msg.id,
+    message: msg.message || "",
+    nickname: msg.nickname || "Jemand",
+    userId: msg.userId || null,
+    createdAt: msg.createdAt || 0,
+    status: msg.status || "open",
+  };
+}
+
 const PEER_REPORT_DIR = path.join(DATA_DIR, "peer-reports");
 
 function ensurePeerReportDir() {
@@ -4406,6 +4425,9 @@ app.get("/v1/admin/overview", (req, res) => {
   const openPeer = Object.values(peerReports()).filter(
     (r) => (r.status || "open") === "open"
   ).length;
+  const openHelp = Object.values(helpMessages()).filter(
+    (r) => (r.status || "open") === "open"
+  ).length;
   const mods = users.filter((u) => {
     ensureStaffFields(u);
     return u.role === "mod";
@@ -4416,6 +4438,7 @@ app.get("/v1/admin/overview", (req, res) => {
     rooms: rooms.size,
     openPublicReports: openPublic,
     openPeerReports: openPeer,
+    openHelpMessages: openHelp,
     moderators: mods,
     vouchers: Object.keys(db.vouchers || {}).length,
     me: publicUser(ctx.user),
@@ -5779,6 +5802,80 @@ app.post("/v1/admin/peer-reports/:id/delete", (req, res) => {
   report.resolvedBy = ctx.user.id;
   scheduleSave();
   return res.json({ ok: true, report: peerReportView(report) });
+});
+
+/** Hilfe-Anfragen aus Einstellungen → Admin/Mod unter Meldungen */
+app.post("/v1/help-messages", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const message = String(req.body?.message || "")
+    .trim()
+    .replace(/\r\n/g, "\n")
+    .slice(0, 800);
+  if (message.length < 5) {
+    return res.status(400).json({
+      error: "empty",
+      message: "Bitte schreib mindestens ein paar Worte.",
+    });
+  }
+  const openMine = Object.values(helpMessages()).filter(
+    (m) =>
+      (m.status || "open") === "open" &&
+      m.userId === ctx.user.id
+  );
+  if (openMine.length >= 5) {
+    return res.status(429).json({
+      error: "too_many",
+      message: "Du hast schon offene Hilfe-Nachrichten. Bitte warte kurz.",
+    });
+  }
+  const newest = openMine.sort(
+    (a, b) => Number(b.createdAt) - Number(a.createdAt)
+  )[0];
+  if (newest && Date.now() - Number(newest.createdAt || 0) < 60_000) {
+    return res.status(429).json({
+      error: "cooldown",
+      message: "Gleich nochmal — warte eine Minute.",
+    });
+  }
+  const entry = {
+    id: newId("help"),
+    message,
+    userId: ctx.user.id,
+    nickname: ctx.user.nickname || "Jemand",
+    createdAt: Date.now(),
+    status: "open",
+  };
+  helpMessages()[entry.id] = entry;
+  scheduleSave();
+  console.log(
+    `help message ${entry.id} by=${entry.nickname} len=${message.length}`
+  );
+  return res.status(201).json({ ok: true, message: helpMessageView(entry) });
+});
+
+app.get("/v1/admin/help-messages", (req, res) => {
+  const ctx = requireStaff(req, res, "reports.view");
+  if (!ctx) return;
+  const list = Object.values(helpMessages())
+    .filter((m) => (m.status || "open") === "open")
+    .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))
+    .slice(0, 100)
+    .map(helpMessageView);
+  return res.json({ messages: list });
+});
+
+app.post("/v1/admin/help-messages/:id/delete", (req, res) => {
+  const ctx = requireStaff(req, res, "reports.act");
+  if (!ctx) return;
+  const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  const entry = helpMessages()[id];
+  if (!entry) return res.status(404).json({ error: "not_found" });
+  entry.status = "deleted";
+  entry.resolvedAt = Date.now();
+  entry.resolvedBy = ctx.user.id;
+  scheduleSave();
+  return res.json({ ok: true, message: helpMessageView(entry) });
 });
 
 app.delete("/v1/rooms/:code", (req, res) => {

@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.61",
+            listOf(
+                "Einstellungen: Hilfe-Nachricht an das Team senden",
+                "Admin/Mod: Hilfe-Anfragen unter Meldungen anzeigen und löschen",
+            )
+        ),
+        Entry(
             "1.9.60",
             listOf(
                 "Itemshop & Inventar: klare Tabs Sticker, Hintergründe, Begleiter, Emojis",

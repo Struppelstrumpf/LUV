@@ -15,6 +15,9 @@ const DEFAULT = {
   rooms: {},
   canvasMemories: {},
   publicCanvases: {},
+  publicReports: {},
+  peerReports: {},
+  helpMessages: {},
   liveNotice: null,
   marketListings: {},
   marketMeta: { priceHistory: {} },
@@ -47,6 +50,16 @@ function load() {
       publicCanvases:
         raw.publicCanvases && typeof raw.publicCanvases === "object"
           ? raw.publicCanvases
+          : {},
+      publicReports:
+        raw.publicReports && typeof raw.publicReports === "object"
+          ? raw.publicReports
+          : {},
+      peerReports:
+        raw.peerReports && typeof raw.peerReports === "object" ? raw.peerReports : {},
+      helpMessages:
+        raw.helpMessages && typeof raw.helpMessages === "object"
+          ? raw.helpMessages
           : {},
       liveNotice:
         raw.liveNotice && typeof raw.liveNotice === "object" ? raw.liveNotice : null,

@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.data.AccountInfo
+import com.luv.couple.net.HelpMessageInfo
 import com.luv.couple.net.LiveNoticeBus
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.PeerReportInfo
@@ -64,6 +65,9 @@ import com.luv.couple.net.StaffLobbyCard
 import com.luv.couple.net.StaffPermGroup
 import com.luv.couple.net.StaffUserCard
 import com.luv.couple.net.VoucherInfo
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -118,6 +122,7 @@ fun AdminHubScreen(
     var overviewRooms by remember { mutableIntStateOf(0) }
     var overviewPublic by remember { mutableIntStateOf(0) }
     var overviewPeer by remember { mutableIntStateOf(0) }
+    var overviewHelp by remember { mutableIntStateOf(0) }
     var overviewMods by remember { mutableIntStateOf(0) }
     var overviewVouchers by remember { mutableIntStateOf(0) }
     var permGroups by remember { mutableStateOf<List<StaffPermGroup>>(emptyList()) }
@@ -128,6 +133,7 @@ fun AdminHubScreen(
 
     var publicReports by remember { mutableStateOf<List<PublicReportInfo>>(emptyList()) }
     var peerReports by remember { mutableStateOf<List<PeerReportInfo>>(emptyList()) }
+    var helpMessages by remember { mutableStateOf<List<HelpMessageInfo>>(emptyList()) }
 
     var vouchers by remember { mutableStateOf<List<VoucherInfo>>(emptyList()) }
     var code by remember { mutableStateOf("") }
@@ -168,6 +174,7 @@ fun AdminHubScreen(
                     overviewRooms = it.rooms
                     overviewPublic = it.openPublicReports
                     overviewPeer = it.openPeerReports
+                    overviewHelp = it.openHelpMessages
                     overviewMods = it.moderators
                     overviewVouchers = it.vouchers
                     if (it.permissionGroups.isNotEmpty()) permGroups = it.permissionGroups
@@ -190,6 +197,7 @@ fun AdminHubScreen(
             AdminTab.Reports -> if (can("reports.view")) {
                 publicReports = runCatching { LuvApiClient.listPublicReports() }.getOrDefault(emptyList())
                 peerReports = runCatching { LuvApiClient.listPeerReports() }.getOrDefault(emptyList())
+                helpMessages = runCatching { LuvApiClient.listHelpMessages() }.getOrDefault(emptyList())
             }
             AdminTab.Codes -> if (can("codes.view")) {
                 vouchers = runCatching { LuvApiClient.listVouchers() }.getOrDefault(emptyList())
@@ -281,6 +289,7 @@ fun AdminHubScreen(
                             "Lobbys live" to "$overviewRooms",
                             "Bild-Meldungen" to "$overviewPublic",
                             "Lobby-Meldungen" to "$overviewPeer",
+                            "Hilfe" to "$overviewHelp",
                             "Moderatoren" to "$overviewMods",
                             "Codes" to "$overviewVouchers"
                         )
@@ -374,6 +383,28 @@ fun AdminHubScreen(
                     }
 
                     AdminTab.Reports -> {
+                        Text("Hilfe-Anfragen", fontFamily = DisplayFont, color = TextPrimary, fontSize = 20.sp)
+                        if (helpMessages.isEmpty()) AdminEmpty("Keine offenen Hilfe-Nachrichten.")
+                        helpMessages.forEach { m ->
+                            HubHelpCard(
+                                nickname = m.nickname,
+                                message = m.message,
+                                createdAt = m.createdAt,
+                                canAct = can("reports.act"),
+                                onDelete = {
+                                    scope.launch {
+                                        runCatching { LuvApiClient.deleteHelpMessage(m.id) }
+                                            .onSuccess {
+                                                helpMessages = helpMessages.filterNot { it.id == m.id }
+                                                toast("Gelöscht")
+                                                reloadOverview()
+                                            }
+                                            .onFailure { toast(it.message ?: "Fehler") }
+                                    }
+                                }
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text("Öffentliche Bilder", fontFamily = DisplayFont, color = TextPrimary, fontSize = 20.sp)
                         if (publicReports.isEmpty()) AdminEmpty("Keine offenen Bild-Meldungen.")
                         publicReports.forEach { r ->
@@ -1136,6 +1167,43 @@ private fun AdminDangerBtn(label: String, onClick: () -> Unit) {
             .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
         Text(label, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun HubHelpCard(
+    nickname: String,
+    message: String,
+    createdAt: Long,
+    canAct: Boolean,
+    onDelete: () -> Unit
+) {
+    val whenLabel = remember(createdAt) {
+        if (createdAt <= 0L) ""
+        else SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.GERMANY).format(Date(createdAt))
+    }
+    AdminCard {
+        Text(
+            nickname,
+            color = TextPrimary,
+            fontFamily = DisplayFont,
+            fontSize = 17.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (whenLabel.isNotBlank()) {
+            Text(whenLabel, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
+        }
+        Text(
+            message,
+            color = TextPrimary,
+            fontFamily = BodyFont,
+            fontSize = 14.sp,
+            lineHeight = 20.sp
+        )
+        if (canAct) {
+            AdminDangerBtn("Löschen", onDelete)
+        }
     }
 }
 

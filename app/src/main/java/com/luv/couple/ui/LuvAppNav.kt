@@ -59,6 +59,7 @@ import com.luv.couple.ui.screens.LiveNoticePopup
 import com.luv.couple.net.LiveNoticeBus
 import com.luv.couple.ui.screens.CreateLobbyScreen
 import com.luv.couple.ui.screens.ForcedUpdateDialog
+import com.luv.couple.ui.screens.HelpScreen
 import com.luv.couple.ui.screens.HostShareScreen
 import com.luv.couple.ui.screens.InviteLobbyDialog
 import com.luv.couple.ui.screens.JoinPreviewScreen
@@ -99,6 +100,7 @@ object Routes {
     fun peerProfile(userId: String) = "peer_profile/$userId"
     const val SETTINGS = "settings"
     const val QUIET_HOURS = "quiet_hours"
+    const val HELP = "help"
     const val RENAME = "rename/{lobbyId}"
     fun rename(lobbyId: String) = "rename/$lobbyId"
 }
@@ -1124,12 +1126,17 @@ fun LuvAppNav() {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 onOpenQuietHours = { navController.navigate(Routes.QUIET_HOURS) },
+                onOpenHelp = { navController.navigate(Routes.HELP) },
                 onDeleteAccount = { deleteAccountCompletely() }
             )
         }
 
         composable(Routes.QUIET_HOURS) {
             QuietHoursScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Routes.HELP) {
+            HelpScreen(onBack = { navController.popBackStack() })
         }
 
         composable(Routes.CREATE) {
