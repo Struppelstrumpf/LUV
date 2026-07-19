@@ -68,21 +68,64 @@
 
   const EMOJI_LIST = uniqueEmojis(ALL_EMOJIS);
 
-  /** Overlay entfernen ohne „Click-through“ auf den Wizard darunter. */
-  function dismissOverlay(layer) {
-    if (!layer) return;
+  function notifyStudioDismiss() {
     try {
-      layer.style.pointerEvents = "none";
+      document.dispatchEvent(new CustomEvent("luv-studio-dismiss"));
     } catch (_) {
       /* ignore */
     }
+  }
+
+  /**
+   * Overlay schließen ohne Ghost-Click auf Wizard (Abbrechen / Backdrop).
+   * Wichtig: NIEMALS pointer-events:none — sonst fällt der Click/Touch durch.
+   * Stattdessen unsichtbar lassen, Events weiter schlucken, dann entfernen.
+   */
+  function dismissOverlay(layer) {
+    if (!layer) return;
+    notifyStudioDismiss();
+    try {
+      layer.style.background = "transparent";
+      layer.querySelectorAll(".pet-paste-card").forEach((card) => {
+        card.style.visibility = "hidden";
+      });
+    } catch (_) {
+      /* ignore */
+    }
+    const absorb = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    [
+      "pointerdown",
+      "pointerup",
+      "mousedown",
+      "mouseup",
+      "click",
+      "touchstart",
+      "touchend",
+    ].forEach((t) => layer.addEventListener(t, absorb, true));
+    // ~300ms Ghost-Click auf Mobile abfangen
     setTimeout(() => {
       try {
         layer.remove();
       } catch (_) {
         /* ignore */
       }
-    }, 60);
+    }, 420);
+  }
+
+  /** Overlay schließen, Callback erst nach dem aktuellen Click-Zyklus. */
+  function completeOverlay(layer, doneFn) {
+    dismissOverlay(layer);
+    if (typeof doneFn !== "function") return;
+    setTimeout(() => {
+      try {
+        doneFn();
+      } catch (err) {
+        console.error(err);
+      }
+    }, 0);
   }
 
   function wireOverlayShield(layer) {
@@ -422,8 +465,8 @@
       e.stopPropagation();
       const dataUrl = exportPng();
       if (!dataUrl) return;
-      onDone(dataUrl, { keyHex, thresh });
-      close();
+      window.removeEventListener("paste", onPaste);
+      completeOverlay(layer, () => onDone(dataUrl, { keyHex, thresh }));
     };
   }
 
@@ -600,8 +643,8 @@
       if (!layers.length) return;
       // Frisch rendern, dann PNG — verhindert veraltetes Canvas
       const finish = () => {
-        onDone(canvas.toDataURL("image/png"));
-        close();
+        const dataUrl = canvas.toDataURL("image/png");
+        completeOverlay(layer, () => onDone(dataUrl));
       };
       Promise.resolve(paint()).then(finish).catch(finish);
     };
@@ -660,8 +703,7 @@
           const i = Number(btn.getAttribute("data-i"));
           const emoji = shown[i];
           if (!emoji) return;
-          onPick(emoji);
-          dismissOverlay(layer);
+          completeOverlay(layer, () => onPick(emoji));
         };
       });
     }
@@ -867,8 +909,8 @@
         e.stopPropagation();
         readControls();
         cancelAnimationFrame(raf);
-        onDone({ ...cfg, emojis: [...cfg.emojis] });
-        dismissOverlay(layer);
+        const payload = { ...cfg, emojis: [...cfg.emojis] };
+        completeOverlay(layer, () => onDone(payload));
       };
       t0 = performance.now();
       raf = requestAnimationFrame(drawPreview);

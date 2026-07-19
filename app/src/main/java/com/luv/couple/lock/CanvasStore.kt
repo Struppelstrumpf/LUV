@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.util.Log
 import com.luv.couple.data.PeerPalette
@@ -15,7 +16,9 @@ import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairMessage
 import com.luv.couple.net.PairProtocol
 import com.luv.couple.net.PairSessionState
+import com.luv.couple.ui.ItemImageCache
 import com.luv.couple.ui.clipItemId
+import com.luv.couple.ui.isImagePetId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -782,17 +785,29 @@ object CanvasStore {
             textSize = min(width, height) * 0.075f
             typeface = Typeface.DEFAULT
         }
+        val emojiBitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         val fm = emojiPaint.fontMetrics
         val baselinePad = (fm.bottom + fm.top) / 2f
         strokes.forEach { stroke ->
             if (stroke.isEmoji) {
                 val p = stroke.points.firstOrNull() ?: return@forEach
-                canvas.drawText(
-                    stroke.emoji.orEmpty(),
-                    p.x * width,
-                    p.y * height - baselinePad,
-                    emojiPaint
-                )
+                val emoji = stroke.emoji.orEmpty()
+                val cx = p.x * width
+                val cy = p.y * height
+                if (isImagePetId(emoji)) {
+                    val bmp = ItemImageCache.getOrLoadSync(emoji)
+                    if (bmp != null) {
+                        val size = min(width, height) * 0.09f
+                        canvas.drawBitmap(
+                            bmp,
+                            null,
+                            RectF(cx - size / 2f, cy - size / 2f, cx + size / 2f, cy + size / 2f),
+                            emojiBitmapPaint
+                        )
+                    }
+                } else {
+                    canvas.drawText(emoji, cx, cy - baselinePad, emojiPaint)
+                }
                 return@forEach
             }
             if (stroke.isTemplate) {

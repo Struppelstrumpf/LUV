@@ -2223,7 +2223,10 @@ private fun ElementContent(
                 softWrap = false
             )
         }
-        ProfileElType.Status -> Text(el.emoji ?: el.text ?: "😊", fontSize = sp(30f))
+        ProfileElType.Status -> com.luv.couple.ui.ItemGlyph(
+            id = el.emoji ?: el.text ?: "😊",
+            fontSize = sp(30f)
+        )
         ProfileElType.Bio -> {
             val body = el.text.orEmpty()
             if (body.isBlank()) {
@@ -2251,7 +2254,7 @@ private fun ElementContent(
                     .border((1f * f).dp, Color.White.copy(0.35f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text(el.emoji ?: "💕", fontSize = sp(32f))
+                com.luv.couple.ui.ItemGlyph(id = el.emoji ?: "💕", fontSize = sp(32f))
             }
         }
         ProfileElType.Glass -> {

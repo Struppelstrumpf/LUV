@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
@@ -18,6 +19,8 @@ import android.view.animation.DecelerateInterpolator
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Stroke
 import com.luv.couple.data.StrokePoint
+import com.luv.couple.ui.ItemImageCache
+import com.luv.couple.ui.isImagePetId
 import kotlin.math.hypot
 import kotlin.math.min
 
@@ -38,6 +41,7 @@ class DrawingView @JvmOverloads constructor(
         textAlign = Paint.Align.CENTER
         typeface = Typeface.DEFAULT
     }
+    private val emojiBitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
     private var downX = 0f
     private var downY = 0f
@@ -197,13 +201,27 @@ class DrawingView @JvmOverloads constructor(
             val alpha = ((alphas[stroke.id] ?: 1f) * 255).toInt().coerceIn(0, 255)
             if (stroke.isEmoji) {
                 val p = stroke.points.firstOrNull() ?: return@forEach
-                emojiPaint.alpha = alpha
-                canvas.drawText(
-                    stroke.emoji.orEmpty(),
-                    p.x * width,
-                    p.y * height - baselinePad,
-                    emojiPaint
-                )
+                val emoji = stroke.emoji.orEmpty()
+                val cx = p.x * width
+                val cy = p.y * height
+                if (isImagePetId(emoji)) {
+                    val bmp = ItemImageCache.get(emoji)
+                    if (bmp != null) {
+                        val size = min(width, height) * 0.09f
+                        emojiBitmapPaint.alpha = alpha
+                        canvas.drawBitmap(
+                            bmp,
+                            null,
+                            RectF(cx - size / 2f, cy - size / 2f, cx + size / 2f, cy + size / 2f),
+                            emojiBitmapPaint
+                        )
+                    } else {
+                        ItemImageCache.preload(emoji) { invalidate() }
+                    }
+                } else {
+                    emojiPaint.alpha = alpha
+                    canvas.drawText(emoji, cx, cy - baselinePad, emojiPaint)
+                }
                 return@forEach
             }
             if (stroke.isTemplate) {

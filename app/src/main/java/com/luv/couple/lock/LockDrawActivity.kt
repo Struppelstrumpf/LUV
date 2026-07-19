@@ -54,6 +54,7 @@ import com.luv.couple.net.PublicVoteEvent
 import com.luv.couple.notify.LiveProximity
 import com.luv.couple.shop.ShopCatalog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.luv.couple.ui.ItemImageCache
 import com.luv.couple.ui.isImagePetId
 import com.luv.couple.ui.petImageUrl
 import com.luv.couple.ui.screens.BrushStudioSheet
@@ -621,31 +622,65 @@ class LockDrawActivity : ComponentActivity() {
             reactionEmojiList.removeAllViews()
             val dp = resources.displayMetrics.density
             bar.forEachIndexed { index, emoji ->
-                val tv = TextView(this@LockDrawActivity).apply {
-                    text = emoji
-                    gravity = Gravity.CENTER
-                    textSize = 22f
-                    layoutParams = LinearLayout.LayoutParams(
-                        (44 * dp).toInt(),
-                        (40 * dp).toInt()
-                    ).apply {
-                        topMargin = if (index == 0) (4 * dp).toInt() else 0
-                        bottomMargin = (3 * dp).toInt()
-                    }
-                    setBackgroundResource(R.drawable.lock_emoji_btn)
-                }
-                attachEmojiGesture(tv, emoji)
-                reactionEmojiList.addView(tv)
+                val cell = createReactionBarCell(emoji, index, dp)
+                attachEmojiGesture(cell, emoji)
+                reactionEmojiList.addView(cell)
             }
         }
     }
 
-    private fun attachEmojiGesture(view: TextView, emoji: String) {
+    private fun createReactionBarCell(emoji: String, index: Int, dp: Float): View {
+        val lp = LinearLayout.LayoutParams(
+            (44 * dp).toInt(),
+            (40 * dp).toInt()
+        ).apply {
+            topMargin = if (index == 0) (4 * dp).toInt() else 0
+            bottomMargin = (3 * dp).toInt()
+        }
+        return if (isImagePetId(emoji)) {
+            FrameLayout(this).apply {
+                layoutParams = lp
+                setBackgroundResource(R.drawable.lock_emoji_btn)
+                val pad = (6 * dp).toInt()
+                val img = ImageView(this@LockDrawActivity).apply {
+                    layoutParams = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    ).apply { setMargins(pad, pad, pad, pad) }
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    adjustViewBounds = true
+                }
+                addView(img)
+                bindItemImage(img, emoji)
+            }
+        } else {
+            TextView(this).apply {
+                text = emoji
+                gravity = Gravity.CENTER
+                textSize = 22f
+                layoutParams = lp
+                setBackgroundResource(R.drawable.lock_emoji_btn)
+            }
+        }
+    }
+
+    private fun bindItemImage(img: ImageView, itemId: String) {
+        val cached = ItemImageCache.get(itemId)
+        if (cached != null) {
+            img.setImageBitmap(cached)
+            return
+        }
+        ItemImageCache.preload(itemId) {
+            ItemImageCache.get(itemId)?.let { img.setImageBitmap(it) }
+        }
+    }
+
+    private fun attachEmojiGesture(view: View, emoji: String) {
         val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
         var downRawX = 0f
         var downRawY = 0f
         var dragging = false
-        var ghost: TextView? = null
+        var ghost: View? = null
         view.setOnTouchListener { v, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -698,24 +733,34 @@ class LockDrawActivity : ComponentActivity() {
         }
     }
 
-    private fun createBarDragGhost(emoji: String, rawX: Float, rawY: Float): TextView? {
+    private fun createBarDragGhost(emoji: String, rawX: Float, rawY: Float): View? {
         val root = rootView ?: return null
         val size = stickerSizePx()
-        val ghost = TextView(this).apply {
-            text = emoji
-            gravity = Gravity.CENTER
-            textSize = 36f
-            elevation = 48f
-            alpha = 0.95f
-            setShadowLayer(12f, 0f, 4f, 0x66000000)
-            layoutParams = FrameLayout.LayoutParams(size, size)
+        val ghost: View = if (isImagePetId(emoji)) {
+            ImageView(this).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                elevation = 48f
+                alpha = 0.95f
+                layoutParams = FrameLayout.LayoutParams(size, size)
+                bindItemImage(this, emoji)
+            }
+        } else {
+            TextView(this).apply {
+                text = emoji
+                gravity = Gravity.CENTER
+                textSize = 36f
+                elevation = 48f
+                alpha = 0.95f
+                setShadowLayer(12f, 0f, 4f, 0x66000000)
+                layoutParams = FrameLayout.LayoutParams(size, size)
+            }
         }
         root.addView(ghost)
         moveBarDragGhost(ghost, rawX, rawY)
         return ghost
     }
 
-    private fun moveBarDragGhost(ghost: TextView?, rawX: Float, rawY: Float) {
+    private fun moveBarDragGhost(ghost: View?, rawX: Float, rawY: Float) {
         val root = rootView ?: return
         val g = ghost ?: return
         val loc = IntArray(2)
@@ -725,7 +770,7 @@ class LockDrawActivity : ComponentActivity() {
         g.y = rawY - loc[1] - size / 2f
     }
 
-    private fun removeBarDragGhost(ghost: TextView?) {
+    private fun removeBarDragGhost(ghost: View?) {
         val g = ghost ?: return
         (g.parent as? ViewGroup)?.removeView(g)
     }
@@ -1224,18 +1269,29 @@ class LockDrawActivity : ComponentActivity() {
         reactionBurst.alpha = 0f
 
         val dp = resources.displayMetrics.density
-        val floater = TextView(this).apply {
-            text = emoji
-            textSize = 64f
-            elevation = 24f
-            alpha = 0f
-            // Leichter Schatten, damit es auf bunten Leinwänden sitzt
-            setShadowLayer(12f * dp, 0f, 4f * dp, 0x66000000)
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
-            )
+        val floaterSize = (96 * dp).toInt()
+        val floater: View = if (isImagePetId(emoji)) {
+            ImageView(this).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                elevation = 24f
+                alpha = 0f
+                layoutParams = FrameLayout.LayoutParams(floaterSize, floaterSize, Gravity.CENTER)
+                bindItemImage(this, emoji)
+            }
+        } else {
+            TextView(this).apply {
+                text = emoji
+                textSize = 64f
+                elevation = 24f
+                alpha = 0f
+                // Leichter Schatten, damit es auf bunten Leinwänden sitzt
+                setShadowLayer(12f * dp, 0f, 4f * dp, 0x66000000)
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER
+                )
+            }
         }
         root.addView(floater)
 

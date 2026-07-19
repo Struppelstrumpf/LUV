@@ -436,7 +436,7 @@ private fun MarketTilePreviewCard(
                 contentScale = ContentScale.Crop
             )
         } else {
-            Text(preview.emoji, fontSize = 28.sp)
+            ItemGlyph(id = preview.emoji, fontSize = 28.sp)
         }
         Spacer(modifier = Modifier.height(6.dp))
         Text(
@@ -1585,7 +1585,7 @@ private fun LootboxTab(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(reward.emoji.ifBlank { "✨" }, fontSize = 56.sp)
+                    ItemGlyph(id = reward.emoji.ifBlank { "✨" }, fontSize = 56.sp)
                     Text(
                         "${kindLabel(reward.kind)} · ${resolveLabel(reward)}",
                         color = TextPrimary,
@@ -1963,7 +1963,7 @@ fun InventoryScreen(
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(emoji, fontSize = 36.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                    ItemGlyph(id = emoji, fontSize = 36.sp)
                     Text(
                         "Dieses Emoji in deine Reaktionsleiste (Leinwand oben rechts) aufnehmen?",
                         fontFamily = BodyFont,
@@ -1998,7 +1998,7 @@ fun InventoryScreen(
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(emoji, fontSize = 36.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                    ItemGlyph(id = emoji, fontSize = 36.sp)
                     Text(
                         "Die Reaktionsleiste hat schon 8 Emojis. Entweder eines auf den Papierkorb ziehen oder ein bestehendes ersetzen.",
                         fontFamily = BodyFont,
@@ -2065,7 +2065,7 @@ fun InventoryScreen(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(e, fontSize = 22.sp)
+                                ItemGlyph(id = e, fontSize = 22.sp)
                             }
                         }
                     }
@@ -2355,7 +2355,7 @@ fun EmojiBarEditorDialog(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(emoji, fontSize = emojiFont)
+                                ItemGlyph(id = emoji, fontSize = emojiFont)
                             }
                         }
                     }
@@ -2483,7 +2483,7 @@ fun EmojiBarEditorDialog(
                                 },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(emoji, fontSize = 26.sp)
+                            ItemGlyph(id = emoji, fontSize = 26.sp)
                         }
                     }
                 }

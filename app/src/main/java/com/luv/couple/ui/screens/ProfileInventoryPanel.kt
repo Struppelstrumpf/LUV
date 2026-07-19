@@ -331,8 +331,8 @@ fun ProfileInventoryPanel(
                                             .clickable { onEmoji(emoji) }
                                             .padding(s(6.dp))
                                     ) {
-                                        Text(
-                                            emoji,
+                                        com.luv.couple.ui.ItemGlyph(
+                                            id = emoji,
                                             fontSize = ts(26.sp),
                                             modifier = Modifier.align(Alignment.Center)
                                         )
@@ -398,7 +398,10 @@ fun ProfileInventoryPanel(
                                             .padding(vertical = s(4.dp), horizontal = s(4.dp)),
                                         horizontalAlignment = Alignment.CenterHorizontally
                                     ) {
-                                        Text(theme.emoji, fontSize = ts(16.sp))
+                                        com.luv.couple.ui.ItemGlyph(
+                                            id = theme.emoji,
+                                            fontSize = ts(16.sp)
+                                        )
                                         Text(
                                             theme.label,
                                             color = Color.White,

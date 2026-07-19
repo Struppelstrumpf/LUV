@@ -47,6 +47,7 @@ import androidx.compose.ui.window.Dialog
 import com.luv.couple.net.AchievementsBadge
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.profile.ProfileThemeBackdrop
+import com.luv.couple.ui.ItemGlyph
 import com.luv.couple.ui.rememberUiScale
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
@@ -650,7 +651,7 @@ private fun AchievementRow(
                             .padding(horizontal = s(8.dp), vertical = s(4.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(reward.emoji, fontSize = ts(18.sp))
+                        ItemGlyph(id = reward.emoji, fontSize = ts(18.sp))
                     }
                 } else {
                     Text(
@@ -758,7 +759,7 @@ private fun AchievementItemPreviewDialog(
                         .border(1.dp, AccentRose.copy(0.35f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(item.emoji, fontSize = 44.sp)
+                    ItemGlyph(id = item.emoji, fontSize = 44.sp)
                 }
             }
             Text(

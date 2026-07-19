@@ -136,10 +136,31 @@
         document.getElementById("themeStudioLayer")
     );
   }
-  modal.addEventListener("click", (e) => {
-    // Nicht schließen während Composer/Pipette/Picker offen (auch kein Click-through)
-    if (e.target === modal && !studioOverlayOpen()) closeModal();
+  /** Nach Composer-Übernehmen: Ghost-Clicks auf Abbrechen/Backdrop ignorieren */
+  let modalUiGuardUntil = 0;
+  document.addEventListener("luv-studio-dismiss", () => {
+    modalUiGuardUntil = Date.now() + 500;
   });
+  modal.addEventListener("click", (e) => {
+    // Nur Backdrop — nicht das ganze Modal blockieren (Name-Feld muss klickbar bleiben)
+    if (e.target !== modal) return;
+    if (Date.now() < modalUiGuardUntil) return;
+    if (!studioOverlayOpen()) closeModal();
+  });
+  // Ghost-Click trifft oft genau den Abbrechen-Button unter „Übernehmen“
+  modalCard.addEventListener(
+    "click",
+    (e) => {
+      if (Date.now() >= modalUiGuardUntil) return;
+      const t = e.target;
+      if (!t) return;
+      if (t.id === "cancelModal" || (t.closest && t.closest("#cancelModal"))) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    },
+    true
+  );
 
   async function googleCredential(idToken) {
     const json = await api("/auth/google", {
@@ -829,6 +850,20 @@
           });
         };
 
+      const focusWizardLabel = () => {
+        requestAnimationFrame(() => {
+          const label = document.querySelector('#wizForm [name="label"]');
+          if (label && typeof label.focus === "function") {
+            try {
+              label.focus();
+              if (typeof label.select === "function") label.select();
+            } catch (_) {
+              /* ignore */
+            }
+          }
+        });
+      };
+
       const openGlyph = $("openGlyph");
       if (openGlyph)
         openGlyph.onclick = () => {
@@ -839,6 +874,7 @@
               ensureCustomImageId();
               if (!draft.label || draft.label === "Herz") draft.label = "Eigenes Emoji";
               paint();
+              focusWizardLabel();
             },
             { title: draft.kind === "pets" ? "Begleiter gestalten" : "Emoji / Sticker gestalten" }
           );
@@ -853,6 +889,7 @@
             ensureCustomImageId();
             if (!draft.label || draft.label === "Herz") draft.label = "Bild-Item";
             paint();
+            focusWizardLabel();
           }, draft.kind === "pets" ? "Begleiter freistellen" : "Bild freistellen");
         };
 

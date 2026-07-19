@@ -1,6 +1,5 @@
 package com.luv.couple.ui
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
@@ -18,9 +17,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.shop.LiveShopCatalog
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import okhttp3.Request
 
 fun isImagePetId(id: String): Boolean {
     // Nur echte Bild-Items — Emoji-Pets/Sticker niemals als Bild behandeln
@@ -85,28 +81,30 @@ fun CompanionGlyph(
     modifier: Modifier = Modifier
 ) {
     val id = petId.trim().ifBlank { "🐣" }
-    val url = remember(
-        id,
+    // Katalog-Keys: imageUrl kann nach Sync kommen → Reload anstoßen
+    val catalogEpoch = remember(
         LiveShopCatalog.remotePets,
         LiveShopCatalog.remoteStickers,
         LiveShopCatalog.remoteEmojis
-    ) { petImageUrl(id) }
-    var bitmap by remember(url) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    ) {
+        listOf(
+            LiveShopCatalog.remotePets?.size,
+            LiveShopCatalog.remoteStickers?.size,
+            LiveShopCatalog.remoteEmojis?.size
+        )
+    }
+    var bitmap by remember(id) { mutableStateOf(ItemImageCache.get(id)) }
 
-    LaunchedEffect(url) {
-        if (url.isNullOrBlank()) {
+    LaunchedEffect(id, catalogEpoch) {
+        if (!isImagePetId(id)) {
             bitmap = null
             return@LaunchedEffect
         }
-        bitmap = withContext(Dispatchers.IO) {
-            runCatching {
-                val req = Request.Builder().url(url).get().build()
-                LuvApiClient.httpClient().newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) return@runCatching null
-                    val bytes = resp.body?.bytes() ?: return@runCatching null
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                }
-            }.getOrNull()
+        bitmap = ItemImageCache.get(id)
+        if (bitmap == null) {
+            ItemImageCache.preload(id) {
+                bitmap = ItemImageCache.get(id)
+            }
         }
     }
 
