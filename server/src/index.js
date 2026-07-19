@@ -5881,7 +5881,8 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   return res.json({
     nickname: user.nickname || "Jemand",
     userId: user.id,
-    coins: user.coins || 0,
+    // Coins nur fürs eigene Profil — sonst Wealth-Scouting / Cheats
+    ...(isSelf ? { coins: user.coins || 0 } : {}),
     profile,
     petEmoji,
     friendStatus: isSelf ? "self" : friendRelation(ctx.user, uid),
@@ -6744,10 +6745,26 @@ app.post("/v1/economy/draw-session", (req, res) => {
 app.post("/v1/redeem", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
+  const ip = clientIp(req);
+  if (!rateLimit(`redeem_user:${ctx.user.id}`, 12, 60 * 60 * 1000)) {
+    return res.status(429).json({
+      error: "rate_limited",
+      message: "Zu viele Einlöseversuche. Bitte später erneut.",
+    });
+  }
+  if (!rateLimit(`redeem_ip:${ip || "x"}`, 40, 60 * 60 * 1000)) {
+    return res.status(429).json({
+      error: "rate_limited",
+      message: "Zu viele Einlöseversuche von diesem Netz.",
+    });
+  }
   const code = String(req.body?.code || "").trim();
   if (!code) return res.status(400).json({ error: "invalid_code" });
 
   const normalized = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (normalized.length < 4 || normalized.length > 32) {
+    return res.status(400).json({ error: "invalid_code" });
+  }
   const db = getDb();
   const voucher =
     db.vouchers[normalized] ||
@@ -7301,10 +7318,13 @@ app.post("/v1/admin/vouchers", (req, res) => {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 24);
-  if (custom.length > 0 && custom.length < 4) {
-    return res.status(400).json({ error: "code_too_short" });
+  if (custom.length > 0 && custom.length < 8) {
+    return res.status(400).json({
+      error: "code_too_short",
+      message: "Eigene Codes mindestens 8 Zeichen (gegen Ausprobieren).",
+    });
   }
-  const code = custom.length >= 4 ? custom : randomCode(10);
+  const code = custom.length >= 8 ? custom : randomCode(10);
   const db = getDb();
   if (db.vouchers[code]) return res.status(409).json({ error: "code_exists" });
   const voucher = {
@@ -7403,10 +7423,13 @@ app.post("/v1/shop/buy-emoji", (req, res) => {
     return res.status(400).json({ error: "unknown_item", message: "Dieses Emoji gibt es im Shop nicht." });
   }
   const check = shopCatalog.canBuy(getDb(), ctx.user, "emojis", emoji);
+  // Static-Fallback nur wenn Artikel noch nicht im Katalog — nie bei Disable/Sold-out
   if (!check.ok) {
-    // Fallback: noch nicht im dynamischen Katalog, aber in Static-Map
-    if (!EMOJI_SHOP_PRICES[emoji]) {
-      return res.status(400).json({ error: check.error, message: check.message });
+    if (check.error !== "unknown_item" || EMOJI_SHOP_PRICES[emoji] == null) {
+      return res.status(400).json({
+        error: check.error || "unknown_item",
+        message: check.message || "Dieses Emoji gibt es im Shop nicht.",
+      });
     }
   }
   const price = check.ok ? check.price : Number(EMOJI_SHOP_PRICES[emoji]) || 0;
@@ -7447,11 +7470,17 @@ app.post("/v1/shop/buy-theme", (req, res) => {
     return res.json({ ok: true, themeId, alreadyOwned: true, user: publicUser(ctx.user) });
   }
   const check = shopCatalog.canBuy(getDb(), ctx.user, "themes", themeId);
+  if (!check.ok) {
+    if (check.error !== "unknown_item" || THEME_SHOP_PRICES[themeId] == null) {
+      return res.status(400).json({
+        error: check.error || "unknown_item",
+        message: check.message || "Hintergrund unbekannt.",
+      });
+    }
+  }
   const price = check.ok
     ? check.price
-    : THEME_SHOP_PRICES[themeId] != null
-      ? Number(THEME_SHOP_PRICES[themeId]) || 0
-      : -1;
+    : Number(THEME_SHOP_PRICES[themeId]) || 0;
   if (price < 0) {
     return res.status(400).json({
       error: check.error || "unknown_item",
@@ -7480,11 +7509,17 @@ app.post("/v1/shop/buy-sticker", (req, res) => {
     return res.status(400).json({ error: "unknown_item", message: "Sticker unbekannt." });
   }
   const check = shopCatalog.canBuy(getDb(), ctx.user, "stickers", emoji);
+  if (!check.ok) {
+    if (check.error !== "unknown_item" || STICKER_SHOP_PRICES[emoji] == null) {
+      return res.status(400).json({
+        error: check.error || "unknown_item",
+        message: check.message || "Sticker unbekannt.",
+      });
+    }
+  }
   const price = check.ok
     ? check.price
-    : STICKER_SHOP_PRICES[emoji] != null
-      ? Number(STICKER_SHOP_PRICES[emoji]) || 0
-      : -1;
+    : Number(STICKER_SHOP_PRICES[emoji]) || 0;
   if (price < 1) {
     return res.status(400).json({
       error: check.error || "unknown_item",
@@ -7527,11 +7562,17 @@ app.post("/v1/shop/buy-pet", (req, res) => {
     return res.json({ ok: true, emoji, alreadyOwned: true, user: publicUser(ctx.user) });
   }
   const check = shopCatalog.canBuy(getDb(), ctx.user, "pets", emoji);
+  if (!check.ok) {
+    if (check.error !== "unknown_item" || PET_SHOP_PRICES[emoji] == null) {
+      return res.status(400).json({
+        error: check.error || "unknown_item",
+        message: check.message || "Begleiter unbekannt.",
+      });
+    }
+  }
   const price = check.ok
     ? check.price
-    : PET_SHOP_PRICES[emoji] != null
-      ? Number(PET_SHOP_PRICES[emoji]) || 0
-      : -1;
+    : Number(PET_SHOP_PRICES[emoji]) || 0;
   if (price < 0) {
     return res.status(400).json({
       error: check.error || "unknown_item",
@@ -8555,20 +8596,63 @@ app.post("/v1/shop/play-purchase", async (req, res) => {
       user: publicUser(ctx.user),
     });
   }
+  // Atomare Reservierung vor await — verhindert Doppelgutschrift bei Parallel-Requests
+  if (existing?.status === "verifying") {
+    return res.status(409).json({
+      error: "purchase_busy",
+      message: "Kauf wird gerade verbucht. Bitte kurz warten.",
+    });
+  }
+  if (existing?.userId && existing.userId !== ctx.user.id) {
+    return res.status(409).json({
+      error: "purchase_owned",
+      message: "Dieser Kauf ist bereits einem anderen Konto zugeordnet.",
+    });
+  }
+  db.payments[paymentKey] = {
+    id: paymentKey,
+    provider: "google_play",
+    userId: ctx.user.id,
+    packId: pack.id,
+    coins: Number(pack.coins) || 0,
+    quantity: 1,
+    orderId: orderId || null,
+    purchaseToken,
+    ip: ip || "",
+    status: "verifying",
+    createdAt: existing?.createdAt || Date.now(),
+    credited: false,
+  };
 
   let playData;
   try {
     playData = await playBilling.getProductPurchase(productId, purchaseToken);
   } catch (e) {
     console.error("play-purchase verify failed", e.message || e);
+    if (db.payments[paymentKey]?.status === "verifying" && !db.payments[paymentKey].credited) {
+      delete db.payments[paymentKey];
+    }
     return res.status(502).json({
       error: "play_verify_failed",
       message: "Google-Play-Kauf konnte nicht geprüft werden.",
     });
   }
 
+  // Nach await erneut prüfen (zweiter Request könnte inzwischen credited haben)
+  if (db.payments[paymentKey]?.credited) {
+    return res.json({
+      ok: true,
+      alreadyCredited: true,
+      coinsGranted: 0,
+      user: publicUser(ctx.user),
+    });
+  }
+
   // 0 = purchased, 1 = canceled, 2 = pending
   if (Number(playData.purchaseState) !== 0) {
+    if (db.payments[paymentKey]?.status === "verifying") {
+      delete db.payments[paymentKey];
+    }
     return res.status(400).json({
       error: "not_purchased",
       message: "Kauf ist noch nicht abgeschlossen.",
@@ -8577,6 +8661,9 @@ app.post("/v1/shop/play-purchase", async (req, res) => {
 
   const creditCoins = Number(pack.coins) || 0;
   if (creditCoins <= 0) {
+    if (db.payments[paymentKey]?.status === "verifying") {
+      delete db.payments[paymentKey];
+    }
     return res.status(400).json({ error: "invalid_pack" });
   }
 
@@ -8591,7 +8678,7 @@ app.post("/v1/shop/play-purchase", async (req, res) => {
     purchaseToken,
     ip: ip || "",
     status: "paid",
-    createdAt: Date.now(),
+    createdAt: db.payments[paymentKey]?.createdAt || Date.now(),
     credited: true,
   };
   applyLedger(ctx.user.id, creditCoins, "play_purchase", paymentKey);
@@ -9077,7 +9164,18 @@ app.post("/v1/rooms/:code/slots", (req, res) => {
       message: "Zur Hochzeitsleinwand kann niemand eingeladen werden.",
     });
   }
-  // Jedes Mitglied darf Plätze freischalten (nicht nur der Host)
+  // Nur Host oder Mitglied — fremde Codes nicht manipulieren
+  const isMember =
+    room.hostUserId === ctx.user.id ||
+    (Array.isArray(room.memberUserIds) && room.memberUserIds.includes(ctx.user.id)) ||
+    Boolean(ctx.user.hostedRooms?.[code]) ||
+    Boolean(ctx.user.joinedRooms?.[code]);
+  if (!isMember) {
+    return res.status(403).json({
+      error: "not_member",
+      message: "Nur Lobby-Mitglieder können Plätze freischalten.",
+    });
+  }
   const capacity = roomCapacity(room);
   if (capacity >= MAX_PEERS) {
     return res.status(400).json({ error: "capacity_full", message: `Maximal ${MAX_PEERS} Personen.` });
@@ -11246,6 +11344,16 @@ wss.on("connection", (socket, req) => {
     }
 
     if (type === "undo") {
+      if (!user || !socket.luvUserId) {
+        socket.send(
+          JSON.stringify({
+            type: "economy_block",
+            error: "auth_required",
+            message: "Bitte einloggen zum Rückgängigmachen.",
+          })
+        );
+        return;
+      }
       removeRoomStroke(room, code, json.id);
     }
 
@@ -11316,6 +11424,16 @@ wss.on("connection", (socket, req) => {
     }
 
     if (type === "sticker_remove") {
+      if (!user || !socket.luvUserId) {
+        socket.send(
+          JSON.stringify({
+            type: "economy_block",
+            error: "auth_required",
+            message: "Bitte einloggen zum Entfernen.",
+          })
+        );
+        return;
+      }
       const sid = String(json.id || "").trim();
       if (!sid) return;
       removeRoomStroke(room, code, sid);

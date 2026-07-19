@@ -165,14 +165,12 @@ async function verifyIntegrityToken(integrityToken, expectedNonce) {
     }
     const device = payload.deviceIntegrity?.deviceRecognitionVerdict || [];
     const appLic = payload.appIntegrity?.appRecognitionVerdict || "";
-    // Mindestens Basic Device Integrity (echte Android-Umgebung)
+    // BASIC allein reicht nicht (Emulator/Mod-Umgebung oft nur BASIC)
     const deviceOk =
       device.includes("MEETS_DEVICE_INTEGRITY") ||
-      device.includes("MEETS_BASIC_INTEGRITY") ||
       device.includes("MEETS_STRONG_INTEGRITY");
-    // App aus Play oder UNEVALUATED (interne Tests) — PLAY_RECOGNIZED ideal
+    // PLAY_RECOGNIZED ideal; UNEVALUATED/UNRECOGNIZED nur für Internal-Test-Tracks
     const appOk =
-      !appLic ||
       appLic === "PLAY_RECOGNIZED" ||
       appLic === "UNRECOGNIZED_VERSION" ||
       appLic === "UNEVALUATED";
@@ -186,9 +184,8 @@ async function verifyIntegrityToken(integrityToken, expectedNonce) {
         verdicts: device,
       };
     }
-    if (appLic === "UNEVALUATED" || appLic === "UNRECOGNIZED_VERSION") {
-      // Internal testing / frische Builds: Device-Check reicht
-      console.warn("[play_integrity] soft app verdict", appLic);
+    if (!appLic || appLic === "UNEVALUATED" || appLic === "UNRECOGNIZED_VERSION") {
+      console.warn("[play_integrity] soft app verdict", appLic || "(empty)");
     } else if (!appOk) {
       return {
         ok: false,
