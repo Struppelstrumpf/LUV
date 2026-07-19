@@ -472,16 +472,27 @@ fun LuvAppNav() {
 
     fun connectGoogle() {
         if (googleBusy) return
+        val activity = context.findActivity()
+        if (activity == null) {
+            Toast.makeText(
+                context,
+                "Google-Anmeldung gerade nicht möglich — App kurz neu öffnen.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
         scope.launch {
             googleBusy = true
             busy = true
             joinError = null
             accountMessage = null
             try {
-                val google = GoogleAuth.signIn(context)
-                // Vor Neukonto: Play Integrity (echtes Gerät) — Login bestehender Konten ohne Token ok
+                val google = GoogleAuth.signIn(activity)
+                // Vor Neukonto: Play Integrity — mit Timeout, damit Login nicht hängt
                 val attestation = runCatching {
-                    com.luv.couple.ui.security.PlayIntegrityGate.attestForSignup(context)
+                    kotlinx.coroutines.withTimeoutOrNull(12_000L) {
+                        com.luv.couple.ui.security.PlayIntegrityGate.attestForSignup(activity)
+                    }
                 }.getOrNull()
                 val result = LuvApiClient.authGoogle(
                     idToken = google.idToken,
@@ -518,14 +529,11 @@ fun LuvAppNav() {
                     }
                 }
             } catch (e: Exception) {
-                if (e is LuvApiException && e.error == "cancelled") {
-                    // still
-                } else {
-                    val msg = e.message ?: "Google-Anmeldung fehlgeschlagen."
-                    joinError = msg
-                    accountMessage = msg
-                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                }
+                val msg = e.message ?: "Google-Anmeldung fehlgeschlagen."
+                // Auch „Abbruch“/Cancel sichtbar machen — oft ist es ein OAuth-Fehler
+                joinError = msg
+                accountMessage = msg
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
             } finally {
                 googleBusy = false
                 busy = false

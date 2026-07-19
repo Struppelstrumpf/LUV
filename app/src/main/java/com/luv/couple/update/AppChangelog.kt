@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.1.1",
+            listOf(
+                "Google-Anmeldung: Login nach Kontoauswahl wieder zuverlässig",
+            )
+        ),
+        Entry(
             "2.1",
             listOf(
                 "Inventar: freie Items klar getrennt von platzierten/ausgerüsteten",
