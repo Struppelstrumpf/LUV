@@ -43,8 +43,39 @@ object CanvasStore {
      * und Veröffentlichungen auf jedem Display gleich aussehen.
      */
     const val WIDTH_REF = 1000f
-    /** Anteil der kurzen Leinwandseite für Vorlagen-Stempel (ganze Zeichenfläche). */
+    /** Anteil der Leinwand für Vorlagen-Stempel. */
     const val TEMPLATE_PLACE_FRAC = 0.92f
+
+    /** Koordinatenraum einer Vorlage / platzierten Vorlage. */
+    fun templateCoordSpace(parts: List<com.luv.couple.data.TemplateStrokePart>, hint: String? = null): String {
+        val h = hint?.trim()?.lowercase()
+        if (h == "canvas" || h == "square") return h
+        val pts = parts.flatMap { it.points }
+        if (pts.size < 2) return "canvas"
+        val minX = pts.minOf { it.x }
+        val maxX = pts.maxOf { it.x }
+        val minY = pts.minOf { it.y }
+        val maxY = pts.maxOf { it.y }
+        val bw = (maxX - minX).coerceAtLeast(0.01f)
+        val bh = (maxY - minY).coerceAtLeast(0.01f)
+        // Hohes Bounding-Box → eher Hochformat-Vorlage; sonst Legacy-Quadrat
+        return if (bh / bw > 1.12f) "canvas" else "square"
+    }
+
+    fun templateStampSize(
+        viewW: Float,
+        viewH: Float,
+        scale: Float,
+        coordSpace: String
+    ): Pair<Float, Float> {
+        val s = scale.coerceIn(0.2f, 4f)
+        return if (coordSpace == "square") {
+            val side = min(viewW, viewH) * TEMPLATE_PLACE_FRAC * s
+            side to side
+        } else {
+            viewW * TEMPLATE_PLACE_FRAC * s to viewH * TEMPLATE_PLACE_FRAC * s
+        }
+    }
 
     private sealed class LocalUndo {
         data class Stroke(val id: String) : LocalUndo()
@@ -398,7 +429,8 @@ object CanvasStore {
         scale: Float,
         rotation: Float,
         lobbyId: String? = null,
-        id: String = UUID.randomUUID().toString()
+        id: String = UUID.randomUUID().toString(),
+        coordSpace: String? = null
     ): Stroke? {
         val lobby = resolveLobbyId(lobbyId) ?: return null
         if (parts.isEmpty()) return null
@@ -418,7 +450,8 @@ object CanvasStore {
             colorLocked = true,
             templateParts = parts,
             templateScale = scale.coerceIn(0.2f, 4f),
-            templateRotation = rotation
+            templateRotation = rotation,
+            templateCoordSpace = templateCoordSpace(parts, coordSpace)
         )
         val c = canvas(lobby)
         if (c.strokes.any { it.id == stroke.id }) return null
@@ -816,8 +849,13 @@ object CanvasStore {
                 val cx = center.x * width
                 val cy = center.y * height
                 val scale = stroke.templateScale.coerceIn(0.2f, 4f)
-                val stampW = width * TEMPLATE_PLACE_FRAC * scale
-                val stampH = height * TEMPLATE_PLACE_FRAC * scale
+                val space = templateCoordSpace(parts, stroke.templateCoordSpace)
+                val (stampW, stampH) = templateStampSize(
+                    width.toFloat(),
+                    height.toFloat(),
+                    scale,
+                    space
+                )
                 val strokeRef = min(stampW, stampH)
                 val rad = Math.toRadians(stroke.templateRotation.toDouble())
                 val cos = kotlin.math.cos(rad).toFloat()
@@ -918,6 +956,9 @@ object CanvasStore {
                     o.put("templateParts", PairProtocol.encodeTemplateParts(tpl))
                     o.put("templateScale", stroke.templateScale.toDouble())
                     o.put("templateRotation", stroke.templateRotation.toDouble())
+                    stroke.templateCoordSpace?.takeIf { it.isNotBlank() }?.let {
+                        o.put("templateCoordSpace", it)
+                    }
                 }
                 arr.put(o)
             }
@@ -977,7 +1018,9 @@ object CanvasStore {
                     colorLocked = o.optBoolean("colorLocked", false),
                     templateParts = templateParts,
                     templateScale = o.optDouble("templateScale", 1.0).toFloat().coerceIn(0.2f, 4f),
-                    templateRotation = o.optDouble("templateRotation", 0.0).toFloat()
+                    templateRotation = o.optDouble("templateRotation", 0.0).toFloat(),
+                    templateCoordSpace = o.optString("templateCoordSpace")
+                        .takeIf { it.isNotBlank() && it != "null" }
                 )
                 if (target.strokes.any { it.id == stroke.id }) continue
                 target.strokes.add(stroke)

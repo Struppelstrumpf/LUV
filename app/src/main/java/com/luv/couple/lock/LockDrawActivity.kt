@@ -556,6 +556,12 @@ class LockDrawActivity : ComponentActivity() {
                     is ClearVoteEvent.Result -> if (event.lobbyId == id) {
                         if (voteKind == "clear") hideClearVote()
                         flashStatus(if (event.approved) "Leinwand leer" else "Abgelehnt")
+                        if (event.approved) {
+                            // Auch ohne separate {type:clear}-Message lokal leeren
+                            CanvasStore.clear(localOnly = true, lobbyId = id)
+                            drawingView.clearCanvas()
+                            stopAllGamesLocal()
+                        }
                         if (voteKind == "clear") {
                             activeProposalId = null
                             hasVotedClear = false
@@ -897,7 +903,7 @@ class LockDrawActivity : ComponentActivity() {
                         onSelect = { tpl ->
                             root.removeView(host)
                             templatesHost = null
-                            beginTemplatePlacement(tpl.strokes)
+                            beginTemplatePlacement(tpl.strokes, tpl.coordSpace)
                         },
                         onEdit = { tpl ->
                             root.removeView(host)
@@ -987,13 +993,15 @@ class LockDrawActivity : ComponentActivity() {
         templateEditorHost = host
     }
 
-    private fun beginTemplatePlacement(parts: List<TemplateStrokePart>) {
+    private fun beginTemplatePlacement(parts: List<TemplateStrokePart>, coordSpace: String = "canvas") {
         if (!::stickerOverlay.isInitialized || !::drawingView.isInitialized) return
         dismissTemplatePlacement()
         if (parts.isEmpty()) return
+        val space = CanvasStore.templateCoordSpace(parts, coordSpace)
         // Overlay genau über der Leinwand (nicht Fullscreen) — sonst Y-Versatz beim Platzieren
         val view = TemplatePlacementView(this).apply {
             this.parts = parts
+            this.coordSpace = space
             centerXNorm = 0.5f
             centerYNorm = 0.5f
             scaleFactor = 1f
@@ -1006,7 +1014,8 @@ class LockDrawActivity : ComponentActivity() {
                     y = mapped.second,
                     scale = scale,
                     rotation = rot,
-                    lobbyId = lobbyId
+                    lobbyId = lobbyId,
+                    coordSpace = space
                 )
                 dismissTemplatePlacement()
                 flashStatus("Vorlage platziert")

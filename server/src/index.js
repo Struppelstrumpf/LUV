@@ -551,8 +551,13 @@ const STARTER_EMOJIS = ["👍", "❌", "❤️", "😂", "😱", "😡", "😭"]
 function isKnownInventoryItem(kind, itemId) {
   const id = String(itemId || "").trim();
   if (!id) return false;
-  // Admin-gelöscht → nirgends mehr kaufbar/gültig (auch nicht via Static-Fallback)
-  if (shopCatalog.isDeleted(getDb(), kind, id)) return false;
+  // Admin-gelöscht: nicht mehr im Shop — Besitz/Markt bleiben gültig
+  if (shopCatalog.isDeleted(getDb(), kind, id)) {
+    if (kind === "stickers" || kind === "emojis") return true;
+    if (kind === "pets") return petImages.hasImage(id) || id === DEFAULT_PET || id === marriage.MARRIAGE_PET;
+    if (kind === "themes") return true;
+    return false;
+  }
   if (ach.isAchievementRewardItem(kind, id)) return true;
   // Dynamischer Admin-Katalog (inkl. Bild-Begleiter)
   if (shopCatalog.isShopKnown(getDb(), kind, id)) return true;
@@ -5095,9 +5100,14 @@ function startWordsRoundTimer(room) {
   }, wait);
 }
 
-/** Leinwand leeren: immer max. 2 Ja nötig (allein reicht 1). */
+/** Leinwand leeren: max. 2 Ja — eindeutige User zählen (nicht Sockets). */
 function clearVotesNeeded(room) {
-  return Math.min(2, Math.max(1, room.sockets.size));
+  const users = new Set();
+  for (const sock of room.sockets?.values?.() || []) {
+    if (sock?.luvUserId) users.add(sock.luvUserId);
+  }
+  const n = users.size > 0 ? users.size : Math.max(1, room.sockets?.size || 1);
+  return Math.min(2, Math.max(1, n));
 }
 
 function clearProposalTotals(proposal) {
@@ -6337,7 +6347,117 @@ app.get("/v1/me/friends", (req, res) => {
     marriageCooldownSkipCost: marriage.skipWaitCost(myCd, marriage.DIVORCE_COOLDOWN_MS),
     marriageCooldownLabel: myCd > 0 ? marriage.formatRemaining(myCd) : null,
     pendingFriendshipCoins,
+    lobbyInvites: listLobbyInvitesFor(ctx.user),
   });
+});
+
+function ensureLobbyInvites(user) {
+  if (!Array.isArray(user.lobbyInvites)) user.lobbyInvites = [];
+  const now = Date.now();
+  user.lobbyInvites = user.lobbyInvites.filter(
+    (inv) => inv && inv.expiresAt > now && inv.id && inv.roomCode
+  );
+  return user.lobbyInvites;
+}
+
+function listLobbyInvitesFor(user) {
+  const db = getDb();
+  return ensureLobbyInvites(user).map((inv) => {
+    const from = db.users?.[inv.fromUserId];
+    return {
+      id: inv.id,
+      roomCode: inv.roomCode,
+      lobbyName: inv.lobbyName || "Lobby",
+      expiresAt: inv.expiresAt,
+      fromUserId: inv.fromUserId,
+      fromNickname: from?.nickname || "Jemand",
+      fromPetEmoji: from?.inventory?.equippedPet || DEFAULT_PET,
+    };
+  });
+}
+
+app.post("/v1/me/lobby-invites", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const friendUserId = String(req.body?.friendUserId || "").trim();
+  const roomCode = String(req.body?.roomCode || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "")
+    .trim();
+  if (!friendUserId || !roomCode) {
+    return res.status(400).json({ error: "bad_request", message: "Freund und Lobby nötig." });
+  }
+  const db = getDb();
+  const friend = db.users?.[friendUserId];
+  if (!friend) return res.status(404).json({ error: "not_found", message: "Freund nicht gefunden." });
+  const mine = ensureFriends(ctx.user);
+  if (!mine.list.includes(friendUserId)) {
+    return res.status(403).json({ error: "not_friends", message: "Nur Freunde einladen." });
+  }
+  const hosted = ensureHostedRooms(ctx.user);
+  const meta = hosted[roomCode];
+  if (!meta) {
+    return res.status(403).json({
+      error: "not_host",
+      message: "Nur eigene Lobbys können Freunde einladen.",
+    });
+  }
+  if (meta.isRandom || meta.isWedding) {
+    return res.status(400).json({
+      error: "lobby_type",
+      message: "In diese Lobby kann nicht eingeladen werden.",
+    });
+  }
+  const invites = ensureLobbyInvites(friend);
+  // Doppelte offene Einladung zur gleichen Lobby vermeiden
+  const existing = invites.find(
+    (i) => i.fromUserId === ctx.user.id && i.roomCode === roomCode
+  );
+  if (existing) {
+    return res.json({ ok: true, inviteId: existing.id, already: true });
+  }
+  const invite = {
+    id: newId("linv"),
+    fromUserId: ctx.user.id,
+    toUserId: friendUserId,
+    roomCode,
+    lobbyName: String(meta.name || "Lobby").slice(0, 40),
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+  };
+  invites.push(invite);
+  scheduleSave();
+  return res.json({ ok: true, inviteId: invite.id });
+});
+
+app.post("/v1/me/lobby-invites/accept", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const inviteId = String(req.body?.inviteId || "").trim();
+  const invites = ensureLobbyInvites(ctx.user);
+  const idx = invites.findIndex((i) => i.id === inviteId);
+  if (idx < 0) {
+    return res.status(404).json({ error: "not_found", message: "Einladung nicht mehr gültig." });
+  }
+  const inv = invites[idx];
+  invites.splice(idx, 1);
+  scheduleSave();
+  return res.json({
+    ok: true,
+    roomCode: inv.roomCode,
+    lobbyName: inv.lobbyName,
+  });
+});
+
+app.post("/v1/me/lobby-invites/decline", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const inviteId = String(req.body?.inviteId || "").trim();
+  const invites = ensureLobbyInvites(ctx.user);
+  const before = invites.length;
+  ctx.user.lobbyInvites = invites.filter((i) => i.id !== inviteId);
+  if (ctx.user.lobbyInvites.length !== before) scheduleSave();
+  return res.json({ ok: true });
 });
 
 app.post("/v1/users/:userId/friend-request", (req, res) => {
@@ -8040,6 +8160,7 @@ function publicDrawTemplate(t) {
     id: t.id,
     strokes: t.strokes,
     createdAt: t.createdAt || 0,
+    coordSpace: t.coordSpace === "square" ? "square" : "canvas",
   };
 }
 
@@ -8067,11 +8188,14 @@ app.post("/v1/me/templates", (req, res) => {
       message: `Maximal ${MAX_DRAW_TEMPLATES} Vorlagen.`,
     });
   }
+  const coordSpace =
+    String(req.body?.coordSpace || "").toLowerCase() === "square" ? "square" : "canvas";
   const entry = {
     id: `tpl_${crypto.randomBytes(8).toString("hex")}`,
     strokes,
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    coordSpace,
   };
   list.push(entry);
   trackAch(ctx.user, "templates_created", 1);
@@ -8091,6 +8215,10 @@ app.put("/v1/me/templates/:id", (req, res) => {
   const entry = list.find((t) => t && t.id === id);
   if (!entry) return res.status(404).json({ error: "not_found" });
   entry.strokes = strokes;
+  entry.coordSpace =
+    String(req.body?.coordSpace || entry.coordSpace || "").toLowerCase() === "square"
+      ? "square"
+      : "canvas";
   entry.updatedAt = Date.now();
   scheduleSave();
   return res.json({ ok: true, template: publicDrawTemplate(entry) });
@@ -8267,7 +8395,15 @@ function marketItemMeta(kind, itemId) {
     };
   }
   seedShopCatalogIfNeeded();
-  if (shopCatalog.isDeleted(getDb(), kind, id)) return null;
+  // Gelöscht aus Shop, aber Besitz darf weiterverkauft werden
+  if (shopCatalog.isDeleted(getDb(), kind, id)) {
+    return {
+      category: kind,
+      emoji: kind === "themes" ? "🖼️" : id,
+      label: friendlyMarketLabel(kind, id, id),
+      sellable: true,
+    };
+  }
   const cat = shopCatalog.getItem(getDb(), kind, id);
   if (cat) {
     const pub = shopCatalog.publicItem(cat, Date.now(), { admin: false });
@@ -8290,6 +8426,15 @@ function marketItemMeta(kind, itemId) {
   }
   if (kind === "emojis" && EMOJI_SHOP_PRICES[id] != null) {
     return { category: "emojis", emoji: id, label: id, sellable: true };
+  }
+  // Legacy-/Composer-Items ohne Katalogeintrag: trotzdem anbietbar
+  if (kind === "stickers" || kind === "emojis" || kind === "pets" || kind === "themes") {
+    return {
+      category: kind,
+      emoji: kind === "themes" ? "🖼️" : id,
+      label: friendlyMarketLabel(kind, id, id),
+      sellable: true,
+    };
   }
   return null;
 }

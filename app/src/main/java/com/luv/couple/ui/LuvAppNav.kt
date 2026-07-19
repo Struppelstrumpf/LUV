@@ -970,12 +970,24 @@ fun LuvAppNav() {
                 inviteLobby = null
             },
             onShareToFriend = { friend ->
-                val who = nickname?.takeIf { it.isNotBlank() }
-                    ?: lobby.hostNickname.takeIf { it.isNotBlank() }
-                    ?: "Jemand"
-                shareText(
-                    "Hey ${friend.nickname}, $who lädt dich zu „${lobby.name}“ ein\n${lobby.joinUrl}"
-                )
+                scope.launch {
+                    runCatching {
+                        LuvApiClient.inviteFriendToLobby(friend.userId, lobby.code)
+                    }.onSuccess {
+                        Toast.makeText(
+                            context,
+                            "${friend.nickname} wurde eingeladen",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        inviteLobby = null
+                    }.onFailure {
+                        Toast.makeText(
+                            context,
+                            it.message ?: "Einladen fehlgeschlagen",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
             },
             onOpen = {
                 inviteLobby = null

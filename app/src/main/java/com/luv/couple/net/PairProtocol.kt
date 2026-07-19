@@ -79,6 +79,9 @@ object PairProtocol {
                     json.put("templateParts", encodeTemplateParts(parts))
                     json.put("templateScale", message.stroke.templateScale.toDouble())
                     json.put("templateRotation", message.stroke.templateRotation.toDouble())
+                    message.stroke.templateCoordSpace?.takeIf { it.isNotBlank() }?.let {
+                        json.put("templateCoordSpace", it)
+                    }
                 }
                 json
             }
@@ -173,7 +176,9 @@ object PairProtocol {
                             templateParts = parseTemplateParts(json.optJSONArray("templateParts")),
                             templateScale = json.optDouble("templateScale", 1.0).toFloat()
                                 .coerceIn(0.2f, 4f),
-                            templateRotation = json.optDouble("templateRotation", 0.0).toFloat()
+                            templateRotation = json.optDouble("templateRotation", 0.0).toFloat(),
+                            templateCoordSpace = json.optString("templateCoordSpace")
+                                .takeIf { it.isNotBlank() && it != "null" }
                         )
                     )
                 }

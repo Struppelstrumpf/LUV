@@ -457,6 +457,12 @@ fun MarketScreen(
 
 
 
+/** Letzter Markt-Hub — sofort anzeigen, während neu geladen wird. */
+private object MarketHubCache {
+    @Volatile
+    var latest: LuvApiClient.MarketHubData? = null
+}
+
 @Composable
 
 private fun MarketHub(
@@ -471,13 +477,21 @@ private fun MarketHub(
 
 ) {
 
-    var hub by remember { mutableStateOf<LuvApiClient.MarketHubData?>(null) }
+    var hub by remember { mutableStateOf(MarketHubCache.latest) }
 
     val marketAlert by com.luv.couple.net.NotificationBadges.hasMarketDot.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
 
-        hub = runCatching { LuvApiClient.fetchMarketHub() }.getOrNull()
+        val fresh = runCatching { LuvApiClient.fetchMarketHub() }.getOrNull()
+
+        if (fresh != null) {
+
+            MarketHubCache.latest = fresh
+
+            hub = fresh
+
+        }
 
         com.luv.couple.net.NotificationBadges.refreshPendingSales()
 
@@ -3545,9 +3559,11 @@ fun InventoryScreen(
 
     var profile by remember {
 
-        mutableStateOf(ProfileState(layout = ProfileCatalog.defaultLayout(nickname)))
+        mutableStateOf<ProfileState?>(null)
 
     }
+
+    var inventoryReady by remember { mutableStateOf(false) }
 
     var pendingAction by remember { mutableStateOf<ProfilePlaceAction?>(null) }
 
@@ -3662,14 +3678,15 @@ fun InventoryScreen(
         // Profil vom Server — sonst zaehlen platzierte Sticker lokal nicht
         runCatching {
             val remote = LuvApiClient.fetchMyProfileCanvas()
-            profile = remote.second.normalized(remote.first)
-            prefs.setProfileCanvasJson(ProfileCatalog.encode(profile))
+            val next = remote.second.normalized(remote.first)
+            profile = next
+            prefs.setProfileCanvasJson(ProfileCatalog.encode(next))
         }.onFailure {
             val json = runCatching { prefs.profileCanvasJson() }.getOrNull()
             profile = ProfileCatalog.decode(json, nickname)
         }
 
-        val companion = profile.companionEmoji.trim()
+        val companion = profile?.companionEmoji?.trim().orEmpty()
 
         if (companion.isNotBlank()) {
 
@@ -3683,6 +3700,10 @@ fun InventoryScreen(
 
     LaunchedEffect(nickname) {
 
+        // Sofort lokales Profil (freie Items korrekt), dann Server-Refresh
+        val json = runCatching { prefs.profileCanvasJson() }.getOrNull()
+        profile = ProfileCatalog.decode(json, nickname)
+        inventoryReady = true
         refreshInventoryAndProfile()
 
     }
@@ -3763,11 +3784,13 @@ fun InventoryScreen(
 
 
 
-    val placedStickers = remember(profile) {
+    val activeProfile = profile ?: ProfileState(layout = ProfileCatalog.defaultLayout(nickname))
+
+    val placedStickers = remember(activeProfile) {
 
         InventoryAvailability.countPlacedStickers(
 
-            profile.layout.filter { it.type == ProfileElType.Sticker }.map { it.emoji }
+            activeProfile.layout.filter { it.type == ProfileElType.Sticker }.map { it.emoji }
 
         )
 
@@ -3783,7 +3806,7 @@ fun InventoryScreen(
                 }
             }
             is ProfilePlaceAction.Theme -> {
-                if (action.themeId == profile.themeId) {
+                if (action.themeId == activeProfile.themeId) {
                     Toast.makeText(context, "Hintergrund ist schon aktiv", Toast.LENGTH_SHORT).show()
                     return
                 }
@@ -3810,7 +3833,16 @@ fun InventoryScreen(
 
         ) {
 
-            ProfileInventoryPanel(
+            if (!inventoryReady) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    androidx.compose.material3.CircularProgressIndicator(color = AccentRose)
+                }
+            } else ProfileInventoryPanel(
 
                 mode = InventoryPanelMode.Menu,
 
@@ -3826,9 +3858,9 @@ fun InventoryScreen(
 
                 emojiBar = emojiBar,
 
-                currentThemeId = profile.themeId,
+                currentThemeId = activeProfile.themeId,
 
-                currentCompanion = equippedPet.ifBlank { profile.companionEmoji },
+                currentCompanion = equippedPet.ifBlank { activeProfile.companionEmoji },
 
                 hasGlass = false,
 
@@ -3848,7 +3880,7 @@ fun InventoryScreen(
 
                             prefs.setEquippedPet(eq)
 
-                            profile = profile.copy(companionEmoji = eq)
+                            profile = activeProfile.copy(companionEmoji = eq)
 
                             Toast.makeText(
 

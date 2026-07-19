@@ -364,6 +364,7 @@ private fun FriendsPanel(
     var incoming by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
     var outgoing by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
     var marriageProposals by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
+    var lobbyInvites by remember { mutableStateOf<List<LuvApiClient.LobbyInvite>>(emptyList()) }
     var myMarriage by remember { mutableStateOf<LuvApiClient.MarriageInfo?>(null) }
     var showSkipWait by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
@@ -394,10 +395,11 @@ private fun FriendsPanel(
                     incoming = it.incoming
                     outgoing = it.outgoing
                     marriageProposals = it.marriageProposals
+                    lobbyInvites = it.lobbyInvites
                     myMarriage = it.myMarriage
                     pendingFriendshipCoins = it.pendingFriendshipCoins
                     com.luv.couple.net.NotificationBadges.setFriendIncoming(
-                        it.incoming.size + it.marriageProposals.size
+                        it.incoming.size + it.marriageProposals.size + it.lobbyInvites.size
                     )
                     com.luv.couple.net.NotificationBadges.syncAppBadge(context)
                 }
@@ -557,6 +559,65 @@ private fun FriendsPanel(
                     modifier = Modifier
                         .clickable { showSkipWait = true }
                         .padding(vertical = 4.dp)
+                )
+            }
+        }
+
+        if (lobbyInvites.isNotEmpty()) {
+            Text("Lobby-Einladungen", color = TextPrimary, fontFamily = DisplayFont, fontSize = 16.sp)
+            lobbyInvites.forEach { inv ->
+                FriendRequestRow(
+                    card = LuvApiClient.FriendCard(
+                        userId = inv.fromUserId,
+                        nickname = inv.fromNickname,
+                        petEmoji = inv.fromPetEmoji
+                    ),
+                    busy = busyId == "l-${inv.id}",
+                    acceptLabel = "Beitreten",
+                    subtitle = "Einladung zu „${inv.lobbyName}“",
+                    onAccept = {
+                        busyId = "l-${inv.id}"
+                        scope.launch {
+                            runCatching { LuvApiClient.acceptLobbyInvite(inv.id) }
+                                .onSuccess { code ->
+                                    com.luv.couple.net.PendingJoin.offer(code)
+                                    Toast.makeText(
+                                        context,
+                                        "Einladung angenommen",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    reload()
+                                }
+                                .onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        it.message ?: "Annehmen fehlgeschlagen",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            busyId = null
+                        }
+                    },
+                    onDecline = {
+                        busyId = "l-${inv.id}"
+                        scope.launch {
+                            runCatching { LuvApiClient.declineLobbyInvite(inv.id) }
+                                .onSuccess { reload() }
+                                .onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        it.message ?: "Ablehnen fehlgeschlagen",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            busyId = null
+                        }
+                    },
+                    onOpen = {
+                        if (inv.fromUserId.isNotBlank()) {
+                            onOpenFriendProfile(inv.fromUserId, inv.fromNickname)
+                        }
+                    }
                 )
             }
         }
@@ -1005,7 +1066,8 @@ private fun FriendRequestRow(
     onAccept: () -> Unit,
     onDecline: () -> Unit,
     onOpen: () -> Unit,
-    acceptLabel: String = "Annehmen"
+    acceptLabel: String = "Annehmen",
+    subtitle: String? = null
 ) {
     Column(
         modifier = Modifier
@@ -1018,6 +1080,7 @@ private fun FriendRequestRow(
     ) {
         FriendRow(
             card = card,
+            subtitle = subtitle,
             modifier = Modifier.clickable(onClick = onOpen)
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -162,7 +162,7 @@ object ShopCatalog {
         ShopEmoji("🥀", 8), ShopEmoji("🥟", 8), ShopEmoji("🥼", 8), ShopEmoji("🦎", 8),
         ShopEmoji("🧂", 8), ShopEmoji("🫒", 8), ShopEmoji("🫗", 8), ShopEmoji("🫘", 8),
         ShopEmoji("♥️", 9), ShopEmoji("⛈️", 9), ShopEmoji("⛰️", 9), ShopEmoji("🌖", 9),
-        ShopEmoji("🌲", 9), ShopEmoji("🍉", 9), ShopEmoji("🍞", 9), ShopEmoji("🍭", 9),
+        ShopEmoji("🌲", 9), ShopEmoji("🌳", 9), ShopEmoji("🍉", 9), ShopEmoji("🍞", 9), ShopEmoji("🍭", 9),
         ShopEmoji("🎎", 9), ShopEmoji("🎓", 9), ShopEmoji("🎵", 9), ShopEmoji("🏉", 9),
         ShopEmoji("🐅", 9), ShopEmoji("🐍", 9), ShopEmoji("🐑", 9), ShopEmoji("🐛", 9),
         ShopEmoji("🐤", 9), ShopEmoji("🐿️", 9), ShopEmoji("👛", 9), ShopEmoji("💦", 9),

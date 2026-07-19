@@ -248,13 +248,14 @@ private fun TemplateThumb(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(1f)
+            .aspectRatio(9f / 16f)
             .clip(RoundedCornerShape(18.dp))
             .background(CardBg)
             .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(18.dp))
     ) {
         TemplatePreviewCanvas(
             parts = template.strokes,
+            coordSpace = template.coordSpace,
             modifier = Modifier
                 .fillMaxSize()
                 .clickable(onClick = onClick)
@@ -703,19 +704,44 @@ private fun distPointToSegment2(p: StrokePoint, a: StrokePoint, b: StrokePoint):
 @Composable
 fun TemplatePreviewCanvas(
     parts: List<TemplateStrokePart>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    coordSpace: String = "canvas"
 ) {
     Canvas(modifier = modifier) {
-        // Wie Editor: 0…1 auf der gesamten Fläche (Hochformat), nicht nur Quadrat
-        val w = size.width.coerceAtLeast(1f)
-        val h = size.height.coerceAtLeast(1f)
-        val strokeRef = min(w, h)
+        val boxW = size.width.coerceAtLeast(1f)
+        val boxH = size.height.coerceAtLeast(1f)
+        val space = CanvasStore.templateCoordSpace(parts, coordSpace)
+        // Letterbox: Inhalt proportional in die Kachel
+        var drawW = boxW
+        var drawH = boxH
+        var ox = 0f
+        var oy = 0f
+        if (space == "square") {
+            val side = min(boxW, boxH)
+            drawW = side
+            drawH = side
+            ox = (boxW - side) / 2f
+            oy = (boxH - side) / 2f
+        } else {
+            val target = 9f / 16f
+            val boxAr = boxW / boxH
+            if (boxAr > target) {
+                drawH = boxH
+                drawW = boxH * target
+                ox = (boxW - drawW) / 2f
+            } else {
+                drawW = boxW
+                drawH = boxW / target
+                oy = (boxH - drawH) / 2f
+            }
+        }
+        val strokeRef = min(drawW, drawH)
         parts.forEach { part ->
             if (part.points.size < 2) return@forEach
             val path = Path()
             part.points.forEachIndexed { idx, p ->
-                val x = p.x * w
-                val y = p.y * h
+                val x = ox + p.x * drawW
+                val y = oy + p.y * drawH
                 if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
             drawPath(
@@ -738,6 +764,11 @@ class TemplatePlacementView(
     context: android.content.Context
 ) : android.widget.FrameLayout(context) {
     var parts: List<TemplateStrokePart> = emptyList()
+        set(value) {
+            field = value
+            invalidate()
+        }
+    var coordSpace: String = "canvas"
         set(value) {
             field = value
             invalidate()
@@ -777,9 +808,13 @@ class TemplatePlacementView(
         if (width <= 0 || height <= 0) return
         val cx = centerXNorm * width
         val cy = centerYNorm * height
-        // Volle Leinwand-Proportion (Hochformat), nicht mehr nur Quadrat
-        val stampW = width * TEMPLATE_PLACE_FRAC * scaleFactor
-        val stampH = height * TEMPLATE_PLACE_FRAC * scaleFactor
+        val space = CanvasStore.templateCoordSpace(parts, coordSpace)
+        val (stampW, stampH) = CanvasStore.templateStampSize(
+            width.toFloat(),
+            height.toFloat(),
+            scaleFactor,
+            space
+        )
         val strokeRef = min(stampW, stampH)
         val rad = Math.toRadians(rotationDeg.toDouble())
         val cos = kotlin.math.cos(rad).toFloat()

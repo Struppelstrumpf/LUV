@@ -185,7 +185,7 @@ data class RosterMember(
 
 data class StrokePoint(val x: Float, val y: Float)
 
-/** Ein Strich innerhalb einer Vorlage (Koordinaten 0…1 im Vorlagen-Quadrat). */
+/** Ein Strich innerhalb einer Vorlage (Koordinaten 0…1). */
 data class TemplateStrokePart(
     val points: List<StrokePoint>,
     val width: Float = 18f,
@@ -195,7 +195,9 @@ data class TemplateStrokePart(
 data class DrawTemplate(
     val id: String,
     val strokes: List<TemplateStrokePart>,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    /** "canvas" = volle Hochformat-Fläche, "square" = Legacy-Quadrat. */
+    val coordSpace: String = "canvas"
 )
 
 data class Stroke(
@@ -222,7 +224,9 @@ data class Stroke(
     /** Platzierte Vorlage: Teile + Transform (points[0] = Zentrum). */
     val templateParts: List<TemplateStrokePart>? = null,
     val templateScale: Float = 1f,
-    val templateRotation: Float = 0f
+    val templateRotation: Float = 0f,
+    /** "canvas" | "square" — fehlt bei alten Strokes → Heuristik. */
+    val templateCoordSpace: String? = null
 ) {
     val isEmoji: Boolean get() = !emoji.isNullOrBlank()
     val isTemplate: Boolean get() = !templateParts.isNullOrEmpty()

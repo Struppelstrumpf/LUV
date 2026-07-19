@@ -287,8 +287,13 @@ class DrawingView @JvmOverloads constructor(
         val cx = center.x * width
         val cy = center.y * height
         val scale = stroke.templateScale.coerceIn(0.2f, 4f)
-        val stampW = width * CanvasStore.TEMPLATE_PLACE_FRAC * scale
-        val stampH = height * CanvasStore.TEMPLATE_PLACE_FRAC * scale
+        val space = CanvasStore.templateCoordSpace(parts, stroke.templateCoordSpace)
+        val (stampW, stampH) = CanvasStore.templateStampSize(
+            width.toFloat(),
+            height.toFloat(),
+            scale,
+            space
+        )
         val strokeRef = min(stampW, stampH)
         val rad = Math.toRadians(stroke.templateRotation.toDouble())
         val cos = kotlin.math.cos(rad).toFloat()

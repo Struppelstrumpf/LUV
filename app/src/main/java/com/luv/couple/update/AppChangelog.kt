@@ -12,22 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
-            "2.1.3",
-            listOf(
-                "Google-Anmeldung: falsches „Abgebrochen“ nach E-Mail-Wahl behoben",
-                "Lobbys nach App-Update wieder aus dem Google-Konto laden",
-            )
-        ),
-        Entry(
-            "2.1.2",
-            listOf(
-                "Google-Anmeldung: „No credentials available“ behoben (klassischer Login)",
-            )
-        ),
-        Entry(
             "2.1.1",
             listOf(
-                "Google-Anmeldung: Login nach Kontoauswahl wieder zuverlässig",
+                "Papierkorb: Mitspieler werden wieder zuverlässig gefragt",
+                "Vorlagen in der Übersicht im richtigen Hochformat",
+                "Freunde in die Lobby einladen (Hinweis unter Sozial)",
+                "Marktplatz & Inventar ohne kurzes Flackern",
+                "Baum-Sticker wieder im Shop; Besitz weiter am Markt anbietbar",
             )
         ),
         Entry(

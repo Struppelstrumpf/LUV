@@ -1454,7 +1454,10 @@ object LuvApiClient {
                         com.luv.couple.data.DrawTemplate(
                             id = id,
                             strokes = parts,
-                            createdAt = o.optLong("createdAt", 0L)
+                            createdAt = o.optLong("createdAt", 0L),
+                            coordSpace = o.optString("coordSpace").ifBlank {
+                                com.luv.couple.lock.CanvasStore.templateCoordSpace(parts, null)
+                            }
                         )
                     )
                 }
@@ -1464,8 +1467,10 @@ object LuvApiClient {
     suspend fun saveDrawTemplate(
         strokes: List<com.luv.couple.data.TemplateStrokePart>
     ): com.luv.couple.data.DrawTemplate = withContext(Dispatchers.IO) {
+        val space = com.luv.couple.lock.CanvasStore.templateCoordSpace(strokes, "canvas")
         val body = JSONObject()
             .put("strokes", PairProtocol.encodeTemplateParts(strokes))
+            .put("coordSpace", space)
             .toString()
             .toRequestBody(jsonMedia)
         val request = authedRequestBuilder("/v1/me/templates").post(body).build()
@@ -1482,7 +1487,8 @@ object LuvApiClient {
             com.luv.couple.data.DrawTemplate(
                 id = o.optString("id"),
                 strokes = parts,
-                createdAt = o.optLong("createdAt", System.currentTimeMillis())
+                createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+                coordSpace = o.optString("coordSpace").ifBlank { space }
             )
         }
     }
@@ -1492,8 +1498,10 @@ object LuvApiClient {
         strokes: List<com.luv.couple.data.TemplateStrokePart>
     ): com.luv.couple.data.DrawTemplate = withContext(Dispatchers.IO) {
         val clean = id.trim().encodeURL()
+        val space = com.luv.couple.lock.CanvasStore.templateCoordSpace(strokes, "canvas")
         val body = JSONObject()
             .put("strokes", PairProtocol.encodeTemplateParts(strokes))
+            .put("coordSpace", space)
             .toString()
             .toRequestBody(jsonMedia)
         val request = authedRequestBuilder("/v1/me/templates/$clean").put(body).build()
@@ -1510,7 +1518,8 @@ object LuvApiClient {
             com.luv.couple.data.DrawTemplate(
                 id = o.optString("id").ifBlank { id },
                 strokes = parts,
-                createdAt = o.optLong("createdAt", System.currentTimeMillis())
+                createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+                coordSpace = o.optString("coordSpace").ifBlank { space }
             )
         }
     }
@@ -1680,11 +1689,21 @@ object LuvApiClient {
         val marriage: MarriageInfo? = null
     )
 
+    data class LobbyInvite(
+        val id: String,
+        val roomCode: String,
+        val lobbyName: String,
+        val fromUserId: String,
+        val fromNickname: String,
+        val fromPetEmoji: String
+    )
+
     data class FriendsBag(
         val friends: List<FriendCard>,
         val incoming: List<FriendCard>,
         val outgoing: List<FriendCard>,
         val marriageProposals: List<FriendCard> = emptyList(),
+        val lobbyInvites: List<LobbyInvite> = emptyList(),
         val myMarriage: MarriageInfo? = null,
         val marriageCooldownRemainingMs: Long = 0L,
         val marriageCooldownSkipCost: Int = 0,
@@ -1789,6 +1808,7 @@ object LuvApiClient {
             incoming = parseFriendCards(json.optJSONArray("incoming")),
             outgoing = parseFriendCards(json.optJSONArray("outgoing")),
             marriageProposals = parseFriendCards(json.optJSONArray("marriageProposals")),
+            lobbyInvites = parseLobbyInvites(json.optJSONArray("lobbyInvites")),
             myMarriage = parseMarriageInfo(json.optJSONObject("myMarriage")),
             marriageCooldownRemainingMs = json.optLong("marriageCooldownRemainingMs", 0L),
             marriageCooldownSkipCost = json.optInt("marriageCooldownSkipCost", 0),
@@ -1797,6 +1817,81 @@ object LuvApiClient {
                 ?.takeIf { json.optLong("marriageCooldownRemainingMs", 0L) > 0L },
             pendingFriendshipCoins = json.optInt("pendingFriendshipCoins", 0)
         )
+    }
+
+    private fun parseLobbyInvites(arr: org.json.JSONArray?): List<LobbyInvite> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val id = o.optString("id").trim()
+                val code = o.optString("roomCode").trim().uppercase().removePrefix("LUV-")
+                if (id.isBlank() || code.isBlank()) continue
+                add(
+                    LobbyInvite(
+                        id = id,
+                        roomCode = code,
+                        lobbyName = o.optString("lobbyName").ifBlank { "Lobby" },
+                        fromUserId = o.optString("fromUserId"),
+                        fromNickname = o.optString("fromNickname").ifBlank { "Jemand" },
+                        fromPetEmoji = o.optString("fromPetEmoji").ifBlank { "🐣" }
+                    )
+                )
+            }
+        }
+    }
+
+    suspend fun inviteFriendToLobby(friendUserId: String, roomCode: String) =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject()
+                .put("friendUserId", friendUserId.trim())
+                .put("roomCode", roomCode.trim())
+                .toString()
+                .toRequestBody(jsonMedia)
+            val request = authedRequestBuilder("/v1/me/lobby-invites").post(body).build()
+            http.newCall(request).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                if (!response.isSuccessful) {
+                    throw LuvApiException(
+                        json?.optString("message")?.takeIf { it.isNotBlank() }
+                            ?: "Einladen fehlgeschlagen"
+                    )
+                }
+            }
+        }
+
+    suspend fun acceptLobbyInvite(inviteId: String): String = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("inviteId", inviteId.trim()).toString().toRequestBody(jsonMedia)
+        val request = authedRequestBuilder("/v1/me/lobby-invites/accept").post(body).build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            val json = runCatching { JSONObject(raw) }.getOrNull()
+            if (!response.isSuccessful) {
+                throw LuvApiException(
+                    json?.optString("message")?.takeIf { it.isNotBlank() }
+                        ?: "Annehmen fehlgeschlagen"
+                )
+            }
+            json?.optString("roomCode")?.trim()?.uppercase()?.removePrefix("LUV-")
+                ?.takeIf { it.isNotBlank() }
+                ?: throw LuvApiException("Kein Lobby-Code")
+        }
+    }
+
+    suspend fun declineLobbyInvite(inviteId: String) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("inviteId", inviteId.trim()).toString().toRequestBody(jsonMedia)
+        val request = authedRequestBuilder("/v1/me/lobby-invites/decline").post(body).build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val raw = response.body?.string().orEmpty()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                throw LuvApiException(
+                    json?.optString("message")?.takeIf { it.isNotBlank() }
+                        ?: "Ablehnen fehlgeschlagen"
+                )
+            }
+        }
     }
 
     suspend fun claimFriendshipLevelCoins(): Int = withContext(Dispatchers.IO) {
