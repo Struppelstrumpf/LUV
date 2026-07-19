@@ -141,12 +141,7 @@
   document.addEventListener("luv-studio-dismiss", () => {
     modalUiGuardUntil = Date.now() + 500;
   });
-  modal.addEventListener("click", (e) => {
-    // Nur Backdrop — nicht das ganze Modal blockieren (Name-Feld muss klickbar bleiben)
-    if (e.target !== modal) return;
-    if (Date.now() < modalUiGuardUntil) return;
-    if (!studioOverlayOpen()) closeModal();
-  });
+  // Backdrop-Klick schließt NICHT — nur „Abbrechen“ / Speichern-Erfolg
   // Ghost-Click trifft oft genau den Abbrechen-Button unter „Übernehmen“
   modalCard.addEventListener(
     "click",
