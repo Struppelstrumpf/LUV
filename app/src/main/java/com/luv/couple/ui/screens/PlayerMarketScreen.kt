@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import com.luv.couple.ui.ItemGlyph
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -311,7 +312,7 @@ fun PlayerMarketScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         sales.sales.take(12).forEach { sale ->
-                            Text(sale.emoji, fontSize = 28.sp)
+                            ItemGlyph(id = sale.emoji, fontSize = 28.sp)
                         }
                     }
                     Text(
@@ -820,7 +821,7 @@ private fun MarketOffersPanel(
                 horizontalArrangement = Arrangement.spacedBy(ui.s(8.dp))
             ) {
                 Text("<", color = MarketBrown, fontFamily = DisplayFont, fontSize = ui.ts(20.sp))
-                Text(product.emoji, fontSize = ui.ts(22.sp))
+                ItemGlyph(id = product.emoji, fontSize = ui.ts(22.sp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         product.label,
@@ -985,7 +986,7 @@ private fun MarketListingPreviewDialog(
                             .border(1.dp, MarketBrownMuted.copy(0.25f), RoundedCornerShape(16.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(listing.emoji, fontSize = 72.sp)
+                        ItemGlyph(id = listing.emoji, fontSize = 72.sp)
                     }
                 }
                 Text(
@@ -1062,7 +1063,7 @@ private fun MarketItemRow(
                     modifier = Modifier.fillMaxSize()
                 )
             }
-            Text(item.emoji, fontSize = ui.ts(22.sp))
+            ItemGlyph(id = item.emoji, fontSize = ui.ts(22.sp))
         }
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1183,7 +1184,7 @@ private fun MyListingRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text(listing.emoji, fontSize = 28.sp)
+        ItemGlyph(id = listing.emoji, fontSize = 28.sp)
         Column(modifier = Modifier.weight(1f)) {
             Text(listing.label, color = MarketBrown, fontFamily = DisplayFont, fontSize = 14.sp)
             Text(
@@ -1353,7 +1354,7 @@ private fun CreateListingDialog(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text(item.emoji, fontSize = 22.sp)
+                                ItemGlyph(id = item.emoji, fontSize = 22.sp)
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         item.label,
@@ -1401,7 +1402,7 @@ private fun CreateListingDialog(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Text(selected.emoji, fontSize = 36.sp)
+                            ItemGlyph(id = selected.emoji, fontSize = 36.sp)
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     "Ausgewählt",

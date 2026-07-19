@@ -1246,12 +1246,9 @@ object LuvApiClient {
         val equippedPet: String
     )
 
-    /** Shop-/Inventar-ID: Emoji kurz, Bild-Items (img_*) bis 32 Zeichen — nie abschneiden. */
-    private fun clipShopItemId(raw: String, maxEmoji: Int = 16): String {
-        val e = raw.trim()
-        if (e.isEmpty()) return ""
-        return if (e.startsWith("img_", ignoreCase = true)) e.take(32) else e.take(maxEmoji)
-    }
+    /** Shop-/Inventar-ID: Emoji kurz, Bild-/Theme-Items bis 32 Zeichen — nie abschneiden. */
+    private fun clipShopItemId(raw: String, maxEmoji: Int = 16): String =
+        com.luv.couple.ui.clipItemId(raw, maxEmoji)
 
     suspend fun buyEmoji(emoji: String): Pair<AccountInfo, Int> = withContext(Dispatchers.IO) {
         val body = JSONObject().put("emoji", clipShopItemId(emoji)).toString()
@@ -2607,7 +2604,7 @@ object LuvApiClient {
     ): Pair<MarketListing, AccountInfo> = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("kind", kind)
-            .put("itemId", itemId.trim().take(24))
+            .put("itemId", clipShopItemId(itemId, 32))
             .put("priceCoins", priceCoins.coerceIn(0, 10_000))
             .put("allowTrade", allowTrade)
             .put("private", isPrivate)
@@ -2699,7 +2696,7 @@ object LuvApiClient {
         val id = listingId.trim().encodeURL()
         val body = JSONObject()
             .put("kind", kind)
-            .put("itemId", itemId.trim().take(24))
+            .put("itemId", clipShopItemId(itemId, 32))
             .toString()
         val request = authedRequestBuilder("/v1/market/$id/trade")
             .post(body.toRequestBody(jsonMedia))

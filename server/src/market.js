@@ -304,14 +304,20 @@ function aggregateMarket(db, viewerId, { category, q, mode }) {
         if (pa !== pb) return pa - pb;
         return (a.createdAt || 0) - (b.createdAt || 0);
       });
-      const coinOffers = sorted.filter((l) => (Number(l.priceCoins) || 0) > 0);
-      const minPrice = coinOffers.length
-        ? Math.min(...coinOffers.map((l) => Number(l.priceCoins) || 0))
-        : Math.min(...sorted.map((l) => Number(l.priceCoins) || 0));
-      const buyable = sorted.find((l) => l.sellerId !== viewerId);
-      const best = buyable || sorted[0];
+      // Preis/Listing nur aus fremden Angeboten — eigene nicht mit Minimum vermischen
+      const buyableList = sorted.filter((l) => l.sellerId !== viewerId);
+      const coinBuyable = buyableList.filter((l) => (Number(l.priceCoins) || 0) > 0);
+      const ownCoin = sorted.filter(
+        (l) => l.sellerId === viewerId && (Number(l.priceCoins) || 0) > 0
+      );
+      const minPrice = coinBuyable.length
+        ? Math.min(...coinBuyable.map((l) => Number(l.priceCoins) || 0))
+        : ownCoin.length
+          ? Math.min(...ownCoin.map((l) => Number(l.priceCoins) || 0))
+          : Math.min(...sorted.map((l) => Number(l.priceCoins) || 0));
+      const best = buyableList[0] || sorted[0];
       const hasMine = sorted.some((l) => l.sellerId === viewerId);
-      const allMine = !buyable;
+      const allMine = !buyableList.length;
       const anyTrade = sorted.some((l) => l.allowTrade);
       return {
         listingId: best.id,
@@ -322,7 +328,12 @@ function aggregateMarket(db, viewerId, { category, q, mode }) {
         category: g.category,
         priceCoins: Number.isFinite(minPrice) ? minPrice : 0,
         allowTrade: anyTrade,
-        trend: trendFor(db, g.kind, g.itemId, minPrice),
+        trend: trendFor(
+          db,
+          g.kind,
+          g.itemId,
+          coinBuyable.length ? minPrice : minPrice
+        ),
         stock: g.listings.length,
         offerCount: g.listings.length,
         isMine: allMine,

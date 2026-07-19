@@ -448,8 +448,8 @@ fun ProfileInventoryPanel(
                                             .clickable { onSticker(emoji) }
                                             .padding(s(4.dp))
                                     ) {
-                                        Text(
-                                            emoji,
+                                        com.luv.couple.ui.ItemGlyph(
+                                            id = emoji,
                                             fontSize = ts(26.sp),
                                             modifier = Modifier.align(Alignment.Center)
                                         )

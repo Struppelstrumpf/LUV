@@ -23,24 +23,38 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 
 fun isImagePetId(id: String): Boolean {
-    // Nur echte Bild-Begleiter — Emoji-Pets niemals als Bild behandeln
+    // Nur echte Bild-Items — Emoji-Pets/Sticker niemals als Bild behandeln
     return id.trim().startsWith("img_", ignoreCase = true)
+}
+
+/** Shop-/Inventar-/Leinwand-ID: img_/theme_ bis 32, sonst kurzes Emoji — nie stutzen. */
+fun clipItemId(raw: String?, maxEmoji: Int = 16): String {
+    val e = raw?.trim().orEmpty()
+    if (e.isEmpty()) return ""
+    return if (
+        e.startsWith("img_", ignoreCase = true) ||
+        e.startsWith("theme_", ignoreCase = true)
+    ) {
+        e.take(32)
+    } else {
+        e.take(maxEmoji)
+    }
 }
 
 fun petImageUrl(id: String): String? {
     val t = id.trim()
     if (t.isBlank()) return null
-    val fromCatalog = LiveShopCatalog.remotePets
-        ?.firstOrNull { it.emoji == t }
-        ?.imageUrl
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
-    if (fromCatalog != null) {
+    val fromCatalog =
+        LiveShopCatalog.remotePets?.firstOrNull { it.emoji == t }?.imageUrl
+            ?: LiveShopCatalog.remoteStickers?.firstOrNull { it.emoji == t }?.imageUrl
+            ?: LiveShopCatalog.remoteEmojis?.firstOrNull { it.emoji == t }?.imageUrl
+    val rawUrl = fromCatalog?.trim()?.takeIf { it.isNotBlank() }
+    if (rawUrl != null) {
         return when {
-            fromCatalog.startsWith("http") -> fromCatalog
-            fromCatalog.startsWith("/luv/v1") ->
-                LuvApiClient.baseUrl() + fromCatalog.removePrefix("/luv")
-            fromCatalog.startsWith("/v1") -> LuvApiClient.baseUrl() + fromCatalog
+            rawUrl.startsWith("http") -> rawUrl
+            rawUrl.startsWith("/luv/v1") ->
+                LuvApiClient.baseUrl() + rawUrl.removePrefix("/luv")
+            rawUrl.startsWith("/v1") -> LuvApiClient.baseUrl() + rawUrl
             else -> "${LuvApiClient.baseUrl()}/v1/shop/pet-image/$t"
         }
     }
@@ -50,6 +64,20 @@ fun petImageUrl(id: String): String? {
     return null
 }
 
+/** Emoji oder Custom-Bild (img_*) einheitlich anzeigen. */
+@Composable
+fun ItemGlyph(
+    id: String,
+    fontSize: TextUnit = 28.sp,
+    modifier: Modifier = Modifier
+) {
+    if (isImagePetId(id)) {
+        CompanionGlyph(petId = id, fontSize = fontSize, modifier = modifier)
+    } else {
+        Text(id.ifBlank { "✨" }, fontSize = fontSize, modifier = modifier)
+    }
+}
+
 @Composable
 fun CompanionGlyph(
     petId: String,
@@ -57,7 +85,12 @@ fun CompanionGlyph(
     modifier: Modifier = Modifier
 ) {
     val id = petId.trim().ifBlank { "🐣" }
-    val url = remember(id, LiveShopCatalog.remotePets) { petImageUrl(id) }
+    val url = remember(
+        id,
+        LiveShopCatalog.remotePets,
+        LiveShopCatalog.remoteStickers,
+        LiveShopCatalog.remoteEmojis
+    ) { petImageUrl(id) }
     var bitmap by remember(url) { mutableStateOf<android.graphics.Bitmap?>(null) }
 
     LaunchedEffect(url) {

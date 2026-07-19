@@ -15,6 +15,7 @@ import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairMessage
 import com.luv.couple.net.PairProtocol
 import com.luv.couple.net.PairSessionState
+import com.luv.couple.ui.clipItemId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -442,7 +443,7 @@ object CanvasStore {
         id: String = UUID.randomUUID().toString()
     ): Stroke? {
         val lobby = resolveLobbyId(lobbyId) ?: return null
-        val emojiText = emoji.trim().take(8)
+        val emojiText = clipItemId(emoji)
         if (emojiText.isEmpty()) return null
         val stroke = Stroke(
             id = id,
@@ -486,7 +487,7 @@ object CanvasStore {
         nickname: String?,
         lobbyId: String
     ) {
-        val emojiText = emoji.trim().take(8)
+        val emojiText = clipItemId(emoji)
         if (emojiText.isEmpty()) return
         addRemoteStroke(
             Stroke(
@@ -937,7 +938,9 @@ object CanvasStore {
                         )
                     }
                 }
-                val emoji = o.optString("emoji").takeIf { it.isNotBlank() && it != "null" }?.take(8)
+                val emoji = o.optString("emoji").takeIf { it.isNotBlank() && it != "null" }
+                    ?.let { clipItemId(it) }
+                    ?.takeIf { it.isNotEmpty() }
                 val templateParts = PairProtocol.parseTemplateParts(o.optJSONArray("templateParts"))
                 if (emoji == null && templateParts == null && points.size < 2) continue
                 if (emoji != null && points.isEmpty()) continue

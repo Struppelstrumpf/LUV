@@ -678,8 +678,8 @@ function purgeShopItemEverywhere(kind, itemId) {
           const t = String(el.type || "").toLowerCase();
           const e = String(el.emoji || "").trim();
           if (!sameId(e)) return true;
+          // Nur passende Kind-Typen — Emoji-Delete entfernt keine Sticker-Platzierungen
           if (k === "stickers" && t === "sticker") return false;
-          if (k === "emojis" && t === "sticker") return false;
           if (k === "pets" && t === "pet") return false;
           return true;
         });
@@ -1254,19 +1254,20 @@ function publicSettings(user) {
 function mergeInventory(target, source) {
   const a = ensureInventory(target);
   const b = ensureInventory(source);
+  // Besitz immer übernehmen — Katalog-Status darf beim Merge nichts löschen
   for (const [e, n] of Object.entries(b.emojis || {})) {
-    if (!isKnownInventoryItem("emojis", e)) continue;
+    if (!String(e || "").trim()) continue;
     a.emojis[e] = Math.min(999, Math.max(Number(a.emojis[e]) || 0, Number(n) || 0));
   }
   for (const [e, n] of Object.entries(b.stickers || {})) {
-    if (!isKnownInventoryItem("stickers", e)) continue;
+    if (!String(e || "").trim()) continue;
     a.stickers[e] = Math.min(999, Math.max(Number(a.stickers[e]) || 0, Number(n) || 0));
   }
   for (const t of b.themes || []) {
-    if (t && isKnownInventoryItem("themes", t) && !a.themes.includes(t)) a.themes.push(t);
+    if (t && !a.themes.includes(t)) a.themes.push(t);
   }
   for (const p of b.pets || []) {
-    if (p && isKnownInventoryItem("pets", p) && !a.pets.includes(p)) a.pets.push(p);
+    if (p && !a.pets.includes(p)) a.pets.push(p);
   }
   if (!a.equippedPet || !a.pets.includes(a.equippedPet)) {
     a.equippedPet = b.equippedPet && a.pets.includes(b.equippedPet)
@@ -4151,6 +4152,10 @@ function bumpShopPurchase(kind, itemId) {
 }
 
 function shopItemPrice(kind, itemId) {
+  // Dynamischer Katalog zuerst — Static nur Fallback
+  seedShopCatalogIfNeeded();
+  const p = shopCatalog.priceOf(getDb(), kind, itemId);
+  if (p != null) return p;
   if (kind === "emojis") return Number(EMOJI_SHOP_PRICES[itemId]) || 0;
   if (kind === "stickers") return Number(STICKER_SHOP_PRICES[itemId]) || 0;
   if (kind === "pets") return Number(PET_SHOP_PRICES[itemId]) || 0;
@@ -6005,7 +6010,14 @@ function sanitizeProfileCanvas(raw) {
       flipX: Boolean(el.flipX),
       visible: el.visible !== false,
       z: Math.max(0, Math.min(500, Number(el.z) || 10)),
-      emoji: clipCanvasEmojiId(el.emoji) || null,
+      emoji: (() => {
+        const raw = clipCanvasEmojiId(el.emoji);
+        if (!raw) return null;
+        if (!raw.toLowerCase().startsWith("img_")) return raw;
+        const hint =
+          type === "pet" ? "pets" : type === "sticker" ? "stickers" : null;
+        return expandTruncatedPetId(raw, hint);
+      })(),
       text: String(el.text || "").trim().slice(0, 500) || null,
       color: String(el.color || "").trim().slice(0, 16) || null,
       fontSize,
@@ -6061,11 +6073,17 @@ function restoreStickerTotalOwnership(user) {
     return;
   }
   const onProfile = countLayoutStickers(user.profileCanvas?.layout);
-  if (user.stickerInvMode === 2) {
-    for (const [e, n] of Object.entries(onProfile)) {
-      const add = Math.max(0, Math.floor(Number(n) || 0));
-      if (!e || add <= 0) continue;
-      inv.stickers[e] = Math.min(999, (Number(inv.stickers[e]) || 0) + add);
+  const prevMode = Number(user.stickerInvMode) || 0;
+  for (const [e, n] of Object.entries(onProfile)) {
+    const placed = Math.max(0, Math.floor(Number(n) || 0));
+    if (!e || placed <= 0) continue;
+    const owned = Math.max(0, Math.floor(Number(inv.stickers[e]) || 0));
+    if (prevMode === 2) {
+      // Mode 2: freier Stock — platzierte wieder aufaddieren
+      inv.stickers[e] = Math.min(999, owned + placed);
+    } else if (owned < placed) {
+      // Legacy/unbekannt: Unterzählung heilen, nie Besitz kürzen
+      inv.stickers[e] = placed;
     }
   }
   user.stickerInvMode = 3;
@@ -7761,6 +7779,9 @@ app.post("/v1/shop/buy-theme", (req, res) => {
   if (!themeId) {
     return res.status(400).json({ error: "unknown_item", message: "Hintergrund unbekannt." });
   }
+  if (!isKnownInventoryItem("themes", themeId)) {
+    return res.status(400).json({ error: "unknown_item", message: "Hintergrund unbekannt." });
+  }
   const inv = ensureInventory(ctx.user);
   if (inv.themes.includes(themeId)) {
     return res.json({ ok: true, themeId, alreadyOwned: true, user: publicUser(ctx.user) });
@@ -7851,6 +7872,9 @@ app.post("/v1/shop/buy-pet", (req, res) => {
   seedShopCatalogIfNeeded();
   const emoji = normalizePetId(req.body?.emoji);
   if (!emoji) {
+    return res.status(400).json({ error: "unknown_item", message: "Begleiter unbekannt." });
+  }
+  if (!isKnownInventoryItem("pets", emoji)) {
     return res.status(400).json({ error: "unknown_item", message: "Begleiter unbekannt." });
   }
   const inv = ensureInventory(ctx.user);
@@ -8147,78 +8171,61 @@ app.post("/v1/me/achievements/:id/claim", (req, res) => {
 });
 
 /** —— Spieler-Marktplatz (Nasebär-Stil) —— */
+function clipMarketItemId(raw) {
+  const e = String(raw || "").trim();
+  if (!e) return "";
+  if (e.toLowerCase().startsWith("img_") || e.toLowerCase().startsWith("theme_")) {
+    return e.slice(0, PET_ID_MAX);
+  }
+  return e.slice(0, PET_ID_MAX);
+}
+
 function marketItemMeta(kind, itemId) {
-  const id = String(itemId || "").trim();
-  if (isBoundInventoryItem(kind, id)) {
-    const emoji = id;
+  const id = clipMarketItemId(itemId);
+  if (!id || !["pets", "themes", "stickers", "emojis"].includes(kind)) return null;
+  const unsellable =
+    isBoundInventoryItem(kind, id) ||
+    (kind === "pets" && id === DEFAULT_PET) ||
+    (kind === "themes" && id === "meadow") ||
+    (kind === "stickers" && isAchievementSticker(id));
+  if (unsellable) {
     const label =
       kind === "pets" && id === marriage.MARRIAGE_PET
         ? marriage.MARRIAGE_PET_LABEL
         : kind === "stickers" && id === marriage.MARRIAGE_CHAPEL_STICKER
           ? "Kapelle"
           : id;
-    return { category: kind, emoji, label, sellable: false };
-  }
-  if (kind === "pets") {
-    return { category: "pets", emoji: id, label: id, sellable: id !== DEFAULT_PET && PET_SHOP_PRICES[id] != null };
-  }
-  if (kind === "themes") {
-    const labels = {
-      meadow: "Wiese",
-      forest: "Wald",
-      sunset: "Abendrot",
-      night: "Nacht",
-      snow: "Schnee",
-      blossom: "Blüte",
-      ocean: "Meer",
-      rain: "Regen",
-      autumn: "Herbst",
-      stars: "Sterne",
-      cabin: "Hütte",
-      lake: "See",
-      lavender: "Lavendel",
-      hearth: "Kamin",
-      dawn: "Morgengrauen",
-      desert: "Wüste",
-      bamboo: "Bambus",
-      mist: "Nebel",
-      golden: "Goldstunde",
-      iceberg: "Eisberg",
-      sakura: "Sakura",
-      coral: "Koralle",
-      vineyard: "Weinberg",
-      storm: "Gewitter",
-      candy: "Candy",
-      ember: "Glut",
-      volcano: "Vulkan",
-      aurora: "Nordlicht",
-      meteor: "Sternschnuppen",
-      galaxy: "Galaxie"
-    };
     return {
-      category: "themes",
-      emoji: "🖼️",
-      label: labels[id] || id,
-      sellable: id !== "meadow" && THEME_SHOP_PRICES[id] != null,
+      category: kind,
+      emoji: kind === "themes" ? "🖼️" : id,
+      label,
+      sellable: false,
     };
   }
-  if (kind === "stickers") {
+  seedShopCatalogIfNeeded();
+  if (shopCatalog.isDeleted(getDb(), kind, id)) return null;
+  const cat = shopCatalog.getItem(getDb(), kind, id);
+  if (cat) {
+    const pub = shopCatalog.publicItem(cat, Date.now(), { admin: false });
     return {
-      category: "stickers",
-      emoji: id,
-      label: id,
-      // Achievement-Exclusives nicht verkaufen
-      sellable: STICKER_SHOP_PRICES[id] != null && !isAchievementSticker(id),
+      category: kind,
+      emoji: (pub && pub.emoji) || (kind === "themes" ? "🖼️" : id),
+      label: (pub && pub.label) || cat.label || id,
+      sellable: true,
     };
   }
-  if (kind === "emojis") {
-    return {
-      category: "emojis",
-      emoji: id,
-      label: id,
-      // Nur Katalog-Emojis (Starter-Minimum bleibt in takeItem geschützt)
-      sellable: EMOJI_SHOP_PRICES[id] != null,
-    };
+  // Static-Fallback (Seed noch nicht / Legacy)
+  if (kind === "pets" && PET_SHOP_PRICES[id] != null) {
+    return { category: "pets", emoji: id, label: id, sellable: true };
+  }
+  if (kind === "themes" && THEME_SHOP_PRICES[id] != null) {
+    return { category: "themes", emoji: "🖼️", label: id, sellable: true };
+  }
+  if (kind === "stickers" && STICKER_SHOP_PRICES[id] != null) {
+    return { category: "stickers", emoji: id, label: id, sellable: true };
+  }
+  if (kind === "emojis" && EMOJI_SHOP_PRICES[id] != null) {
+    return { category: "emojis", emoji: id, label: id, sellable: true };
   }
   return null;
 }
@@ -8272,7 +8279,7 @@ app.get("/v1/market/offers", (req, res) => {
   if (!ctx) return;
   const mode = String(req.query.mode || "market") === "private" ? "private" : "market";
   const kind = String(req.query.kind || "").trim();
-  const itemId = String(req.query.itemId || "").trim().slice(0, 24);
+  const itemId = clipMarketItemId(req.query.itemId);
   if (!["pets", "themes", "stickers", "emojis"].includes(kind) || !itemId) {
     return res.status(400).json({ error: "bad_item", message: "Item ungültig." });
   }
@@ -8291,7 +8298,7 @@ app.get("/v1/market/item-price", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   const kind = String(req.query.kind || "").trim();
-  const itemId = String(req.query.itemId || "").trim().slice(0, 24);
+  const itemId = clipMarketItemId(req.query.itemId);
   if (!["pets", "themes", "stickers", "emojis"].includes(kind) || !itemId) {
     return res.status(400).json({ error: "bad_item", message: "Item ungültig." });
   }
@@ -8543,7 +8550,7 @@ app.post("/v1/market/list", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   const kind = String(req.body?.kind || "").trim();
-  const itemId = String(req.body?.itemId || "").trim().slice(0, 24);
+  const itemId = clipMarketItemId(req.body?.itemId);
   const priceCoins = Math.max(0, Math.min(10_000, Math.floor(Number(req.body?.priceCoins) || 0)));
   const allowTrade = Boolean(req.body?.allowTrade);
   const isPrivate = Boolean(req.body?.private);
@@ -8559,7 +8566,7 @@ app.post("/v1/market/list", (req, res) => {
   let tradeWantLabel = null;
   if (allowTrade) {
     tradeWantKind = String(req.body?.tradeWantKind || "").trim();
-    tradeWantItemId = String(req.body?.tradeWantItemId || "").trim().slice(0, 24);
+    tradeWantItemId = clipMarketItemId(req.body?.tradeWantItemId);
     tradeWantLabel = String(req.body?.tradeWantLabel || "").trim().slice(0, 40) || null;
     if (!["pets", "themes", "stickers", "emojis"].includes(tradeWantKind) || !tradeWantItemId) {
       return res.status(400).json({
@@ -8809,7 +8816,7 @@ app.post("/v1/market/:id/trade", (req, res) => {
   if (!ctx) return;
   const id = String(req.params.id || "").trim();
   const offerKind = String(req.body?.kind || "").trim();
-  const offerItemId = String(req.body?.itemId || "").trim().slice(0, 24);
+  const offerItemId = clipMarketItemId(req.body?.itemId);
   const listings = market.ensureMarket(getDb());
   const entry = listings[id];
   if (!entry || entry.status !== "open" || !entry.allowTrade) {

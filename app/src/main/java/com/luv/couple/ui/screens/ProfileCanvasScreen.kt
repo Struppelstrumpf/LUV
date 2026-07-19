@@ -2298,7 +2298,10 @@ private fun ElementContent(
                 )
             }
         }
-        ProfileElType.Sticker -> Text(el.emoji ?: "✨", fontSize = sp(34f))
+        ProfileElType.Sticker -> com.luv.couple.ui.ItemGlyph(
+            id = el.emoji ?: "✨",
+            fontSize = sp(34f)
+        )
         ProfileElType.Text -> Text(
             el.text ?: "",
             color = color,

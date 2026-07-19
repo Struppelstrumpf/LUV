@@ -406,11 +406,8 @@ object ProfileCatalog {
     }
 
     /** Emoji kurz; Bild-Sticker/Pets (img_*) vollständig behalten. */
-    fun clipProfileItemId(raw: String, maxEmoji: Int = 16): String {
-        val e = raw.trim()
-        if (e.isEmpty()) return ""
-        return if (e.startsWith("img_", ignoreCase = true)) e.take(32) else e.take(maxEmoji)
-    }
+    fun clipProfileItemId(raw: String, maxEmoji: Int = 16): String =
+        com.luv.couple.ui.clipItemId(raw, maxEmoji)
 
     fun newText(color: String, layout: List<ProfileLayoutEl>): ProfileLayoutEl {
         val n = layout.count { it.type == ProfileElType.Text }
