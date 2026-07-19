@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -140,8 +141,9 @@ fun GalleryScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp)
-                .padding(top = 20.dp, bottom = 8.dp)
+                .padding(top = 20.dp, bottom = 16.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -215,7 +217,9 @@ fun GalleryScreen(
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(2),
                         modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(bottom = 12.dp),
+                        contentPadding = PaddingValues(
+                            bottom = if (selecting && selectedIds.isNotEmpty()) 8.dp else 12.dp
+                        ),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -246,7 +250,7 @@ fun GalleryScreen(
             }
 
             if (selecting && selectedIds.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 PrimaryButton(
                     "Löschen (${selectedIds.size})",
                     AccentRose,
@@ -254,6 +258,7 @@ fun GalleryScreen(
                         confirmDelete = moments.filter { it.id in selectedIds }
                     }
                 )
+                Spacer(modifier = Modifier.height(8.dp))
             }
         }
     }

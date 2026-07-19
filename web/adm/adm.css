@@ -62,7 +62,20 @@ body {
   margin: 0.6rem 0 0.4rem;
 }
 .lede, .hint, .page-hint { color: var(--muted); line-height: 1.5; }
-.google-slot { margin: 1.4rem 0 0.8rem; min-height: 44px; }
+.google-slot {
+  margin: 1.4rem 0 0.8rem;
+  min-height: 44px;
+  position: relative;
+  z-index: 1;
+}
+.google-login-btn {
+  width: 100%;
+  background: #fff;
+  color: #1f1f1f;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.google-login-btn:hover { filter: brightness(0.96); }
+.google-official { margin-top: 0.65rem; }
 .error { color: var(--danger); margin-top: 0.75rem; }
 
 .app-view {
@@ -166,6 +179,96 @@ body {
   margin: 0 0 1rem;
 }
 
+.shop-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.shop-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 1rem;
+}
+.shop-cat {
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.45rem 0.85rem;
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 0.9rem;
+}
+.shop-cat:hover { color: var(--text); border-color: rgba(255,255,255,0.2); }
+.shop-cat.on {
+  background: rgba(233, 78, 119, 0.22);
+  color: var(--text);
+  border-color: rgba(233, 78, 119, 0.5);
+}
+.shop-cat-n {
+  display: inline-block;
+  min-width: 1.4em;
+  margin-left: 0.25rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.25);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.shop-cat.on .shop-cat-n { color: var(--text); }
+.shop-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.shop-section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 0.9rem 1rem 1rem;
+}
+.shop-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.65rem;
+}
+.shop-section-head h3 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.25rem;
+  font-weight: 500;
+}
+.shop-table-wrap { overflow: auto; }
+.shop-item-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+.shop-emoji {
+  font-size: 1.45rem;
+  width: 2rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+.shop-thumb {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  border-radius: 50%;
+  background: #3d6b9e;
+  border: 1px solid rgba(255,255,255,0.25);
+  flex-shrink: 0;
+}
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.78rem; }
+table tr.is-off { opacity: 0.55; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -261,10 +364,13 @@ th { color: var(--muted); font-weight: 500; }
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.55);
-  display: grid;
+  display: none;
   place-items: center;
   padding: 1rem;
   z-index: 40;
+}
+.modal.is-open {
+  display: grid;
 }
 .modal-card {
   width: min(640px, 100%);
@@ -274,6 +380,141 @@ th { color: var(--muted); font-weight: 500; }
   border: 1px solid var(--line);
   border-radius: 20px;
   padding: 1.25rem;
+}
+.modal-card.wide {
+  width: min(820px, 100%);
+}
+
+.seg {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.4rem 0 0.75rem;
+}
+.seg button {
+  flex: 1;
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  color: var(--muted);
+  border-radius: 12px;
+  padding: 0.55rem 0.7rem;
+  cursor: pointer;
+  font-family: var(--body);
+}
+.seg button.on {
+  background: rgba(233, 78, 119, 0.22);
+  color: var(--text);
+  border-color: rgba(233, 78, 119, 0.45);
+}
+
+.chroma-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+.chroma-swatch i {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: #00ff00;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  display: inline-block;
+}
+
+.pet-paste-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.72);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+.pet-paste-card {
+  width: min(720px, 100%);
+  max-height: 92vh;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 1.1rem 1.25rem;
+}
+.pet-paste-stage {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  margin: 0.75rem auto;
+  aspect-ratio: 1;
+  border-radius: 16px;
+  overflow: hidden;
+  background:
+    linear-gradient(45deg, #2a3142 25%, transparent 25%),
+    linear-gradient(-45deg, #2a3142 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a3142 75%),
+    linear-gradient(-45deg, transparent 75%, #2a3142 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+  border: 1px solid var(--line);
+  touch-action: none;
+  user-select: none;
+}
+.pet-paste-stage canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.pet-paste-stage .crop {
+  position: absolute;
+  border: 2px solid #e94e77;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.pet-dropzone {
+  border: 1.5px dashed var(--line);
+  border-radius: 14px;
+  padding: 1.25rem;
+  text-align: center;
+  color: var(--muted);
+  background: var(--panel2);
+}
+.pet-dropzone.on {
+  border-color: #e94e77;
+  color: var(--text);
+}
+.pet-preview-row {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+.pet-preview-circle {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  background: #3d6b9e;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.pet-preview-circle img {
+  width: 72%;
+  height: 72%;
+  object-fit: contain;
+}
+
+/* hidden darf nicht von display:grid/flex überschrieben werden */
+[hidden],
+.login-view[hidden],
+.app-view[hidden],
+.modal[hidden] {
+  display: none !important;
 }
 .grid-2 {
   display: grid;

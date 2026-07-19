@@ -10,10 +10,18 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
+import com.google.android.play.core.appupdate.AppUpdateInfo
+import com.google.android.play.core.appupdate.AppUpdateManager
+import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.google.android.play.core.appupdate.AppUpdateOptions
+import com.google.android.play.core.install.model.AppUpdateType
+import com.google.android.play.core.install.model.UpdateAvailability
+import com.google.android.play.core.ktx.requestAppUpdateInfo
 import com.luv.couple.BuildConfig
 import com.luv.couple.LuvApp
 import com.luv.couple.MainActivity
 import com.luv.couple.R
+import com.luv.couple.billing.findActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,12 +36,22 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
+enum class UpdateChannel {
+    /** Google Play In-App-Update (App aus dem Play Store) */
+    PlayInApp,
+    /** Play-Store-Seite öffnen (z. B. alte Sideload-APK) */
+    PlayStore,
+    /** Legacy: APK von der Website (nur Fallback, wenn kein Play) */
+    WebsiteApk
+}
+
 data class AppRelease(
     val versionCode: Int,
     val versionName: String,
     val apkUrl: String,
     val sha256: String?,
-    val notes: String
+    val notes: String,
+    val channel: UpdateChannel = UpdateChannel.WebsiteApk
 )
 
 sealed class UpdateUiState {
@@ -48,8 +66,12 @@ sealed class UpdateUiState {
 
 object AppUpdater {
     private const val MANIFEST_URL = "https://reineke.pro/downloads/luv/version.json"
+    private const val PLAY_PACKAGE = "com.android.vending"
+    private const val PLAY_LISTING =
+        "https://play.google.com/store/apps/details?id=${BuildConfig.APPLICATION_ID}"
     private const val CHANNEL_ID = "luv_updates"
     private const val NOTIFICATION_ID = 71
+    const val REQUEST_PLAY_UPDATE = 7142
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -69,6 +91,11 @@ object AppUpdater {
     @Volatile
     private var lastNavCheckAt = 0L
     private const val NAV_CHECK_MIN_MS = 8_000L
+
+    @Volatile
+    private var playUpdateManager: AppUpdateManager? = null
+    @Volatile
+    private var cachedPlayUpdateInfo: AppUpdateInfo? = null
 
     fun offerFocus() {
         _focusRequest.value = true
@@ -93,6 +120,22 @@ object AppUpdater {
     }
 
     fun versionLabel(): String = BuildConfig.VERSION_NAME
+
+    /** true = App wurde über Google Play installiert / aktualisiert */
+    fun isInstalledFromPlay(context: Context): Boolean {
+        return try {
+            val pm = context.packageManager
+            val installer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                pm.getInstallSourceInfo(context.packageName).installingPackageName
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getInstallerPackageName(context.packageName)
+            }
+            installer == PLAY_PACKAGE
+        } catch (_: Throwable) {
+            false
+        }
+    }
 
     /** Installierte Version (PackageManager) — nach Update auch vor Prozess-Neustart korrekt. */
     fun installedVersionCode(context: Context): Int {
@@ -127,6 +170,19 @@ object AppUpdater {
         }
     }
 
+    fun openPlayStoreListing(context: Context) {
+        val market = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("market://details?id=${BuildConfig.APPLICATION_ID}")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val web = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse(PLAY_LISTING)
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(market) }
+            .recoverCatching { context.startActivity(web) }
+    }
+
     fun currentReleaseOrNull(): AppRelease? = when (val s = _state.value) {
         is UpdateUiState.Available -> s.release
         is UpdateUiState.Downloading -> s.release
@@ -144,7 +200,6 @@ object AppUpdater {
         if (now - lastNavCheckAt < NAV_CHECK_MIN_MS) {
             return currentReleaseOrNull()
         }
-        // Während Download/Ready nicht stören
         when (_state.value) {
             is UpdateUiState.Downloading, is UpdateUiState.Ready ->
                 return currentReleaseOrNull()
@@ -157,12 +212,10 @@ object AppUpdater {
     suspend fun check(context: Context, notify: Boolean = true): AppRelease? = withContext(Dispatchers.IO) {
         val installed = installedVersionCode(context).coerceAtLeast(BuildConfig.VERSION_CODE)
 
-        // Download läuft — nicht abbrechen
         val current = _state.value
         if (current is UpdateUiState.Downloading) {
             return@withContext current.release
         }
-        // Ready nur behalten, wenn die Version wirklich noch fehlt
         if (current is UpdateUiState.Ready) {
             if (current.release.versionCode > installed) {
                 return@withContext current.release
@@ -180,39 +233,13 @@ object AppUpdater {
             _state.value = UpdateUiState.Checking
         }
         try {
-            val request = Request.Builder()
-                .url(MANIFEST_URL)
-                .header("Cache-Control", "no-cache")
-                .get()
-                .build()
-            http.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    val known = currentReleaseOrNull()
-                    if (known == null) {
-                        _state.value = UpdateUiState.Error("Update-Check fehlgeschlagen")
-                    }
-                    return@withContext known
-                }
-                val json = JSONObject(response.body?.string().orEmpty())
-                val release = AppRelease(
-                    versionCode = json.optInt("versionCode", 0),
-                    versionName = json.optString("versionName", "?"),
-                    apkUrl = json.optString("apkUrl", "https://reineke.pro/downloads/luv/LUV.apk"),
-                    sha256 = json.optString("sha256").takeIf { it.isNotBlank() },
-                    notes = json.optString("notes", "Neue Version verfügbar")
-                )
-                if (release.versionCode > installed) {
-                    if (_state.value !is UpdateUiState.Downloading &&
-                        _state.value !is UpdateUiState.Ready
-                    ) {
-                        _state.value = UpdateUiState.Available(release)
-                    }
-                    if (notify) maybeNotify(context, release)
-                    release
-                } else {
-                    _state.value = UpdateUiState.UpToDate
-                    null
-                }
+            if (isInstalledFromPlay(context)) {
+                // Play In-App zuerst; falls Play nichts meldet → version.json als Pflicht-Hinweis
+                checkPlayUpdate(context, installed, notify)
+                    ?: checkManifestThenPlayStore(context, installed, notify)
+            } else {
+                // Sideload / alte Website-APK: Version über Manifest, Update nur über Play Store
+                checkManifestThenPlayStore(context, installed, notify)
             }
         } catch (t: Throwable) {
             val known = currentReleaseOrNull()
@@ -225,81 +252,247 @@ object AppUpdater {
         }
     }
 
+    private suspend fun checkPlayUpdate(
+        context: Context,
+        installed: Int,
+        notify: Boolean
+    ): AppRelease? {
+        val manager = playUpdateManager
+            ?: AppUpdateManagerFactory.create(context.applicationContext).also {
+                playUpdateManager = it
+            }
+        val info = try {
+            manager.requestAppUpdateInfo()
+        } catch (_: Throwable) {
+            // Play Services / Simulator — Caller fällt auf Manifest zurück
+            return null
+        }
+        cachedPlayUpdateInfo = info
+
+        val availability = info.updateAvailability()
+        val remoteCode = info.availableVersionCode()
+
+        if (availability == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) {
+            val release = playRelease(info, installed)
+            _state.value = UpdateUiState.Available(release)
+            withContext(Dispatchers.Main) {
+                startPlayInAppUpdate(context)
+            }
+            return release
+        }
+
+        // Pflicht-Popup sobald Play ein Update kennt — nicht nur bei IMMEDIATE
+        if (availability == UpdateAvailability.UPDATE_AVAILABLE && remoteCode > installed) {
+            val release = playRelease(info, installed)
+            if (_state.value !is UpdateUiState.Downloading &&
+                _state.value !is UpdateUiState.Ready
+            ) {
+                _state.value = UpdateUiState.Available(release)
+            }
+            if (notify) maybeNotify(context, release)
+            return release
+        }
+
+        return null
+    }
+
+    private fun playRelease(info: AppUpdateInfo, installed: Int): AppRelease {
+        val code = info.availableVersionCode().coerceAtLeast(installed + 1)
+        return AppRelease(
+            versionCode = code,
+            versionName = AppChangelog.entries.firstOrNull()?.version ?: "Play #$code",
+            apkUrl = PLAY_LISTING,
+            sha256 = null,
+            notes = "Neue Version im Google Play Store — bitte aktualisieren.",
+            channel = UpdateChannel.PlayInApp
+        )
+    }
+
+    private suspend fun checkManifestThenPlayStore(
+        context: Context,
+        installed: Int,
+        notify: Boolean
+    ): AppRelease? {
+        val request = Request.Builder()
+            .url(MANIFEST_URL)
+            .header("Cache-Control", "no-cache")
+            .get()
+            .build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val known = currentReleaseOrNull()
+                if (known == null) {
+                    _state.value = UpdateUiState.Error("Update-Check fehlgeschlagen")
+                }
+                return known
+            }
+            val json = JSONObject(response.body?.string().orEmpty())
+            val remoteCode = json.optInt("versionCode", 0)
+            if (remoteCode <= installed) {
+                _state.value = UpdateUiState.UpToDate
+                return null
+            }
+            val release = AppRelease(
+                versionCode = remoteCode,
+                versionName = json.optString("versionName", "?"),
+                apkUrl = PLAY_LISTING,
+                sha256 = null,
+                notes = json.optString(
+                    "notes",
+                    "Neue Version — bitte über den Google Play Store aktualisieren."
+                ),
+                channel = UpdateChannel.PlayStore
+            )
+            if (_state.value !is UpdateUiState.Downloading &&
+                _state.value !is UpdateUiState.Ready
+            ) {
+                _state.value = UpdateUiState.Available(release)
+            }
+            if (notify) maybeNotify(context, release)
+            return release
+        }
+    }
+
+    /**
+     * Update starten: Play In-App, Play-Store-Seite oder (Legacy) APK.
+     */
     suspend fun downloadAndInstall(context: Context, release: AppRelease? = null): Boolean =
-        withContext(Dispatchers.IO) {
+        withContext(Dispatchers.Main) {
             val targetRelease = release
                 ?: (_state.value as? UpdateUiState.Available)?.release
                 ?: (_state.value as? UpdateUiState.Error)?.release
                 ?: (_state.value as? UpdateUiState.Ready)?.release
                 ?: return@withContext false
 
-            if (!downloading.compareAndSet(false, true)) return@withContext false
-            try {
-                if (!canRequestPackageInstalls(context)) {
-                    withContext(Dispatchers.Main) { openInstallPermissionSettings(context) }
-                    _state.value = UpdateUiState.Error(
-                        "Bitte Installation aus unbekannten Quellen erlauben, dann erneut tippen.",
-                        targetRelease
-                    )
-                    return@withContext false
+            when (targetRelease.channel) {
+                UpdateChannel.PlayInApp -> startPlayInAppUpdate(context)
+                UpdateChannel.PlayStore -> {
+                    openPlayStoreListing(context)
+                    true
                 }
+                UpdateChannel.WebsiteApk -> withContext(Dispatchers.IO) {
+                    downloadWebsiteApk(context, targetRelease)
+                }
+            }
+        }
 
-                _state.value = UpdateUiState.Downloading(targetRelease, 0f)
-                val dir = File(context.cacheDir, "updates").apply { mkdirs() }
-                val target = File(dir, "luv-${targetRelease.versionCode}.apk")
-                if (target.exists()) target.delete()
+    private fun startPlayInAppUpdate(context: Context): Boolean {
+        val activity = context.findActivity() ?: run {
+            openPlayStoreListing(context)
+            return true
+        }
+        val manager = playUpdateManager
+            ?: AppUpdateManagerFactory.create(context.applicationContext).also {
+                playUpdateManager = it
+            }
+        // Info ggf. neu laden — cached kann abgelaufen sein
+        manager.appUpdateInfo
+            .addOnSuccessListener { info ->
+                cachedPlayUpdateInfo = info
+                val available =
+                    info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE ||
+                        info.updateAvailability() ==
+                        UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS
+                if (!available) {
+                    openPlayStoreListing(context)
+                    return@addOnSuccessListener
+                }
+                val updateType = when {
+                    info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE) -> AppUpdateType.IMMEDIATE
+                    info.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE) -> AppUpdateType.FLEXIBLE
+                    else -> {
+                        openPlayStoreListing(context)
+                        return@addOnSuccessListener
+                    }
+                }
+                runCatching {
+                    manager.startUpdateFlowForResult(
+                        info,
+                        activity,
+                        AppUpdateOptions.newBuilder(updateType).build(),
+                        REQUEST_PLAY_UPDATE
+                    )
+                }.onFailure {
+                    openPlayStoreListing(context)
+                }
+            }
+            .addOnFailureListener {
+                openPlayStoreListing(context)
+            }
+        return true
+    }
 
-                val request = Request.Builder().url(targetRelease.apkUrl).get().build()
-                http.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        _state.value = UpdateUiState.Error("Download fehlgeschlagen", targetRelease)
-                        return@withContext false
-                    }
-                    val body = response.body ?: run {
-                        _state.value = UpdateUiState.Error("Leere Antwort", targetRelease)
-                        return@withContext false
-                    }
-                    val total = body.contentLength()
-                    val digest = MessageDigest.getInstance("SHA-256")
-                    body.byteStream().use { input ->
-                        FileOutputStream(target).use { output ->
-                            val buffer = ByteArray(64 * 1024)
-                            var read: Int
-                            var done = 0L
-                            while (input.read(buffer).also { read = it } != -1) {
-                                output.write(buffer, 0, read)
-                                digest.update(buffer, 0, read)
-                                done += read
-                                if (total > 0) {
-                                    _state.value = UpdateUiState.Downloading(
-                                        targetRelease,
-                                        (done.toFloat() / total.toFloat()).coerceIn(0f, 1f)
-                                    )
-                                }
+    private suspend fun downloadWebsiteApk(context: Context, targetRelease: AppRelease): Boolean {
+        if (!downloading.compareAndSet(false, true)) return false
+        try {
+            if (!canRequestPackageInstalls(context)) {
+                withContext(Dispatchers.Main) { openInstallPermissionSettings(context) }
+                _state.value = UpdateUiState.Error(
+                    "Bitte Installation aus unbekannten Quellen erlauben, dann erneut tippen.",
+                    targetRelease
+                )
+                return false
+            }
+
+            _state.value = UpdateUiState.Downloading(targetRelease, 0f)
+            val dir = File(context.cacheDir, "updates").apply { mkdirs() }
+            val target = File(dir, "luv-${targetRelease.versionCode}.apk")
+            if (target.exists()) target.delete()
+
+            val request = Request.Builder().url(targetRelease.apkUrl).get().build()
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    _state.value = UpdateUiState.Error("Download fehlgeschlagen", targetRelease)
+                    return false
+                }
+                val body = response.body ?: run {
+                    _state.value = UpdateUiState.Error("Leere Antwort", targetRelease)
+                    return false
+                }
+                val total = body.contentLength()
+                val digest = MessageDigest.getInstance("SHA-256")
+                body.byteStream().use { input ->
+                    FileOutputStream(target).use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        var read: Int
+                        var done = 0L
+                        while (input.read(buffer).also { read = it } != -1) {
+                            output.write(buffer, 0, read)
+                            digest.update(buffer, 0, read)
+                            done += read
+                            if (total > 0) {
+                                _state.value = UpdateUiState.Downloading(
+                                    targetRelease,
+                                    (done.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+                                )
                             }
                         }
                     }
-                    val actualSha = digest.digest().joinToString("") { "%02x".format(it) }
-                    val expected = targetRelease.sha256?.lowercase()
-                    if (!expected.isNullOrBlank() && expected != actualSha) {
-                        target.delete()
-                        _state.value = UpdateUiState.Error("Checksumme ungültig — bitte erneut versuchen.", targetRelease)
-                        return@withContext false
-                    }
                 }
-
-                _state.value = UpdateUiState.Ready(targetRelease, target)
-                withContext(Dispatchers.Main) {
-                    installApkFile(context, target)
+                val actualSha = digest.digest().joinToString("") { "%02x".format(it) }
+                val expected = targetRelease.sha256?.lowercase()
+                if (!expected.isNullOrBlank() && expected != actualSha) {
+                    target.delete()
+                    _state.value = UpdateUiState.Error(
+                        "Checksumme ungültig — bitte erneut versuchen.",
+                        targetRelease
+                    )
+                    return false
                 }
-                true
-            } catch (t: Throwable) {
-                _state.value = UpdateUiState.Error(t.message ?: "Download fehlgeschlagen", targetRelease)
-                false
-            } finally {
-                downloading.set(false)
             }
+
+            _state.value = UpdateUiState.Ready(targetRelease, target)
+            withContext(Dispatchers.Main) {
+                installApkFile(context, target)
+            }
+            return true
+        } catch (t: Throwable) {
+            _state.value = UpdateUiState.Error(t.message ?: "Download fehlgeschlagen", targetRelease)
+            return false
+        } finally {
+            downloading.set(false)
         }
+    }
 
     fun installApkFile(context: Context, file: File) {
         val contentUri = FileProvider.getUriForFile(

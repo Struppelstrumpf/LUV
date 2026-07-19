@@ -3,102 +3,30 @@
   const impressumDialog = document.getElementById("impressumDialog");
   openImpressum?.addEventListener("click", () => impressumDialog?.showModal());
 
-  // Fake „live“ Nutzerzähler — ruhig im Bereich ~10–15k
+  // Echter Live-Zähler: Nutzer mit offener App (API)
   (function liveUsersHook() {
     const el = document.getElementById("liveCount");
     if (!el) return;
+    const URL = "/luv/v1/public/live-count";
 
-    const HARD_MIN = 10011;
-    const HARD_MAX = 14987;
-
-    // Zielniveau ~12.5k über den Tag (Lokalzeit) — nie glatte Tausender
-    const HOUR_TARGET = [
-      10847, 10483, 10271, 10093, 10627, 11111, // 0–5 Nacht
-      11847, 12411, 12993, // 6–8 Morgen
-      13217, 13647, 13813, 13407, 12973, // 9–13
-      13141, 13573, 13919, // 14–16
-      14287, 14621, 14317, 13673, 12889, // 17–21 Abend
-      12183, 11497, // 22–23
-    ];
-
-    const rand = (a, b) => a + Math.random() * (b - a);
-    const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
-    const pick = (arr) => arr[(Math.random() * arr.length) | 0];
-
-    // Nur ungerade, keine …x00 / …x50
-    function displayInt(n) {
-      let v = Math.round(n);
-      v = clamp(v, HARD_MIN, HARD_MAX);
-      if (v % 2 === 0) v += 1;
-      const mod100 = ((v % 100) + 100) % 100;
-      if (mod100 === 0 || mod100 === 50) v += pick([3, 5, 7, 9, 11, 13]);
-      if (v % 2 === 0) v += 1;
-      return clamp(v, HARD_MIN, HARD_MAX) | 1;
+    function render(n) {
+      const v = Math.max(0, Math.floor(Number(n) || 0));
+      el.textContent = v.toLocaleString("de-DE");
     }
 
-    function dayTarget() {
-      const d = new Date();
-      const h = d.getHours();
-      const m = d.getMinutes() + d.getSeconds() / 60;
-      const a = HOUR_TARGET[h];
-      const b = HOUR_TARGET[(h + 1) % 24];
-      const t = m / 60;
-      const daySeed = d.getFullYear() * 1000 + d.getMonth() * 40 + d.getDate();
-      const frac = Math.abs(Math.sin(daySeed * 12.9898) * 43758.5453) % 1;
-      const dayJitter = frac * 0.05 - 0.025;
-      return (a + (b - a) * t) * (1 + dayJitter);
+    async function poll() {
+      try {
+        const res = await fetch(URL, { cache: "no-store" });
+        if (!res.ok) throw new Error("bad status");
+        const json = await res.json();
+        render(json.count);
+      } catch {
+        /* stiller Retry */
+      }
+      setTimeout(poll, 15000);
     }
 
-    let value = dayTarget() * rand(0.98, 1.02);
-    let shown = displayInt(value);
-    let waveRemaining = 0; // Ticks einer längeren Welle
-    let waveStep = 0; // Delta pro Tick während der Welle
-    let lastJumpAt = 0;
-
-    function tick() {
-      const now = Date.now();
-      const target = dayTarget();
-      const delay = rand(900, 1800); // ~40–65 Ticks/min
-      // ~100 Veränderung / Minute → grob 1.5–3 pro Tick im Schnitt
-      let delta = rand(-2.8, 2.8);
-
-      // Sehr leichte Drift zum Tagesziel (kein hektisches Nachziehen)
-      delta += (target - value) * 0.0008;
-
-      // Seltene abrupte Sprünge (alle paar Minuten) — kleiner Maßstab
-      if (now - lastJumpAt > 90000 && Math.random() < 0.04) {
-        delta += pick([-1, 1]) * rand(18, 55);
-        lastJumpAt = now;
-        waveRemaining = 0;
-      }
-
-      // Oder eine Welle über einige Minuten (~2–5 min)
-      if (waveRemaining <= 0 && now - lastJumpAt > 120000 && Math.random() < 0.025) {
-        const dir = pick([-1, 1]);
-        const ticks = (rand(80, 180)) | 0; // bei ~1.3s ≈ 2–4 min
-        const total = rand(25, 80);
-        waveStep = (dir * total) / ticks;
-        waveRemaining = ticks;
-        lastJumpAt = now;
-      }
-      if (waveRemaining > 0) {
-        delta += waveStep + rand(-0.6, 0.6);
-        waveRemaining -= 1;
-      }
-
-      value = clamp(value + delta, HARD_MIN, HARD_MAX);
-
-      let next = displayInt(value);
-      if (next === shown) next = displayInt(shown + pick([-2, 2, -4, 4]));
-      if (next % 2 === 0) next += 1;
-      shown = next;
-      el.textContent = shown.toLocaleString("de-DE");
-
-      setTimeout(tick, delay);
-    }
-
-    el.textContent = shown.toLocaleString("de-DE");
-    setTimeout(tick, rand(600, 1200));
+    poll();
   })();
 
   document.getElementById("scrollCue")?.addEventListener("click", (e) => {

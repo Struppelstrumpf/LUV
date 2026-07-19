@@ -374,7 +374,7 @@ Reineke GbR, Matthias und Jane Reineke, Elisabethstraße 31, 49201 Dissen (info@
 LUV ermöglicht gemeinsames Zeichnen in Lobbys. Kostenlose Funktionen (u. a. Daily Coins, freie Sessions) und optionale Coin-Pakete können angeboten werden. Technische Verfügbarkeit kann schwanken.
 
 3. Käufe / Coins
-Käufe erfolgen über den integrierten Shop (z. B. Mollie). Mit Abschluss der Zahlung erwirbst du digitale Guthaben-/Nutzungsrechte (Coins) in der App. Preise werden vor dem Kauf angezeigt. Es gelten die Zahlungsbedingungen des jeweiligen Zahlungsdienstleisters.
+Käufe von Coin-Paketen erfolgen ausschließlich über Google Play (In-App-Käufe). Mit Abschluss der Zahlung erwirbst du digitale Guthaben-/Nutzungsrechte (Coins) in der App. Preise werden vor dem Kauf in der Google-Play-Oberfläche angezeigt. Es gelten die Nutzungsbedingungen und Zahlungsbedingungen von Google Play.
 
 3a. Lootboxen / Zufallsinhalte
 In der App können Lootboxen gegen Coins erworben werden. Der Inhalt einer Lootbox wird zufällig aus dem Itemshop bestimmt (z. B. Sticker, Emojis, Hintergründe, Begleiter). Die Wahrscheinlichkeit hängt u. a. vom Shop-Preis des jeweiligen Items ab; teurere Items sind seltener. Vor dem Kauf werden Preis und Hinweise angezeigt. Mit dem Kauf erklärst du dich mit dem Zufallscharakter einverstanden. Eingesetzte Coins und erhaltene Zufallsinhalte sind nicht erstattungsfähig, soweit gesetzlich zulässig. Lootboxen sind Unterhaltung innerhalb der App und kein Glücksspiel um Echtgeld; ein Umtausch von Lootbox-Inhalten in Geld findet nicht statt.

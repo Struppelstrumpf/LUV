@@ -3,6 +3,8 @@
  * Seed = statische Maps; Admin speichert Overrides in db.shopCatalog.items.
  */
 
+const { keywordsForEmoji } = require("./emoji_search_keywords");
+
 const EXTRA_EMOJI_PRICES = {
   // Premium / teuer
   "💋": 22,
@@ -314,64 +316,57 @@ function seedFromStatic(db, staticMaps) {
   return cat;
 }
 
+function normalizeSearch(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/ä/g, "ae")
+    .replace(/ö/g, "oe")
+    .replace(/ü/g, "ue")
+    .replace(/ß/g, "ss")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function mergeSearchText(...parts) {
+  const seen = new Set();
+  const out = [];
+  for (const part of parts) {
+    for (const w of normalizeSearch(part).split(" ")) {
+      if (w.length < 2 || seen.has(w)) continue;
+      seen.add(w);
+      out.push(w);
+    }
+  }
+  return out.join(" ").slice(0, 480);
+}
+
 function defaultSearchText(kind, itemId) {
   const id = String(itemId || "");
-  const map = {
-    "❤️": "herz heart liebe",
-    "🧡": "herz orange",
-    "💛": "herz gelb",
-    "💚": "herz gruen",
-    "💙": "herz blau",
-    "💜": "herz lila",
-    "🖤": "herz schwarz",
-    "🤍": "herz weiss",
-    "🤎": "herz braun",
-    "💕": "herz herzen liebe",
-    "💖": "herz sparkle",
-    "💗": "herz wachsend",
-    "💘": "herz pfeil",
-    "💝": "herz geschenk",
-    "💞": "herz kreisend",
-    "💟": "herz dekoration",
-    "❣️": "herz ausrufezeichen",
-    "💔": "herz gebrochen",
-    "❤️‍🔥": "herz feuer",
-    "❤️‍🩹": "herz heilen",
-    "💋": "kuss lippen",
-    "👑": "krone king queen",
-    "💎": "diamant juwel",
-    "🦄": "einhorn unicorn",
-    "🐉": "drache dragon",
-    "⭐": "stern star",
-    "🌟": "stern glanz",
-    "✨": "funken sparkle",
-    "🔥": "feuer fire",
-    "🌙": "mond moon",
-    "☀️": "sonne sun",
-    "🌹": "rose blume",
-    "🌸": "blume sakura",
-    "🍀": "klee glueck",
-    "🌈": "regenbogen rainbow",
-    "🐱": "katze cat",
-    "🐶": "hund dog",
-    "🦊": "fuchs fox",
-    "🐻": "baer bear",
-    "🐼": "panda",
-    "🐸": "frosch frog",
-    "🐧": "pinguin",
-    "🦋": "schmetterling butterfly",
-    "😂": "lachen lachend",
-    "😍": "verliebt eyes",
-    "🥰": "liebe herzen",
-    "😊": "laecheln smile",
-    "👍": "daumen gut ok",
-    "👎": "daumen schlecht",
-    "🎉": "party feier",
-    "🎁": "geschenk gift",
-    "🏆": "pokal trophy",
-    "🥇": "medaille gold",
-  };
-  return map[id] || `${kind} ${id}`;
+  const kw = keywordsForEmoji(id);
+  if (kw) return kw;
+  return mergeSearchText(kind, id);
+}
+
+function itemSearchHaystack(item) {
+  const id = String(item?.itemId || "");
+  return mergeSearchText(id, item?.label, item?.searchText, keywordsForEmoji(id), item?.kind);
+}
+
+function tokenMatchesHay(token, hayWords, itemId) {
+  if (!token) return true;
+  if (String(itemId || "").includes(token)) return true;
+  for (const w of hayWords) {
+    if (w === token || w.startsWith(token)) return true;
+  }
+  return false;
+}
+
+function matchesSearchQuery(item, query) {
+  const tokens = normalizeSearch(query).split(" ").filter(Boolean);
+  if (!tokens.length) return true;
+  const hayWords = itemSearchHaystack(item).split(" ").filter(Boolean);
+  return tokens.every((token) => tokenMatchesHay(token, hayWords, item?.itemId));
 }
 
 function normalizeItem(raw) {
@@ -403,8 +398,9 @@ function normalizeItem(raw) {
     maxTotalSales,
     maxPerUser,
     soldTotal: Math.max(0, Math.floor(Number(raw.soldTotal) || 0)),
-    searchText: String(raw.searchText || defaultSearchText(kind, itemId)).trim().slice(0, 120),
+    searchText: mergeSearchText(raw.searchText, defaultSearchText(kind, itemId)),
     seeded: Boolean(raw.seeded),
+    hasImage: Boolean(raw.hasImage),
     createdAt: Number(raw.createdAt) || Date.now(),
     updatedAt: Date.now(),
   };
@@ -512,20 +508,29 @@ function publicItem(item, now = Date.now(), { admin = false } = {}) {
         ? item.priceCoins
         : null;
   const rem = remainingMs(item, now);
+  const hasImage = Boolean(item.hasImage);
   const base = {
     kind: item.kind,
     itemId: item.itemId,
     label: item.label,
-    emoji: item.kind === "themes" ? "🖼️" : item.itemId,
+    emoji:
+      item.kind === "themes"
+        ? "🖼️"
+        : item.itemId,
     priceCoins: price,
     compareAtPrice: compareAt,
     onSale: Boolean(compareAt && compareAt > price),
-    searchText: item.searchText || "",
+    searchText: mergeSearchText(item.searchText, keywordsForEmoji(item.itemId), item.label),
     availableUntil: item.availableUntil || null,
     remainingMs: rem,
     maxPerUser: item.maxPerUser,
     maxTotalSales: item.maxTotalSales,
     soldTotal: item.soldTotal || 0,
+    hasImage,
+    imageUrl:
+      hasImage && item.kind === "pets"
+        ? `/luv/v1/shop/pet-image/${encodeURIComponent(item.itemId)}`
+        : null,
   };
   if (admin) {
     return {
@@ -559,10 +564,7 @@ function listPublicCatalog(db, { admin = false, kind = null, q = "" } = {}) {
     });
   }
   if (query) {
-    items = items.filter((i) => {
-      const hay = `${i.itemId} ${i.label} ${i.searchText || ""} ${i.kind}`.toLowerCase();
-      return hay.includes(query);
-    });
+    items = items.filter((i) => matchesSearchQuery(i, query));
   }
   items.sort((a, b) => effectivePrice(a) - effectivePrice(b) || a.itemId.localeCompare(b.itemId));
   return items.map((i) => publicItem(i, now, { admin }));

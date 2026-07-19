@@ -1,7 +1,6 @@
 package com.luv.couple.ui
 
 import android.content.Intent
-import android.net.Uri
 import android.util.Log
 import android.widget.Toast
 import com.luv.couple.data.Stroke
@@ -37,6 +36,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.luv.couple.LuvApp
+import com.luv.couple.billing.PlayBilling
+import com.luv.couple.billing.PlayBillingException
+import com.luv.couple.billing.findActivity
 import com.luv.couple.data.Lobby
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Role
@@ -119,6 +121,10 @@ fun LuvAppNav() {
     val prefs = LuvApp.instance.prefs
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
+    val playBilling = remember(context) { PlayBilling(context) }
+    DisposableEffect(playBilling) {
+        onDispose { playBilling.endConnection() }
+    }
 
     val nickname by prefs.nicknameFlow.collectAsStateWithLifecycle(initialValue = null)
     val lobbies by prefs.lobbiesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -268,8 +274,29 @@ fun LuvAppNav() {
             }
             val (enabled, list) = LuvApiClient.shopPacks()
             shopEnabled = enabled
-            packs = list
+            val playPrices = runCatching {
+                playBilling.queryProducts(list.map { it.id }).let { playBilling.formattedPrices }
+            }.getOrDefault(emptyMap())
+            packs = list.map { pack ->
+                pack.copy(displayPrice = playPrices[pack.id])
+            }
         }
+    }
+
+    suspend fun fulfillPlayPurchase(
+        productId: String,
+        purchaseToken: String,
+        orderId: String?
+    ): Boolean {
+        val granted = LuvApiClient.confirmPlayPurchase(productId, purchaseToken, orderId)
+        playBilling.consume(purchaseToken)
+        refreshAccount()
+        accountMessage = if (granted > 0) {
+            "+$granted Coins gutgeschrieben ♥"
+        } else {
+            "Kauf bestätigt — Coins aktualisiert ♥"
+        }
+        return true
     }
 
     /**
@@ -452,7 +479,15 @@ fun LuvAppNav() {
             accountMessage = null
             try {
                 val google = GoogleAuth.signIn(context)
-                val result = LuvApiClient.authGoogle(google.idToken)
+                // Vor Neukonto: Play Integrity (echtes Gerät) — Login bestehender Konten ohne Token ok
+                val attestation = runCatching {
+                    com.luv.couple.ui.security.PlayIntegrityGate.attestForSignup(context)
+                }.getOrNull()
+                val result = LuvApiClient.authGoogle(
+                    idToken = google.idToken,
+                    integrityToken = attestation?.integrityToken,
+                    integrityNonce = attestation?.nonce
+                )
                 val inTutorial = navController.currentDestination?.route == Routes.TUTORIAL
                 val returning =
                     !result.created && isChosenNickname(result.user.nickname)
@@ -606,11 +641,14 @@ fun LuvAppNav() {
 
     fun startAppUpdate() {
         scope.launch {
+            val release = AppUpdater.currentReleaseOrNull()
             val ready = updateState as? UpdateUiState.Ready
-            if (ready != null) {
+            if (ready != null &&
+                ready.release.channel == com.luv.couple.update.UpdateChannel.WebsiteApk
+            ) {
                 AppUpdater.installApkFile(context, ready.file)
             } else {
-                AppUpdater.downloadAndInstall(context)
+                AppUpdater.downloadAndInstall(context, release)
             }
         }
     }
@@ -781,11 +819,19 @@ fun LuvAppNav() {
         tab = 3
         openMarketCoinShop = true
         refreshAccount()
-        // Webhook kann kurz brauchen
-        kotlinx.coroutines.delay(1200)
-        refreshAccount()
-        accountMessage = "Willkommen zurück — Coins sind aktualisiert ♥"
-        Toast.makeText(context, "Zurück in LUV", Toast.LENGTH_SHORT).show()
+    }
+
+    // Offene Play-Käufe nach Absturz / unterbrochener Bestätigung nachziehen
+    LaunchedEffect(startDestination, account?.googleLinked) {
+        if (startDestination != Routes.MAIN) return@LaunchedEffect
+        if (account?.googleLinked != true) return@LaunchedEffect
+        if (LuvApiClient.sessionToken.isNullOrBlank()) return@LaunchedEffect
+        val pending = runCatching { playBilling.queryUnconsumedPurchases() }.getOrDefault(emptyList())
+        for (p in pending) {
+            runCatching {
+                fulfillPlayPurchase(p.productId, p.purchaseToken, p.orderId)
+            }
+        }
     }
 
     LaunchedEffect(pendingShop, startDestination) {
@@ -1177,19 +1223,39 @@ fun LuvAppNav() {
                                 }
                             },
                             onRefreshInventory = { syncInventory() },
-                            onBuyPack = { pack, quantity ->
+                            onBuyPack = { pack ->
                                 if (requireGoogleOrToast()) {
                                     scope.launch {
-                                        runCatching {
-                                            val url = LuvApiClient.checkout(pack.id, quantity)
-                                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                        }.onFailure {
-                                            accountMessage = it.message
+                                        val activity = context.findActivity()
+                                        if (activity == null) {
                                             Toast.makeText(
                                                 context,
-                                                it.message ?: "Shop nicht erreichbar",
+                                                "Kauf gerade nicht möglich",
                                                 Toast.LENGTH_SHORT
                                             ).show()
+                                            return@launch
+                                        }
+                                        runCatching {
+                                            val purchase = playBilling.launchPurchase(activity, pack.id)
+                                            fulfillPlayPurchase(
+                                                purchase.productId.ifBlank { pack.id },
+                                                purchase.purchaseToken,
+                                                purchase.orderId
+                                            )
+                                            Toast.makeText(
+                                                context,
+                                                accountMessage ?: "Kauf erfolgreich",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }.onFailure { err ->
+                                            if (err is PlayBillingException &&
+                                                err.message?.contains("abgebrochen", ignoreCase = true) == true
+                                            ) {
+                                                return@onFailure
+                                            }
+                                            val msg = err.message ?: "Kauf fehlgeschlagen"
+                                            accountMessage = msg
+                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                         }
                                     }
                                 }
@@ -1616,6 +1682,18 @@ fun LuvAppNav() {
                 }
             }
             delay(4000)
+        }
+    }
+
+    // Heartbeat: zählt für die Website, wie viele die App gerade offen haben
+    val appLifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(Unit) {
+        while (true) {
+            val foreground = appLifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            if (foreground && !LuvApiClient.sessionToken.isNullOrBlank()) {
+                runCatching { LuvApiClient.heartbeat() }
+            }
+            delay(45_000)
         }
     }
     LiveNoticePopup()

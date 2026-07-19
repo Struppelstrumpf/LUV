@@ -1,6 +1,11 @@
 package com.luv.couple.ui.screens
 
 import android.widget.Toast
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -62,6 +67,7 @@ import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -193,6 +199,14 @@ private fun FriendsPanel(
     var showAddFriend by remember { mutableStateOf(false) }
     var pendingFriendshipCoins by remember { mutableIntStateOf(0) }
     var claimingCoins by remember { mutableStateOf(false) }
+    var liveCount by remember { mutableIntStateOf(-1) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            runCatching { LuvApiClient.fetchLiveCount() }.onSuccess { liveCount = it }
+            delay(15_000)
+        }
+    }
 
     fun reload() {
         scope.launch {
@@ -258,7 +272,7 @@ private fun FriendsPanel(
             ),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Runde Plus-Kachel + ggf. Freundschaftslevel-Coins abholen (gleiche Höhe)
+        // Plus links · Coins optional · Live-Zähler rechts (gleiche Höhe)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -274,47 +288,53 @@ private fun FriendsPanel(
             ) {
                 Text("+", color = Color.White, fontFamily = DisplayFont, fontSize = 28.sp)
             }
-            if (pendingFriendshipCoins > 0) {
-                val gold = Color(0xFFFFD54F)
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(gold.copy(0.22f))
-                        .border(1.dp, gold.copy(0.7f), RoundedCornerShape(20.dp))
-                        .clickable(enabled = !claimingCoins) {
-                            claimingCoins = true
-                            scope.launch {
-                                runCatching { LuvApiClient.claimFriendshipLevelCoins() }
-                                    .onSuccess { claimed ->
-                                        pendingFriendshipCoins = 0
-                                        Toast.makeText(
-                                            context,
-                                            if (claimed > 0) "+$claimed Coins abgeholt"
-                                            else "Bereits abgeholt",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                        reload()
-                                    }
-                                    .onFailure {
-                                        Toast.makeText(
-                                            context,
-                                            it.message ?: "Abholen fehlgeschlagen",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                claimingCoins = false
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (pendingFriendshipCoins > 0) {
+                    val gold = Color(0xFFFFD54F)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(gold.copy(0.22f))
+                            .border(1.dp, gold.copy(0.7f), RoundedCornerShape(20.dp))
+                            .clickable(enabled = !claimingCoins) {
+                                claimingCoins = true
+                                scope.launch {
+                                    runCatching { LuvApiClient.claimFriendshipLevelCoins() }
+                                        .onSuccess { claimed ->
+                                            pendingFriendshipCoins = 0
+                                            Toast.makeText(
+                                                context,
+                                                if (claimed > 0) "+$claimed Coins abgeholt"
+                                                else "Bereits abgeholt",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                            reload()
+                                        }
+                                        .onFailure {
+                                            Toast.makeText(
+                                                context,
+                                                it.message ?: "Abholen fehlgeschlagen",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    claimingCoins = false
+                                }
                             }
-                        }
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
-                ) {
-                    Text(
-                        if (claimingCoins) "…" else "🪙 $pendingFriendshipCoins abholen",
-                        color = gold,
-                        fontFamily = DisplayFont,
-                        fontSize = 14.sp,
-                        softWrap = false
-                    )
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            if (claimingCoins) "…" else "🪙 $pendingFriendshipCoins abholen",
+                            color = gold,
+                            fontFamily = DisplayFont,
+                            fontSize = 14.sp,
+                            softWrap = false
+                        )
+                    }
                 }
+                LiveAppCounter(count = liveCount)
             }
         }
 
@@ -548,6 +568,67 @@ private fun FriendsPanel(
                 myMarriage = it
                 reload()
             }
+        )
+    }
+}
+
+@Composable
+private fun LiveAppCounter(count: Int) {
+    val liveGreen = Color(0xFF3DDC84)
+    val pulse = rememberInfiniteTransition(label = "liveDot")
+    val scale by pulse.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.55f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1100),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "liveScale"
+    )
+    val haloAlpha by pulse.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1100),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "liveHalo"
+    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .height(56.dp)
+            .padding(horizontal = 4.dp)
+    ) {
+        Box(
+            modifier = Modifier.size(18.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(14.dp)
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        alpha = haloAlpha
+                    }
+                    .clip(CircleShape)
+                    .background(liveGreen)
+            )
+            Box(
+                modifier = Modifier
+                    .size(9.dp)
+                    .clip(CircleShape)
+                    .background(liveGreen)
+            )
+        }
+        Text(
+            text = if (count < 0) "…" else count.toString(),
+            color = TextPrimary,
+            fontFamily = DisplayFont,
+            fontSize = 18.sp,
+            softWrap = false
         )
     }
 }

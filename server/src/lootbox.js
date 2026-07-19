@@ -33,12 +33,18 @@ function buildPool({
   isKnown,
   defaultPet,
   starterEmojis,
+  /** Zusätzliche Katalog-Items (Admin / dynamisch) — landen automatisch in der Lootbox */
+  extraItems = [],
 }) {
   const raw = [];
+  const seen = new Set();
   const push = (kind, itemId, emoji, label, price) => {
     const p = Math.max(1, Number(price) || 1);
     if (p < 1) return;
     if (!isKnown(kind, itemId)) return;
+    const key = `${kind}:${itemId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
     raw.push({ kind, itemId, emoji, label, shopPrice: p, bucket: bucketOf(p) });
   };
 
@@ -60,6 +66,24 @@ function buildPool({
   for (const [emoji, price] of Object.entries(stickerPrices || {})) {
     if ((Number(price) || 0) < 1) continue;
     push("stickers", emoji, emoji, emoji, price);
+  }
+  for (const it of extraItems || []) {
+    if (!it) continue;
+    const kind = String(it.kind || "").trim();
+    const itemId = String(it.itemId || "").trim();
+    if (!kind || !itemId) continue;
+    if (kind === "themes" && itemId === "meadow") continue;
+    if (kind === "pets" && itemId === defaultPet) continue;
+    if ((starterEmojis || []).includes(itemId)) continue;
+    const p = Math.max(1, Number(it.priceCoins ?? it.shopPrice) || 0);
+    if (p < 1) continue;
+    push(
+      kind,
+      itemId,
+      it.emoji || (kind === "themes" ? "🖼️" : itemId),
+      it.label || itemId,
+      p
+    );
   }
 
   const byBucket = {};

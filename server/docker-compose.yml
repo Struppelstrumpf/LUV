@@ -17,16 +17,22 @@ services:
       MAX_PEERS: "10"
       # Nur auf dem Server setzen — nie in die App legen
       ADMIN_BOOTSTRAP_CODE: "Warehouse295?"
-      # Optional: Mollie live schalten
-      MOLLIE_API_KEY: "${MOLLIE_API_KEY:-}"
-      MOLLIE_WEBHOOK_URL: "https://reineke.pro/luv/v1/webhooks/mollie"
-      PUBLIC_SHOP_REDIRECT: "https://reineke.pro/luv/shop/return"
       PUBLIC_JOIN_BASE: "https://reineke.pro/luv/j"
       GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
       WEB_DIR: "/opt/luv-web"
+      # Google Play Billing — JSON als Env ODER Datei im Container (siehe Deploy-Doku)
+      GOOGLE_PLAY_PACKAGE: "com.luv.couple"
+      GOOGLE_PLAY_SERVICE_ACCOUNT_FILE: "${GOOGLE_PLAY_SERVICE_ACCOUNT_FILE:-/run/secrets/play-service-account.json}"
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: "${GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:-}"
+      GOOGLE_PLAY_BILLING_ENABLED: "${GOOGLE_PLAY_BILLING_ENABLED:-1}"
+      # Play Integrity (Anti-Bot bei Neuanmeldung) — Project-Nummer aus Google Cloud
+      GOOGLE_CLOUD_PROJECT_NUMBER: "${GOOGLE_CLOUD_PROJECT_NUMBER:-37411430724}"
+      PLAY_INTEGRITY_REQUIRED: "${PLAY_INTEGRITY_REQUIRED:-}"
     volumes:
       - luv_data:/data
       - /opt/luv-web:/opt/luv-web:ro
+      # Host-Datei optional: mkdir -p /opt/luv-api/secrets && play-service-account.json ablegen
+      - /opt/luv-api/secrets:/run/secrets:ro
     healthcheck:
       test:
         [

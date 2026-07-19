@@ -219,7 +219,26 @@ object ProfileCatalog {
         ProfileTheme("bamboo", "Bambus", "🎋", 0xFFAED581, 0xFFDCEDC8, 0xFF558B2F, 0xFF33691E),
         ProfileTheme("vineyard", "Weinberg", "🍇", 0xFFCE93D8, 0xFFE1BEE7, 0xFF6A1B9A, 0xFF4A148C, "leaves"),
         ProfileTheme("dawn", "Morgengrauen", "🌄", 0xFFFFAB91, 0xFFFFE0B2, 0xFF81C784, 0xFF558B2F),
-        ProfileTheme("ember", "Glut", "🧡", 0xFFBF360C, 0xFFFF8A65, 0xFF4E342E, 0xFF212121, "fire")
+        ProfileTheme("ember", "Glut", "🧡", 0xFFBF360C, 0xFFFF8A65, 0xFF4E342E, 0xFF212121, "fire"),
+        // Weitere Hintergründe (animiert + Premium)
+        ProfileTheme("twilight", "Dämmerung", "🌆", 0xFF5C6BC0, 0xFFFFAB91, 0xFF37474F, 0xFF263238, "stars"),
+        ProfileTheme("neon", "Neon", "💠", 0xFF12001F, 0xFF00E5FF, 0xFF1A0033, 0xFF00C853, "sparkles"),
+        ProfileTheme("abyss", "Abgrund", "🕳️", 0xFF0A0A12, 0xFF1A237E, 0xFF000000, 0xFF0D0D14, "galaxy"),
+        ProfileTheme("cherry", "Kirschgarten", "🍒", 0xFFF8BBD0, 0xFFFFF0F5, 0xFF81C784, 0xFFC62828, "petals"),
+        ProfileTheme("moss", "Moos", "🪴", 0xFFA5D6A7, 0xFFDCEDC8, 0xFF2E7D32, 0xFF1B5E20, "leaves"),
+        ProfileTheme("sandstorm", "Sandsturm", "🏜️", 0xFFFFCC80, 0xFFFFE0B2, 0xFFE65100, 0xFFBF360C, "fog"),
+        ProfileTheme("frostfire", "Frostfeuer", "🧊", 0xFF81D4FA, 0xFFFF8A65, 0xFF0277BD, 0xFFBF360C, "fire"),
+        ProfileTheme("prism", "Prisma", "🔮", 0xFFCE93D8, 0xFF80DEEA, 0xFF7E57C2, 0xFF00838F, "sparkles"),
+        ProfileTheme("void", "Leere", "⬛", 0xFF000000, 0xFF1A1A2E, 0xFF0A0A0A, 0xFF000000, "galaxy"),
+        ProfileTheme("royal", "Königlich", "👑", 0xFF6A1B9A, 0xFFFFD54F, 0xFF4A148C, 0xFF3E2723, "sparkles"),
+        ProfileTheme("celestial", "Himmlisch", "👼", 0xFFE3F2FD, 0xFFFFF8E1, 0xFF90CAF9, 0xFFFFE082, "aurora"),
+        ProfileTheme("inferno", "Inferno", "🔥", 0xFFBF360C, 0xFFFF6F00, 0xFF3E2723, 0xFF1B0000, "fire"),
+        ProfileTheme("paradise", "Paradies", "🏝️", 0xFF4FC3F7, 0xFFFFF59D, 0xFF00897B, 0xFF004D40, "bubbles"),
+        ProfileTheme("mythic", "Mythisch", "🐉", 0xFF311B92, 0xFF7C4DFF, 0xFF1A237E, 0xFF0D0221, "meteors"),
+        ProfileTheme("eternity", "Ewigkeit", "♾️", 0xFF0D1B2A, 0xFF415A77, 0xFF1B263B, 0xFF0D1B2A, "aurora"),
+        ProfileTheme("cosmos", "Kosmos", "🛸", 0xFF0B0014, 0xFF311B92, 0xFF000000, 0xFF12001F, "galaxy"),
+        ProfileTheme("legend", "Legende", "🏆", 0xFFFF8F00, 0xFFFFE082, 0xFFBF360C, 0xFF3E2723, "sparkles"),
+        ProfileTheme("divine", "Göttlich", "✨", 0xFFFFFDE7, 0xFFFFF8E1, 0xFFFFD54F, 0xFFFFAB00, "sparkles")
     )
 
     /** Früher gratis — jetzt nur noch über Itemshop / Besitz. */
@@ -280,8 +299,8 @@ object ProfileCatalog {
         y = 70f,
         scale = 0.9f,
         z = 8,
-        emoji = emoji.take(8),
-        text = emoji.take(8)
+        emoji = emoji.take(32),
+        text = emoji.take(32)
     )
 
     fun newGlass(): ProfileLayoutEl = ProfileLayoutEl(

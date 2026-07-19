@@ -107,7 +107,7 @@ sealed class MarketReturnTo {
 fun MarketScreen(
     shopEnabled: Boolean,
     packs: List<ShopPack>,
-    onBuyPack: (ShopPack, Int) -> Unit,
+    onBuyPack: (ShopPack) -> Unit,
     onRefreshInventory: suspend () -> Unit = {},
     startInCoinShop: Boolean = false,
     onStartInCoinShopConsumed: () -> Unit = {},
@@ -173,17 +173,41 @@ fun MarketScreen(
                 onRequireGoogle = onRequireGoogle
             )
         }
-        MarketPanel.ItemShop -> MarketExpandShell(
-            title = "Itemshop",
-            onBack = { backFromPanel() }
-        ) {
-            key(shopTabSeed) {
-                ItemShopContent(
-                    onRefreshInventory = onRefreshInventory,
-                    initialTab = shopTabSeed,
-                    economyUnlocked = economyUnlocked,
-                    onRequireGoogle = onRequireGoogle
-                )
+        MarketPanel.ItemShop -> {
+            var shopSearchOpen by remember { mutableStateOf(false) }
+            var shopSearchQuery by remember { mutableStateOf("") }
+            MarketExpandShell(
+                title = "Itemshop",
+                onBack = { backFromPanel() },
+                trailing = {
+                    ShopSearchIconButton(
+                        expanded = shopSearchOpen,
+                        onClick = {
+                            shopSearchOpen = !shopSearchOpen
+                            if (!shopSearchOpen) shopSearchQuery = ""
+                        }
+                    )
+                },
+                belowTitle = {
+                    if (shopSearchOpen) {
+                        ShopSearchField(
+                            query = shopSearchQuery,
+                            onQueryChange = { shopSearchQuery = it },
+                            placeholder = "Itemshop filtern…"
+                        )
+                    }
+                }
+            ) {
+                key(shopTabSeed) {
+                    ItemShopContent(
+                        onRefreshInventory = onRefreshInventory,
+                        initialTab = shopTabSeed,
+                        economyUnlocked = economyUnlocked,
+                        onRequireGoogle = onRequireGoogle,
+                        externalSearchQuery = shopSearchQuery,
+                        searchManagedExternally = true
+                    )
+                }
             }
         }
         MarketPanel.CoinShop -> MarketExpandShell(
@@ -436,6 +460,8 @@ private fun MarketTilePreviewCard(
 private fun MarketExpandShell(
     title: String,
     onBack: () -> Unit,
+    trailing: (@Composable () -> Unit)? = null,
+    belowTitle: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     MenuBackdrop(includeNavigationBars = false) {
@@ -461,7 +487,15 @@ private fun MarketExpandShell(
                 Spacer(modifier = Modifier.weight(1f))
                 Text(title, color = TextPrimary, fontFamily = DisplayFont, fontSize = 22.sp)
                 Spacer(modifier = Modifier.weight(1f))
-                Spacer(modifier = Modifier.size(56.dp))
+                if (trailing != null) {
+                    trailing()
+                } else {
+                    Spacer(modifier = Modifier.size(40.dp))
+                }
+            }
+            if (belowTitle != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                belowTitle()
             }
             Spacer(modifier = Modifier.height(12.dp))
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -501,13 +535,12 @@ private fun EmptyMarketCard(title: String, body: String) {
 private fun CoinShopContent(
     shopEnabled: Boolean,
     packs: List<ShopPack>,
-    onBuyPack: (ShopPack, Int) -> Unit,
+    onBuyPack: (ShopPack) -> Unit,
     economyUnlocked: Boolean = true,
     onRequireGoogle: () -> Unit = {}
 ) {
     val account by AccountSession.account.collectAsStateWithLifecycle()
     var pendingPack by remember { mutableStateOf<ShopPack?>(null) }
-    var quantity by remember { mutableIntStateOf(1) }
     val offers = remember(packs) { packs.filter { it.isOffer || it.onceOnly } }
     val normals = remember(packs) { packs.filterNot { it.isOffer || it.onceOnly } }
 
@@ -516,14 +549,15 @@ private fun CoinShopContent(
             onRequireGoogle()
             return
         }
-        quantity = 1
         pendingPack = pack
     }
 
+    fun packPriceLabel(pack: ShopPack): String {
+        pack.displayPrice?.takeIf { it.isNotBlank() }?.let { return it }
+        return "${pack.amountEur.replace('.', ',')} €"
+    }
+
     pendingPack?.let { pack ->
-        val unit = pack.amountEur.replace(',', '.').toDoubleOrNull() ?: 0.0
-        val qty = if (pack.onceOnly) 1 else quantity.coerceIn(1, 20)
-        val total = String.format(java.util.Locale.GERMANY, "%.2f", unit * qty)
         AlertDialog(
             onDismissRequest = { pendingPack = null },
             containerColor = BgSoft,
@@ -538,10 +572,16 @@ private fun CoinShopContent(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        "${pack.coins * qty} Coins · $total €",
+                        "${pack.coins} Coins · ${packPriceLabel(pack)}",
                         color = TextMuted,
                         fontFamily = BodyFont,
                         fontSize = 14.sp
+                    )
+                    Text(
+                        "Zahlung über Google Play.",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp
                     )
                     if (pack.onceOnly) {
                         Text(
@@ -550,45 +590,15 @@ private fun CoinShopContent(
                             fontFamily = BodyFont,
                             fontSize = 13.sp
                         )
-                    } else {
-                        Text(
-                            "Menge",
-                            color = TextPrimary,
-                            fontFamily = DisplayFont,
-                            fontSize = 15.sp
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            TextButton(
-                                onClick = { quantity = (quantity - 1).coerceAtLeast(1) },
-                                enabled = quantity > 1
-                            ) {
-                                Text("−", color = TextPrimary, fontSize = 22.sp)
-                            }
-                            Text(
-                                "$qty",
-                                color = TextPrimary,
-                                fontFamily = DisplayFont,
-                                fontSize = 22.sp
-                            )
-                            TextButton(
-                                onClick = { quantity = (quantity + 1).coerceAtMost(20) }
-                            ) {
-                                Text("+", color = TextPrimary, fontSize = 22.sp)
-                            }
-                        }
                     }
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val buyQty = if (pack.onceOnly) 1 else quantity.coerceIn(1, 20)
                     pendingPack = null
-                    onBuyPack(pack, buyQty)
+                    onBuyPack(pack)
                 }) {
-                    Text("Kaufen", color = AccentRose, fontFamily = DisplayFont)
+                    Text("Mit Google Play kaufen", color = AccentRose, fontFamily = DisplayFont)
                 }
             },
             dismissButton = {
@@ -736,7 +746,8 @@ private fun CoinPackCard(pack: ShopPack, onBuy: () -> Unit) {
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "${pack.amountEur.replace('.', ',')} €",
+                    pack.displayPrice?.takeIf { it.isNotBlank() }
+                        ?: "${pack.amountEur.replace('.', ',')} €",
                     color = AccentRose,
                     fontFamily = DisplayFont,
                     fontSize = 18.sp
@@ -766,7 +777,9 @@ private fun ItemShopContent(
     onRefreshInventory: suspend () -> Unit,
     initialTab: Int = 0,
     economyUnlocked: Boolean = true,
-    onRequireGoogle: () -> Unit = {}
+    onRequireGoogle: () -> Unit = {},
+    externalSearchQuery: String = "",
+    searchManagedExternally: Boolean = false
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -786,7 +799,8 @@ private fun ItemShopContent(
     var busyKey by remember { mutableStateOf<String?>(null) }
     var pendingBuy by remember { mutableStateOf<ShopPendingBuy?>(null) }
     var searchOpen by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
+    var localSearchQuery by remember { mutableStateOf("") }
+    val searchQuery = if (searchManagedExternally) externalSearchQuery else localSearchQuery
     var catalogTick by remember { mutableIntStateOf(0) }
 
     fun openBuy(pending: ShopPendingBuy) {
@@ -1019,15 +1033,17 @@ private fun ItemShopContent(
                 }
             }
         }
-        Spacer(modifier = Modifier.height(10.dp))
-        if (tab != 4) {
+        if (!searchManagedExternally && tab != 4) {
+            Spacer(modifier = Modifier.height(10.dp))
             ShopSearchToggleRow(
                 expanded = searchOpen,
-                query = searchQuery,
+                query = localSearchQuery,
                 onExpandedChange = { searchOpen = it },
-                onQueryChange = { searchQuery = it }
+                onQueryChange = { localSearchQuery = it }
             )
             Spacer(modifier = Modifier.height(10.dp))
+        } else {
+            Spacer(modifier = Modifier.height(4.dp))
         }
         val q = searchQuery
         val stickers = remember(catalogTick, q) {
@@ -1673,11 +1689,16 @@ private fun ShopGridCell(
                 modifier = Modifier.fillMaxSize()
             )
         }
-        Text(
-            emoji,
-            fontSize = 32.sp,
-            modifier = Modifier.align(Alignment.Center)
-        )
+        Box(
+            modifier = Modifier.align(Alignment.Center),
+            contentAlignment = Alignment.Center
+        ) {
+            if (com.luv.couple.ui.isImagePetId(emoji)) {
+                com.luv.couple.ui.CompanionGlyph(petId = emoji, fontSize = 32.sp)
+            } else {
+                Text(emoji, fontSize = 32.sp)
+            }
+        }
         if (timer != null) {
             Text(
                 timer,
@@ -2113,10 +2134,13 @@ fun EmojiBarEditorDialog(
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
     var overTrash by remember { mutableStateOf(false) }
 
-    val slotDp = 52.dp
-    val gapDp = 8.dp
-    val trashDp = 64.dp
-    val listTrashGapDp = 14.dp
+    // Bei 7–8 Emojis kompakter, damit „Fertig“ sichtbar bleibt
+    val compact = bar.size >= 7
+    val slotDp = if (compact) 40.dp else 52.dp
+    val gapDp = if (compact) 5.dp else 8.dp
+    val trashDp = if (compact) 52.dp else 64.dp
+    val listTrashGapDp = if (compact) 10.dp else 14.dp
+    val emojiFont = if (compact) 24.sp else 30.sp
     val slotPx = with(density) { slotDp.toPx() }
     val gapPx = with(density) { gapDp.toPx() }
     val stride = slotPx + gapPx
@@ -2168,24 +2192,24 @@ fun EmojiBarEditorDialog(
                     "Reaktionsleiste",
                     color = TextPrimary,
                     fontFamily = DisplayFont,
-                    fontSize = 26.sp
+                    fontSize = if (compact) 22.sp else 26.sp
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(if (compact) 2.dp else 4.dp))
                 Text(
                     "Ziehen zum Sortieren · in den Mülleimer zum Entfernen",
                     color = TextMuted,
                     fontFamily = BodyFont,
-                    fontSize = 13.sp,
+                    fontSize = if (compact) 12.sp else 13.sp,
                     textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(if (compact) 4.dp else 6.dp))
                 Text(
                     "${bar.size} / ${ShopCatalog.MAX_BAR}",
                     color = AccentRose.copy(0.9f),
                     fontFamily = DisplayFont,
                     fontSize = 13.sp
                 )
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(if (compact) 10.dp else 16.dp))
 
                 val emojiStackH = slotDp * bar.size.coerceAtLeast(1) +
                     gapDp * (bar.size - 1).coerceAtLeast(0)
@@ -2325,7 +2349,7 @@ fun EmojiBarEditorDialog(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(emoji, fontSize = 30.sp)
+                                Text(emoji, fontSize = emojiFont)
                             }
                         }
                     }
@@ -2354,23 +2378,23 @@ fun EmojiBarEditorDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("🗑", fontSize = if (trashHot) 26.sp else 22.sp)
+                            Text("🗑", fontSize = if (trashHot) 24.sp else if (compact) 18.sp else 22.sp)
                             Text(
                                 if (trashHot) "Loslassen zum Entfernen" else "Mülleimer",
                                 color = if (trashHot) AccentRose else TextMuted,
                                 fontFamily = BodyFont,
-                                fontSize = 11.sp
+                                fontSize = if (compact) 10.sp else 11.sp
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(if (compact) 12.dp else 18.dp))
 
                 val canAdd = bar.size < ShopCatalog.MAX_BAR
                 Box(
                     modifier = Modifier
-                        .size(58.dp)
+                        .size(if (compact) 48.dp else 58.dp)
                         .shadow(8.dp, CircleShape, clip = false)
                         .clip(CircleShape)
                         .background(
@@ -2384,29 +2408,34 @@ fun EmojiBarEditorDialog(
                         "+",
                         color = if (canAdd) Color.White else TextMuted,
                         fontFamily = DisplayFont,
-                        fontSize = 30.sp,
+                        fontSize = if (compact) 26.sp else 30.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(if (compact) 4.dp else 6.dp))
                 Text(
                     if (canAdd) "Emoji hinzufügen" else "Leiste voll (max. ${ShopCatalog.MAX_BAR})",
                     color = TextMuted,
                     fontFamily = BodyFont,
-                    fontSize = 12.sp
+                    fontSize = if (compact) 11.sp else 12.sp
                 )
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(if (compact) 12.dp else 18.dp))
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .height(if (compact) 44.dp else 48.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(AccentRose.copy(0.2f))
                         .clickable(onClick = onDismiss),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("Fertig", color = AccentRose, fontFamily = DisplayFont, fontSize = 17.sp)
+                    Text(
+                        "Fertig",
+                        color = AccentRose,
+                        fontFamily = DisplayFont,
+                        fontSize = if (compact) 16.sp else 17.sp
+                    )
                 }
             }
         }

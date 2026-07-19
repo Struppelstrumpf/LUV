@@ -19,6 +19,9 @@ const market = require("./market");
 const lootbox = require("./lootbox");
 const marriage = require("./marriage");
 const shopCatalog = require("./shop_catalog");
+const petImages = require("./pet_images");
+const playBilling = require("./play_billing");
+const playIntegrity = require("./play_integrity");
 const {
   STICKER_SHOP_PRICES,
   isKnownSticker,
@@ -30,7 +33,15 @@ const ROOM_TTL_MS = Number(process.env.ROOM_TTL_MS || 24 * 60 * 60 * 1000);
 const PUBLIC_JOIN_BASE =
   process.env.PUBLIC_JOIN_BASE || "https://reineke.pro/luv/j";
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 30 * 24 * 60 * 60 * 1000);
+/** Web-Admin / Staff-Only-Login: kürzere Sessions (Standard 12h). */
+const STAFF_SESSION_TTL_MS = Number(
+  process.env.STAFF_SESSION_TTL_MS || 12 * 60 * 60 * 1000
+);
+/** @deprecated Mollie entfernt — nur noch Play Billing */
 const MOLLIE_API_KEY = process.env.MOLLIE_API_KEY || "";
+function shopPurchasesEnabled() {
+  return playBilling.isConfigured();
+}
 /** Feste Super-Admins per Google-E-Mail (nicht Spitzname). Komma-getrennt via Env erweiterbar. */
 const SUPER_ADMIN_EMAILS = new Set(
   String(process.env.SUPER_ADMIN_EMAILS || "xstruppelstrumpf@gmail.com")
@@ -55,9 +66,25 @@ const ALL_MOD_PERMISSION_IDS = [
   "mods.manage",
 ];
 
-/** Standard: volle Rechte — Mods sehen/können wie Admins (außer Super-Admin-only). */
+/** Rechte, die nur Admins haben dürfen (nie an Mods vergeben/speichern). */
+const ADMIN_ONLY_PERMISSION_IDS = new Set(["mods.manage"]);
+
+/**
+ * Standard für neue Mods: nur Moderation, keine Wirtschaft/Shop/Rechte-Vergabe.
+ * Admins können einzelne Rechte später gezielt freischalten.
+ */
 const DEFAULT_MOD_PERMISSIONS = Object.fromEntries(
-  ALL_MOD_PERMISSION_IDS.map((id) => [id, true])
+  ALL_MOD_PERMISSION_IDS.map((id) => [
+    id,
+    [
+      "reports.view",
+      "reports.act",
+      "gm.search",
+      "gm.block",
+      "codes.view",
+      "live.notify",
+    ].includes(id),
+  ])
 );
 
 const MOD_PERMISSION_GROUPS = [
@@ -115,14 +142,12 @@ const MOD_PERMISSION_GROUPS = [
     id: "mods",
     icon: "🛡️",
     label: "Moderatoren",
-    description: "Moderatoren einladen und Rechte vergeben",
-    permissions: [{ id: "mods.manage", label: "Moderatoren verwalten" }],
+    description: "Nur Admins: Moderatoren einladen und Rechte vergeben",
+    permissions: [
+      { id: "mods.manage", label: "Moderatoren verwalten (nur Admin)" },
+    ],
   },
 ];
-const MOLLIE_WEBHOOK_URL =
-  process.env.MOLLIE_WEBHOOK_URL || "https://reineke.pro/luv/v1/webhooks/mollie";
-const PUBLIC_SHOP_REDIRECT =
-  process.env.PUBLIC_SHOP_REDIRECT || "https://reineke.pro/luv/shop/return";
 /** OAuth 2.0 Web-Client-ID (Google Cloud) — für Sign-In + Token-Verify */
 const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || "").trim();
 const WEB_DIR = String(process.env.WEB_DIR || "/opt/luv-web").trim();
@@ -381,6 +406,25 @@ const THEME_SHOP_PRICES = {
   aurora: 36,
   meteor: 38,
   galaxy: 40,
+  // Weitere Hintergründe (auch animiert) — inkl. hoch / extrem
+  twilight: 45,
+  neon: 55,
+  abyss: 60,
+  cherry: 48,
+  moss: 42,
+  sandstorm: 50,
+  frostfire: 70,
+  prism: 85,
+  void: 120,
+  royal: 150,
+  celestial: 200,
+  inferno: 280,
+  paradise: 350,
+  mythic: 500,
+  eternity: 1200,
+  cosmos: 2500,
+  legend: 5000,
+  divine: 10000,
 };
 
 const PET_SHOP_PRICES = {
@@ -507,23 +551,37 @@ function isKnownInventoryItem(kind, itemId) {
   const id = String(itemId || "").trim();
   if (!id) return false;
   if (ach.isAchievementRewardItem(kind, id)) return true;
+  // Dynamischer Admin-Katalog (inkl. Bild-Begleiter)
+  if (shopCatalog.isShopKnown(getDb(), kind, id)) return true;
   if (kind === "pets") {
     return (
       id === DEFAULT_PET ||
       id === marriage.MARRIAGE_PET ||
-      PET_SHOP_PRICES[id] != null
+      PET_SHOP_PRICES[id] != null ||
+      petImages.hasImage(id)
     );
   }
   if (kind === "themes") return id === "meadow" || THEME_SHOP_PRICES[id] != null;
   if (kind === "stickers") return isKnownSticker(id);
   if (kind === "emojis") {
-    return (
-      STARTER_EMOJIS.includes(id) ||
-      EMOJI_SHOP_PRICES[id] != null ||
-      shopCatalog.isShopKnown(getDb(), "emojis", id)
-    );
+    return STARTER_EMOJIS.includes(id) || EMOJI_SHOP_PRICES[id] != null;
   }
   return false;
+}
+
+/** Alle aktivierten Shop-Katalog-Items für Lootbox (Preis = effektiver Shop-Preis). */
+function catalogLootboxExtras() {
+  seedShopCatalogIfNeeded();
+  const items = shopCatalog.listPublicCatalog(getDb(), { admin: false });
+  return items
+    .filter((i) => i && i.enabled !== false && (Number(i.priceCoins) || 0) >= 1)
+    .map((i) => ({
+      kind: i.kind,
+      itemId: i.itemId,
+      emoji: i.emoji || i.itemId,
+      label: i.label || i.itemId,
+      priceCoins: i.priceCoins,
+    }));
 }
 
 /** Heirats-Boni & Erfolgs-Exclusives — nie handelbar. */
@@ -554,8 +612,39 @@ function repairAchievementItemRewards(user) {
   );
 }
 
+/** Begleiter-IDs: Emoji oder img_xxxxxxxx (nicht auf 8 Zeichen kürzen). */
+const PET_ID_MAX = 32;
+
+function normalizePetId(raw) {
+  return String(raw || "").trim().slice(0, PET_ID_MAX);
+}
+
+/** Durch slice(0,8) gekürzte img_*-IDs anhand Katalog wiederherstellen. */
+function expandTruncatedPetId(raw) {
+  const id = normalizePetId(raw);
+  if (!id.startsWith("img_") || id.length >= 12) return id;
+  try {
+    seedShopCatalogIfNeeded();
+    const items = shopCatalog.listPublicCatalog(getDb(), { admin: true, kind: "pets" }) || [];
+    const hits = items.filter(
+      (i) => i && String(i.itemId || "").startsWith(id) && String(i.itemId).length >= 12
+    );
+    if (hits.length === 1) return String(hits[0].itemId).slice(0, PET_ID_MAX);
+  } catch (_) {
+    /* ignore */
+  }
+  return id;
+}
+
 function scrubInventoryCatalog(inv) {
-  inv.pets = (inv.pets || []).filter((p) => isKnownInventoryItem("pets", p));
+  inv.pets = (inv.pets || [])
+    .map((p) => expandTruncatedPetId(p))
+    .filter((p) => isKnownInventoryItem("pets", p));
+  // Duplikate entfernen, Reihenfolge behalten
+  inv.pets = inv.pets.filter((p, i, a) => a.indexOf(p) === i);
+  if (inv.equippedPet) {
+    inv.equippedPet = expandTruncatedPetId(inv.equippedPet);
+  }
   inv.themes = (inv.themes || []).filter((t) => isKnownInventoryItem("themes", t));
   for (const e of Object.keys(inv.stickers || {})) {
     if (!isKnownInventoryItem("stickers", e)) delete inv.stickers[e];
@@ -608,7 +697,7 @@ function clampProfileToInventory(user, profile) {
   let themeId = String(profile.themeId || "meadow").trim().slice(0, 32) || "meadow";
   if (!inv.themes.includes(themeId)) themeId = "meadow";
   let companionEmoji =
-    String(profile.companionEmoji || DEFAULT_PET).trim().slice(0, 8) || DEFAULT_PET;
+    expandTruncatedPetId(profile.companionEmoji || DEFAULT_PET) || DEFAULT_PET;
   if (!inv.pets.includes(companionEmoji)) companionEmoji = DEFAULT_PET;
   const myM = marriage.findMarriageForUser(getDb(), user.id);
   const canSpouse = myM && myM.status === "married";
@@ -770,9 +859,25 @@ function rateLimit(key, max, windowMs) {
   return b.count <= max;
 }
 
+const BLOCKED_NICK_RE =
+  /^(testuser|test\d*|user\d+|guest\d*|bot\d*|admin|moderator|null|undefined)$/i;
+
+function looksLikeBotNickname(nick) {
+  const n = String(nick || "").trim();
+  if (!n) return false;
+  if (BLOCKED_NICK_RE.test(n)) return true;
+  if (/^(user|player|guest)[\s._-]*\d+$/i.test(n)) return true;
+  return false;
+}
+
+/** Max. neue Google-Konten systemweit pro Stunde (zusätzlich zum IP-Limit). */
+function globalSignupAllowed(maxPerHour = 20) {
+  return rateLimit("auth_google_signup_global", maxPerHour, 60 * 60 * 1000);
+}
+
 function userPetEmoji(user) {
   const inv = ensureInventory(user);
-  return String(inv.equippedPet || DEFAULT_PET).slice(0, 8) || DEFAULT_PET;
+  return normalizePetId(inv.equippedPet || DEFAULT_PET) || DEFAULT_PET;
 }
 
 function ensureSettings(user) {
@@ -2688,6 +2793,7 @@ function ensureDailyGrant(user) {
 
 const PAID_CREDIT_REASONS = new Set([
   "mollie_purchase",
+  "play_purchase",
   "voucher",
   "clear_refund",
   "signup_grant",
@@ -3060,6 +3166,7 @@ function buildLootboxPoolForUser(user) {
   ensureInventory(user);
   // Volle Pool — Duplikate sind erlaubt (Emojis/Sticker stapeln;
   // Themes/Begleiter bei Besitz → Coin-Ausgleich beim Öffnen).
+  // Nachträglich angelegte Katalog-Items landen automatisch mit Preis-Rarity drin.
   return lootbox.buildPool({
     emojiPrices: EMOJI_SHOP_PRICES,
     themePrices: THEME_SHOP_PRICES,
@@ -3068,6 +3175,7 @@ function buildLootboxPoolForUser(user) {
     isKnown: isKnownInventoryItem,
     defaultPet: DEFAULT_PET,
     starterEmojis: STARTER_EMOJIS,
+    extraItems: catalogLootboxExtras(),
   });
 }
 
@@ -3161,16 +3269,35 @@ function syncAchInventoryMetrics(user) {
   }
 }
 
-function createSession(userId) {
+function createSession(userId, ttlMs = SESSION_TTL_MS) {
   const db = getDb();
   const token = randomToken();
+  const ttl = Math.max(60_000, Number(ttlMs) || SESSION_TTL_MS);
   db.sessions[token] = {
     userId,
     createdAt: Date.now(),
-    expiresAt: Date.now() + SESSION_TTL_MS,
+    expiresAt: Date.now() + ttl,
   };
   scheduleSave();
   return token;
+}
+
+function staffAudit(actor, action, detail) {
+  const db = getDb();
+  if (!Array.isArray(db.staffAudit)) db.staffAudit = [];
+  db.staffAudit.push({
+    id: newId("aud"),
+    at: Date.now(),
+    actorId: actor?.id || null,
+    actorNick: String(actor?.nickname || "").slice(0, 18) || null,
+    actorRole: actor?.role || null,
+    action: String(action || "").slice(0, 64),
+    detail: detail && typeof detail === "object" ? detail : {},
+  });
+  if (db.staffAudit.length > 2500) {
+    db.staffAudit = db.staffAudit.slice(-2000);
+  }
+  scheduleSave();
 }
 
 function destroySession(token) {
@@ -3514,6 +3641,10 @@ async function verifyGoogleIdToken(idToken) {
       return null;
     }
     if (Number(payload.exp) * 1000 < Date.now()) return null;
+    // Unverifizierte Google-Adressen dürfen keinen Login erzeugen
+    if (String(payload.email_verified) !== "true" && payload.email_verified !== true) {
+      return null;
+    }
     const sub = String(payload.sub || "");
     if (!sub) return null;
     return {
@@ -3558,6 +3689,30 @@ function publicHostedLobbies(user) {
     invite: `${PUBLIC_JOIN_BASE}/${code}`,
     hostNickname: user.nickname || "Host",
   }));
+}
+
+/** userId → lastSeen (App im Vordergrund / API-Aktivität) */
+const ACTIVE_APP_TTL_MS = 120_000;
+const activeAppUsers = new Map();
+
+function touchActiveAppUser(userId) {
+  const id = String(userId || "").trim();
+  if (!id) return;
+  activeAppUsers.set(id, Date.now());
+}
+
+function countActiveAppUsers() {
+  const now = Date.now();
+  for (const [id, ts] of activeAppUsers) {
+    if (now - ts > ACTIVE_APP_TTL_MS) activeAppUsers.delete(id);
+  }
+  const ids = new Set(activeAppUsers.keys());
+  for (const room of rooms.values()) {
+    for (const sock of room.sockets?.values() || []) {
+      if (sock?.readyState === 1 && sock.luvUserId) ids.add(sock.luvUserId);
+    }
+  }
+  return ids.size;
 }
 
 function authUser(req) {
@@ -3807,17 +3962,17 @@ function ensureStaffFields(user) {
   if (!user) return user;
   applySuperAdmin(user);
   if (user.role === "mod") {
-    // Einmalig volle Rechte für bestehende Mods (Frau & Co.)
-    if (!user.modFullRightsV3) {
-      user.modPermissions = { ...DEFAULT_MOD_PERMISSIONS };
-      user.modFullRightsV3 = true;
-      scheduleSave();
-    } else if (!user.modPermissions || typeof user.modPermissions !== "object") {
+    if (!user.modPermissions || typeof user.modPermissions !== "object") {
       user.modPermissions = { ...DEFAULT_MOD_PERMISSIONS };
     } else {
+      // Neue Permission-Keys defaulten auf false (kein stilles Aufstocken)
       for (const id of ALL_MOD_PERMISSION_IDS) {
-        if (user.modPermissions[id] == null) user.modPermissions[id] = true;
+        if (user.modPermissions[id] == null) user.modPermissions[id] = false;
       }
+    }
+    // Admin-only Rechte nie auf Mod-Konten belassen
+    for (const id of ADMIN_ONLY_PERMISSION_IDS) {
+      if (user.modPermissions[id]) user.modPermissions[id] = false;
     }
   } else if (user.role !== "admin") {
     user.modPermissions = {};
@@ -3835,7 +3990,9 @@ function staffPermissions(user) {
   if (user.role === "mod") {
     const out = {};
     for (const id of ALL_MOD_PERMISSION_IDS) {
-      out[id] = Boolean(user.modPermissions?.[id]);
+      out[id] = ADMIN_ONLY_PERMISSION_IDS.has(id)
+        ? false
+        : Boolean(user.modPermissions?.[id]);
     }
     return out;
   }
@@ -3847,9 +4004,19 @@ function isStaff(user) {
   return user.role === "admin" || user.role === "mod";
 }
 
+function isProtectedStaff(user) {
+  if (!user) return false;
+  ensureStaffFields(user);
+  if (user.role === "admin" || user.role === "mod") return true;
+  return SUPER_ADMIN_EMAILS.has(String(user.googleEmail || "").toLowerCase());
+}
+
 function hasStaffPerm(user, perm) {
   if (!perm) return isStaff(user);
   ensureStaffFields(user);
+  if (ADMIN_ONLY_PERMISSION_IDS.has(perm)) {
+    return user.role === "admin";
+  }
   if (user.role === "admin") return true;
   if (user.role !== "mod") return false;
   return Boolean(user.modPermissions?.[perm]);
@@ -3882,6 +4049,25 @@ function requireStaff(req, res, perm) {
     return null;
   }
   return ctx;
+}
+
+/** Mods dürfen keine anderen Staff-Konten sperren/löschen/ändern — nur Admins. */
+function assertCanModerateTarget(actor, target, res) {
+  if (!target) {
+    res.status(404).json({ error: "not_found", message: "Nutzer nicht gefunden." });
+    return false;
+  }
+  ensureStaffFields(actor);
+  ensureStaffFields(target);
+  if (actor.role === "admin") return true;
+  if (isProtectedStaff(target)) {
+    res.status(403).json({
+      error: "forbidden",
+      message: "Staff-Konten können nur von Admins bearbeitet werden.",
+    });
+    return false;
+  }
+  return true;
 }
 
 function staffUserCard(user) {
@@ -5013,6 +5199,7 @@ app.get("/health", (_req, res) => {
     rooms: rooms.size,
     maxPeers: MAX_PEERS,
     users: Object.keys(getDb().users).length,
+    liveAppUsers: countActiveAppUsers(),
     economy: {
       dailyCoins: DAILY_COINS,
       glassTipDailyMax: GLASS_TIP_DAILY_MAX,
@@ -5028,15 +5215,64 @@ app.get("/health", (_req, res) => {
       freeLobbyStartCapacity: FREE_LOBBY_START_CAPACITY,
       paidLobbyStartCapacity: PAID_LOBBY_START_CAPACITY,
     },
-    shopEnabled: Boolean(MOLLIE_API_KEY),
+    shopEnabled: shopPurchasesEnabled(),
     uptimeSec: Math.round(process.uptime()),
   });
+});
+
+/** Öffentlich: wie viele Nutzer gerade die App offen haben (Website-Zähler). */
+app.get("/v1/public/live-count", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  return res.json({
+    ok: true,
+    count: countActiveAppUsers(),
+    at: Date.now(),
+  });
+});
+
+app.post("/v1/me/heartbeat", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  touchActiveAppUser(ctx.user.id);
+  return res.json({ ok: true, liveAppUsers: countActiveAppUsers() });
 });
 
 app.get("/v1/auth/config", (_req, res) => {
   return res.json({
     googleEnabled: Boolean(GOOGLE_CLIENT_ID),
     googleWebClientId: GOOGLE_CLIENT_ID || null,
+    playIntegrity: playIntegrity.isEnforced(),
+    cloudProjectNumber: playIntegrity.cloudProjectNumber() || null,
+  });
+});
+
+/**
+ * Einmal-Nonce für Play Integrity (vor Google-Signup).
+ * Nur echte App auf echtem Gerät kann damit ein gültiges Integrity-Token holen.
+ */
+app.post("/v1/auth/integrity-nonce", (req, res) => {
+  const ip = clientIp(req);
+  if (!rateLimit(`integrity_nonce:${ip}`, 30, 60 * 60 * 1000)) {
+    return res.status(429).json({
+      error: "rate_limited",
+      message: "Zu viele Anfragen. Bitte kurz warten.",
+    });
+  }
+  if (!playIntegrity.isConfigured()) {
+    return res.json({
+      ok: true,
+      required: false,
+      nonce: null,
+      cloudProjectNumber: null,
+    });
+  }
+  const issued = playIntegrity.issueNonce(ip);
+  return res.json({
+    ok: true,
+    required: playIntegrity.isEnforced(),
+    nonce: issued.nonce,
+    expiresAt: issued.expiresAt,
+    cloudProjectNumber: issued.cloudProjectNumber,
   });
 });
 
@@ -5146,8 +5382,16 @@ app.post("/v1/auth/google", async (req, res) => {
       message: "Google-Login ist noch nicht eingerichtet.",
     });
   }
+  const ip = clientIp(req);
+  if (!rateLimit(`auth_google:${ip}`, 20, 60 * 60 * 1000)) {
+    return res.status(429).json({
+      error: "rate_limited",
+      message: "Zu viele Login-Versuche. Bitte später erneut versuchen.",
+    });
+  }
   const idToken = String(req.body?.idToken || "").trim();
   if (!idToken) return res.status(400).json({ error: "missing_token" });
+  const staffOnly = Boolean(req.body?.staffOnly);
   const profile = await verifyGoogleIdToken(idToken);
   if (!profile) {
     return res.status(401).json({
@@ -5190,6 +5434,36 @@ app.post("/v1/auth/google", async (req, res) => {
     applySuperAdmin(user);
     scheduleSave();
   } else {
+    // ——— Neues Konto: Play Integrity (echtes Gerät + echte App) ———
+    if (playIntegrity.isEnforced()) {
+      const integrityToken = String(req.body?.integrityToken || "").trim();
+      const integrityNonce = String(req.body?.integrityNonce || "").trim();
+      const verdict = await playIntegrity.verifyIntegrityToken(
+        integrityToken,
+        integrityNonce
+      );
+      if (!verdict.ok) {
+        return res.status(403).json({
+          error: verdict.error || "integrity_required",
+          message:
+            verdict.message ||
+            "Neue Konten nur über die echte Play-Store-App auf einem Android-Gerät.",
+        });
+      }
+    }
+    if (!rateLimit(`auth_google_signup:${ip}`, 5, 24 * 60 * 60 * 1000)) {
+      return res.status(429).json({
+        error: "rate_limited",
+        message:
+          "Zu viele neue Konten von diesem Netz. Bitte morgen erneut versuchen oder ein bestehendes Konto nutzen.",
+      });
+    }
+    if (!globalSignupAllowed(20)) {
+      return res.status(429).json({
+        error: "rate_limited",
+        message: "Gerade zu viele Anmeldungen. Bitte in einer Stunde erneut versuchen.",
+      });
+    }
     user = {
       id: newId("u"),
       secretHash: hashSecret(`google:${profile.sub}:${crypto.randomBytes(16).toString("hex")}`),
@@ -5205,6 +5479,7 @@ app.post("/v1/auth/google", async (req, res) => {
       createdAt: Date.now(),
       googleSub: profile.sub,
       googleEmail: profile.email,
+      signupIp: ip,
       hostedRooms: {},
     };
     applySuperAdmin(user);
@@ -5229,8 +5504,22 @@ app.post("/v1/auth/google", async (req, res) => {
       message: "Dieses Konto ist gesperrt.",
     });
   }
+  ensureStaffFields(user);
+  if (staffOnly && !isStaff(user)) {
+    staffAudit(user, "staff_login_denied", { email: user.googleEmail || null });
+    return res.status(403).json({
+      error: "not_staff",
+      message: "Kein Admin-/Mod-Zugang für dieses Konto.",
+    });
+  }
   ensureDailyGrant(user);
-  const token = createSession(user.id);
+  const token = createSession(
+    user.id,
+    staffOnly ? STAFF_SESSION_TTL_MS : SESSION_TTL_MS
+  );
+  if (staffOnly) {
+    staffAudit(user, "staff_login", { via: "web_adm" });
+  }
   return res.json({
     sessionToken: token,
     created,
@@ -5326,8 +5615,15 @@ app.patch("/v1/me", (req, res) => {
         message: "Dein Spitzname kann nicht mehr geändert werden.",
       });
     }
-    // Erste Vergabe (Placeholder „Luv“) — Doppel-Namen werden manuell bereinigt
+    // Erste Vergabe (Placeholder „Luv“)
     if (!isChosenNickname(ctx.user.nickname)) {
+      if (looksLikeBotNickname(nickname)) {
+        return res.status(400).json({
+          error: "bad_nick",
+          message: "Dieser Spitzname ist nicht erlaubt. Bitte wähle einen eigenen Namen.",
+        });
+      }
+      if (!assertNicknameAvailable(nickname, ctx.user.id, res)) return;
       ctx.user.nickname = nickname;
       scheduleSave();
     }
@@ -5365,7 +5661,7 @@ function sanitizeProfileCanvas(raw) {
   const themeId = String(raw.themeId || "meadow").trim().slice(0, 32) || "meadow";
   const statusEmoji = String(raw.statusEmoji || "😊").trim().slice(0, 8) || "😊";
   const companionEmoji =
-    String(raw.companionEmoji || DEFAULT_PET).trim().slice(0, 8) || DEFAULT_PET;
+    normalizePetId(raw.companionEmoji || DEFAULT_PET) || DEFAULT_PET;
   const bio = String(raw.bio || "").trim().slice(0, 500);
   const layoutIn = Array.isArray(raw.layout) ? raw.layout : [];
   const layout = [];
@@ -5505,7 +5801,7 @@ app.put("/v1/me/profile", (req, res) => {
   ctx.user.profileCanvas = profile;
   const inv = ensureInventory(ctx.user);
   // Begleiter auf Leinwand ↔ ausgerüstetes Pet synchron halten
-  const companion = String(profile.companionEmoji || "").trim().slice(0, 8);
+  const companion = normalizePetId(profile.companionEmoji || "");
   if (companion && inv.pets.includes(companion)) {
     inv.equippedPet = companion;
   }
@@ -6518,7 +6814,7 @@ app.get("/v1/admin/overview", (req, res) => {
 });
 
 app.get("/v1/admin/moderators", (req, res) => {
-  const ctx = requireStaff(req, res, "mods.manage");
+  const ctx = requireAdmin(req, res);
   if (!ctx) return;
   const list = Object.values(getDb().users || {})
     .filter((u) => {
@@ -6612,7 +6908,7 @@ app.get("/v1/admin/rooms/:code", (req, res) => {
 
 /** Lobby sofort auflösen — alle raus. */
 app.post("/v1/admin/rooms/:code/force-delete", (req, res) => {
-  const ctx = requireStaff(req, res, "gm.search");
+  const ctx = requireStaff(req, res, "gm.block");
   if (!ctx) return;
   const code = String(req.params.code || "")
     .toUpperCase()
@@ -6627,6 +6923,7 @@ app.post("/v1/admin/rooms/:code/force-delete", (req, res) => {
       message: "Lobby konnte nicht gelöscht werden.",
     });
   }
+  staffAudit(ctx.user, "room_force_delete", { code: result.code });
   return res.json({ ok: true, code: result.code, deleted: true });
 });
 
@@ -6652,7 +6949,7 @@ function findUserForStaffQuery(qRaw) {
 }
 
 app.post("/v1/admin/moderators/invite", (req, res) => {
-  const ctx = requireStaff(req, res, "mods.manage");
+  const ctx = requireAdmin(req, res);
   if (!ctx) return;
   const q = String(req.body?.query || req.body?.nickname || "").trim();
   if (q.length < 2) {
@@ -6681,9 +6978,16 @@ app.post("/v1/admin/moderators/invite", (req, res) => {
   const already = target.role === "mod";
   target.role = "mod";
   target.modPermissions = { ...DEFAULT_MOD_PERMISSIONS };
-  target.modFullRightsV3 = true;
+  for (const id of ADMIN_ONLY_PERMISSION_IDS) {
+    target.modPermissions[id] = false;
+  }
   target.modSince = target.modSince || Date.now();
   scheduleSave();
+  staffAudit(ctx.user, "mod_invite", {
+    targetId: target.id,
+    nickname: target.nickname,
+    already,
+  });
   return res.json({
     ok: true,
     already,
@@ -6692,7 +6996,7 @@ app.post("/v1/admin/moderators/invite", (req, res) => {
 });
 
 function applyModeratorPermissions(req, res) {
-  const ctx = requireStaff(req, res, "mods.manage");
+  const ctx = requireAdmin(req, res);
   if (!ctx) return;
   const uid = String(req.params.userId || "").trim();
   const target = getDb().users?.[uid];
@@ -6712,10 +7016,14 @@ function applyModeratorPermissions(req, res) {
       : {};
   const next = {};
   for (const id of ALL_MOD_PERMISSION_IDS) {
-    next[id] = Boolean(raw[id]);
+    next[id] = ADMIN_ONLY_PERMISSION_IDS.has(id) ? false : Boolean(raw[id]);
   }
   target.modPermissions = next;
   scheduleSave();
+  staffAudit(ctx.user, "mod_permissions", {
+    targetId: target.id,
+    permissions: next,
+  });
   return res.json({ ok: true, moderator: staffUserCard(target) });
 }
 
@@ -6723,7 +7031,7 @@ app.put("/v1/admin/moderators/:userId/permissions", applyModeratorPermissions);
 app.post("/v1/admin/moderators/:userId/permissions", applyModeratorPermissions);
 
 app.post("/v1/admin/moderators/:userId/remove", (req, res) => {
-  const ctx = requireStaff(req, res, "mods.manage");
+  const ctx = requireAdmin(req, res);
   if (!ctx) return;
   const uid = String(req.params.userId || "").trim();
   const target = getDb().users?.[uid];
@@ -6733,7 +7041,9 @@ app.post("/v1/admin/moderators/:userId/remove", (req, res) => {
   }
   target.role = "user";
   target.modPermissions = {};
+  destroyAllSessionsForUser(uid);
   scheduleSave();
+  staffAudit(ctx.user, "mod_remove", { targetId: uid });
   return res.json({ ok: true });
 });
 
@@ -6742,7 +7052,7 @@ app.post("/v1/admin/users/:userId/coins", (req, res) => {
   if (!ctx) return;
   const uid = String(req.params.userId || "").trim();
   const target = getDb().users?.[uid];
-  if (!target) return res.status(404).json({ error: "not_found" });
+  if (!assertCanModerateTarget(ctx.user, target, res)) return;
   const delta = Math.trunc(Number(req.body?.delta) || 0);
   if (!delta || Math.abs(delta) > 5000) {
     return res.status(400).json({ error: "bad_delta" });
@@ -6750,6 +7060,7 @@ app.post("/v1/admin/users/:userId/coins", (req, res) => {
   applyLedger(uid, delta, delta > 0 ? "admin_grant" : "admin_grant", ctx.user.id);
   // negative admin_grant still works via applyLedger
   scheduleSave();
+  staffAudit(ctx.user, "coins_adjust", { targetId: uid, delta });
   return res.json({ ok: true, user: staffUserCard(target) });
 });
 
@@ -6758,7 +7069,7 @@ app.post("/v1/admin/users/:userId/nickname", (req, res) => {
   if (!ctx) return;
   const uid = String(req.params.userId || "").trim();
   const target = getDb().users?.[uid];
-  if (!target) return res.status(404).json({ error: "not_found" });
+  if (!assertCanModerateTarget(ctx.user, target, res)) return;
   const nick = String(req.body?.nickname || "")
     .trim()
     .slice(0, 18);
@@ -6769,8 +7080,10 @@ app.post("/v1/admin/users/:userId/nickname", (req, res) => {
     });
   }
   // Admin darf umbenennen; Doppel-Namen werden manuell bereinigt
+  const prev = target.nickname;
   target.nickname = nick;
   scheduleSave();
+  staffAudit(ctx.user, "nickname_change", { targetId: uid, from: prev, to: nick });
   return res.json({ ok: true, user: staffUserCard(target) });
 });
 
@@ -6781,7 +7094,7 @@ app.post("/v1/admin/users/:userId/marriage/advance", (req, res) => {
   const uid = String(req.params.userId || "").trim();
   const db = getDb();
   const target = db.users?.[uid];
-  if (!target) return res.status(404).json({ error: "not_found" });
+  if (!assertCanModerateTarget(ctx.user, target, res)) return;
   const m = marriage.findMarriageForUser(db, uid);
   if (!m) {
     return res.status(400).json({
@@ -6820,8 +7133,7 @@ app.post("/v1/admin/users/:userId/ban", (req, res) => {
   if (!ctx) return;
   const uid = String(req.params.userId || "").trim();
   const target = getDb().users?.[uid];
-  if (!target) return res.status(404).json({ error: "not_found" });
-  ensureStaffFields(target);
+  if (!assertCanModerateTarget(ctx.user, target, res)) return;
   if (target.role === "admin" || SUPER_ADMIN_EMAILS.has(String(target.googleEmail || "").toLowerCase())) {
     return res.status(400).json({ error: "cannot_ban_admin" });
   }
@@ -6832,12 +7144,13 @@ app.post("/v1/admin/users/:userId/ban", (req, res) => {
     ? String(req.body?.reason || "staff_ban").slice(0, 80)
     : null;
   if (banned) {
-    const db = getDb();
-    for (const [token, session] of Object.entries(db.sessions || {})) {
-      if (session?.userId === target.id) delete db.sessions[token];
-    }
+    destroyAllSessionsForUser(target.id);
   }
   scheduleSave();
+  staffAudit(ctx.user, banned ? "user_ban" : "user_unban", {
+    targetId: uid,
+    reason: target.bannedReason,
+  });
   return res.json({ ok: true, user: staffUserCard(target) });
 });
 
@@ -6850,16 +7163,22 @@ app.post("/v1/admin/users/:userId/delete", (req, res) => {
   }
   const db = getDb();
   const target = db.users?.[uid];
-  if (!target) return res.status(404).json({ error: "not_found" });
-  ensureStaffFields(target);
+  if (!assertCanModerateTarget(ctx.user, target, res)) return;
   if (target.role === "admin" || SUPER_ADMIN_EMAILS.has(String(target.googleEmail || "").toLowerCase())) {
     return res.status(400).json({ error: "cannot_delete_admin" });
   }
-  for (const [token, session] of Object.entries(db.sessions || {})) {
-    if (session?.userId === uid) delete db.sessions[token];
+  // Konto löschen: zusätzlich nur Admins, wenn Ziel jemals Staff war
+  if (ctx.user.role !== "admin" && (target.role === "mod" || target.modSince)) {
+    return res.status(403).json({
+      error: "forbidden",
+      message: "Ehemalige/aktuelle Mods können nur Admins löschen.",
+    });
   }
+  destroyAllSessionsForUser(uid);
+  const nick = target.nickname;
   delete db.users[uid];
   scheduleSave();
+  staffAudit(ctx.user, "user_delete", { targetId: uid, nickname: nick });
   return res.json({ ok: true });
 });
 
@@ -6867,6 +7186,14 @@ app.get("/v1/live-notice", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   return res.json({ ok: true, notice: getLiveNotice() });
+});
+
+app.delete("/v1/admin/live-notice", (req, res) => {
+  const ctx = requireStaff(req, res, "live.notify");
+  if (!ctx) return;
+  getDb().liveNotice = null;
+  scheduleSave();
+  return res.json({ ok: true, cleared: true });
 });
 
 app.post("/v1/admin/live-notice", (req, res) => {
@@ -7001,7 +7328,8 @@ app.get("/v1/shop/packs", (req, res) => {
   const ctx = authUser(req);
   const ip = clientIp(req);
   res.json({
-    enabled: Boolean(MOLLIE_API_KEY),
+    enabled: shopPurchasesEnabled(),
+    provider: "google_play",
     packs: listShopPacks(ctx?.user || null, ip),
   });
 });
@@ -7179,7 +7507,7 @@ app.post("/v1/shop/buy-pet", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   seedShopCatalogIfNeeded();
-  const emoji = String(req.body?.emoji || "").trim().slice(0, 8);
+  const emoji = normalizePetId(req.body?.emoji);
   if (!emoji) {
     return res.status(400).json({ error: "unknown_item", message: "Begleiter unbekannt." });
   }
@@ -7218,7 +7546,7 @@ app.post("/v1/shop/buy-pet", (req, res) => {
 app.post("/v1/me/equip-pet", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
-  const emoji = String(req.body?.emoji || "").trim().slice(0, 8);
+  const emoji = normalizePetId(req.body?.emoji);
   const inv = ensureInventory(ctx.user);
   if (!emoji || !inv.pets.includes(emoji)) {
     return res.status(400).json({ error: "not_owned" });
@@ -7676,16 +8004,47 @@ app.get("/v1/admin/shop/items", (req, res) => {
   return res.json({ ok: true, items, count: items.length });
 });
 
+function applyPetImageFromBody(body, itemId) {
+  const img = body?.imageBase64 || body?.imageDataUrl || null;
+  if (!img) {
+    return { hasImage: petImages.hasImage(itemId) };
+  }
+  const saved = petImages.saveImage(itemId, img);
+  if (!saved.ok) return saved;
+  return { ok: true, hasImage: true };
+}
+
 app.post("/v1/admin/shop/items", (req, res) => {
   const ctx = requireStaff(req, res, "market.settings");
   if (!ctx) return;
   seedShopCatalogIfNeeded();
-  const result = shopCatalog.upsertItem(getDb(), req.body || {});
+  const body = { ...(req.body || {}) };
+  let itemId = String(body.itemId || "").trim();
+  const kind = String(body.kind || "").trim();
+  // Bild-Begleiter: ID automatisch, wenn leer oder Modus Bild
+  if (kind === "pets" && (body.petSource === "image" || body.imageBase64 || body.imageDataUrl)) {
+    const looksLikeEmoji = !itemId || itemId.length <= 4 || /[^\x00-\x7F]/.test(itemId);
+    if (looksLikeEmoji || !/^img_[a-z0-9]+$/i.test(itemId)) {
+      itemId = `img_${crypto.randomBytes(4).toString("hex")}`;
+    }
+    body.itemId = itemId;
+    const imgResult = applyPetImageFromBody(body, itemId);
+    if (imgResult.ok === false) {
+      return res.status(400).json({ error: imgResult.error, message: imgResult.message });
+    }
+    body.hasImage = Boolean(imgResult.hasImage);
+  }
+  const result = shopCatalog.upsertItem(getDb(), body);
   if (!result.ok) {
     return res.status(400).json({ error: result.error, message: result.message });
   }
   scheduleSave();
-  return res.json({ ok: true, item: result.item });
+  return res.json({
+    ok: true,
+    item: result.item,
+    lootbox: true,
+    chromaKey: petImages.CHROMA_KEY_HEX,
+  });
 });
 
 app.put("/v1/admin/shop/items/:kind/:itemId", (req, res) => {
@@ -7694,16 +8053,42 @@ app.put("/v1/admin/shop/items/:kind/:itemId", (req, res) => {
   seedShopCatalogIfNeeded();
   const kind = String(req.params.kind || "").trim();
   const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
-  const result = shopCatalog.upsertItem(getDb(), {
-    ...(req.body || {}),
-    kind,
-    itemId,
-  });
+  const body = { ...(req.body || {}), kind, itemId };
+  if (kind === "pets" && (body.imageBase64 || body.imageDataUrl)) {
+    const imgResult = applyPetImageFromBody(body, itemId);
+    if (imgResult.ok === false) {
+      return res.status(400).json({ error: imgResult.error, message: imgResult.message });
+    }
+    body.hasImage = true;
+  } else if (kind === "pets" && petImages.hasImage(itemId)) {
+    body.hasImage = true;
+  }
+  const result = shopCatalog.upsertItem(getDb(), body);
   if (!result.ok) {
     return res.status(400).json({ error: result.error, message: result.message });
   }
   scheduleSave();
   return res.json({ ok: true, item: result.item });
+});
+
+/** Begleiter-Bild (PNG mit Alpha). Öffentlich lesbar für Shop/Inventar. */
+app.get("/v1/shop/pet-image/:itemId", (req, res) => {
+  const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
+  const buf = petImages.readImage(itemId);
+  if (!buf) return res.status(404).json({ error: "not_found" });
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  return res.send(buf);
+});
+
+app.get("/v1/admin/shop/chroma-key", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  return res.json({
+    ok: true,
+    chromaKey: petImages.CHROMA_KEY_HEX,
+    tip: "Grüner Hintergrund #00FF00 wird transparent. Motiv mittig, ruhiger Rand.",
+  });
 });
 
 app.post("/v1/admin/shop/items/:kind/:itemId/disable", (req, res) => {
@@ -8089,19 +8474,55 @@ app.post("/v1/market/:id/trade", (req, res) => {
   return res.json({ ok: true, user: publicUser(ctx.user) });
 });
 
-app.post("/v1/shop/checkout", async (req, res) => {
+/** Mollie ist abgeschaltet — Käufe nur noch über Google Play. */
+app.post("/v1/shop/checkout", (_req, res) => {
+  return res.status(410).json({
+    error: "mollie_removed",
+    message: "Käufe laufen nur noch über Google Play. Bitte die App aktualisieren.",
+  });
+});
+
+app.post("/v1/webhooks/mollie", (_req, res) => {
+  return res.status(200).send("ok");
+});
+
+/**
+ * Google Play In-App-Kauf verifizieren und Coins gutschreiben (Consumable).
+ * Body: { productId, purchaseToken, orderId? }
+ */
+app.post("/v1/shop/play-purchase", async (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
-  if (!MOLLIE_API_KEY) {
+  if (!ctx.user.googleSub) {
+    return res.status(403).json({
+      error: "google_required",
+      message: "Bitte zuerst mit Google anmelden.",
+    });
+  }
+  if (!shopPurchasesEnabled()) {
     return res.status(503).json({
       error: "shop_disabled",
       message: "Shop kommt bald — bis dahin Daily Coins & Gutscheine.",
     });
   }
-  const pack = PACKS[String(req.body?.packId || "")];
-  if (!pack) return res.status(400).json({ error: "invalid_pack" });
+  const productId = String(req.body?.productId || "").trim();
+  const purchaseToken = String(req.body?.purchaseToken || "").trim();
+  const orderId = String(req.body?.orderId || "").trim() || null;
+  if (!productId || !purchaseToken || purchaseToken.length < 10) {
+    return res.status(400).json({
+      error: "invalid_purchase",
+      message: "Ungültige Kaufdaten.",
+    });
+  }
+  const pack = PACKS[productId];
+  if (!pack) {
+    return res.status(400).json({ error: "invalid_pack", message: "Unbekanntes Paket." });
+  }
   if (pack.expiresAt && Date.now() >= pack.expiresAt) {
-    return res.status(400).json({ error: "offer_gone", message: "Dieses Angebot ist nicht mehr verfügbar." });
+    return res.status(400).json({
+      error: "offer_gone",
+      message: "Dieses Angebot ist nicht mehr verfügbar.",
+    });
   }
   const ip = clientIp(req);
   if (pack.oncePerUserAndIp && !canClaimIntroOffer(ctx.user, ip)) {
@@ -8110,143 +8531,71 @@ app.post("/v1/shop/checkout", async (req, res) => {
       message: "Dieses Angebot hast du schon genutzt.",
     });
   }
-  let quantity = Math.floor(Number(req.body?.quantity) || 1);
-  if (!Number.isFinite(quantity) || quantity < 1) quantity = 1;
-  if (pack.oncePerUserAndIp) quantity = 1;
-  quantity = Math.min(20, quantity);
-  const unitEur = Number(pack.amountEur);
-  if (!Number.isFinite(unitEur) || unitEur <= 0) {
+
+  const paymentKey = `play:${purchaseToken}`;
+  const db = getDb();
+  if (!db.payments || typeof db.payments !== "object") db.payments = {};
+  const existing = db.payments[paymentKey];
+  if (existing?.credited) {
+    return res.json({
+      ok: true,
+      alreadyCredited: true,
+      coinsGranted: 0,
+      user: publicUser(ctx.user),
+    });
+  }
+
+  let playData;
+  try {
+    playData = await playBilling.getProductPurchase(productId, purchaseToken);
+  } catch (e) {
+    console.error("play-purchase verify failed", e.message || e);
+    return res.status(502).json({
+      error: "play_verify_failed",
+      message: "Google-Play-Kauf konnte nicht geprüft werden.",
+    });
+  }
+
+  // 0 = purchased, 1 = canceled, 2 = pending
+  if (Number(playData.purchaseState) !== 0) {
+    return res.status(400).json({
+      error: "not_purchased",
+      message: "Kauf ist noch nicht abgeschlossen.",
+    });
+  }
+
+  const creditCoins = Number(pack.coins) || 0;
+  if (creditCoins <= 0) {
     return res.status(400).json({ error: "invalid_pack" });
   }
-  const totalEur = (unitEur * quantity).toFixed(2);
-  const totalCoins = pack.coins * quantity;
-  try {
-    const body = {
-      amount: { currency: "EUR", value: totalEur },
-      description:
-        quantity > 1
-          ? `LUV ${pack.label} ×${quantity}`
-          : `LUV ${pack.label}`,
-      redirectUrl: PUBLIC_SHOP_REDIRECT,
-      webhookUrl: MOLLIE_WEBHOOK_URL,
-      metadata: {
-        userId: ctx.user.id,
-        packId: pack.id,
-        coins: String(totalCoins),
-        quantity: String(quantity),
-        ip: ip || "",
-      },
-    };
-    const resp = await fetch("https://api.mollie.com/v2/payments", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${MOLLIE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-    const data = await resp.json();
-    if (!resp.ok) {
-      return res.status(502).json({ error: "mollie_error", detail: data });
-    }
-    const db = getDb();
-    db.payments[data.id] = {
-      id: data.id,
-      userId: ctx.user.id,
-      packId: pack.id,
-      coins: totalCoins,
-      quantity,
-      ip: ip || "",
-      status: data.status,
-      createdAt: Date.now(),
-      credited: false,
-    };
-    scheduleSave();
-    const checkoutUrl = data._links?.checkout?.href;
-    return res.json({ paymentId: data.id, checkoutUrl });
-  } catch (e) {
-    return res.status(502).json({ error: "mollie_unreachable", message: String(e.message || e) });
-  }
-});
 
-app.post("/v1/webhooks/mollie", async (req, res) => {
-  const id = String(req.body?.id || req.query?.id || "");
-  if (!id || !MOLLIE_API_KEY) return res.status(200).send("ok");
-  try {
-    const resp = await fetch(`https://api.mollie.com/v2/payments/${id}`, {
-      headers: { Authorization: `Bearer ${MOLLIE_API_KEY}` },
-    });
-    const data = await resp.json();
-    if (!resp.ok) return res.status(200).send("ok");
-    const db = getDb();
-    let payment = db.payments[id];
-    if (!payment) {
-      // Ohne lokalen Checkout-Record: nur mit gültigem Pack aus PACKS (kein Metadata-Coins)
-      const packId = String(data.metadata?.packId || "");
-      const pack = PACKS[packId];
-      const userId = String(data.metadata?.userId || "");
-      if (!pack || !userId || !db.users[userId]) {
-        return res.status(200).send("ok");
-      }
-      const qtyMeta = Math.min(
-        20,
-        Math.max(1, Math.floor(Number(data.metadata?.quantity) || 1))
-      );
-      payment = {
-        id,
-        userId,
-        packId: pack.id,
-        coins: (Number(pack.coins) || 0) * qtyMeta,
-        quantity: qtyMeta,
-        status: data.status,
-        createdAt: Date.now(),
-        credited: false,
-        ip: String(data.metadata?.ip || ""),
-      };
-      db.payments[id] = payment;
-    }
-    payment.status = data.status;
-    const packId = payment.packId || data.metadata?.packId;
-    const pack = packId ? PACKS[packId] : null;
-    const qty = Math.min(
-      20,
-      Math.max(
-        1,
-        Math.floor(
-          Number(payment.quantity) ||
-            Number(data.metadata?.quantity) ||
-            1
-        )
-      )
-    );
-    payment.quantity = qty;
-    const creditCoins = pack
-      ? (Number(pack.coins) || 0) * qty
-      : Number(payment.coins) || 0;
-    if (creditCoins > 0) payment.coins = creditCoins;
-    // credited sofort setzen (vor weiteren awaits) → kein Double-Credit bei Parallel-Webhooks
-    if (
-      data.status === "paid" &&
-      !payment.credited &&
-      payment.userId &&
-      creditCoins > 0
-    ) {
-      payment.credited = true;
-      applyLedger(payment.userId, creditCoins, "mollie_purchase", id);
-      if (pack) bumpPackPurchase(pack.id, qty);
-      if (pack?.oncePerUserAndIp) {
-        const user = db.users[payment.userId];
-        if (user) user.introOfferUsed = true;
-        ensureIntroDb(db);
-        const ip = payment.ip || data.metadata?.ip || "";
-        if (ip) db.introOffersByIp[ip] = payment.userId;
-      }
-    }
-    scheduleSave();
-  } catch {
-    // acknowledge to avoid retries storm; next webhook can retry
+  db.payments[paymentKey] = {
+    id: paymentKey,
+    provider: "google_play",
+    userId: ctx.user.id,
+    packId: pack.id,
+    coins: creditCoins,
+    quantity: 1,
+    orderId: orderId || playData.orderId || null,
+    purchaseToken,
+    ip: ip || "",
+    status: "paid",
+    createdAt: Date.now(),
+    credited: true,
+  };
+  applyLedger(ctx.user.id, creditCoins, "play_purchase", paymentKey);
+  bumpPackPurchase(pack.id, 1);
+  if (pack.oncePerUserAndIp) {
+    ctx.user.introOfferUsed = true;
+    ensureIntroDb(db);
+    if (ip) db.introOffersByIp[ip] = ctx.user.id;
   }
-  return res.status(200).send("ok");
+  scheduleSave();
+  return res.json({
+    ok: true,
+    coinsGranted: creditCoins,
+    user: publicUser(ctx.user),
+  });
 });
 
 
@@ -10092,6 +10441,7 @@ wss.on("connection", (socket, req) => {
   attachWsErrorGuard(socket, `code=${code} peer=${peerId}`);
   socket.luvPeerId = peerId;
   socket.luvUserId = user?.id || null;
+  if (user?.id) touchActiveAppUser(user.id);
   socket.luvNickname =
     String(user?.nickname || "")
       .trim()
@@ -11025,7 +11375,7 @@ process.on("unhandledRejection", (reason) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(
-    `luv-api :${PORT} rooms=${rooms.size} maxPeers=${MAX_PEERS} maxLobbies=${MAX_LOBBIES} clearCost=${CLEAR_COST} lobbyCreate=${LOBBY_CREATE_COST} shop=${Boolean(MOLLIE_API_KEY)}`
+    `luv-api :${PORT} rooms=${rooms.size} maxPeers=${MAX_PEERS} maxLobbies=${MAX_LOBBIES} clearCost=${CLEAR_COST} lobbyCreate=${LOBBY_CREATE_COST} shop=${shopPurchasesEnabled()}`
   );
   try {
     ensureWeddingDir();

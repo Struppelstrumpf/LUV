@@ -257,7 +257,9 @@ data class ShopPack(
     val compareAtEur: String? = null,
     val onceOnly: Boolean = false,
     val isOffer: Boolean = false,
-    val mostPurchased: Boolean = false
+    val mostPurchased: Boolean = false,
+    /** Anzeigepreis aus Google Play (z. B. „0,99 €“), sonst Server-amountEur */
+    val displayPrice: String? = null
 )
 
 class LuvApiException(
@@ -298,6 +300,9 @@ object LuvApiClient {
     var sessionToken: String? = null
 
     fun baseUrl(): String = BuildConfig.LUV_API_BASE_URL.trimEnd('/')
+
+    /** Für Bild-Downloads (Begleiter-PNGs etc.). */
+    fun httpClient(): OkHttpClient = http
 
     fun publicJoinUrl(code: String): String =
         "https://reineke.pro/luv/j/${code.uppercase()}"
@@ -357,8 +362,44 @@ object LuvApiClient {
         }
     }
 
-    suspend fun authGoogle(idToken: String): AuthResult = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("idToken", idToken).toString().toRequestBody(jsonMedia)
+    data class IntegrityNonceChallenge(
+        val required: Boolean,
+        val nonce: String?,
+        val cloudProjectNumber: String?
+    )
+
+    suspend fun fetchIntegrityNonce(): IntegrityNonceChallenge = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("${baseUrl()}/v1/auth/integrity-nonce")
+            .post(emptyBody)
+            .build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            val json = runCatching { JSONObject(raw) }.getOrNull()
+            if (!response.isSuccessful) {
+                return@use IntegrityNonceChallenge(false, null, null)
+            }
+            IntegrityNonceChallenge(
+                required = json?.optBoolean("required", false) == true,
+                nonce = json?.optString("nonce")?.takeIf { it.isNotBlank() },
+                cloudProjectNumber = json?.optString("cloudProjectNumber")?.takeIf { it.isNotBlank() }
+            )
+        }
+    }
+
+    suspend fun authGoogle(
+        idToken: String,
+        integrityToken: String? = null,
+        integrityNonce: String? = null
+    ): AuthResult = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("idToken", idToken)
+            .apply {
+                if (!integrityToken.isNullOrBlank()) put("integrityToken", integrityToken)
+                if (!integrityNonce.isNullOrBlank()) put("integrityNonce", integrityNonce)
+            }
+            .toString()
+            .toRequestBody(jsonMedia)
         val request = authedRequestBuilder("/v1/auth/google").post(body).build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
@@ -370,6 +411,11 @@ object LuvApiClient {
                             "google_disabled" -> "Google-Login ist noch nicht eingerichtet."
                             "google_in_use" -> "Dieses Google-Konto gehört schon zu einem anderen LUV-Konto."
                             "already_linked_other" -> "Schon mit einem anderen Google-Konto verbunden."
+                            "integrity_required",
+                            "missing_integrity",
+                            "device_untrusted",
+                            "app_untrusted" ->
+                                "Neue Konten nur über die Play-Store-App auf einem echten Gerät."
                             else -> "Google-Anmeldung fehlgeschlagen."
                         },
                     error = json?.optString("error")
@@ -545,6 +591,27 @@ object LuvApiClient {
     suspend fun me(): AccountInfo = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/me")
         AccountInfo.fromApi(json.getJSONObject("user"))
+    }
+
+    /** Meldet: App ist im Vordergrund (für Live-Zähler). */
+    suspend fun heartbeat(): Boolean = withContext(Dispatchers.IO) {
+        if (sessionToken.isNullOrBlank()) return@withContext false
+        val request = authedRequestBuilder("/v1/me/heartbeat").post(emptyBody).build()
+        http.newCall(request).execute().use { it.isSuccessful }
+    }
+
+    /** Wie viele Nutzer gerade die App offen haben. */
+    suspend fun fetchLiveCount(): Int = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("${baseUrl()}/v1/public/live-count")
+            .get()
+            .build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            if (!response.isSuccessful) return@withContext 0
+            val json = runCatching { JSONObject(raw) }.getOrNull() ?: return@withContext 0
+            json.optInt("count", 0).coerceAtLeast(0)
+        }
     }
 
     suspend fun updateNickname(nickname: String): AccountInfo = withContext(Dispatchers.IO) {
@@ -1204,7 +1271,7 @@ object LuvApiClient {
     }
 
     suspend fun buyPet(emoji: String): AccountInfo = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("emoji", emoji.trim().take(8)).toString()
+        val body = JSONObject().put("emoji", emoji.trim().take(32)).toString()
         val json = authedPost("/v1/shop/buy-pet", body)
         val user = AccountInfo.fromApi(json.getJSONObject("user"))
         AccountSession.setAccount(user)
@@ -1212,9 +1279,9 @@ object LuvApiClient {
     }
 
     suspend fun equipPet(emoji: String): String = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("emoji", emoji.trim().take(8)).toString()
+        val body = JSONObject().put("emoji", emoji.trim().take(32)).toString()
         val json = authedPost("/v1/me/equip-pet", body)
-        json.optString("equippedPet", emoji.trim().take(8))
+        json.optString("equippedPet", emoji.trim().take(32))
     }
 
     suspend fun fetchShopCatalog() = withContext(Dispatchers.IO) {
@@ -1260,7 +1327,14 @@ object LuvApiClient {
                             priceCoins = price,
                             compareAtPrice = compare,
                             remainingMs = rem,
-                            searchText = search
+                            searchText = search,
+                            imageUrl = o.optString("imageUrl", "").trim().ifBlank {
+                                if (o.optBoolean("hasImage", false) ||
+                                    itemId.startsWith("img_", ignoreCase = true)
+                                ) {
+                                    "${baseUrl()}/v1/shop/pet-image/${itemId.encodeURL()}"
+                                } else ""
+                            }.ifBlank { null }
                         )
                     )
                 }
@@ -2724,22 +2798,31 @@ object LuvApiClient {
         }
     }
 
-    suspend fun checkout(packId: String, quantity: Int = 1): String = withContext(Dispatchers.IO) {
-        val qty = quantity.coerceIn(1, 20)
+    /** Google Play Kauf serverseitig verifizieren und Coins gutschreiben. */
+    suspend fun confirmPlayPurchase(
+        productId: String,
+        purchaseToken: String,
+        orderId: String? = null
+    ): Int = withContext(Dispatchers.IO) {
         val body = JSONObject()
-            .put("packId", packId)
-            .put("quantity", qty)
+            .put("productId", productId)
+            .put("purchaseToken", purchaseToken)
+            .put("orderId", orderId ?: JSONObject.NULL)
             .toString()
             .toRequestBody(jsonMedia)
-        val request = authedRequestBuilder("/v1/shop/checkout").post(body).build()
+        val request = authedRequestBuilder("/v1/shop/play-purchase").post(body).build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
             val json = runCatching { JSONObject(raw) }.getOrNull()
             if (!response.isSuccessful) {
-                throw LuvApiException(json?.optString("message") ?: "Shop gerade nicht verfügbar")
+                throw LuvApiException(
+                    json?.optString("message")?.takeIf { it.isNotBlank() }
+                        ?: "Kauf konnte nicht bestätigt werden",
+                    error = json?.optString("error")
+                )
             }
-            json?.optString("checkoutUrl")?.takeIf { it.isNotBlank() }
-                ?: throw LuvApiException("Keine Checkout-URL")
+            json?.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
+            json?.optInt("coinsGranted", 0) ?: 0
         }
     }
 

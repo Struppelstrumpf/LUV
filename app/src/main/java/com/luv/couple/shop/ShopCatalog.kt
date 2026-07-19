@@ -106,7 +106,25 @@ object ShopCatalog {
         ShopTheme("volcano", "Vulkan", "🌋", 34),
         ShopTheme("aurora", "Nordlicht", "🌌", 36),
         ShopTheme("meteor", "Sternschnuppen", "☄️", 38),
-        ShopTheme("galaxy", "Galaxie", "🪐", 40)
+        ShopTheme("galaxy", "Galaxie", "🪐", 40),
+        ShopTheme("twilight", "Dämmerung", "🌆", 45),
+        ShopTheme("neon", "Neon", "💠", 55),
+        ShopTheme("abyss", "Abgrund", "🕳️", 60),
+        ShopTheme("cherry", "Kirschgarten", "🍒", 48),
+        ShopTheme("moss", "Moos", "🪴", 42),
+        ShopTheme("sandstorm", "Sandsturm", "🏜️", 50),
+        ShopTheme("frostfire", "Frostfeuer", "🧊", 70),
+        ShopTheme("prism", "Prisma", "🔮", 85),
+        ShopTheme("void", "Leere", "⬛", 120),
+        ShopTheme("royal", "Königlich", "👑", 150),
+        ShopTheme("celestial", "Himmlisch", "👼", 200),
+        ShopTheme("inferno", "Inferno", "🔥", 280),
+        ShopTheme("paradise", "Paradies", "🏝️", 350),
+        ShopTheme("mythic", "Mythisch", "🐉", 500),
+        ShopTheme("eternity", "Ewigkeit", "♾️", 1200),
+        ShopTheme("cosmos", "Kosmos", "🛸", 2500),
+        ShopTheme("legend", "Legende", "🏆", 5000),
+        ShopTheme("divine", "Göttlich", "✨", 10000)
     )
 
     /**
@@ -423,7 +441,9 @@ data class ShopPet(
     val priceCoins: Int,
     val compareAtPrice: Int? = null,
     val remainingMs: Long? = null,
-    val searchText: String = ""
+    val searchText: String = "",
+    /** Relativer oder absoluter URL für Custom-Begleiter-PNG (Alpha). */
+    val imageUrl: String? = null
 )
 
 /** Remote-Katalog vom Server (Angebote, Timer) — Fallback = lokale Listen. */
@@ -447,9 +467,44 @@ object LiveShopCatalog {
         (remotePets ?: ShopCatalog.PETS).sortedBy { it.priceCoins }
 
     fun matchesQuery(query: String, emoji: String, label: String = "", searchText: String = ""): Boolean {
-        val q = query.trim().lowercase()
-        if (q.isEmpty()) return true
-        val hay = "$emoji $label $searchText".lowercase()
-        return hay.contains(q) || emoji.contains(q)
+        val tokens = normalizeSearch(query).split(' ').filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return true
+        val catalogBits = buildString {
+            append(EmojiSearchKeywords.forEmoji(emoji))
+            append(' ')
+            remoteEmojis?.firstOrNull { it.emoji == emoji }?.searchText?.let { append(it); append(' ') }
+            remoteStickers?.firstOrNull { it.emoji == emoji }?.searchText?.let { append(it); append(' ') }
+            remotePets?.firstOrNull { it.emoji == emoji }?.let {
+                append(it.label); append(' '); append(it.searchText); append(' ')
+            }
+            remoteThemes?.firstOrNull { it.id == emoji || it.emoji == emoji }?.let {
+                append(it.id); append(' '); append(it.label); append(' '); append(it.searchText); append(' ')
+            }
+            ShopCatalog.PETS.firstOrNull { it.emoji == emoji }?.let {
+                append(it.label); append(' '); append(it.searchText); append(' ')
+            }
+            ShopCatalog.THEMES.firstOrNull { it.id == emoji || it.emoji == emoji }?.let {
+                append(it.id); append(' '); append(it.label); append(' ')
+            }
+            ShopCatalog.EMOJIS.firstOrNull { it.emoji == emoji }?.searchText?.let { append(it); append(' ') }
+            ShopCatalog.STICKERS.firstOrNull { it.emoji == emoji }?.searchText?.let { append(it); append(' ') }
+        }
+        val hayWords = normalizeSearch("$emoji $label $searchText $catalogBits")
+            .split(' ')
+            .filter { it.isNotEmpty() }
+        return tokens.all { token ->
+            emoji.contains(token) ||
+                hayWords.any { w -> w == token || w.startsWith(token) }
+        }
     }
+
+    private fun normalizeSearch(s: String): String =
+        s.lowercase()
+            .replace("ä", "ae")
+            .replace("ö", "oe")
+            .replace("ü", "ue")
+            .replace("ß", "ss")
+            .replace(Regex("[^a-z0-9\\s]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
 }

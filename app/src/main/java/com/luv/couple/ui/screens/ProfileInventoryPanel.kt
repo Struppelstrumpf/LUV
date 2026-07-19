@@ -142,11 +142,14 @@ fun ProfileInventoryPanel(
             .filter { LiveShopCatalog.matchesQuery(searchQuery, it.emoji, it.label) }
     }
     val petItems = remember(ownedPets, searchQuery) {
-        val owned = ownedPets.toSet()
-        com.luv.couple.shop.ShopCatalog.PETS.map { it.emoji }
-            .filter { it in owned }
-            .filter { LiveShopCatalog.matchesQuery(searchQuery, it) }
-            .ifEmpty { if (searchQuery.isBlank()) listOf("🐣") else emptyList() }
+        val owned = ownedPets.distinct().ifEmpty { listOf("🐣") }
+        owned.filter { id ->
+            val label = LiveShopCatalog.remotePets?.firstOrNull { it.emoji == id }?.label
+                ?: com.luv.couple.shop.ShopCatalog.PETS.firstOrNull { it.emoji == id }?.label
+                ?: ""
+            val search = LiveShopCatalog.remotePets?.firstOrNull { it.emoji == id }?.searchText.orEmpty()
+            LiveShopCatalog.matchesQuery(searchQuery, id, label, search)
+        }.ifEmpty { if (searchQuery.isBlank()) listOf("🐣") else emptyList() }
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -181,7 +184,15 @@ fun ProfileInventoryPanel(
                     fontSize = ts(22.sp),
                     modifier = Modifier.weight(1f)
                 )
+                ShopSearchIconButton(
+                    expanded = searchOpen,
+                    onClick = {
+                        searchOpen = !searchOpen
+                        if (!searchOpen) searchQuery = ""
+                    }
+                )
                 if (onDismiss != null) {
+                    Spacer(modifier = Modifier.width(s(8.dp)))
                     Box(
                         modifier = Modifier
                             .size(s(32.dp))
@@ -191,6 +202,14 @@ fun ProfileInventoryPanel(
                         contentAlignment = Alignment.Center
                     ) { Text("✕", color = TextMuted, fontSize = ts(14.sp)) }
                 }
+            }
+            if (searchOpen) {
+                Spacer(modifier = Modifier.height(s(10.dp)))
+                ShopSearchField(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    placeholder = "Inventar filtern…"
+                )
             }
             Spacer(modifier = Modifier.height(s(12.dp)))
             Row(horizontalArrangement = Arrangement.spacedBy(s(8.dp))) {
@@ -256,14 +275,6 @@ fun ProfileInventoryPanel(
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(s(10.dp)))
-            ShopSearchToggleRow(
-                expanded = searchOpen,
-                query = searchQuery,
-                onExpandedChange = { searchOpen = it },
-                onQueryChange = { searchQuery = it },
-                placeholder = "Inventar filtern…"
-            )
             Spacer(modifier = Modifier.height(s(10.dp)))
 
             val gridMod = Modifier
@@ -474,7 +485,12 @@ fun ProfileInventoryPanel(
                                     )
                                     .clickable { onCompanion(emoji) },
                                 contentAlignment = Alignment.Center
-                            ) { Text(emoji, fontSize = ts(28.sp)) }
+                            ) {
+                                com.luv.couple.ui.CompanionGlyph(
+                                    petId = emoji,
+                                    fontSize = ts(28.sp)
+                                )
+                            }
                         }
                     }
                 }

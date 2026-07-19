@@ -920,7 +920,7 @@ class PrefsRepository(private val context: Context) {
     }
 
     suspend fun setEquippedPet(emoji: String) {
-        val pet = emoji.trim().take(8).ifBlank {
+        val pet = emoji.trim().take(32).ifBlank {
             com.luv.couple.shop.ShopCatalog.DEFAULT_PET
         }
         context.dataStore.edit { prefs ->
@@ -953,7 +953,7 @@ class PrefsRepository(private val context: Context) {
             val petList = pets.map { it.trim() }.filter { it.isNotBlank() }.distinct()
                 .ifEmpty { listOf(com.luv.couple.shop.ShopCatalog.DEFAULT_PET) }
             prefs[ownedPetsKey] = JSONArray(petList).toString()
-            val eq = equippedPet.trim().take(8)
+            val eq = equippedPet.trim().take(32)
             prefs[equippedPetKey] =
                 if (eq.isNotBlank() && petList.contains(eq)) eq
                 else com.luv.couple.shop.ShopCatalog.DEFAULT_PET

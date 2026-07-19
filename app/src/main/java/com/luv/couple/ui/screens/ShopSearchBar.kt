@@ -29,6 +29,57 @@ import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
 
 @Composable
+fun ShopSearchIconButton(
+    expanded: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(if (expanded) AccentRose.copy(0.28f) else BgSoft)
+            .border(1.dp, Color.White.copy(0.1f), CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text("🔍", fontSize = 18.sp)
+    }
+}
+
+@Composable
+fun ShopSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    placeholder: String = "Suchen… z. B. herz",
+    modifier: Modifier = Modifier
+) {
+    BasicTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        singleLine = true,
+        cursorBrush = SolidColor(AccentRose),
+        textStyle = TextStyle(
+            color = TextPrimary,
+            fontFamily = BodyFont,
+            fontSize = 15.sp
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(BgSoft)
+            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(14.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        decorationBox = { inner ->
+            if (query.isEmpty()) {
+                Text(placeholder, color = TextMuted, fontFamily = BodyFont, fontSize = 14.sp)
+            }
+            inner()
+        }
+    )
+}
+
+@Composable
 fun ShopSearchToggleRow(
     expanded: Boolean,
     query: String,
@@ -40,45 +91,22 @@ fun ShopSearchToggleRow(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(if (expanded) AccentRose.copy(0.28f) else BgSoft)
-                .border(1.dp, Color.White.copy(0.1f), CircleShape)
-                .clickable {
-                    val next = !expanded
-                    onExpandedChange(next)
-                    if (!next) onQueryChange("")
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Text("🔍", fontSize = 18.sp)
-        }
+        ShopSearchIconButton(
+            expanded = expanded,
+            onClick = {
+                val next = !expanded
+                onExpandedChange(next)
+                if (!next) onQueryChange("")
+            }
+        )
         if (expanded) {
-            BasicTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                singleLine = true,
-                cursorBrush = SolidColor(AccentRose),
-                textStyle = TextStyle(
-                    color = TextPrimary,
-                    fontFamily = BodyFont,
-                    fontSize = 15.sp
-                ),
+            ShopSearchField(
+                query = query,
+                onQueryChange = onQueryChange,
+                placeholder = placeholder,
                 modifier = Modifier
                     .padding(start = 8.dp)
                     .weight(1f)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(BgSoft)
-                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(14.dp))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                decorationBox = { inner ->
-                    if (query.isEmpty()) {
-                        Text(placeholder, color = TextMuted, fontFamily = BodyFont, fontSize = 14.sp)
-                    }
-                    inner()
-                }
             )
         }
     }

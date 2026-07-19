@@ -2211,7 +2211,7 @@ private fun ElementContent(
                     .border((2f * f).dp, Color.White.copy(0.9f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text(pet, fontSize = sp(28f))
+                com.luv.couple.ui.CompanionGlyph(petId = pet, fontSize = sp(28f))
             }
         }
         ProfileElType.Name -> {
@@ -2586,7 +2586,7 @@ private fun WeddingGuestbookDialog(
                     },
                     modifier = Modifier
                         .fillMaxWidth(0.94f)
-                        .fillMaxHeight(0.88f)
+                        .fillMaxHeight(0.78f)
                         .clickable(
                             indication = null,
                             interactionSource = remember { MutableInteractionSource() }
@@ -2811,8 +2811,8 @@ private fun WeddingGuestbookBookCard(
 
         Column(
             modifier = Modifier
-                .weight(1f)
                 .fillMaxWidth()
+                .heightIn(max = 168.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(Color.White.copy(0.4f))
                 .padding(10.dp)
@@ -2886,7 +2886,7 @@ private fun WeddingGuestbookBookCard(
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
             "Dein Eintrag",
             color = WeddingInk.copy(0.65f),
@@ -2904,11 +2904,11 @@ private fun WeddingGuestbookBookCard(
             cursorBrush = SolidColor(WeddingRose),
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 72.dp)
+                .heightIn(min = 52.dp, max = 88.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(Color.White.copy(0.8f))
                 .border(1.dp, WeddingGold.copy(0.35f), RoundedCornerShape(14.dp))
-                .padding(12.dp)
+                .padding(horizontal = 12.dp, vertical = 10.dp)
         )
         Text(
             "${draft.length}/280",
@@ -2917,11 +2917,11 @@ private fun WeddingGuestbookBookCard(
             fontSize = 11.sp,
             modifier = Modifier.align(Alignment.End)
         )
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .height(44.dp)
                 .clip(RoundedCornerShape(24.dp))
                 .background(
                     if (!busy && draft.isNotBlank()) {

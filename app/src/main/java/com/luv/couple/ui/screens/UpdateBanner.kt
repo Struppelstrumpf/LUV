@@ -21,6 +21,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.luv.couple.update.UpdateChannel
 import com.luv.couple.update.UpdateUiState
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgSoft
@@ -58,7 +59,11 @@ fun UpdateBanner(
         else -> return
     }
     val action = when (state) {
-        is UpdateUiState.Available -> "Jetzt aktualisieren"
+        is UpdateUiState.Available -> when (state.release.channel) {
+            UpdateChannel.PlayInApp,
+            UpdateChannel.PlayStore -> "Über Play Store aktualisieren"
+            UpdateChannel.WebsiteApk -> "Jetzt aktualisieren"
+        }
         is UpdateUiState.Downloading -> null
         is UpdateUiState.Ready -> "Installation öffnen"
         is UpdateUiState.Error -> "Erneut versuchen"

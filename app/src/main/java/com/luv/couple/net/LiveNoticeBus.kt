@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 data class LiveNotice(
     val id: String,
@@ -28,17 +29,23 @@ object LiveNoticeBus {
     @Volatile
     private var lastShownId: String? = null
 
+    @Volatile
+    private var prefsReady = false
+
     init {
-        scope.launch {
-            lastShownId = runCatching {
+        // Synchron laden, sonst zeigt offer() denselben Hinweis bei jedem Kaltstart erneut
+        lastShownId = runCatching {
+            runBlocking {
                 LuvApp.instance.prefs.lastShownLiveNoticeId()
-            }.getOrNull()
-        }
+            }
+        }.getOrNull()
+        prefsReady = true
     }
 
     fun offer(notice: LiveNotice?) {
         if (notice == null) return
         if (notice.id.isBlank() || notice.message.isBlank()) return
+        if (!prefsReady) return
         if (notice.id == lastShownId) return
         if (_pending.value?.id == notice.id) return
         _pending.value = notice

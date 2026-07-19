@@ -12,6 +12,14 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.9937",
+            listOf(
+                "Update-Hinweis erscheint wieder, wenn im Play Store eine neue Version wartet",
+                "Gästebuch: Absenden-Button höher und leichter erreichbar",
+                "Reaktionsleiste: bei vielen Emojis kompakter — Fertig bleibt sichtbar",
+            )
+        ),
+        Entry(
             "1.9.9930",
             listOf(
                 "Vorlagen: längere Zeichnungen speichern & bearbeiten",
