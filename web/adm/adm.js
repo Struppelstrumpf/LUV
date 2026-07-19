@@ -12,6 +12,11 @@
     shopQ: "",
     shopSource: "",
     shopUniverse: [],
+    achQ: "",
+    achCat: "",
+    achFocusId: null,
+    userQ: "",
+    userFocusId: null,
   };
 
   try {
@@ -33,9 +38,10 @@
   const TABS = [
     { id: "overview", label: "Übersicht", hint: "Live-Zahlen und Räume auf einen Blick." },
     { id: "shop", label: "Itemshop", hint: "Alle Items: Shop, Erfolge, Codes — Preise, Handelbarkeit und Limits.", perm: "market.settings" },
+    { id: "achievements", label: "Erfolge", hint: "Erfolge ansehen, deaktivieren und mit Wizard erstellen/bearbeiten.", perm: "market.settings" },
     { id: "reports", label: "Meldungen", hint: "Gemeldete Lobby-/Galerie-Bilder prüfen.", perm: "reports.view" },
     { id: "codes", label: "Codes", hint: "Gutscheincodes erstellen und widerrufen.", perm: "codes.view" },
-    { id: "users", label: "Nutzer", hint: "Spieler suchen, Coins und Nick anpassen.", perm: "gm.search" },
+    { id: "users", label: "Nutzer", hint: "Vollprofil: Coins, Erfolge, Logs, Lobbys, Verwarnungen, Streak.", perm: "gm.search" },
     { id: "mods", label: "Moderatoren", hint: "Mods einladen und Rechte setzen.", perm: "mods.manage", adminOnly: true },
     { id: "market", label: "Einstellungen", hint: "Markt-Preisfenster und Erfolgs-Tageslimit.", perm: "market.settings" },
     { id: "live", label: "Live-Hinweis", hint: "Nachricht an alle App-Nutzer senden.", perm: "live.notify" },
@@ -119,8 +125,9 @@
     });
   }
 
-  function openModal(html) {
+  function openModal(html, wide) {
     modalCard.innerHTML = html;
+    modalCard.classList.toggle("wide", Boolean(wide));
     modal.hidden = false;
     modal.classList.add("is-open");
   }
@@ -294,6 +301,14 @@
     return `${Math.max(1, min)}m`;
   }
 
+  function goTab(id, opts = {}) {
+    if (opts.focusId && id === "achievements") state.achFocusId = opts.focusId;
+    if (opts.userId && id === "users") state.userFocusId = opts.userId;
+    state.tab = id;
+    renderNav();
+    loadTab(id);
+  }
+
   async function loadTab(id) {
     const meta = TABS.find((t) => t.id === id) || TABS[0];
     pageTitle.textContent = meta.label;
@@ -302,9 +317,13 @@
     try {
       if (id === "overview") await renderOverview();
       else if (id === "shop") await renderShop();
-      else if (id === "reports") await renderReports();
+      else if (id === "achievements") {
+        const focus = state.achFocusId;
+        state.achFocusId = null;
+        await window.LuvAdmPanels.renderAchievements(focus);
+      } else if (id === "reports") await renderReports();
       else if (id === "codes") await renderCodes();
-      else if (id === "users") await renderUsers();
+      else if (id === "users") await window.LuvAdmPanels.renderUsers();
       else if (id === "mods") await renderMods();
       else if (id === "market") await renderMarketSettings();
       else if (id === "live") await renderLive();
@@ -413,6 +432,12 @@
             it.marketSellable ? "Marktplatz: handelbar — klicken zum Sperren" : "Marktplatz: gesperrt — klicken zum Freigeben"
           }">${it.marketSellable ? "🏪" : "🚫"}</button>`;
       const shopOff = shop && shop.enabled === false;
+      const achLinks = (it.achievements || [])
+        .map(
+          (a) =>
+            `<button type="button" class="ach-chip" data-goto-ach="${esc(a.id)}" title="${esc(a.desc || "")}">🏆 ${esc(a.title)}</button>`
+        )
+        .join(" ");
       return `<article class="shop-card ${shopOff ? "is-off" : ""} ${
         it.marketSellable ? "is-tradeable" : "is-untradeable"
       }">
@@ -424,7 +449,6 @@
           <div class="muted mono shop-card-id">${esc(it.itemId)}</div>
           <div class="shop-card-price-row">${price}
             ${shopOff ? '<span class="badge off">Shop aus</span>' : ""}
-            ${!shop && it.sources.includes("shop") ? "" : ""}
             ${
               !it.sources.includes("shop")
                 ? '<span class="badge src-noshop">nicht im Shop</span>'
@@ -432,8 +456,10 @@
             }
           </div>
           <div class="shop-card-meta source-row">${sourceBadges(it.sources)}</div>
+          ${achLinks ? `<div class="ach-chip-row">${achLinks}</div>` : ""}
         </div>
         <div class="shop-card-actions">
+          <button type="button" class="btn secondary" data-name="${esc(it.kind)}|${esc(it.itemId)}" title="Nur Anzeigename">Name</button>
           ${
             shop
               ? `<button type="button" class="btn secondary btn-edit" data-edit="${esc(it.kind)}|${esc(it.itemId)}">Bearbeiten</button>
@@ -441,7 +467,7 @@
                   shop.enabled ? "Shop aus" : "Shop an"
                 }</button>
           <button type="button" class="btn btn-del" data-del="${esc(it.kind)}|${esc(it.itemId)}" title="Aus Shop löschen">Löschen</button>`
-              : `<span class="muted" style="font-size:0.78rem;padding:0.35rem 0">Nur Herkunft / Markt</span>`
+              : `<span class="muted" style="font-size:0.78rem;padding:0.35rem 0">Herkunft / Markt</span>`
           }
         </div>
       </article>`;
@@ -583,8 +609,19 @@
       btn.onclick = () => {
         const [kind, itemId] = btn.getAttribute("data-edit").split("|");
         const it = state.shopItems.find((x) => x.kind === kind && x.itemId === itemId);
-        openEditItem(it || { kind, itemId });
+        const uni = state.shopUniverse.find((x) => x.kind === kind && x.itemId === itemId);
+        openEditItem(it || { kind, itemId, label: uni?.label });
       };
+    });
+    content.querySelectorAll("[data-name]").forEach((btn) => {
+      btn.onclick = () => {
+        const [kind, itemId] = btn.getAttribute("data-name").split("|");
+        const uni = state.shopUniverse.find((x) => x.kind === kind && x.itemId === itemId);
+        openDisplayNameEditor(kind, itemId, uni?.label || itemId, uni?.displayLabelOverride);
+      };
+    });
+    content.querySelectorAll("[data-goto-ach]").forEach((btn) => {
+      btn.onclick = () => goTab("achievements", { focusId: btn.getAttribute("data-goto-ach") });
     });
     content.querySelectorAll("[data-toggle]").forEach((btn) => {
       btn.onclick = async () => {
@@ -718,7 +755,7 @@
   function openEditItem(it) {
     openModal(`
       <h3 style="font-family:var(--display);margin:0 0 0.5rem">Item bearbeiten</h3>
-      <p class="help">Änderungen sind sofort für alle Spieler sichtbar.</p>
+      <p class="help">Änderungen sind sofort für alle Spieler sichtbar. Nur den Namen ändern? Nutze „Name“ auf der Karte — ohne Shop-Seiteneffekte.</p>
       <form id="editForm">${itemFormFields(it)}
         <div class="actions" style="margin-top:1rem">
           <button type="submit" class="btn">Speichern</button>
@@ -729,9 +766,52 @@
     $("editForm").onsubmit = async (e) => {
       e.preventDefault();
       const body = readForm(e.target);
+      // Anzeigename separat speichern — wirkt auch ohne Katalog-Seiteneffekte
+      if (body.label) {
+        await api(
+          `/admin/items/${encodeURIComponent(body.kind)}/${encodeURIComponent(body.itemId)}/display-label`,
+          { method: "PUT", body: JSON.stringify({ label: body.label }) }
+        );
+      }
       await api(
         `/admin/shop/items/${encodeURIComponent(body.kind)}/${encodeURIComponent(body.itemId)}`,
         { method: "PUT", body: JSON.stringify(body) }
+      );
+      closeModal();
+      renderShop();
+    };
+  }
+
+  function openDisplayNameEditor(kind, itemId, currentLabel, override) {
+    openModal(`
+      <h3 style="font-family:var(--display);margin:0 0 0.4rem">Anzeigename</h3>
+      <p class="help">Wirkt nur auf die Namensanzeige in Shop, Inventar und Admin — nicht auf Preise, Limits oder Belohnungen.</p>
+      <p class="muted mono" style="margin:0.25rem 0 0.75rem">${esc(kind)} · ${esc(itemId)}</p>
+      <form id="nameForm">
+        <label class="field">Anzeigename
+          <input name="label" maxlength="40" value="${esc(override || currentLabel || "")}" required />
+        </label>
+        <div class="actions" style="margin-top:1rem">
+          <button type="submit" class="btn">Speichern</button>
+          <button type="button" class="btn ghost" id="nameClear">Zurücksetzen</button>
+          <button type="button" class="btn ghost" id="cancelModal">Abbrechen</button>
+        </div>
+      </form>`);
+    $("cancelModal").onclick = closeModal;
+    $("nameClear").onclick = async () => {
+      await api(
+        `/admin/items/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/display-label`,
+        { method: "PUT", body: JSON.stringify({ label: "" }) }
+      );
+      closeModal();
+      renderShop();
+    };
+    $("nameForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const label = new FormData(e.target).get("label");
+      await api(
+        `/admin/items/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/display-label`,
+        { method: "PUT", body: JSON.stringify({ label }) }
       );
       closeModal();
       renderShop();
@@ -1501,6 +1581,17 @@
     initGoogle();
   };
   $("refreshBtn").onclick = () => loadTab(state.tab);
+
+  window.LuvAdmHost = {
+    api,
+    esc,
+    $,
+    openModal,
+    closeModal,
+    content,
+    state,
+    goTab,
+  };
 
   // boot
   if (document.readyState === "loading") {

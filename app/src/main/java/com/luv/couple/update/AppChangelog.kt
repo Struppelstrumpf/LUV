@@ -12,6 +12,15 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.1.4",
+            listOf(
+                "Profil gestalten: nach Platzieren aus dem Inventar zurück mit Speichern oder ✕",
+                "Inventar: ausgegraute Items unten, freie Items oben",
+                "Team-Verwarnungen unter Sozial · Freunde",
+                "Klarere Item-Namen (z. B. Tiger statt Gesicht)",
+            )
+        ),
+        Entry(
             "2.1.3",
             listOf(
                 "Vorlagen & Leinwand: überall gleiche Größe ohne Verzerrung (9:16)",

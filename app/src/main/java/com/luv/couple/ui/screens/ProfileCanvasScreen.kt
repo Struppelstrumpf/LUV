@@ -155,6 +155,8 @@ fun ProfileCanvasScreen(
     var savedSnapshot by remember { mutableStateOf("") }
     var selectedId by remember { mutableStateOf<String?>(null) }
     var showChest by remember { mutableStateOf(false) }
+    /** Nach Platzieren aus der Truhe: Speichern/✕ öffnet wieder das Inventar statt zu schließen. */
+    var returnToChestAfterPlace by remember { mutableStateOf(false) }
     var chestTab by remember { mutableIntStateOf(initialChestTab) }
     var editElId by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
@@ -413,19 +415,24 @@ fun ProfileCanvasScreen(
         patchLayout(state.layout.map { if (it.id == updated.id) updated else it })
     }
 
-    fun setTheme(theme: ProfileTheme) {
-        if (!editable) return
-        state = state.copy(themeId = theme.id)
+    fun closeChestAfterPlace(fromChest: Boolean) {
         showChest = false
+        if (fromChest) returnToChestAfterPlace = true
     }
 
-    fun placeCompanion(emoji: String) {
+    fun setTheme(theme: ProfileTheme, fromChest: Boolean = false) {
+        if (!editable) return
+        state = state.copy(themeId = theme.id)
+        closeChestAfterPlace(fromChest)
+    }
+
+    fun placeCompanion(emoji: String, fromChest: Boolean = false) {
         if (!editable) return
         // Begleiter sitzt mittig im Avatar-Kreis — kein separates Pet-Element mehr
         val nextLayout = state.layout.filterNot { it.type == ProfileElType.Pet }
         state = state.copy(companionEmoji = emoji, layout = nextLayout)
         selectedId = nextLayout.firstOrNull { it.type == ProfileElType.Avatar }?.id
-        showChest = false
+        closeChestAfterPlace(fromChest)
         scope.launch {
             runCatching {
                 val eq = LuvApiClient.equipPet(emoji)
@@ -434,42 +441,42 @@ fun ProfileCanvasScreen(
         }
     }
 
-    fun placeGlass() {
+    fun placeGlass(fromChest: Boolean = false) {
         if (!editable) return
         val existing = state.layout.firstOrNull { it.type == ProfileElType.Glass }
         if (existing != null) {
             selectedId = existing.id
-            showChest = false
+            closeChestAfterPlace(fromChest)
             return
         }
         val el = ProfileCatalog.newGlass()
         patchLayout(state.layout + el)
         selectedId = el.id
-        showChest = false
+        closeChestAfterPlace(fromChest)
     }
 
-    fun placeBio() {
+    fun placeBio(fromChest: Boolean = false) {
         if (!editable) return
         val existing = state.layout.firstOrNull { it.type == ProfileElType.Bio }
         if (existing != null) {
             selectedId = existing.id
-            showChest = false
+            closeChestAfterPlace(fromChest)
             return
         }
         val el = ProfileCatalog.newBio(state.bio)
         patchLayout(state.layout + el)
         selectedId = el.id
         editElId = el.id
-        showChest = false
+        closeChestAfterPlace(fromChest)
     }
 
-    fun placeSpouse() {
+    fun placeSpouse(fromChest: Boolean = false) {
         if (!editable) return
         val nick = spouseExtraName ?: return
         val existing = state.layout.firstOrNull { it.type == ProfileElType.Spouse }
         if (existing != null) {
             selectedId = existing.id
-            showChest = false
+            closeChestAfterPlace(fromChest)
             return
         }
         val el = ProfileCatalog.newSpouse(nick)
@@ -479,16 +486,16 @@ fun ProfileCanvasScreen(
             } + el
         )
         selectedId = el.id
-        showChest = false
+        closeChestAfterPlace(fromChest)
     }
 
-    fun placeEngaged() {
+    fun placeEngaged(fromChest: Boolean = false) {
         if (!editable) return
         val nick = engagedExtraName ?: return
         val existing = state.layout.firstOrNull { it.type == ProfileElType.Engaged }
         if (existing != null) {
             selectedId = existing.id
-            showChest = false
+            closeChestAfterPlace(fromChest)
             return
         }
         val el = ProfileCatalog.newEngaged(nick)
@@ -498,10 +505,14 @@ fun ProfileCanvasScreen(
             } + el
         )
         selectedId = el.id
-        showChest = false
+        closeChestAfterPlace(fromChest)
     }
 
-    fun placeSticker(emoji: String, afterInventoryRefresh: Boolean = false) {
+    fun placeSticker(
+        emoji: String,
+        afterInventoryRefresh: Boolean = false,
+        fromChest: Boolean = false
+    ) {
         if (!editable) return
         val id = ProfileCatalog.clipProfileItemId(emoji)
         if (id.isBlank()) return
@@ -524,7 +535,7 @@ fun ProfileCanvasScreen(
                         }
                         ownedStickers = remote.stickers
                     }
-                    placeSticker(id, afterInventoryRefresh = true)
+                    placeSticker(id, afterInventoryRefresh = true, fromChest = fromChest)
                 }
                 return
             }
@@ -538,7 +549,7 @@ fun ProfileCanvasScreen(
         val el = ProfileCatalog.newSticker(id, state.layout)
         applyLayoutWithStickerStock(state.layout + el)
         selectedId = el.id
-        showChest = false
+        closeChestAfterPlace(fromChest)
     }
 
     fun applyPendingPlace(action: ProfilePlaceAction) {
@@ -583,10 +594,17 @@ fun ProfileCanvasScreen(
         applyPendingPlace(action)
     }
 
+    fun reopenChestFromPlace(): Boolean {
+        if (!returnToChestAfterPlace) return false
+        returnToChestAfterPlace = false
+        showChest = true
+        return true
+    }
+
     fun tryClose() {
         if (editable && state.snapshotKey() != savedSnapshot) {
             confirmDiscard = true
-        } else {
+        } else if (!reopenChestFromPlace()) {
             onClose()
         }
     }
@@ -632,7 +650,7 @@ fun ProfileCanvasScreen(
                     Toast.LENGTH_SHORT
                 ).show()
             }
-            if (closeAfter) onClose()
+            if (closeAfter && !reopenChestFromPlace()) onClose()
         }
     }
 
@@ -1390,13 +1408,13 @@ fun ProfileCanvasScreen(
                 hasEngaged = state.layout.any { it.type == ProfileElType.Engaged },
                 dayStreak = dayStreak,
                 readOnly = !editable,
-                onTheme = { if (editable) setTheme(it) },
-                onSticker = { if (editable) placeSticker(it) },
-                onCompanion = { if (editable) placeCompanion(it) },
-                onGlass = { if (editable) placeGlass() },
-                onBio = { if (editable) placeBio() },
-                onSpouse = { if (editable) placeSpouse() },
-                onEngaged = { if (editable) placeEngaged() },
+                onTheme = { if (editable) setTheme(it, fromChest = true) },
+                onSticker = { if (editable) placeSticker(it, fromChest = true) },
+                onCompanion = { if (editable) placeCompanion(it, fromChest = true) },
+                onGlass = { if (editable) placeGlass(fromChest = true) },
+                onBio = { if (editable) placeBio(fromChest = true) },
+                onSpouse = { if (editable) placeSpouse(fromChest = true) },
+                onEngaged = { if (editable) placeEngaged(fromChest = true) },
                 selectedTab = if (editable) chestTab else 0,
                 onTabChange = { if (editable) chestTab = it },
                 onOpenMarketplace = {
@@ -1455,6 +1473,7 @@ fun ProfileCanvasScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         confirmDiscard = false
+                        returnToChestAfterPlace = false
                         onClose()
                     }) {
                         Text("Verwerfen", color = AccentRose)

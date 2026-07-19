@@ -55,6 +55,7 @@ const OVERRIDES = {
   "🐱": "Katze",
   "🐶": "Hund",
   "🐣": "Küken",
+  "🐯": "Tiger",
   "🧙": "Hexe",
   "🧙‍♀️": "Hexe",
   "🧙‍♂️": "Hexer",

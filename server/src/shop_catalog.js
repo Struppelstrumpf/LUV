@@ -5,6 +5,7 @@
 
 const { keywordsForEmoji } = require("./emoji_search_keywords");
 const { displayNameForEmoji } = require("./emoji_display_names");
+const itemLabels = require("./item_labels");
 
 const EXTRA_EMOJI_PRICES = {
   // Premium / teuer
@@ -548,7 +549,7 @@ function remainingMs(item, now = Date.now()) {
   return Math.max(0, item.availableUntil - now);
 }
 
-function publicItem(item, now = Date.now(), { admin = false } = {}) {
+function publicItem(item, now = Date.now(), { admin = false, db = null } = {}) {
   if (!item) return null;
   const price = effectivePrice(item);
   const compareAt =
@@ -565,10 +566,17 @@ function publicItem(item, now = Date.now(), { admin = false } = {}) {
       : item.kind === "themes"
         ? "🖼️"
         : item.itemId;
+  const resolvedLabel = itemLabels.resolveDisplayLabel(
+    db,
+    item.kind,
+    item.itemId,
+    displayNameForEmoji,
+    item.label
+  );
   const base = {
     kind: item.kind,
     itemId: item.itemId,
-    label: item.label,
+    label: resolvedLabel,
     emoji: themeEmoji,
     priceCoins: price,
     compareAtPrice: compareAt,
@@ -621,7 +629,7 @@ function listPublicCatalog(db, { admin = false, kind = null, q = "" } = {}) {
     items = items.filter((i) => matchesSearchQuery(i, query));
   }
   items.sort((a, b) => effectivePrice(a) - effectivePrice(b) || a.itemId.localeCompare(b.itemId));
-  return items.map((i) => publicItem(i, now, { admin }));
+  return items.map((i) => publicItem(i, now, { admin, db }));
 }
 
 function upsertItem(db, patch) {
@@ -645,7 +653,7 @@ function upsertItem(db, patch) {
     createdAt: prev.createdAt || Date.now(),
   });
   cat.items[key] = next;
-  return { ok: true, item: publicItem(next, Date.now(), { admin: true }) };
+  return { ok: true, item: publicItem(next, Date.now(), { admin: true, db }) };
 }
 
 function setEnabled(db, kind, itemId, enabled) {

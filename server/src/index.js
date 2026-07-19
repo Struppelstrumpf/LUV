@@ -23,6 +23,8 @@ const petImages = require("./pet_images");
 const playBilling = require("./play_billing");
 const playIntegrity = require("./play_integrity");
 const itemTrade = require("./item_trade");
+const itemLabels = require("./item_labels");
+ach.bindGetDb(getDb);
 const {
   STICKER_SHOP_PRICES,
   isKnownSticker,
@@ -7696,6 +7698,436 @@ app.post("/v1/admin/users/:userId/delete", (req, res) => {
   staffAudit(ctx.user, "user_delete", { targetId: uid, nickname: nick });
   return res.json({ ok: true });
 });
+
+/** Vollständiges Nutzer-Detail für Web-Admin */
+app.get("/v1/admin/users/:userId", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.search");
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const db = getDb();
+  const user = db.users?.[uid];
+  if (!user) {
+    return res.status(404).json({ error: "not_found", message: "Nutzer nicht gefunden." });
+  }
+  ensureInventory(user);
+  ensureFriends(user);
+  ach.ensureAchievements(user);
+  reconcileAbandonedLobbyOwnership(user);
+  ensureHostedRooms(user);
+  const day = todayKey();
+  const aState = ach.publicAchievementsState(user, day, achDailyCap());
+  const a = user.achievements;
+  const inv = user.inventory || {};
+  const ledger = (Array.isArray(db.ledger) ? db.ledger : [])
+    .filter((e) => e && e.userId === uid)
+    .slice(-120)
+    .reverse();
+  const audit = (Array.isArray(db.staffAudit) ? db.staffAudit : [])
+    .filter(
+      (e) =>
+        e &&
+        (e.actorId === uid ||
+          String(e.detail?.targetId || "") === uid ||
+          String(e.detail?.userId || "") === uid)
+    )
+    .slice(-150)
+    .reverse();
+  const lobbies = Object.entries(user.hostedRooms || {}).map(([code, meta]) =>
+    staffLobbyCard(code, meta, user)
+  );
+  lobbies.sort((x, y) => {
+    if (x.live !== y.live) return x.live ? -1 : 1;
+    return String(x.name).localeCompare(String(y.name), "de");
+  });
+  const warnings = Array.isArray(user.staffWarnings) ? user.staffWarnings.slice(-40).reverse() : [];
+  return res.json({
+    ok: true,
+    user: {
+      ...staffUserCard(user),
+      bannedAt: user.bannedAt || null,
+      bannedReason: user.bannedReason || null,
+      paidCoins: Math.max(0, Number(user.paidCoins) || 0),
+      dailyBalance: Math.max(0, Number(user.dailyBalance) || 0),
+      googleSub: user.googleSub ? String(user.googleSub).slice(0, 12) + "…" : null,
+      lastSeenAt: user.lastSeenAt || user.updatedAt || null,
+    },
+    achievements: {
+      streak: a.streak || 0,
+      lastDailyCompleteDate: a.lastDailyCompleteDate || null,
+      coinsEarnedToday: a.coinsEarnedToday || 0,
+      totalAchCoins: a.totalAchCoins || 0,
+      progress: a.progress || {},
+      unlocked: a.unlocked || {},
+      daily: aState.daily,
+      list: aState.achievements,
+      unlockedCount: aState.unlockedCount,
+      totalCount: aState.totalCount,
+    },
+    inventory: {
+      equippedPet: inv.equippedPet || null,
+      pets: Array.isArray(inv.pets) ? inv.pets : [],
+      themes: Array.isArray(inv.themes) ? inv.themes : [],
+      stickers: inv.stickers && typeof inv.stickers === "object" ? inv.stickers : {},
+      emojis: inv.emojis && typeof inv.emojis === "object" ? inv.emojis : {},
+      stickerCount: Object.values(inv.stickers || {}).reduce((n, v) => n + (Number(v) || 0), 0),
+      emojiCount: Object.values(inv.emojis || {}).reduce((n, v) => n + (Number(v) || 0), 0),
+    },
+    friends: {
+      count: Array.isArray(user.friends?.list) ? user.friends.list.length : 0,
+      incoming: Array.isArray(user.friends?.incoming) ? user.friends.incoming.length : 0,
+      outgoing: Array.isArray(user.friends?.outgoing) ? user.friends.outgoing.length : 0,
+    },
+    lobbies,
+    ledger,
+    audit,
+    warnings,
+  });
+});
+
+app.post("/v1/admin/users/:userId/streak", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.editCoins");
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const target = getDb().users?.[uid];
+  if (!assertCanModerateTarget(ctx.user, target, res)) return;
+  const streak = Math.max(0, Math.min(3650, Math.floor(Number(req.body?.streak) || 0)));
+  const a = ach.ensureAchievements(target);
+  a.streak = streak;
+  a.progress.daily_streak = Math.max(Number(a.progress.daily_streak) || 0, streak);
+  if (streak > 0 && !a.lastDailyCompleteDate) {
+    a.lastDailyCompleteDate = todayKey();
+  }
+  scheduleSave();
+  staffAudit(ctx.user, "streak_set", { targetId: uid, streak });
+  return res.json({ ok: true, streak, user: staffUserCard(target) });
+});
+
+app.post("/v1/admin/users/:userId/achievements", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.editCoins");
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const target = getDb().users?.[uid];
+  if (!assertCanModerateTarget(ctx.user, target, res)) return;
+  const action = String(req.body?.action || "").trim().toLowerCase();
+  const id = String(req.body?.id || "").trim();
+  const a = ach.ensureAchievements(target);
+  const day = todayKey();
+  if (action === "set_metric") {
+    const metric = String(req.body?.metric || "").trim();
+    const value = Math.max(0, Math.floor(Number(req.body?.value) || 0));
+    if (!metric) {
+      return res.status(400).json({ error: "bad_metric", message: "Metrik fehlt." });
+    }
+    a.progress[metric] = value;
+    ach.bumpMetric(target, metric, 0, day, null);
+    scheduleSave();
+    staffAudit(ctx.user, "ach_metric_set", { targetId: uid, metric, value });
+    return res.json({ ok: true, progress: a.progress });
+  }
+  if (action === "unlock") {
+    const def = ach.findAchievement(id, { includeDisabled: true });
+    if (!def) return res.status(404).json({ error: "not_found", message: "Erfolg unbekannt." });
+    if (!a.unlocked[id]) {
+      a.unlocked[id] = {
+        at: Date.now(),
+        coins: 0,
+        rewardItem: ach.publicRewardItem(def),
+        claimed: false,
+      };
+    }
+    a.progress.achievements_unlocked = Object.keys(a.unlocked).length;
+    scheduleSave();
+    staffAudit(ctx.user, "ach_unlock", { targetId: uid, id });
+    return res.json({ ok: true });
+  }
+  if (action === "lock") {
+    delete a.unlocked[id];
+    a.progress.achievements_unlocked = Object.keys(a.unlocked).length;
+    scheduleSave();
+    staffAudit(ctx.user, "ach_lock", { targetId: uid, id });
+    return res.json({ ok: true });
+  }
+  if (action === "unclaim") {
+    if (a.unlocked[id]) {
+      a.unlocked[id].claimed = false;
+      a.unlocked[id].claimedAt = null;
+      a.unlocked[id].itemGranted = false;
+    }
+    scheduleSave();
+    staffAudit(ctx.user, "ach_unclaim", { targetId: uid, id });
+    return res.json({ ok: true });
+  }
+  if (action === "reset_progress") {
+    a.progress = {};
+    a.unlocked = {};
+    a.streak = 0;
+    a.lastDailyCompleteDate = null;
+    a.coinsEarnedToday = 0;
+    a.daily = null;
+    scheduleSave();
+    staffAudit(ctx.user, "ach_reset", { targetId: uid });
+    return res.json({ ok: true });
+  }
+  return res.status(400).json({
+    error: "bad_action",
+    message: "Aktion: set_metric|unlock|lock|unclaim|reset_progress",
+  });
+});
+
+app.post("/v1/admin/users/:userId/warn", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.block");
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const target = getDb().users?.[uid];
+  if (!assertCanModerateTarget(ctx.user, target, res)) return;
+  const message = String(req.body?.message || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 280);
+  if (message.length < 3) {
+    return res.status(400).json({ error: "empty", message: "Verwarnung zu kurz." });
+  }
+  const severity = String(req.body?.severity || "warn").trim().toLowerCase() === "final"
+    ? "final"
+    : "warn";
+  if (!Array.isArray(target.staffWarnings)) target.staffWarnings = [];
+  const warning = {
+    id: newId("warn"),
+    message,
+    severity,
+    at: Date.now(),
+    by: ctx.user.id,
+    byNick: staffDisplayName(ctx.user),
+    seen: false,
+  };
+  target.staffWarnings.push(warning);
+  if (target.staffWarnings.length > 80) {
+    target.staffWarnings = target.staffWarnings.slice(-60);
+  }
+  target.pendingStaffNotice = {
+    id: warning.id,
+    message,
+    severity,
+    at: warning.at,
+    authorNickname: warning.byNick,
+  };
+  scheduleSave();
+  staffAudit(ctx.user, "user_warn", { targetId: uid, message, severity, warningId: warning.id });
+  return res.json({ ok: true, warning, user: staffUserCard(target) });
+});
+
+app.get("/v1/me/staff-notices", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const user = ctx.user;
+  const pending = user.pendingStaffNotice || null;
+  const warnings = Array.isArray(user.staffWarnings)
+    ? user.staffWarnings.slice(-20).reverse()
+    : [];
+  return res.json({ ok: true, pending, warnings });
+});
+
+app.post("/v1/me/staff-notices/:id/ack", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "").trim();
+  const user = ctx.user;
+  if (user.pendingStaffNotice && user.pendingStaffNotice.id === id) {
+    user.pendingStaffNotice = null;
+  }
+  if (Array.isArray(user.staffWarnings)) {
+    for (const w of user.staffWarnings) {
+      if (w && w.id === id) w.seen = true;
+    }
+  }
+  scheduleSave();
+  return res.json({ ok: true });
+});
+
+app.get("/v1/admin/audit", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.search");
+  if (!ctx) return;
+  const db = getDb();
+  const userId = String(req.query?.userId || "").trim();
+  const actorId = String(req.query?.actorId || "").trim();
+  const action = String(req.query?.action || "").trim().toLowerCase();
+  const q = String(req.query?.q || "").trim().toLowerCase();
+  const limit = Math.max(1, Math.min(500, Math.floor(Number(req.query?.limit) || 100)));
+  let entries = Array.isArray(db.staffAudit) ? [...db.staffAudit] : [];
+  entries.reverse();
+  if (userId) {
+    entries = entries.filter(
+      (e) =>
+        e &&
+        (e.actorId === userId ||
+          String(e.detail?.targetId || "") === userId ||
+          String(e.detail?.userId || "") === userId)
+    );
+  }
+  if (actorId) entries = entries.filter((e) => e && e.actorId === actorId);
+  if (action) entries = entries.filter((e) => e && String(e.action || "").includes(action));
+  if (q) {
+    entries = entries.filter((e) => {
+      const hay = JSON.stringify(e || {}).toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  return res.json({ ok: true, entries: entries.slice(0, limit), total: entries.length });
+});
+
+app.get("/v1/admin/rooms/:code/canvas", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.search");
+  if (!ctx) return;
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  const live = rooms.get(code);
+  let strokes = [];
+  if (live && Array.isArray(live.strokes)) {
+    strokes = live.strokes.map((s) => sanitizeStoredStroke(s)).filter(Boolean);
+  } else {
+    strokes = loadRoomStrokes(code);
+  }
+  const capped = strokes.slice(-2500);
+  return res.json({
+    ok: true,
+    code,
+    live: Boolean(live),
+    strokeCount: capped.length,
+    strokes: capped,
+  });
+});
+
+app.get("/v1/admin/achievements", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const list = ach.listAchievements({ includeDisabled: true });
+  return res.json({
+    ok: true,
+    achievements: list.map((d) => ({
+      ...d,
+      rewardItem: ach.publicRewardItem(d),
+    })),
+    categories: ach.CATEGORIES,
+    metrics: ach.METRIC_OPTIONS,
+    dailyCap: ach.getAchievementDailyCap(getDb()),
+  });
+});
+
+app.get("/v1/admin/achievements/:id", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const def = ach.findAchievement(req.params.id, { includeDisabled: true });
+  if (!def) return res.status(404).json({ error: "not_found" });
+  return res.json({
+    ok: true,
+    achievement: { ...def, rewardItem: ach.publicRewardItem(def) },
+    categories: ach.CATEGORIES,
+    metrics: ach.METRIC_OPTIONS,
+  });
+});
+
+app.post("/v1/admin/achievements", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const body = { ...(req.body || {}), custom: true };
+  if (!body.id) {
+    const base = String(body.title || "erfolg")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_|_$/g, "")
+      .slice(0, 28);
+    body.id = `custom_${base || "item"}_${crypto.randomBytes(2).toString("hex")}`;
+  }
+  const result = ach.upsertAchievementDef(getDb(), body, { create: true });
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "ach_create", { id: result.achievement.id });
+  return res.json({ ok: true, achievement: result.achievement });
+});
+
+app.put("/v1/admin/achievements/:id", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const id = String(req.params.id || "").trim();
+  const result = ach.upsertAchievementDef(getDb(), { ...(req.body || {}), id }, { create: false });
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "ach_update", { id });
+  return res.json({ ok: true, achievement: result.achievement });
+});
+
+app.post("/v1/admin/achievements/:id/disable", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const id = String(req.params.id || "").trim();
+  const result = ach.setAchievementDisabled(getDb(), id, true);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "ach_disable", { id });
+  return res.json({ ok: true, achievement: result.achievement });
+});
+
+app.post("/v1/admin/achievements/:id/enable", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const id = String(req.params.id || "").trim();
+  const result = ach.setAchievementDisabled(getDb(), id, false);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "ach_enable", { id });
+  return res.json({ ok: true, achievement: result.achievement });
+});
+
+app.delete("/v1/admin/achievements/:id", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const id = String(req.params.id || "").trim();
+  const result = ach.deleteCustomAchievement(getDb(), id);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "ach_delete", { id });
+  return res.json({ ok: true });
+});
+
+/** Nur Anzeigename — ohne Shop-/Preis-Seiteneffekte */
+function applyItemDisplayLabel(req, res) {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const kind = String(req.params.kind || "").trim();
+  const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
+  const label = req.body?.label;
+  const result = itemLabels.setDisplayLabel(getDb(), kind, itemId, label);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  // Bestehenden Katalogeintrag: Label spiegeln, sonst nichts anfassen
+  const existing = shopCatalog.getItem(getDb(), kind, itemId);
+  if (existing && result.label) {
+    existing.label = result.label;
+    existing.updatedAt = Date.now();
+  }
+  flushSave();
+  staffAudit(ctx.user, "item_display_label", {
+    kind,
+    itemId,
+    label: result.label,
+    cleared: result.cleared,
+  });
+  return res.json({ ok: true, ...result });
+}
+app.put("/v1/admin/items/:kind/:itemId/display-label", applyItemDisplayLabel);
+app.post("/v1/admin/items/:kind/:itemId/display-label", applyItemDisplayLabel);
 
 app.get("/v1/live-notice", (req, res) => {
   const ctx = requireAuth(req, res);

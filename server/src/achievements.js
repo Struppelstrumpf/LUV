@@ -52,7 +52,7 @@ function itemReward(kind, itemId, emoji, label) {
 /**
  * @type {{ id: string, title: string, desc: string, category: string, metric: string, target: number, coins: number, rewardItem?: object, coinsFallback?: number }[]}
  */
-const ACHIEVEMENTS = [
+const BASE_ACHIEVEMENTS = [
   // —— Sozial / Freunde (20) ——
   { id: "soc_first_friend", title: "Erster Freund", desc: "Füge jemanden als Freund hinzu.", category: "sozial", metric: "friends", target: 1, coins: 1 },
   { id: "soc_friends_3", title: "Kleiner Kreis", desc: "Habe 3 Freunde.", category: "sozial", metric: "friends", target: 3, coins: 1 },
@@ -181,6 +181,311 @@ const ACHIEVEMENTS = [
   { id: "login_google", title: "Verbunden", desc: "Verknüpfe Google.", category: "profil", metric: "google_linked", target: 1, coins: 1 },
   { id: "app_return", title: "Wieder da", desc: "Öffne die App an 5 verschiedenen Tagen.", category: "profil", metric: "active_days", target: 5, coins: 2 },
 ];
+
+/** @deprecated Alias — nutze listAchievements(). Bleibt für require-Kompatibilität. */
+const ACHIEVEMENTS = BASE_ACHIEVEMENTS;
+
+const CATEGORIES = [
+  { id: "sozial", label: "Sozial" },
+  { id: "begleiter", label: "Begleiter" },
+  { id: "malen", label: "Malen" },
+  { id: "markt", label: "Markt" },
+  { id: "profil", label: "Profil" },
+];
+
+const METRIC_OPTIONS = [
+  { id: "friends", label: "Freunde" },
+  { id: "friend_requests_sent", label: "Anfragen gesendet" },
+  { id: "friend_accepts", label: "Anfragen angenommen" },
+  { id: "profile_views", label: "Freundprofile geöffnet" },
+  { id: "tips_given", label: "Gläser ausgegeben" },
+  { id: "tips_received", label: "Gläser erhalten" },
+  { id: "friend_reorders", label: "Freundesliste sortiert" },
+  { id: "daily_streak", label: "Daily-Streak (Tage)" },
+  { id: "dailies_completed", label: "Dailies abgeschlossen" },
+  { id: "friendship_lvl_10", label: "Freundschaftslevel 10" },
+  { id: "friendship_lvl_25", label: "Freundschaftslevel 25" },
+  { id: "friendship_lvl_50", label: "Freundschaftslevel 50" },
+  { id: "friendship_lvl_75", label: "Freundschaftslevel 75" },
+  { id: "friendship_lvl_100", label: "Freundschaftslevel 100" },
+  { id: "marriage_proposals", label: "Heiratsanträge" },
+  { id: "engagements", label: "Verlobungen" },
+  { id: "wedding_started", label: "Hochzeitsleinwand" },
+  { id: "married", label: "Verheiratet" },
+  { id: "guestbook_writes", label: "Gästebuch-Einträge" },
+  { id: "krauls", label: "Kraulen" },
+  { id: "pets_owned", label: "Begleiter Besitz" },
+  { id: "pet_equips", label: "Begleiter gewechselt" },
+  { id: "pets_bought", label: "Begleiter gekauft" },
+  { id: "pet_owl", label: "Eule besitzen" },
+  { id: "pet_tiger", label: "Tiger besitzen" },
+  { id: "kraul_unique", label: "Verschiedene Personen gekrault" },
+  { id: "draw_sessions", label: "Mal-Sessions" },
+  { id: "strokes", label: "Striche" },
+  { id: "draw_with_peers", label: "Zu zweit gemalt" },
+  { id: "draw_group4", label: "Mit 4+ gemalt" },
+  { id: "clear_proposes", label: "Lösch-Abstimmungen gestartet" },
+  { id: "clear_votes", label: "Lösch-Stimmen" },
+  { id: "moments_saved", label: "Momente gespeichert" },
+  { id: "moments_shared", label: "Momente geteilt" },
+  { id: "reactions_sent", label: "Reaktionen gesendet" },
+  { id: "lobby_opens", label: "Lobby geöffnet" },
+  { id: "templates_placed", label: "Vorlagen platziert" },
+  { id: "stickers_placed", label: "Sticker platziert" },
+  { id: "market_opens", label: "Marktplatz geöffnet" },
+  { id: "shop_buys", label: "Shop-Käufe" },
+  { id: "market_sells", label: "Markt-Verkäufe" },
+  { id: "market_buys", label: "Markt-Käufe" },
+  { id: "codes_redeemed", label: "Codes eingelöst" },
+  { id: "profile_saves", label: "Profil gespeichert" },
+  { id: "tutorial_done", label: "Tutorial abgeschlossen" },
+  { id: "tutorial_draw", label: "Tutorial gezeichnet" },
+  { id: "quiet_hours_set", label: "Ruhezeiten gesetzt" },
+  { id: "emoji_bar_edits", label: "Reaktionsleiste angepasst" },
+  { id: "gallery_opens", label: "Galerie geöffnet" },
+  { id: "social_opens", label: "Sozial geöffnet" },
+  { id: "achievements_unlocked", label: "Erfolge freigeschaltet" },
+  { id: "google_linked", label: "Google verknüpft" },
+  { id: "active_days", label: "Aktive Tage" },
+  { id: "ach_coins_earned", label: "Erfolgs-Coins gesamt" },
+];
+
+let getDbFn = () => null;
+
+function bindGetDb(fn) {
+  getDbFn = typeof fn === "function" ? fn : () => null;
+}
+
+function ensureAchievementDefs(db) {
+  if (!db || typeof db !== "object") return {};
+  if (!db.achievementDefs || typeof db.achievementDefs !== "object") {
+    db.achievementDefs = {};
+  }
+  return db.achievementDefs;
+}
+
+function normalizeRewardItem(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const kind = String(raw.kind || "").trim();
+  const itemId = String(raw.itemId || "").trim().slice(0, 32);
+  if (!["emojis", "stickers", "themes", "pets"].includes(kind) || !itemId) return null;
+  return {
+    kind,
+    itemId,
+    emoji: String(raw.emoji || itemId).slice(0, 32),
+    label: String(raw.label || itemId).trim().slice(0, 40) || itemId,
+  };
+}
+
+function normalizeAchievementDef(raw, { requireId = true } = {}) {
+  const id = String(raw?.id || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, 48);
+  if (requireId && !id) {
+    return { ok: false, error: "bad_id", message: "Erfolgs-ID fehlt." };
+  }
+  const title = String(raw?.title || "").trim().slice(0, 48);
+  const desc = String(raw?.desc || "").trim().slice(0, 160);
+  const category = String(raw?.category || "profil").trim().slice(0, 24);
+  const metric = String(raw?.metric || "").trim().slice(0, 48);
+  const target = Math.max(1, Math.min(1_000_000, Math.floor(Number(raw?.target) || 1)));
+  const coins = Math.max(0, Math.min(50, Math.floor(Number(raw?.coins) || 0)));
+  const coinsFallback = Math.max(0, Math.min(50, Math.floor(Number(raw?.coinsFallback) || 3)));
+  const rewardItem = normalizeRewardItem(raw?.rewardItem);
+  if (!title) return { ok: false, error: "bad_title", message: "Titel fehlt." };
+  if (!desc) return { ok: false, error: "bad_desc", message: "Beschreibung fehlt." };
+  if (!metric) return { ok: false, error: "bad_metric", message: "Metrik fehlt." };
+  if (!CATEGORIES.some((c) => c.id === category)) {
+    return { ok: false, error: "bad_category", message: "Unbekannte Kategorie." };
+  }
+  if (!rewardItem && coins <= 0) {
+    return {
+      ok: false,
+      error: "bad_reward",
+      message: "Belohnung: Coins oder Item angeben.",
+    };
+  }
+  return {
+    ok: true,
+    def: {
+      id,
+      title,
+      desc,
+      category,
+      metric,
+      target,
+      coins: rewardItem ? 0 : coins,
+      rewardItem: rewardItem || undefined,
+      coinsFallback: rewardItem ? coinsFallback : undefined,
+      disabled: raw?.disabled === true,
+      custom: raw?.custom === true,
+    },
+  };
+}
+
+function mergeAchievementDef(base, patch) {
+  if (!base && !patch) return null;
+  if (!base) {
+    const n = normalizeAchievementDef({ ...patch, custom: true });
+    return n.ok ? n.def : null;
+  }
+  if (!patch || typeof patch !== "object") {
+    return { ...base, disabled: false, custom: false };
+  }
+  const merged = {
+    ...base,
+    ...patch,
+    id: base.id,
+    rewardItem:
+      patch.rewardItem === null
+        ? undefined
+        : patch.rewardItem !== undefined
+          ? normalizeRewardItem(patch.rewardItem) || undefined
+          : base.rewardItem,
+    custom: Boolean(patch.custom || base.custom),
+    disabled: patch.disabled === true,
+  };
+  if (merged.rewardItem) merged.coins = 0;
+  return merged;
+}
+
+/**
+ * Aktive Erfolge (Spieler) oder inkl. deaktivierter (Admin).
+ * @param {{ includeDisabled?: boolean }} [opts]
+ */
+function listAchievements(opts = {}) {
+  const includeDisabled = Boolean(opts.includeDisabled);
+  const db = getDbFn();
+  const overrides = ensureAchievementDefs(db);
+  const byId = new Map();
+  for (const base of BASE_ACHIEVEMENTS) {
+    const patch = overrides[base.id];
+    const merged = mergeAchievementDef(base, patch);
+    if (!merged) continue;
+    if (!includeDisabled && merged.disabled) continue;
+    byId.set(merged.id, { ...merged, builtin: true });
+  }
+  for (const [id, patch] of Object.entries(overrides)) {
+    if (byId.has(id)) continue;
+    if (!patch || typeof patch !== "object") continue;
+    const merged = mergeAchievementDef(null, { ...patch, id, custom: true });
+    if (!merged) continue;
+    if (!includeDisabled && merged.disabled) continue;
+    byId.set(merged.id, { ...merged, builtin: false, custom: true });
+  }
+  return [...byId.values()].sort((a, b) => {
+    const ca = String(a.category).localeCompare(String(b.category), "de");
+    if (ca) return ca;
+    return String(a.title).localeCompare(String(b.title), "de");
+  });
+}
+
+function findAchievement(id, opts = {}) {
+  const want = String(id || "").trim();
+  if (!want) return null;
+  return listAchievements(opts).find((d) => d.id === want) || null;
+}
+
+function achievementMetaMap() {
+  const map = {};
+  for (const def of listAchievements({ includeDisabled: true })) {
+    map[def.id] = {
+      id: def.id,
+      title: def.title,
+      desc: def.desc,
+      category: def.category,
+      metric: def.metric,
+      target: def.target,
+      coins: def.coins,
+      rewardItem: publicRewardItem(def),
+      coinsFallback: def.coinsFallback ?? null,
+      disabled: Boolean(def.disabled),
+      custom: Boolean(def.custom),
+      builtin: Boolean(def.builtin),
+    };
+  }
+  return map;
+}
+
+function upsertAchievementDef(db, patch, { create = false } = {}) {
+  const defs = ensureAchievementDefs(db);
+  const id = String(patch?.id || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, 48);
+  if (!id) return { ok: false, error: "bad_id", message: "Erfolgs-ID fehlt." };
+  const base = BASE_ACHIEVEMENTS.find((d) => d.id === id) || null;
+  const prev = defs[id] || null;
+  if (create && (base || prev)) {
+    return { ok: false, error: "exists", message: "Erfolg existiert bereits." };
+  }
+  if (!create && !base && !prev) {
+    return { ok: false, error: "not_found", message: "Erfolg nicht gefunden." };
+  }
+  const source = mergeAchievementDef(base, prev) || { id, custom: true };
+  const nextRaw = {
+    ...source,
+    ...patch,
+    id,
+    custom: Boolean(source.custom || !base),
+  };
+  const normalized = normalizeAchievementDef(nextRaw);
+  if (!normalized.ok) return normalized;
+  const stored = {
+    ...normalized.def,
+    updatedAt: Date.now(),
+  };
+  // Builtins: nur Diff speichern wo sinnvoll — volle Kopie ist ok und einfacher
+  defs[id] = stored;
+  return {
+    ok: true,
+    achievement: {
+      ...stored,
+      builtin: Boolean(base),
+      custom: !base,
+    },
+  };
+}
+
+function setAchievementDisabled(db, id, disabled) {
+  const defs = ensureAchievementDefs(db);
+  const want = String(id || "").trim();
+  const base = BASE_ACHIEVEMENTS.find((d) => d.id === want) || null;
+  const prev = defs[want] || null;
+  if (!base && !prev) {
+    return { ok: false, error: "not_found", message: "Erfolg nicht gefunden." };
+  }
+  const merged = mergeAchievementDef(base, prev) || { id: want, custom: !base };
+  defs[want] = {
+    ...merged,
+    disabled: Boolean(disabled),
+    updatedAt: Date.now(),
+  };
+  return { ok: true, achievement: findAchievement(want, { includeDisabled: true }) };
+}
+
+function deleteCustomAchievement(db, id) {
+  const defs = ensureAchievementDefs(db);
+  const want = String(id || "").trim();
+  const base = BASE_ACHIEVEMENTS.find((d) => d.id === want);
+  if (base) {
+    return {
+      ok: false,
+      error: "builtin",
+      message: "Eingebaute Erfolge können nur deaktiviert werden.",
+    };
+  }
+  if (!defs[want]) {
+    return { ok: false, error: "not_found", message: "Erfolg nicht gefunden." };
+  }
+  delete defs[want];
+  return { ok: true, deleted: want };
+}
 
 const DAILY_POOL = [
   { id: "d_kraul", title: "Begleiter kraulen", metric: "krauls", target: 1 },
@@ -345,7 +650,7 @@ function bumpMetric(user, metric, amount, dayKey, applyLedgerFn) {
 
   const unlockedNow = [];
   const tryUnlockAll = () => {
-    for (const def of ACHIEVEMENTS) {
+    for (const def of listAchievements()) {
       if (a.unlocked[def.id]) continue;
       const cur = Number(a.progress[def.metric]) || 0;
       if (cur < def.target) continue;
@@ -376,7 +681,7 @@ function isAchievementRewardItem(kind, itemId) {
   const k = String(kind || "");
   const id = String(itemId || "").trim();
   if (!k || !id) return false;
-  return ACHIEVEMENTS.some((d) => {
+  return listAchievements({ includeDisabled: true }).some((d) => {
     const r = d.rewardItem;
     return r && String(r.kind) === k && String(r.itemId) === id;
   });
@@ -401,7 +706,7 @@ function repairMissingRewardItems(user, giveItemFn, ownsUniqueFn) {
   if (!user || typeof giveItemFn !== "function") return 0;
   const a = ensureAchievements(user);
   let repaired = 0;
-  for (const def of ACHIEVEMENTS) {
+  for (const def of listAchievements({ includeDisabled: true })) {
     const reward = publicRewardItem(def);
     if (!reward) continue;
     const entry = a.unlocked[def.id];
@@ -435,7 +740,7 @@ function claimAchievement(
 ) {
   const a = ensureDaily(user, dayKey);
   const id = String(achievementId || "").trim();
-  const def = ACHIEVEMENTS.find((d) => d.id === id);
+  const def = findAchievement(id);
   if (!def) return { ok: false, error: "not_found", message: "Erfolg unbekannt." };
   const entry = a.unlocked[id];
   if (!entry) {
@@ -558,7 +863,8 @@ function publicAchievementsState(user, dayKey, dailyCap = DEFAULT_ACHIEVEMENT_DA
   const unlockedIds = new Set(Object.keys(a.unlocked));
   const dailyClaimable =
     Boolean(a.daily?.completed) && !Boolean(a.daily?.rewardClaimed);
-  const achievements = ACHIEVEMENTS.map((def) => {
+  const allDefs = listAchievements();
+  const achievements = allDefs.map((def) => {
     const u = a.unlocked[def.id];
     const progress = Number(a.progress[def.metric]) || 0;
     const claimed = Boolean(u?.claimed);
@@ -609,7 +915,7 @@ function publicAchievementsState(user, dayKey, dailyCap = DEFAULT_ACHIEVEMENT_DA
     },
     achievements,
     unlockedCount: unlockedIds.size,
-    totalCount: ACHIEVEMENTS.length,
+    totalCount: allDefs.length,
   };
 }
 
@@ -675,6 +981,9 @@ function mergeAchievements(target, source) {
 
 module.exports = {
   ACHIEVEMENTS,
+  BASE_ACHIEVEMENTS,
+  CATEGORIES,
+  METRIC_OPTIONS,
   ACHIEVEMENT_DAILY_CAP,
   DEFAULT_ACHIEVEMENT_DAILY_CAP,
   ACHIEVEMENT_DAILY_CAP_MIN,
@@ -694,4 +1003,13 @@ module.exports = {
   isAchievementRewardItem,
   repairMissingRewardItems,
   publicRewardItem,
+  bindGetDb,
+  listAchievements,
+  findAchievement,
+  achievementMetaMap,
+  upsertAchievementDef,
+  setAchievementDisabled,
+  deleteCustomAchievement,
+  ensureAchievementDefs,
+  itemReward,
 };

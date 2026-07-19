@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
@@ -310,6 +312,8 @@ fun ProfileInventoryPanel(
                     val entries = ownedEmojis.entries
                         .filter { LiveShopCatalog.matchesQuery(q, it.key, ItemLabels.emojiLabel(it.key)) }
                         .sortedBy { it.key }
+                    val freeEntries = if (readOnly) entries else entries.filter { (freeEmojis[it.key] ?: 0) > 0 }
+                    val dimmedEntries = if (readOnly) emptyList() else entries.filter { (freeEmojis[it.key] ?: 0) <= 0 }
                     if (entries.isEmpty()) {
                         Box(modifier = gridMod, contentAlignment = Alignment.Center) {
                             Text(
@@ -328,9 +332,9 @@ fun ProfileInventoryPanel(
                             horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
                             verticalArrangement = Arrangement.spacedBy(s(8.dp))
                         ) {
-                            items(entries, key = { it.key }) { (emoji, count) ->
+                            @Composable
+                            fun EmojiCell(emoji: String, count: Int, dimmed: Boolean) {
                                 val free = freeEmojis[emoji] ?: 0
-                                val dimmed = !readOnly && free <= 0
                                 val itemKey = "emojis:$emoji"
                                 ItemNewGlowBorder(
                                     active = itemKey in highlightKeys,
@@ -363,6 +367,13 @@ fun ProfileInventoryPanel(
                                     }
                                 }
                             }
+                            items(freeEntries, key = { "free-${it.key}" }) { (emoji, count) ->
+                                EmojiCell(emoji, count, dimmed = false)
+                            }
+                            invDimmedGap(freeEntries.isNotEmpty() && dimmedEntries.isNotEmpty(), s(14.dp))
+                            items(dimmedEntries, key = { "dim-${it.key}" }) { (emoji, count) ->
+                                EmojiCell(emoji, count, dimmed = true)
+                            }
                         }
                     }
                 }
@@ -375,6 +386,10 @@ fun ProfileInventoryPanel(
                         modifier = gridMod
                     )
                 } else {
+                    val freeThemes = if (readOnly) themeItems
+                    else themeItems.filter { it.id != currentThemeId }
+                    val dimmedThemes = if (readOnly) emptyList()
+                    else themeItems.filter { it.id == currentThemeId }
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(3),
                         modifier = gridMod,
@@ -382,9 +397,9 @@ fun ProfileInventoryPanel(
                         verticalArrangement = Arrangement.spacedBy(s(8.dp)),
                         contentPadding = PaddingValues(bottom = s(4.dp))
                     ) {
-                        items(themeItems, key = { it.id }) { theme ->
+                        @Composable
+                        fun ThemeCell(theme: ProfileTheme, dimmed: Boolean) {
                             val on = theme.id == currentThemeId
-                            val dimmed = !readOnly && on
                             val itemKey = "themes:${theme.id}"
                             ItemNewGlowBorder(
                                 active = itemKey in highlightKeys,
@@ -430,12 +445,23 @@ fun ProfileInventoryPanel(
                                 }
                             }
                         }
+                        items(freeThemes, key = { "free-${it.id}" }) { theme ->
+                            ThemeCell(theme, dimmed = false)
+                        }
+                        invDimmedGap(freeThemes.isNotEmpty() && dimmedThemes.isNotEmpty(), s(14.dp))
+                        items(dimmedThemes, key = { "dim-${it.id}" }) { theme ->
+                            ThemeCell(theme, dimmed = true)
+                        }
                     }
                 }
                 InvTab.Stickers -> {
                     val stickerEntries = ownedStickers.entries
                         .filter { LiveShopCatalog.matchesQuery(q, it.key, ItemLabels.stickerLabel(it.key)) }
                         .sortedBy { it.key }
+                    val freeEntries = if (readOnly) stickerEntries
+                    else stickerEntries.filter { (freeStickers[it.key] ?: 0) > 0 }
+                    val dimmedEntries = if (readOnly) emptyList()
+                    else stickerEntries.filter { (freeStickers[it.key] ?: 0) <= 0 }
                     if (stickerEntries.isEmpty()) {
                         InvEmptyHint(
                             title = "Noch keine Sticker.",
@@ -452,9 +478,9 @@ fun ProfileInventoryPanel(
                             horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
                             verticalArrangement = Arrangement.spacedBy(s(8.dp))
                         ) {
-                            items(stickerEntries, key = { it.key }) { (emoji, count) ->
+                            @Composable
+                            fun StickerCell(emoji: String, count: Int, dimmed: Boolean) {
                                 val free = freeStickers[emoji] ?: 0
-                                val dimmed = !readOnly && free <= 0
                                 val itemKey = "stickers:$emoji"
                                 ItemNewGlowBorder(
                                     active = itemKey in highlightKeys,
@@ -487,6 +513,13 @@ fun ProfileInventoryPanel(
                                     }
                                 }
                             }
+                            items(freeEntries, key = { "free-${it.key}" }) { (emoji, count) ->
+                                StickerCell(emoji, count, dimmed = false)
+                            }
+                            invDimmedGap(freeEntries.isNotEmpty() && dimmedEntries.isNotEmpty(), s(14.dp))
+                            items(dimmedEntries, key = { "dim-${it.key}" }) { (emoji, count) ->
+                                StickerCell(emoji, count, dimmed = true)
+                            }
                         }
                     }
                 }
@@ -503,15 +536,19 @@ fun ProfileInventoryPanel(
                         )
                     }
                 } else {
+                    val freePets = if (readOnly) petItems
+                    else petItems.filter { it != currentCompanion }
+                    val dimmedPets = if (readOnly) emptyList()
+                    else petItems.filter { it == currentCompanion }
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(4),
                         modifier = gridMod,
                         horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
                         verticalArrangement = Arrangement.spacedBy(s(8.dp))
                     ) {
-                        items(petItems, key = { it }) { emoji ->
+                        @Composable
+                        fun PetCell(emoji: String, dimmed: Boolean) {
                             val equipped = emoji == currentCompanion
-                            val dimmed = !readOnly && equipped
                             val itemKey = "pets:$emoji"
                             ItemNewGlowBorder(
                                 active = itemKey in highlightKeys,
@@ -538,6 +575,13 @@ fun ProfileInventoryPanel(
                                     )
                                 }
                             }
+                        }
+                        items(freePets, key = { "free-$it" }) { emoji ->
+                            PetCell(emoji, dimmed = false)
+                        }
+                        invDimmedGap(freePets.isNotEmpty() && dimmedPets.isNotEmpty(), s(14.dp))
+                        items(dimmedPets, key = { "dim-$it" }) { emoji ->
+                            PetCell(emoji, dimmed = true)
                         }
                     }
                 }
@@ -698,6 +742,14 @@ fun ProfileInventoryPanel(
                 null -> Unit
             }
         }
+    }
+}
+
+/** Abstand zwischen freien und ausgegrauten (platzierten/ausgerüsteten) Items. */
+private fun LazyGridScope.invDimmedGap(show: Boolean, height: Dp) {
+    if (!show) return
+    item(span = { GridItemSpan(maxLineSpan) }) {
+        Spacer(modifier = Modifier.height(height))
     }
 }
 

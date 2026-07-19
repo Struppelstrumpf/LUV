@@ -1398,6 +1398,68 @@ fun LiveNoticePopup() {
 }
 
 @Composable
+fun StaffWarningPopup() {
+    val warning by com.luv.couple.net.StaffWarningBus.pending.collectAsStateWithLifecycle()
+    val current = warning ?: return
+    val scope = rememberCoroutineScope()
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .zIndex(85f),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color(0xF21A2030))
+                .border(1.dp, Color(0xFFFF6B7A).copy(0.55f), RoundedCornerShape(18.dp))
+                .padding(14.dp)
+        ) {
+            Text(
+                if (current.severity == "final") "Letzte Verwarnung" else "Verwarnung vom Team",
+                color = Color(0xFFFF6B7A),
+                fontFamily = DisplayFont,
+                fontSize = 14.sp
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                current.message,
+                color = TextPrimary,
+                fontFamily = BodyFont,
+                fontSize = 15.sp
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                "Von ${current.byNick.ifBlank { "Team" }} · bleibt unter Sozial · Freunde sichtbar",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                "Verstanden",
+                color = AccentRose,
+                fontFamily = BodyFont,
+                fontSize = 14.sp,
+                modifier = Modifier
+                    .align(Alignment.End)
+                    .clickable {
+                        val id = current.id
+                        com.luv.couple.net.StaffWarningBus.consume(id)
+                        scope.launch {
+                            runCatching { LuvApiClient.ackStaffNotice(id) }
+                        }
+                    }
+            )
+        }
+    }
+}
+
+@Composable
 private fun AdminStatGrid(items: List<Triple<String, String, () -> Unit>>) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         items.chunked(2).forEach { row ->

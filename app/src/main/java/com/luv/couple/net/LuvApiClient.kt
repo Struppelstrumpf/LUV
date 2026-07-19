@@ -1221,6 +1221,58 @@ object LuvApiClient {
         )
     }
 
+    data class StaffWarning(
+        val id: String,
+        val message: String,
+        val severity: String,
+        val at: Long,
+        val byNick: String,
+        val seen: Boolean
+    )
+
+    data class StaffNoticesBag(
+        val pending: StaffWarning?,
+        val warnings: List<StaffWarning>
+    )
+
+    suspend fun fetchStaffNotices(): StaffNoticesBag = withContext(Dispatchers.IO) {
+        val json = runCatching { authedGet("/v1/me/staff-notices") }.getOrNull()
+            ?: return@withContext StaffNoticesBag(null, emptyList())
+        fun parse(o: org.json.JSONObject?): StaffWarning? {
+            if (o == null) return null
+            val id = o.optString("id").trim()
+            val message = o.optString("message").trim()
+            if (id.isBlank() || message.isBlank()) return null
+            return StaffWarning(
+                id = id,
+                message = message,
+                severity = o.optString("severity", "warn"),
+                at = o.optLong("at", System.currentTimeMillis()),
+                byNick = o.optString("authorNickname").ifBlank { o.optString("byNick") }.ifBlank { "Team" },
+                seen = o.optBoolean("seen", false)
+            )
+        }
+        val pending = parse(json.optJSONObject("pending"))
+        val arr = json.optJSONArray("warnings")
+        val list = buildList {
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    parse(arr.optJSONObject(i))?.let { add(it) }
+                }
+            }
+        }
+        StaffNoticesBag(pending, list)
+    }
+
+    suspend fun ackStaffNotice(id: String) = withContext(Dispatchers.IO) {
+        val clean = id.trim()
+        if (clean.isBlank()) return@withContext
+        runCatching {
+            authedPost("/v1/me/staff-notices/${clean.encodeURL()}/ack", "{}")
+        }
+        Unit
+    }
+
     suspend fun sendLiveNotice(message: String): LiveNotice = withContext(Dispatchers.IO) {
         val body = JSONObject().put("message", message.trim().take(160)).toString()
         val json = authedPost("/v1/admin/live-notice", body)

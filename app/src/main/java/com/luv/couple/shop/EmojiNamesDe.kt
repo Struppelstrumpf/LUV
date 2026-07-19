@@ -58,6 +58,7 @@ object EmojiNamesDe {
         "🐱" to "Katze",
         "🐶" to "Hund",
         "🐣" to "Küken",
+        "🐯" to "Tiger",
         "🧙" to "Hexe",
         "🧙‍♀️" to "Hexe",
         "🧙‍♂️" to "Hexer",

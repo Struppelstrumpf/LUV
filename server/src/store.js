@@ -23,6 +23,8 @@ const DEFAULT = {
   marketMeta: { priceHistory: {} },
   economySettings: { achievementDailyCap: 12 },
   itemTradeFlags: {},
+  itemDisplayLabels: {},
+  achievementDefs: {},
   marriages: {},
   guestbookReports: [],
   shopCatalog: { items: {}, version: 1 },
@@ -87,6 +89,14 @@ function load() {
       itemTradeFlags:
         raw.itemTradeFlags && typeof raw.itemTradeFlags === "object"
           ? raw.itemTradeFlags
+          : {},
+      itemDisplayLabels:
+        raw.itemDisplayLabels && typeof raw.itemDisplayLabels === "object"
+          ? raw.itemDisplayLabels
+          : {},
+      achievementDefs:
+        raw.achievementDefs && typeof raw.achievementDefs === "object"
+          ? raw.achievementDefs
           : {},
       marriages:
         raw.marriages && typeof raw.marriages === "object" ? raw.marriages : {},

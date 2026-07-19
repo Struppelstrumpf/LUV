@@ -3,10 +3,19 @@
  * Quellen: Shop, Erfolg, Code, Starter, Ehe — Flags überschreibbar.
  */
 
-const { ACHIEVEMENTS, publicRewardItem } = require("./achievements");
+const ach = require("./achievements");
 const { ACHIEVEMENT_STICKERS, STICKER_SHOP_PRICES } = require("./sticker_catalog");
 const { displayNameForEmoji } = require("./emoji_display_names");
+const itemLabels = require("./item_labels");
 const marriage = require("./marriage");
+
+function isWeakLabel(label, itemId) {
+  const l = String(label || "").trim();
+  const id = String(itemId || "").trim();
+  if (!l) return true;
+  if (l === id) return true;
+  return false;
+}
 
 const KINDS = ["emojis", "stickers", "themes", "pets"];
 
@@ -94,7 +103,9 @@ function addSource(map, kind, itemId, source, extra = {}) {
   }
   const row = map.get(key);
   row.sources.add(source);
-  if (extra.label && (!row.label || row.label === id)) row.label = extra.label;
+  if (extra.label && (!row.label || isWeakLabel(row.label, id))) {
+    row.label = extra.label;
+  }
   if (extra.emoji) row.emoji = extra.emoji;
   if (extra.shopEnabled != null) row.shopEnabled = extra.shopEnabled;
   if (extra.priceCoins != null) row.priceCoins = extra.priceCoins;
@@ -176,8 +187,8 @@ function listItemUniverse(db, ctx) {
   }
 
   // Erfolgs-Belohnungen
-  for (const def of ACHIEVEMENTS) {
-    const reward = publicRewardItem(def);
+  for (const def of ach.listAchievements({ includeDisabled: true })) {
+    const reward = ach.publicRewardItem(def);
     if (!reward) continue;
     addSource(map, reward.kind, reward.itemId, "achievement", {
       label: reward.label,
@@ -248,27 +259,34 @@ function listItemUniverse(db, ctx) {
     starterEmojis: ctx.starterEmojis || [],
   };
 
+  const achMeta = ach.achievementMetaMap();
   let rows = [...map.values()].map((row) => {
     const sources = [...row.sources].sort();
     const locked = isLockedStarter(row.kind, row.itemId, lockCtx);
     const marketSellable = getMarketSellable(db, row.kind, row.itemId, sources, lockCtx);
-    let label = row.label;
-    if (!label || label === row.itemId) {
-      label =
-        row.kind === "themes"
-          ? row.itemId
-          : displayNameForEmoji(row.itemId);
-    }
+    const label = itemLabels.resolveDisplayLabel(
+      db,
+      row.kind,
+      row.itemId,
+      (id) =>
+        row.kind === "themes" ? id : displayNameForEmoji(id),
+      row.label
+    );
+    const achievements = (row.achievementIds || [])
+      .map((aid) => achMeta[aid])
+      .filter(Boolean);
     return {
       kind: row.kind,
       itemId: row.itemId,
       label,
+      displayLabelOverride: itemLabels.getDisplayLabel(db, row.kind, row.itemId),
       emoji: row.emoji || (row.kind === "themes" ? "🖼️" : row.itemId),
       sources,
       shopEnabled: row.shopEnabled,
       inShopCatalog: Boolean(row.inShopCatalog),
       priceCoins: row.priceCoins,
       achievementIds: row.achievementIds,
+      achievements,
       marketSellable,
       marketLocked: locked,
     };

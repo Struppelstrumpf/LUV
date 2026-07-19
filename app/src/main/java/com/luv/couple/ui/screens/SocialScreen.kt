@@ -442,6 +442,8 @@ private fun FriendsPanel(
         return idx.coerceIn(0, friends.lastIndex)
     }
 
+    val staffInbox by com.luv.couple.net.StaffWarningBus.inbox.collectAsStateWithLifecycle()
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -451,6 +453,48 @@ private fun FriendsPanel(
             ),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        if (staffInbox.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Hinweise vom Team",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 18.sp
+                )
+                staffInbox.take(5).forEach { w ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                if (w.severity == "final") Color(0x33FF6B7A) else Color(0x22E94E77)
+                            )
+                            .padding(12.dp)
+                    ) {
+                        Text(
+                            if (w.severity == "final") "Letzte Verwarnung" else "Verwarnung",
+                            color = AccentRose,
+                            fontFamily = DisplayFont,
+                            fontSize = 13.sp
+                        )
+                        Text(
+                            w.message,
+                            color = TextPrimary,
+                            fontFamily = BodyFont,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        Text(
+                            "Von ${w.byNick.ifBlank { "Team" }}",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                }
+            }
+        }
         // Plus links · Coins optional · Live-Zähler rechts (gleiche Höhe)
         Row(
             modifier = Modifier.fillMaxWidth(),

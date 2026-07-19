@@ -69,7 +69,9 @@ import com.luv.couple.ui.PublicCanvasSplash
 import com.luv.couple.ui.screens.AccountHomeScreen
 import com.luv.couple.ui.screens.AdminHubScreen
 import com.luv.couple.ui.screens.LiveNoticePopup
+import com.luv.couple.ui.screens.StaffWarningPopup
 import com.luv.couple.net.LiveNoticeBus
+import com.luv.couple.net.StaffWarningBus
 import com.luv.couple.ui.screens.CreateLobbyScreen
 import com.luv.couple.ui.screens.ForcedUpdateDialog
 import com.luv.couple.ui.screens.HelpScreen
@@ -828,6 +830,10 @@ fun LuvAppNav() {
                 if (!LuvApiClient.sessionToken.isNullOrBlank()) {
                     runCatching {
                         LuvApiClient.fetchLiveNotice()?.let { LiveNoticeBus.offer(it) }
+                    }
+                    runCatching {
+                        val sn = LuvApiClient.fetchStaffNotices()
+                        StaffWarningBus.offer(sn.pending, sn.warnings)
                     }
                     val prevSales = runCatching { prefs.pendingSalesKnownCount() }.getOrDefault(0)
                     val sales = com.luv.couple.net.NotificationBadges.refreshPendingSales(context)
@@ -1745,12 +1751,16 @@ fun LuvAppNav() {
         PublicCanvasSplash(onFinished = { showPublicSplash = false })
     }
 
-    // Live-Hinweise vom Team (WS + Poll)
+    // Live-Hinweise / Verwarnungen vom Team (WS + Poll)
     LaunchedEffect(Unit) {
         while (true) {
             if (!LuvApiClient.sessionToken.isNullOrBlank()) {
                 runCatching {
                     LuvApiClient.fetchLiveNotice()?.let { LiveNoticeBus.offer(it) }
+                }
+                runCatching {
+                    val sn = LuvApiClient.fetchStaffNotices()
+                    StaffWarningBus.offer(sn.pending, sn.warnings)
                 }
             }
             delay(4000)
@@ -1769,5 +1779,6 @@ fun LuvAppNav() {
         }
     }
     LiveNoticePopup()
+    StaffWarningPopup()
     }
 }
