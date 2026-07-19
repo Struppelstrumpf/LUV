@@ -385,20 +385,25 @@ fun LuvAppNav() {
         val now = android.os.SystemClock.elapsedRealtime()
         if (!force && now - lastCloudSyncAt < 20_000L) return
         lastCloudSyncAt = now
-        val bundle = runCatching { LuvApiClient.myLobbyBundle() }.getOrNull()
+        val bundleResult = runCatching { LuvApiClient.myLobbyBundle() }
+        val bundle = bundleResult.getOrNull()
+        if (bundle == null && hostedHint.isEmpty() && joinedHint.isEmpty()) {
+            // Sync fehlgeschlagen — lokale Lobbys nicht anfassen
+            Log.w("LuvCloudSync", "Lobby-Sync fehlgeschlagen: ${bundleResult.exceptionOrNull()?.message}")
+            return
+        }
         val hosted = hostedHint.ifEmpty { bundle?.hosted.orEmpty() }
         val joined = joinedHint.ifEmpty { bundle?.joined.orEmpty() }
-        if (hosted.isNotEmpty() || joined.isNotEmpty() || bundle != null) {
-            prefs.replaceCloudLobbiesFromRemote(
-                hosted = hosted,
-                joined = joined,
-                dropUnknownJoins = true
-            )
-            CanvasStore.updateKnownLobbies(prefs.snapshot().lobbies.map { it.id })
-            if (prefs.snapshot().hasLobbies) {
-                CanvasStore.setActiveLobby(prefs.snapshot().activeLobbyId)
-                PairConnectionService.startAll(context)
-            }
+        // Nur ersetzen wenn Server geantwortet hat (oder Auth-Hints da sind)
+        prefs.replaceCloudLobbiesFromRemote(
+            hosted = hosted,
+            joined = joined,
+            dropUnknownJoins = true
+        )
+        CanvasStore.updateKnownLobbies(prefs.snapshot().lobbies.map { it.id })
+        if (prefs.snapshot().hasLobbies) {
+            CanvasStore.setActiveLobby(prefs.snapshot().activeLobbyId)
+            PairConnectionService.startAll(context)
         }
         val remoteSettings = settingsHint
             ?: runCatching { LuvApiClient.fetchSettings() }.getOrNull()
@@ -521,17 +526,17 @@ fun LuvAppNav() {
     ) { activityResult ->
         scope.launch {
             try {
-                if (activityResult.resultCode != Activity.RESULT_OK) {
-                    throw LuvApiException("Abgebrochen.", error = "cancelled")
-                }
-                val google = GoogleAuth.parseSignInIntentResult(activityResult.data)
+                // Auch bei RESULT_CANCELED parsen — Google meldet SHA-Fehler oft so
+                val google = GoogleAuth.parseSignInIntentResult(
+                    activityResult.data,
+                    activityResult.resultCode
+                )
                 completeGoogleLogin(google)
             } catch (e: Exception) {
+                val msg = e.message ?: "Google-Anmeldung fehlgeschlagen."
                 if (e is LuvApiException && e.error == "cancelled") {
-                    // echter Abbruch — kurz und klar
                     Toast.makeText(context, "Abgebrochen", Toast.LENGTH_SHORT).show()
                 } else {
-                    val msg = e.message ?: "Google-Anmeldung fehlgeschlagen."
                     joinError = msg
                     accountMessage = msg
                     Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
@@ -560,15 +565,13 @@ fun LuvAppNav() {
             joinError = null
             accountMessage = null
             try {
-                // Klassischer Google-Intent — umgeht „No credentials available“
                 val webClientId = GoogleAuth.fetchWebClientId()
                     ?: throw LuvApiException(
                         "Google-Login ist noch nicht eingerichtet. Bitte später erneut versuchen.",
                         error = "google_disabled"
                     )
-                val intent = GoogleAuth.prepareSignInIntent(activity, webClientId)
-                googleSignInLauncher.launch(intent)
-                // busy bleibt bis zum Activity-Result
+                // Kein signOut vorher — sonst oft „Abgebrochen“ nach E-Mail-Wahl
+                googleSignInLauncher.launch(GoogleAuth.signInIntent(activity, webClientId))
             } catch (e: Exception) {
                 val msg = e.message ?: "Google-Anmeldung fehlgeschlagen."
                 joinError = msg
@@ -790,8 +793,18 @@ fun LuvAppNav() {
             }
             scope.launch {
                 runCatching { LuvApiClient.claimDaily(); refreshAccount() }
-                if (snapshot.account?.googleLinked == true) {
-                    runCatching { syncCloudAccount() }
+                // Session prüfen + Lobbys aus der Cloud holen (nicht nur Cache)
+                val sessionOk = runCatching {
+                    val user = LuvApiClient.me()
+                    prefs.updateAccount(user)
+                    AccountSession.setAccount(user)
+                    true
+                }.getOrDefault(false)
+                if (sessionOk && AccountSession.account.value?.googleLinked == true) {
+                    runCatching { syncCloudAccount(force = true) }
+                } else if (!sessionOk && !snapshot.sessionToken.isNullOrBlank()) {
+                    // Alte Session tot → Nutzer soll Google neu verbinden
+                    accountMessage = "Bitte erneut mit Google anmelden, um Lobbys zu laden."
                 }
             }
             Routes.MAIN

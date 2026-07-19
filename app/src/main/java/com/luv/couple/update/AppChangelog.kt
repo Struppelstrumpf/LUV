@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.1.3",
+            listOf(
+                "Google-Anmeldung: falsches „Abgebrochen“ nach E-Mail-Wahl behoben",
+                "Lobbys nach App-Update wieder aus dem Google-Konto laden",
+            )
+        ),
+        Entry(
             "2.1.2",
             listOf(
                 "Google-Anmeldung: „No credentials available“ behoben (klassischer Login)",

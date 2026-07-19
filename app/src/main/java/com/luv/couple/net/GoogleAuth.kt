@@ -6,17 +6,11 @@ import android.content.Intent
 import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
-import androidx.credentials.CustomCredential
-import androidx.credentials.GetCredentialRequest
-import androidx.credentials.exceptions.GetCredentialCancellationException
-import androidx.credentials.exceptions.GetCredentialException
-import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.api.ApiException
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
-import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
-import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.gms.common.api.CommonStatusCodes
 import com.luv.couple.billing.findActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -37,129 +31,73 @@ object GoogleAuth {
         }.getOrNull()
     }
 
-    fun signInIntent(activity: Activity, webClientId: String): Intent {
-        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestIdToken(webClientId)
-            .requestEmail()
-            .build()
-        return GoogleSignIn.getClient(activity, gso).signInIntent
-    }
+    private fun client(activity: Activity, webClientId: String) =
+        GoogleSignIn.getClient(
+            activity,
+            GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                .requestIdToken(webClientId)
+                .requestEmail()
+                .build()
+        )
 
     /**
-     * Vor dem Intent-Picker abmelden, damit die Kontoliste zuverlässig erscheint.
+     * Sign-In-Intent. Kein vorheriges signOut — das führt oft zu „Abgebrochen“
+     * direkt nach der Kontoauswahl.
      */
-    suspend fun prepareSignInIntent(activity: Activity, webClientId: String): Intent {
-        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestIdToken(webClientId)
-            .requestEmail()
-            .build()
-        val client = GoogleSignIn.getClient(activity, gso)
-        runCatching { client.signOut().await() }
-        return client.signInIntent
-    }
+    fun signInIntent(activity: Activity, webClientId: String): Intent =
+        client(activity, webClientId).signInIntent
 
-    fun parseSignInIntentResult(data: Intent?): Result {
+    /**
+     * Ergebnis auswerten — auch wenn resultCode != RESULT_OK
+     * (Google liefert bei SHA-/OAuth-Fehlern oft CANCELED + ApiException).
+     */
+    fun parseSignInIntentResult(data: Intent?, resultCode: Int = Activity.RESULT_OK): Result {
+        if (data == null) {
+            throw LuvApiException(
+                if (resultCode == Activity.RESULT_CANCELED) "Abgebrochen."
+                else "Google-Anmeldung fehlgeschlagen.",
+                error = if (resultCode == Activity.RESULT_CANCELED) "cancelled" else "google_failed"
+            )
+        }
         val task = GoogleSignIn.getSignedInAccountFromIntent(data)
         return try {
             val account = task.getResult(ApiException::class.java)
             val token = account?.idToken?.takeIf { it.isNotBlank() }
                 ?: throw LuvApiException(
-                    "Kein Google-Token erhalten. Bitte in der Google Cloud Console " +
-                        "prüfen, ob die Web-Client-ID und der Android-SHA-1 stimmen.",
+                    "Kein Google-Token. In Google Cloud Console muss ein Android-OAuth-Client " +
+                        "für com.luv.couple mit dem SHA-1 der App-Signatur existieren " +
+                        "(Upload-Key und Play App Signing).",
                     error = "missing_id_token"
                 )
             Result(idToken = token, displayName = account.displayName)
         } catch (e: ApiException) {
             Log.w(TAG, "GoogleSignIn ApiException status=${e.statusCode} ${e.message}")
-            when (e.statusCode) {
-                // CommonStatusCodes.CANCELED / SIGN_IN_CANCELLED
-                12501, 16 -> throw LuvApiException("Abgebrochen.", error = "cancelled")
-                else -> throw LuvApiException(
-                    "Google-Anmeldung fehlgeschlagen (Code ${e.statusCode}).",
-                    error = "google_failed"
-                )
-            }
+            throw LuvApiException(messageForStatus(e.statusCode), error = errorForStatus(e.statusCode))
         }
     }
 
-    /**
-     * Credential Manager (schnell) — bei „No credentials“ soll der Aufrufer
-     * auf [prepareSignInIntent] zurückfallen.
-     */
-    suspend fun signInWithCredentialManager(context: Context): Result {
-        val activity = context.findActivity()
-            ?: throw LuvApiException(
-                "Google-Anmeldung ist gerade nicht möglich — App neu öffnen und erneut tippen.",
-                error = "no_activity"
-            )
-        val webClientId = fetchWebClientId()
-            ?: throw LuvApiException(
-                "Google-Login ist noch nicht eingerichtet. Bitte später erneut versuchen.",
-                error = "google_disabled"
-            )
-        val manager = CredentialManager.create(activity)
+    private fun messageForStatus(code: Int): String = when (code) {
+        GoogleSignInStatusCodes.SIGN_IN_CANCELLED,
+        CommonStatusCodes.CANCELED -> "Abgebrochen."
+        GoogleSignInStatusCodes.SIGN_IN_CURRENTLY_IN_PROGRESS ->
+            "Anmeldung läuft schon — bitte kurz warten."
+        GoogleSignInStatusCodes.SIGN_IN_FAILED ->
+            "Google-Anmeldung fehlgeschlagen. Bitte erneut versuchen."
+        CommonStatusCodes.NETWORK_ERROR ->
+            "Netzwerkfehler bei Google — bitte Verbindung prüfen."
+        CommonStatusCodes.DEVELOPER_ERROR, 10 ->
+            "Google-Login: App-Signatur stimmt nicht (SHA-1). " +
+                "Bitte Play-Store-Version nutzen oder Support kontaktieren."
+        CommonStatusCodes.INVALID_ACCOUNT ->
+            "Dieses Google-Konto ist ungültig — bitte ein anderes wählen."
+        else -> "Google-Anmeldung fehlgeschlagen (Code $code)."
+    }
 
-        // 1) Bekannte Konten  2) Alle Konten  3) Sign-in-with-Google-Button
-        val attempts = listOf(
-            GetCredentialRequest.Builder()
-                .addCredentialOption(
-                    GetGoogleIdOption.Builder()
-                        .setFilterByAuthorizedAccounts(true)
-                        .setServerClientId(webClientId)
-                        .setAutoSelectEnabled(false)
-                        .build()
-                )
-                .build(),
-            GetCredentialRequest.Builder()
-                .addCredentialOption(
-                    GetGoogleIdOption.Builder()
-                        .setFilterByAuthorizedAccounts(false)
-                        .setServerClientId(webClientId)
-                        .setAutoSelectEnabled(false)
-                        .build()
-                )
-                .build(),
-            GetCredentialRequest.Builder()
-                .addCredentialOption(
-                    GetSignInWithGoogleOption.Builder(webClientId).build()
-                )
-                .build()
-        )
-
-        var sawNoCredential = false
-        for ((index, request) in attempts.withIndex()) {
-            try {
-                val response = manager.getCredential(activity, request)
-                val credential = response.credential
-                if (
-                    credential is CustomCredential &&
-                    credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
-                ) {
-                    val google = GoogleIdTokenCredential.createFrom(credential.data)
-                    val token = google.idToken
-                    if (token.isBlank()) throw LuvApiException("Kein Google-Token erhalten.")
-                    return Result(idToken = token, displayName = google.displayName)
-                }
-            } catch (e: GetCredentialCancellationException) {
-                Log.w(TAG, "cm attempt $index cancelled: ${e.message}")
-                throw LuvApiException("Abgebrochen.", error = "cancelled")
-            } catch (e: NoCredentialException) {
-                Log.w(TAG, "cm attempt $index no credential: ${e.message}")
-                sawNoCredential = true
-                continue
-            } catch (e: GetCredentialException) {
-                Log.w(TAG, "cm attempt $index failed: ${e.type} ${e.message}")
-                continue
-            }
-        }
-        throw LuvApiException(
-            if (sawNoCredential) {
-                "Kein Google-Konto bereit — wechsle zum klassischen Login…"
-            } else {
-                "Google-Anmeldung nicht möglich."
-            },
-            error = "no_credentials"
-        )
+    private fun errorForStatus(code: Int): String = when (code) {
+        GoogleSignInStatusCodes.SIGN_IN_CANCELLED,
+        CommonStatusCodes.CANCELED -> "cancelled"
+        CommonStatusCodes.DEVELOPER_ERROR, 10 -> "developer_error"
+        else -> "google_failed"
     }
 
     suspend fun signOut(context: Context) {
@@ -170,11 +108,7 @@ object GoogleAuth {
         runCatching {
             val activity = context.findActivity() ?: return
             val webClientId = fetchWebClientId() ?: return
-            val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-                .requestIdToken(webClientId)
-                .requestEmail()
-                .build()
-            GoogleSignIn.getClient(activity, gso).signOut().await()
+            client(activity, webClientId).signOut().await()
         }
     }
 }
