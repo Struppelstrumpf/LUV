@@ -21,8 +21,8 @@ android {
         applicationId = "com.luv.couple"
         minSdk = 28
         targetSdk = 35
-        versionCode = 254
-        versionName = "1.9.9943"
+        versionCode = 255
+        versionName = "1.9.9944"
 
         // Hetzner/API-URL hier oder in gradle.properties setzen:
         // luv.api.baseUrl=https://luv.deinedomain.de
@@ -48,7 +48,8 @@ android {
             signingConfig = signingConfigs.getByName("luv")
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("luv")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

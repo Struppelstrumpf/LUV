@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.9944",
+            listOf(
+                "Release-Build kleiner und etwas besser gegen Reverse-Engineering abgesichert",
+            )
+        ),
+        Entry(
             "1.9.9943",
             listOf(
                 "Querformat: Leinwand und Vorlagen bleiben im Hochformat (Letterbox)",
