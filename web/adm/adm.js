@@ -505,8 +505,10 @@
           state.shopItems.find((x) => x.kind === kind && x.itemId === itemId)?.label || itemId;
         if (
           !confirm(
-            `„${label}" (${itemId}) wirklich löschen?\n\n` +
-              `Das Item verschwindet aus dem Shop, allen Inventaren, Profilen und Lobby-Leinwänden.`
+            `Nur dieses eine Item löschen?\n\n` +
+              `„${label}"\nID: ${itemId}\n\n` +
+              `Entfernt wird ausschließlich dieses Item aus Shop, Inventaren, Profilen und Leinwänden.\n` +
+              `Alle anderen Items bleiben erhalten.`
           )
         ) {
           return;

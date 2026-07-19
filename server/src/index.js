@@ -584,12 +584,14 @@ function isProtectedShopItem(kind, itemId) {
 }
 
 /**
- * Item überall entfernen: Inventare, Profile, Lobby-Leinwände, Markt, Pending-Lootboxen.
+ * Genau EIN Item entfernen (kind + itemId exakt).
+ * Andere Inventar-/Profil-/Leinwand-Inhalte bleiben unberührt.
  */
 function purgeShopItemEverywhere(kind, itemId) {
   const id = String(itemId || "").trim();
   const k = String(kind || "").trim();
-  if (!id || !k) {
+  // Ohne konkrete ID: nichts tun (nie „alles“ leeren)
+  if (!id || !k || id.length > 32) {
     return { users: 0, rooms: 0, listings: 0, pendingRefunds: 0 };
   }
   const db = getDb();
@@ -598,40 +600,41 @@ function purgeShopItemEverywhere(kind, itemId) {
   let listingsClosed = 0;
   let pendingRefunds = 0;
   const purchaseKey = `${k}:${id}`;
+  const sameId = (raw) => String(raw || "").trim() === id;
 
   for (const user of Object.values(db.users || {})) {
     if (!user) continue;
     let changed = false;
-    if (!user.inventory || typeof user.inventory !== "object") user.inventory = {};
+    // Inventar nur anfassen, wenn vorhanden — keine Voll-Reset
     const inv = user.inventory;
-    if (!inv.emojis || typeof inv.emojis !== "object") inv.emojis = {};
-    if (!inv.stickers || typeof inv.stickers !== "object") inv.stickers = {};
-    if (!Array.isArray(inv.themes)) inv.themes = [];
-    if (!Array.isArray(inv.pets)) inv.pets = [];
-
-    if (k === "emojis" && inv.emojis[id] != null) {
-      delete inv.emojis[id];
-      changed = true;
-    }
-    if (k === "stickers" && inv.stickers[id] != null) {
-      delete inv.stickers[id];
-      changed = true;
-    }
-    if (k === "pets") {
-      const before = inv.pets.length;
-      inv.pets = inv.pets.filter((p) => String(p) !== id);
-      if (inv.pets.length !== before) changed = true;
-      if (!inv.pets.includes(DEFAULT_PET)) inv.pets.push(DEFAULT_PET);
-      if (String(inv.equippedPet || "") === id) {
-        inv.equippedPet = DEFAULT_PET;
+    if (inv && typeof inv === "object") {
+      if (k === "emojis" && inv.emojis && typeof inv.emojis === "object" && inv.emojis[id] != null) {
+        delete inv.emojis[id];
         changed = true;
       }
-    }
-    if (k === "themes") {
-      const before = inv.themes.length;
-      inv.themes = inv.themes.filter((t) => String(t) !== id);
-      if (inv.themes.length !== before) changed = true;
-      if (!inv.themes.includes("meadow")) inv.themes.push("meadow");
+      if (k === "stickers" && inv.stickers && typeof inv.stickers === "object" && inv.stickers[id] != null) {
+        delete inv.stickers[id];
+        changed = true;
+      }
+      if (k === "pets" && Array.isArray(inv.pets)) {
+        const before = inv.pets.length;
+        inv.pets = inv.pets.filter((p) => !sameId(p));
+        if (inv.pets.length !== before) changed = true;
+        if (sameId(inv.equippedPet)) {
+          if (!inv.pets.includes(DEFAULT_PET)) inv.pets.push(DEFAULT_PET);
+          inv.equippedPet = DEFAULT_PET;
+          changed = true;
+        }
+      }
+      if (k === "themes" && Array.isArray(inv.themes)) {
+        const before = inv.themes.length;
+        inv.themes = inv.themes.filter((t) => !sameId(t));
+        if (inv.themes.length !== before) {
+          changed = true;
+          // Fallback behalten — nicht das ganze Themen-Inventar leeren
+          if (!inv.themes.includes("meadow")) inv.themes.push("meadow");
+        }
+      }
     }
 
     if (user.shopPurchases && typeof user.shopPurchases === "object" && user.shopPurchases[purchaseKey] != null) {
@@ -642,7 +645,7 @@ function purgeShopItemEverywhere(kind, itemId) {
     if (Array.isArray(user.pendingLootboxes) && user.pendingLootboxes.length) {
       const keep = [];
       for (const p of user.pendingLootboxes) {
-        if (p && String(p.kind) === k && String(p.itemId) === id) {
+        if (p && String(p.kind) === k && sameId(p.itemId)) {
           const refund = Math.max(1, Number(p.shopPrice) || LOOTBOX_PRICE);
           applyLedger(user.id, refund, "lootbox_item_deleted", purchaseKey);
           pendingRefunds += 1;
@@ -656,22 +659,26 @@ function purgeShopItemEverywhere(kind, itemId) {
 
     if (user.profileCanvas && typeof user.profileCanvas === "object") {
       const pc = user.profileCanvas;
-      if (k === "themes" && String(pc.themeId || "") === id) {
+      if (k === "themes" && sameId(pc.themeId)) {
         pc.themeId = "meadow";
         changed = true;
       }
-      if (k === "pets" && String(pc.companionEmoji || "") === id) {
-        pc.companionEmoji = DEFAULT_PET;
+      if (k === "pets" && sameId(pc.companionEmoji)) {
+        const pets = Array.isArray(user.inventory?.pets) ? user.inventory.pets : [];
+        pc.companionEmoji = pets.includes(DEFAULT_PET)
+          ? DEFAULT_PET
+          : pets[0] || DEFAULT_PET;
         changed = true;
       }
-      if (Array.isArray(pc.layout)) {
+      // Nur passende Layout-Elemente mit exakt dieser emoji-ID entfernen
+      if (Array.isArray(pc.layout) && (k === "stickers" || k === "emojis" || k === "pets")) {
         const before = pc.layout.length;
         pc.layout = pc.layout.filter((el) => {
-          if (!el) return false;
+          if (!el || typeof el !== "object") return true;
           const t = String(el.type || "").toLowerCase();
-          const e = String(el.emoji || el.text || "").trim();
-          if (e !== id) return true;
-          if (k === "stickers" && (t === "sticker" || !t)) return false;
+          const e = String(el.emoji || "").trim();
+          if (!sameId(e)) return true;
+          if (k === "stickers" && t === "sticker") return false;
           if (k === "emojis" && t === "sticker") return false;
           if (k === "pets" && t === "pet") return false;
           return true;
@@ -680,29 +687,35 @@ function purgeShopItemEverywhere(kind, itemId) {
       }
     }
 
-    if (k === "emojis") {
-      const settings = ensureSettings(user);
-      if (Array.isArray(settings.emojiBar)) {
-        const before = settings.emojiBar.length;
-        settings.emojiBar = settings.emojiBar.filter((e) => String(e) !== id);
-        if (settings.emojiBar.length !== before) changed = true;
-      }
+    if (k === "emojis" && user.settings && Array.isArray(user.settings.emojiBar)) {
+      const before = user.settings.emojiBar.length;
+      user.settings.emojiBar = user.settings.emojiBar.filter((e) => !sameId(e));
+      if (user.settings.emojiBar.length !== before) changed = true;
     }
 
-    cleanupProfileAfterItemRemoved(user, k, id);
-    if (changed) usersTouched += 1;
+    if (changed) {
+      cleanupProfileAfterItemRemoved(user, k, id);
+      usersTouched += 1;
+    }
   }
 
+  // Lobby-Leinwand: nur Emoji-/Sticker-Stempel mit exakt dieser ID (normale Striche bleiben)
+  const touchesCanvas = k === "emojis" || k === "stickers";
   const purgeStrokeList = (list) => {
     if (!Array.isArray(list)) return list;
-    return list.filter((s) => String(s?.emoji || "").trim() !== id);
+    return list.filter((s) => {
+      if (!s || typeof s !== "object") return true;
+      const e = String(s.emoji || "").trim();
+      // Ohne emoji = normaler Strich/Vorlage → behalten
+      if (!e) return true;
+      return e !== id;
+    });
   };
 
-  // Live-Räume
-  for (const [code, room] of rooms.entries()) {
-    if (!room) continue;
-    let changed = false;
-    if (k === "emojis" || k === "stickers" || k === "pets") {
+  if (touchesCanvas) {
+    for (const [code, room] of rooms.entries()) {
+      if (!room) continue;
+      let changed = false;
       if (Array.isArray(room.strokes)) {
         const next = purgeStrokeList(room.strokes);
         if (next.length !== room.strokes.length) {
@@ -719,40 +732,39 @@ function purgeShopItemEverywhere(kind, itemId) {
           changed = true;
         }
       }
+      if (changed) roomsTouched += 1;
     }
-    if (changed) roomsTouched += 1;
-  }
 
-  // Persistierte Leinwände auf Disk (auch wenn Raum nicht geladen)
-  try {
-    ensureStrokesDir();
-    const files = fs.readdirSync(STROKES_DIR);
-    for (const name of files) {
-      if (!name.endsWith(".json") || name.endsWith(".tmp")) continue;
-      const full = path.join(STROKES_DIR, name);
-      let arr;
-      try {
-        arr = JSON.parse(fs.readFileSync(full, "utf8"));
-      } catch {
-        continue;
+    try {
+      ensureStrokesDir();
+      const files = fs.readdirSync(STROKES_DIR);
+      for (const name of files) {
+        if (!name.endsWith(".json") || name.endsWith(".tmp")) continue;
+        const full = path.join(STROKES_DIR, name);
+        let arr;
+        try {
+          arr = JSON.parse(fs.readFileSync(full, "utf8"));
+        } catch {
+          continue;
+        }
+        if (!Array.isArray(arr)) continue;
+        const next = purgeStrokeList(arr);
+        if (next.length === arr.length) continue;
+        const tmp = `${full}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(next));
+        fs.renameSync(tmp, full);
+        roomsTouched += 1;
       }
-      if (!Array.isArray(arr)) continue;
-      const next = purgeStrokeList(arr);
-      if (next.length === arr.length) continue;
-      const tmp = `${full}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(next));
-      fs.renameSync(tmp, full);
-      roomsTouched += 1;
+    } catch (err) {
+      console.warn("purge strokes dir failed", err?.message || err);
     }
-  } catch (err) {
-    console.warn("purge strokes dir failed", err?.message || err);
   }
 
-  // Offene Markt-Angebote stornieren (Item existiert nicht mehr → nicht zurückgeben)
+  // Nur Markt-Angebote genau dieses Items
   const listings = market.ensureMarket(db);
   for (const entry of Object.values(listings)) {
     if (!entry || entry.status !== "open") continue;
-    if (String(entry.kind) === k && String(entry.itemId) === id) {
+    if (String(entry.kind) === k && sameId(entry.itemId)) {
       entry.status = "cancelled";
       entry.cancelledAt = Date.now();
       entry.cancelReason = "item_deleted";
@@ -760,6 +772,7 @@ function purgeShopItemEverywhere(kind, itemId) {
     }
   }
 
+  // Nur die Bilddatei dieser ID
   if (id.toLowerCase().startsWith("img_")) {
     try {
       petImages.deleteImage(id);
