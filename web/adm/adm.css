@@ -861,6 +861,41 @@ th { color: var(--muted); font-weight: 500; }
   gap: 0.75rem;
 }
 
+/* Tagesaufgaben-Planer */
+.daily-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+.daily-tile {
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.daily-tile-add {
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 140px;
+  border-style: dashed;
+  cursor: pointer;
+  background: transparent;
+}
+.daily-tile-add:hover:not(:disabled) {
+  border-color: var(--rose);
+  color: var(--rose);
+}
+.daily-tile-add:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* Erfolge */
 .ach-grid {
   display: grid;

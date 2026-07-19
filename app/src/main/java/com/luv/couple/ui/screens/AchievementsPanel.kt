@@ -377,13 +377,19 @@ private fun DailyTasksCard(
                 )
             }
             Text(
-                "+3 Coins",
+                "+${daily.rewardCoins} Coins",
                 color = AccentRose,
                 fontFamily = DisplayFont,
                 fontSize = ts(14.sp),
                 softWrap = false
             )
         }
+        Text(
+            "Erledige alle Aufgaben — danach kannst du die Belohnung abholen.",
+            color = TextMuted,
+            fontFamily = BodyFont,
+            fontSize = ts(12.sp)
+        )
         daily.tasks.forEach { task ->
             DailyTaskRow(task = task, scale = scale)
         }
@@ -466,6 +472,16 @@ private fun DailyTaskRow(task: LuvApiClient.AchievementDailyTask, scale: Float) 
                 fontSize = ts(14.sp),
                 softWrap = true
             )
+            if (task.hint.isNotBlank() && !task.done) {
+                Text(
+                    task.hint,
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = ts(11.sp),
+                    softWrap = true,
+                    lineHeight = ts(14.sp)
+                )
+            }
             LinearProgressIndicator(
                 progress = { progress },
                 modifier = Modifier

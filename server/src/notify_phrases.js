@@ -155,6 +155,26 @@ function deletePhrase(db, id) {
   return { ok: true };
 }
 
+/** Mehrere Sprüche aktivieren/deaktivieren. */
+function bulkSetEnabled(db, ids, enabled) {
+  const store = ensureNotifyPhrases(db);
+  const want = new Set(
+    (Array.isArray(ids) ? ids : []).map((id) => String(id || "").trim()).filter(Boolean)
+  );
+  if (!want.size) {
+    return { ok: false, error: "bad_ids", message: "Keine Sprüche ausgewählt." };
+  }
+  let updated = 0;
+  const now = Date.now();
+  for (const p of store.phrases) {
+    if (!p || !want.has(p.id)) continue;
+    p.enabled = Boolean(enabled);
+    p.updatedAt = now;
+    updated += 1;
+  }
+  return { ok: true, updated, enabled: Boolean(enabled) };
+}
+
 function pickPhrase(db, { pool = "mood", excludingId = null } = {}) {
   const store = ensureNotifyPhrases(db);
   const want = normalizePool(pool);
@@ -190,6 +210,7 @@ module.exports = {
   listPhrases,
   upsertPhrase,
   deletePhrase,
+  bulkSetEnabled,
   pickPhrase,
   pickShareLineFromDb,
   publicPhrase,

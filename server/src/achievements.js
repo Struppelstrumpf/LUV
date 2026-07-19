@@ -3,6 +3,8 @@
  * Belohnung 1–3 Coins (Tageslimit konfigurierbar) — seltene Erfolge können stattdessen ein Item geben.
  */
 
+const dailyTasks = require("./daily_tasks");
+
 const DEFAULT_ACHIEVEMENT_DAILY_CAP = 12;
 const ACHIEVEMENT_DAILY_CAP_MIN = 0;
 const ACHIEVEMENT_DAILY_CAP_MAX = 500;
@@ -487,21 +489,13 @@ function deleteCustomAchievement(db, id) {
   return { ok: true, deleted: want };
 }
 
-const DAILY_POOL = [
-  { id: "d_kraul", title: "Begleiter kraulen", metric: "krauls", target: 1 },
-  { id: "d_draw", title: "Einmal malen", metric: "draw_sessions", target: 1 },
-  { id: "d_stroke", title: "10 Striche", metric: "strokes", target: 10 },
-  { id: "d_friend", title: "Freunde ansehen", metric: "profile_views", target: 1 },
-  { id: "d_lobby", title: "Lobby öffnen", metric: "lobby_opens", target: 1 },
-  { id: "d_moment", title: "Moment speichern", metric: "moments_saved", target: 1 },
-  { id: "d_react", title: "Reaktion senden", metric: "reactions_sent", target: 1 },
-  { id: "d_gallery", title: "Galerie öffnen", metric: "gallery_opens", target: 1 },
-  { id: "d_market", title: "Marktplatz besuchen", metric: "market_opens", target: 1 },
-  { id: "d_social", title: "Sozial öffnen", metric: "social_opens", target: 1 },
-  { id: "d_equip", title: "Begleiter wechseln", metric: "pet_equips", target: 1 },
-  { id: "d_sticker", title: "Sticker platzieren", metric: "stickers_placed", target: 1 },
-  { id: "d_template", title: "Vorlage platzieren", metric: "templates_placed", target: 1 },
-];
+/** @deprecated — Pool liegt in daily_tasks.js (Admin-Planer). */
+const DAILY_POOL = dailyTasks.BUILTIN_TEMPLATES.map((t) => ({
+  id: t.id,
+  title: t.title,
+  metric: t.metric,
+  target: t.target,
+}));
 
 function ensureAchievements(user) {
   if (!user.achievements || typeof user.achievements !== "object") {
@@ -538,21 +532,7 @@ function hashDay(str) {
 }
 
 function pickDailyTasks(dayKey) {
-  const seed = hashDay(`luv-daily-${dayKey}`);
-  const pool = [...DAILY_POOL];
-  // Fisher-Yates mit Seed
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = (seed + i * 17) % (i + 1);
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
-  return pool.slice(0, 4).map((t) => ({
-    id: t.id,
-    title: t.title,
-    metric: t.metric,
-    target: t.target,
-    progress: 0,
-    done: false,
-  }));
+  return dailyTasks.pickDailyTasks(getDbFn(), dayKey);
 }
 
 function ensureDaily(user, dayKey) {
@@ -561,6 +541,7 @@ function ensureDaily(user, dayKey) {
     a.daily = {
       date: dayKey,
       tasks: pickDailyTasks(dayKey),
+      rewardCoins: dailyTasks.getRewardCoins(getDbFn()),
       completed: false,
       rewardClaimed: false,
     };
@@ -880,10 +861,13 @@ function claimDailyReward(user, dayKey, applyLedgerFn) {
   if (a.daily.rewardClaimed) {
     return { ok: false, error: "already_claimed", message: "Tagesbelohnung schon abgeholt." };
   }
-  const grant = 3;
+  const grant = Math.max(
+    0,
+    Math.floor(Number(a.daily.rewardCoins) || dailyTasks.getRewardCoins(getDbFn()) || 3)
+  );
   a.daily.rewardClaimed = true;
   a.daily.claimedAt = Date.now();
-  if (applyLedgerFn) {
+  if (applyLedgerFn && grant > 0) {
     applyLedgerFn(user.id, grant, "daily_tasks", dayKey);
     a.coinsEarnedToday += grant;
     a.totalAchCoins += grant;
@@ -953,13 +937,27 @@ function publicAchievementsState(user, dayKey, dailyCap = DEFAULT_ACHIEVEMENT_DA
       completed: Boolean(a.daily.completed),
       rewardClaimed: Boolean(a.daily.rewardClaimed),
       claimable: dailyClaimable,
-      tasks: a.daily.tasks.map((t) => ({
-        id: t.id,
-        title: t.title,
-        target: t.target,
-        progress: t.progress || 0,
-        done: Boolean(t.done),
-      })),
+      rewardCoins: Math.max(
+        0,
+        Math.floor(
+          Number(a.daily.rewardCoins) || dailyTasks.getRewardCoins(getDbFn()) || 3
+        )
+      ),
+      tasks: (() => {
+        const cfg = dailyTasks.ensureDailyTasksConfig(getDbFn());
+        const byId = new Map((cfg.templates || []).map((x) => [x.id, x]));
+        return a.daily.tasks.map((t) => {
+          const tpl = byId.get(t.id);
+          return {
+            id: t.id,
+            title: t.title || tpl?.title || t.id,
+            hint: t.hint || tpl?.hint || "",
+            target: t.target,
+            progress: t.progress || 0,
+            done: Boolean(t.done),
+          };
+        });
+      })(),
     },
     achievements,
     unlockedCount: unlockedIds.size,

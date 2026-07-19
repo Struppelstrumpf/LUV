@@ -25,6 +25,7 @@ const playIntegrity = require("./play_integrity");
 const itemTrade = require("./item_trade");
 const itemLabels = require("./item_labels");
 const notifyPhrases = require("./notify_phrases");
+const dailyTasks = require("./daily_tasks");
 ach.bindGetDb(getDb);
 const {
   STICKER_SHOP_PRICES,
@@ -8203,6 +8204,66 @@ app.delete("/v1/admin/notify-phrases/:id", (req, res) => {
   flushSave();
   staffAudit(ctx.user, "phrase_delete", { id: req.params.id });
   return res.json({ ok: true });
+});
+
+/** Mehrere Sprüche aktivieren/deaktivieren */
+app.post("/v1/admin/notify-phrases/bulk", (req, res) => {
+  const ctx = requireStaff(req, res, "live.notify");
+  if (!ctx) return;
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  const enabled = Boolean(req.body?.enabled);
+  const result = notifyPhrases.bulkSetEnabled(getDb(), ids, enabled);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "phrase_bulk", { updated: result.updated, enabled });
+  return res.json({ ok: true, ...result });
+});
+
+/** Tagesaufgaben-Planer (Admin) */
+app.get("/v1/admin/daily-tasks", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  return res.json({ ok: true, config: dailyTasks.publicConfig(getDb()) });
+});
+
+app.put("/v1/admin/daily-tasks", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const result = dailyTasks.setConfig(getDb(), req.body || {});
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "daily_tasks_config", {
+    mode: result.config.mode,
+    planLen: result.config.plan?.length,
+    rewardCoins: result.config.rewardCoins,
+  });
+  return res.json({ ok: true, config: result.config });
+});
+
+app.post("/v1/admin/daily-tasks/templates/:id/enable", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const result = dailyTasks.setTemplateEnabled(getDb(), req.params.id, true);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  return res.json({ ok: true, config: result.config });
+});
+
+app.post("/v1/admin/daily-tasks/templates/:id/disable", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const result = dailyTasks.setTemplateEnabled(getDb(), req.params.id, false);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  return res.json({ ok: true, config: result.config });
 });
 
 /** App: zufälligen Mood-Spruch inkl. Tap-Ziel holen */

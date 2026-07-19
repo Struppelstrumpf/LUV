@@ -2216,6 +2216,7 @@ object LuvApiClient {
     data class AchievementDailyTask(
         val id: String,
         val title: String,
+        val hint: String = "",
         val target: Int,
         val progress: Int,
         val done: Boolean
@@ -2226,6 +2227,7 @@ object LuvApiClient {
         val completed: Boolean,
         val rewardClaimed: Boolean = false,
         val claimable: Boolean = false,
+        val rewardCoins: Int = 3,
         val tasks: List<AchievementDailyTask>
     )
 
@@ -2375,6 +2377,7 @@ object LuvApiClient {
                         AchievementDailyTask(
                             id = t.optString("id"),
                             title = t.optString("title"),
+                            hint = t.optString("hint", ""),
                             target = t.optInt("target", 1),
                             progress = t.optInt("progress", 0),
                             done = t.optBoolean("done", false)
@@ -2404,6 +2407,7 @@ object LuvApiClient {
                 completed = dailyJson.optBoolean("completed", false),
                 rewardClaimed = dailyJson.optBoolean("rewardClaimed", false),
                 claimable = dailyJson.optBoolean("claimable", false),
+                rewardCoins = dailyJson.optInt("rewardCoins", 3).coerceAtLeast(0),
                 tasks = tasks
             ),
             achievements = achievements,

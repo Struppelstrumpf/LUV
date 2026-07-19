@@ -779,6 +779,10 @@
     const content = contentEl();
     const pool = host().state.phrasePool || "";
     const q = host().state.phraseQ || "";
+    if (!host().state.phraseSelected || typeof host().state.phraseSelected !== "object") {
+      host().state.phraseSelected = {};
+    }
+    const selected = host().state.phraseSelected;
     const qs = new URLSearchParams();
     if (pool) qs.set("pool", pool);
     if (q) qs.set("q", q);
@@ -786,6 +790,10 @@
     const phrases = data.phrases || [];
     const targets = data.targets || [];
     const targetLabel = Object.fromEntries(targets.map((t) => [t.id, t.label]));
+    const visibleIds = phrases.map((p) => p.id);
+    const selectedVisible = visibleIds.filter((id) => selected[id]);
+    const allVisibleSelected =
+      visibleIds.length > 0 && selectedVisible.length === visibleIds.length;
 
     content.innerHTML = `
       <div class="panel ach-hero">
@@ -794,7 +802,7 @@
             <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">Sprüche</h3>
             <p class="help" style="margin:0.4rem 0 0;max-width:44rem">
               Mood = Push-Benachrichtigungen in der App. Share = OG-/Einladungs-Texte.
-              Pro Spruch entscheidest du, wohin Tippen führt (Leinwand, Markt, Inventar, Profil …).
+              Einzelne, mehrere oder alle auswählen — dann aktivieren oder deaktivieren.
             </p>
           </div>
           <button class="btn teal" id="phrNew">＋ Neuer Spruch</button>
@@ -804,9 +812,12 @@
           <button type="button" class="shop-cat ${pool === "mood" ? "on" : ""}" data-pool="mood">Mood / Push <span class="shop-cat-n">${data.counts?.mood ?? 0}</span></button>
           <button type="button" class="shop-cat ${pool === "share" ? "on" : ""}" data-pool="share">Share / OG <span class="shop-cat-n">${data.counts?.share ?? 0}</span></button>
         </div>
-        <div class="toolbar shop-search-bar">
+        <div class="toolbar shop-search-bar" style="flex-wrap:wrap;gap:0.5rem">
           <input id="phrQ" placeholder="Suchen…" value="${esc(q)}" />
           <button class="btn secondary" id="phrFilter">Suchen</button>
+          <button class="btn secondary" id="phrSelectAll">${allVisibleSelected ? "Auswahl aufheben" : "Alle auswählen"}</button>
+          <button class="btn ghost" id="phrBulkOn" ${selectedVisible.length ? "" : "disabled"}>Auswahl aktivieren (${selectedVisible.length})</button>
+          <button class="btn ghost" id="phrBulkOff" ${selectedVisible.length ? "" : "disabled"}>Auswahl deaktivieren (${selectedVisible.length})</button>
         </div>
       </div>
       <div class="ach-grid">
@@ -814,12 +825,15 @@
           phrases.length
             ? phrases
                 .map(
-                  (p) => `<article class="ach-card ${p.enabled ? "" : "is-off"}">
+                  (p) => `<article class="ach-card ${p.enabled ? "" : "is-off"} ${selected[p.id] ? "is-focus" : ""}">
             <header>
-              <div>
-                <strong style="font-size:0.95rem;line-height:1.35">${esc(p.text)}</strong>
-                <div class="muted" style="margin-top:0.35rem;font-size:0.8rem">${esc(p.subtitle || "—")}</div>
-              </div>
+              <label style="display:flex;gap:0.55rem;align-items:flex-start;cursor:pointer;flex:1">
+                <input type="checkbox" class="phr-check" data-phr-id="${esc(p.id)}" ${selected[p.id] ? "checked" : ""} style="margin-top:0.35rem;width:1.1rem;height:1.1rem" />
+                <div>
+                  <strong style="font-size:0.95rem;line-height:1.35">${esc(p.text)}</strong>
+                  <div class="muted" style="margin-top:0.35rem;font-size:0.8rem">${esc(p.subtitle || "—")}</div>
+                </div>
+              </label>
               <span class="badge ${p.pool === "mood" ? "src-achievement" : "src-code"}">${esc(p.pool)}</span>
             </header>
             <div class="ach-meta">
@@ -849,6 +863,38 @@
       renderPhrases();
     };
     $("phrNew").onclick = () => openPhraseEditor(null, targets);
+    $("phrSelectAll").onclick = () => {
+      if (allVisibleSelected) {
+        visibleIds.forEach((id) => {
+          delete selected[id];
+        });
+      } else {
+        visibleIds.forEach((id) => {
+          selected[id] = true;
+        });
+      }
+      renderPhrases();
+    };
+    const bulk = async (enabled) => {
+      const ids = Object.keys(selected).filter((id) => selected[id]);
+      if (!ids.length) return;
+      await api("/admin/notify-phrases/bulk", {
+        method: "POST",
+        body: JSON.stringify({ ids, enabled }),
+      });
+      host().state.phraseSelected = {};
+      renderPhrases();
+    };
+    $("phrBulkOn").onclick = () => bulk(true);
+    $("phrBulkOff").onclick = () => bulk(false);
+    content.querySelectorAll(".phr-check").forEach((cb) => {
+      cb.onchange = () => {
+        const id = cb.getAttribute("data-phr-id");
+        if (cb.checked) selected[id] = true;
+        else delete selected[id];
+        renderPhrases();
+      };
+    });
     content.querySelectorAll("[data-edit-phr]").forEach((b) => {
       b.onclick = () => {
         const id = b.getAttribute("data-edit-phr");
@@ -873,7 +919,248 @@
         const id = b.getAttribute("data-del-phr");
         if (!confirm("Spruch wirklich löschen?")) return;
         await api(`/admin/notify-phrases/${encodeURIComponent(id)}`, { method: "DELETE" });
+        delete selected[id];
         renderPhrases();
+      };
+    });
+  }
+
+  async function renderDailyTasks() {
+    const content = contentEl();
+    const data = await api("/admin/daily-tasks");
+    const cfg = data.config || {};
+    const plan = cfg.plan || [];
+    const templates = cfg.templates || [];
+    const inPlan = new Set(plan.map((p) => p.templateId));
+    const available = templates.filter((t) => t.enabled && !inPlan.has(t.id));
+
+    content.innerHTML = `
+      <div class="panel ach-hero">
+        <div class="shop-top">
+          <div>
+            <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">Tagesaufgaben-Planer</h3>
+            <p class="help" style="margin:0.4rem 0 0;max-width:48rem">
+              Plane, welche Aufgaben Spieler erledigen müssen. Mit <strong>＋</strong> eine Kachel hinzufügen.
+              Wenn alle Aufgaben des Tages fertig sind, gibt es die eingestellte Coin-Belohnung
+              (Standard: <strong>3</strong>). Neue Pläne gelten ab dem <em>nächsten</em> Berlin-Tag
+              (Spieler, die heute schon Aufgaben haben, behalten ihren aktuellen Satz).
+            </p>
+          </div>
+          <button class="btn" id="dailySave">Plan speichern</button>
+        </div>
+        <div class="grid-2" style="margin-top:1rem;gap:1rem">
+          <label class="field">Coin-Belohnung (wenn alles erledigt)
+            <input id="dailyReward" type="number" min="${cfg.limits?.rewardMin ?? 0}" max="${cfg.limits?.rewardMax ?? 100}" value="${esc(cfg.rewardCoins ?? 3)}" />
+            <span class="muted" style="font-size:0.8rem">Spieler holen die Coins unter Sozial → Erfolge ab.</span>
+          </label>
+          <label class="field">Modus
+            <select id="dailyMode">
+              <option value="plan" ${cfg.mode === "plan" ? "selected" : ""}>Fester Plan (gleiche Aufgaben für alle)</option>
+              <option value="random" ${cfg.mode !== "plan" ? "selected" : ""}>Zufällig aus aktivem Pool</option>
+            </select>
+          </label>
+        </div>
+        <label class="field" style="margin-top:0.75rem;max-width:16rem">Anzahl bei Zufall
+          <input id="dailyCount" type="number" min="1" max="${cfg.limits?.planMax ?? 12}" value="${esc(cfg.tasksPerDay ?? 4)}" />
+        </label>
+      </div>
+
+      <div class="panel" style="margin-top:1rem">
+        <h3 style="margin:0 0 0.35rem;font-family:var(--display)">Heutiger Plan</h3>
+        <p class="help" style="margin:0 0 0.85rem">
+          Jede Kachel = eine Aufgabe. Tippe ✕ zum Entfernen. Plus-Kachel fügt die nächste hinzu.
+        </p>
+        <div class="daily-plan-grid" id="dailyPlanGrid">
+          ${plan
+            .map(
+              (p, i) => `<article class="daily-tile" data-plan-idx="${i}">
+            <strong>${esc(p.title)}</strong>
+            <p class="muted" style="font-size:0.82rem;margin:0.35rem 0 0;line-height:1.35">${esc(p.hint || "Keine Anleitung")}</p>
+            <label class="field" style="margin-top:0.55rem">Zielwert
+              <input type="number" class="daily-target" min="1" max="999" value="${esc(p.target)}" data-tid="${esc(p.templateId)}" />
+            </label>
+            <button type="button" class="btn btn-del" data-rm-plan="${i}" style="margin-top:0.5rem">✕ Entfernen</button>
+          </article>`
+            )
+            .join("")}
+          <button type="button" class="daily-tile daily-tile-add" id="dailyAddTile" ${available.length ? "" : "disabled"}>
+            <span style="font-size:2rem;line-height:1">＋</span>
+            <span>Aufgabe hinzufügen</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:1rem">
+        <h3 style="margin:0 0 0.35rem;font-family:var(--display)">Aufgaben-Vorlagen</h3>
+        <p class="help" style="margin:0 0 0.85rem">
+          Deaktivierte Vorlagen erscheinen weder im Zufalls-Pool noch im Plus-Menü.
+          Die Anleitung sieht der Spieler in der App unter der Aufgabe.
+        </p>
+        <div class="ach-grid">
+          ${templates
+            .map(
+              (t) => `<article class="ach-card ${t.enabled ? "" : "is-off"}">
+            <header>
+              <div>
+                <strong>${esc(t.title)}</strong>
+                <div class="muted mono" style="font-size:0.75rem">${esc(t.id)} · ${esc(t.metric)} ≥ ${t.target}</div>
+              </div>
+              ${t.enabled ? '<span class="badge src-shop">Aktiv</span>' : '<span class="badge off">Aus</span>'}
+            </header>
+            <p class="ach-desc">${esc(t.hint || "—")}</p>
+            <div class="actions">
+              <button type="button" class="btn secondary" data-edit-tpl="${esc(t.id)}">Anleitung / Ziel</button>
+              <button type="button" class="btn ghost" data-tog-tpl="${esc(t.id)}|${t.enabled ? "0" : "1"}">${t.enabled ? "Deaktivieren" : "Aktivieren"}</button>
+              ${
+                t.enabled && !inPlan.has(t.id)
+                  ? `<button type="button" class="btn teal" data-add-tpl="${esc(t.id)}">＋ Zum Plan</button>`
+                  : ""
+              }
+            </div>
+          </article>`
+            )
+            .join("")}
+        </div>
+      </div>`;
+
+    const collectPlan = () => {
+      const tiles = [...content.querySelectorAll(".daily-tile[data-plan-idx]")];
+      return tiles.map((tile) => {
+        const input = tile.querySelector(".daily-target");
+        return {
+          templateId: input.getAttribute("data-tid"),
+          target: Math.max(1, Number(input.value) || 1),
+        };
+      });
+    };
+
+    const save = async (extra = {}) => {
+      const body = {
+        rewardCoins: Number($("dailyReward").value),
+        tasksPerDay: Number($("dailyCount").value),
+        mode: $("dailyMode").value,
+        plan: collectPlan(),
+        ...extra,
+      };
+      await api("/admin/daily-tasks", { method: "PUT", body: JSON.stringify(body) });
+      renderDailyTasks();
+    };
+
+    $("dailySave").onclick = () => save();
+    $("dailyMode").onchange = () => {
+      /* nur lokal bis Speichern */
+    };
+
+    content.querySelectorAll("[data-rm-plan]").forEach((b) => {
+      b.onclick = async () => {
+        const idx = Number(b.getAttribute("data-rm-plan"));
+        const next = collectPlan().filter((_, i) => i !== idx);
+        await save({ plan: next, mode: "plan" });
+      };
+    });
+
+    const addTemplate = async (tid) => {
+      const next = collectPlan();
+      if (next.some((p) => p.templateId === tid)) return;
+      const tpl = templates.find((t) => t.id === tid);
+      next.push({ templateId: tid, target: tpl?.target || 1 });
+      await save({ plan: next, mode: "plan" });
+    };
+
+    $("dailyAddTile").onclick = () => {
+      if (!available.length) {
+        alert("Keine weiteren aktiven Vorlagen. Aktiviere welche unten oder entferne eine aus dem Plan.");
+        return;
+      }
+      openModal(
+        `
+        <h3 style="font-family:var(--display);margin:0 0 0.5rem">Aufgabe hinzufügen</h3>
+        <p class="help">Wähle eine Vorlage — der Spieler sieht Titel und Anleitung.</p>
+        <div class="ach-mini-list" id="dailyPickList">
+          ${available
+            .map(
+              (t) => `<button type="button" class="ach-mini" data-pick="${esc(t.id)}" style="text-align:left;width:100%;cursor:pointer;border:1px solid var(--line)">
+              <div>
+                <strong>${esc(t.title)}</strong>
+                <div class="muted" style="font-size:0.8rem;margin-top:0.2rem">${esc(t.hint)}</div>
+              </div>
+            </button>`
+            )
+            .join("")}
+        </div>
+        <div class="actions" style="margin-top:1rem">
+          <button type="button" class="btn ghost" id="cancelModal">Abbrechen</button>
+        </div>`,
+        true
+      );
+      $("cancelModal").onclick = closeModal;
+      const pickList = $("dailyPickList");
+      if (pickList) {
+        pickList.querySelectorAll("[data-pick]").forEach((b) => {
+          b.onclick = async () => {
+            const tid = b.getAttribute("data-pick");
+            closeModal();
+            await addTemplate(tid);
+          };
+        });
+      }
+    };
+
+    content.querySelectorAll("[data-add-tpl]").forEach((b) => {
+      b.onclick = () => addTemplate(b.getAttribute("data-add-tpl"));
+    });
+    content.querySelectorAll("[data-tog-tpl]").forEach((b) => {
+      b.onclick = async () => {
+        const [id, mode] = b.getAttribute("data-tog-tpl").split("|");
+        const path =
+          mode === "0"
+            ? `/admin/daily-tasks/templates/${encodeURIComponent(id)}/disable`
+            : `/admin/daily-tasks/templates/${encodeURIComponent(id)}/enable`;
+        await api(path, { method: "POST", body: "{}" });
+        renderDailyTasks();
+      };
+    });
+    content.querySelectorAll("[data-edit-tpl]").forEach((b) => {
+      b.onclick = () => {
+        const id = b.getAttribute("data-edit-tpl");
+        const t = templates.find((x) => x.id === id);
+        if (!t) return;
+        openModal(
+          `
+          <h3 style="font-family:var(--display);margin:0 0 0.4rem">${esc(t.title)}</h3>
+          <form id="tplForm">
+            <label class="field">Titel
+              <input name="title" maxlength="60" value="${esc(t.title)}" required />
+            </label>
+            <label class="field">Was muss der Spieler tun? (Anleitung)
+              <textarea name="hint" maxlength="200" rows="3" required>${esc(t.hint || "")}</textarea>
+            </label>
+            <label class="field">Zielwert (z. B. 10 Striche)
+              <input name="target" type="number" min="1" max="999" value="${esc(t.target)}" />
+            </label>
+            <div class="actions" style="margin-top:1rem">
+              <button type="submit" class="btn">Speichern</button>
+              <button type="button" class="btn ghost" id="cancelModal">Abbrechen</button>
+            </div>
+          </form>`,
+          true
+        );
+        $("cancelModal").onclick = closeModal;
+        $("tplForm").onsubmit = async (e) => {
+          e.preventDefault();
+          const fd = new FormData(e.target);
+          await save({
+            templates: [
+              {
+                id: t.id,
+                title: String(fd.get("title") || "").trim(),
+                hint: String(fd.get("hint") || "").trim(),
+                target: Number(fd.get("target") || 1),
+              },
+            ],
+          });
+          closeModal();
+        };
       };
     });
   }
@@ -952,6 +1239,7 @@
     renderAchievements,
     renderUsers,
     renderPhrases,
+    renderDailyTasks,
     openAchievementWizard,
     openUserDetail,
   };

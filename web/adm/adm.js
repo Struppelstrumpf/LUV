@@ -19,6 +19,7 @@
     userFocusId: null,
     phrasePool: "",
     phraseQ: "",
+    phraseSelected: {},
   };
 
   try {
@@ -41,7 +42,8 @@
     { id: "overview", label: "Übersicht", hint: "Live-Zahlen und Räume auf einen Blick." },
     { id: "shop", label: "Itemshop", hint: "Alle Items: Shop, Erfolge, Codes — Preise, Handelbarkeit und Limits.", perm: "market.settings" },
     { id: "achievements", label: "Erfolge", hint: "Erfolge ansehen, deaktivieren und mit Wizard erstellen/bearbeiten.", perm: "market.settings" },
-    { id: "phrases", label: "Sprüche", hint: "Push- und Share-Sprüche bearbeiten, Tap-Ziel wählen.", perm: "live.notify" },
+    { id: "dailies", label: "Tagesaufgaben", hint: "Planer: welche Aufgaben, wie viele, Coin-Belohnung und Anleitungen.", perm: "market.settings" },
+    { id: "phrases", label: "Sprüche", hint: "Push- und Share-Sprüche bearbeiten, Tap-Ziel wählen. Mehrfachauswahl möglich.", perm: "live.notify" },
     { id: "reports", label: "Meldungen", hint: "Gemeldete Lobby-/Galerie-Bilder prüfen.", perm: "reports.view" },
     { id: "codes", label: "Codes", hint: "Gutscheincodes erstellen und widerrufen.", perm: "codes.view" },
     { id: "users", label: "Nutzer", hint: "Vollprofil: Coins, Erfolge, Logs, Lobbys, Verwarnungen, Streak.", perm: "gm.search" },
@@ -324,7 +326,8 @@
         const focus = state.achFocusId;
         state.achFocusId = null;
         await window.LuvAdmPanels.renderAchievements(focus);
-      } else if (id === "phrases") await window.LuvAdmPanels.renderPhrases();
+      } else if (id === "dailies") await window.LuvAdmPanels.renderDailyTasks();
+      else if (id === "phrases") await window.LuvAdmPanels.renderPhrases();
       else if (id === "reports") await renderReports();
       else if (id === "codes") await renderCodes();
       else if (id === "users") await window.LuvAdmPanels.renderUsers();
