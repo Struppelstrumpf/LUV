@@ -420,17 +420,34 @@ function takeItemFromUser(user, ensureInventory, kind, itemId) {
     return true;
   }
   if (kind === "stickers") {
-    if ((Number(inv.stickers[itemId]) || 0) < 1) return false;
-    inv.stickers[itemId] -= 1;
+    const owned = Math.max(0, Math.floor(Number(inv.stickers[itemId]) || 0));
+    if (owned < 1) return false;
+    // Nur freien Bestand nehmen (nicht Profil-Platzierungen)
+    let placed = 0;
+    const layout = user?.profileCanvas?.layout;
+    if (Array.isArray(layout)) {
+      for (const el of layout) {
+        if (!el || String(el.type || "").toLowerCase() !== "sticker") continue;
+        const e = String(el.emoji || el.text || "").trim();
+        if (e === itemId) placed += 1;
+      }
+    }
+    if (owned - placed < 1) return false;
+    inv.stickers[itemId] = owned - 1;
     if (inv.stickers[itemId] <= 0) delete inv.stickers[itemId];
     return true;
   }
   if (kind === "emojis") {
-    if ((Number(inv.emojis[itemId]) || 0) < 1) return false;
+    const owned = Math.max(0, Math.floor(Number(inv.emojis[itemId]) || 0));
+    if (owned < 1) return false;
     // Starter-Emojis nicht unter 1
     const starters = ["👍", "❌", "❤️", "😂", "😱", "😡", "😭"];
-    if (starters.includes(itemId) && inv.emojis[itemId] <= 1) return false;
-    inv.emojis[itemId] -= 1;
+    if (starters.includes(itemId) && owned <= 1) return false;
+    // Letztes Exemplar in der Reaktionsleiste nicht entnehmen
+    const bar = Array.isArray(user?.settings?.emojiBar) ? user.settings.emojiBar : [];
+    const inBar = bar.some((e) => String(e) === itemId);
+    if (inBar && owned <= 1) return false;
+    inv.emojis[itemId] = owned - 1;
     if (inv.emojis[itemId] <= 0) delete inv.emojis[itemId];
     return true;
   }
@@ -441,24 +458,27 @@ function giveItemToUser(user, ensureInventory, kind, itemId) {
   const inv = ensureInventory(user);
   if (kind === "pets") {
     if (!inv.pets.includes(itemId)) inv.pets.push(itemId);
-    return;
+    return true; // schon besessen = idempotent ok (Cancel/Expire)
   }
   if (kind === "themes") {
     if (!inv.themes.includes(itemId)) inv.themes.push(itemId);
-    return;
+    return true;
   }
   if (kind === "stickers") {
-    // Kapelle & andere Erfolgs-Sticker: immer genau 1×
+    // Kapelle & andere Erfolgs-Sticker: nie unter 1, nie absenken
     if (isAchievementSticker(itemId)) {
-      inv.stickers[itemId] = 1;
-      return;
+      const cur = Math.max(0, Math.floor(Number(inv.stickers[itemId]) || 0));
+      inv.stickers[itemId] = Math.max(1, cur);
+      return true;
     }
     inv.stickers[itemId] = (Number(inv.stickers[itemId]) || 0) + 1;
-    return;
+    return true;
   }
   if (kind === "emojis") {
     inv.emojis[itemId] = (Number(inv.emojis[itemId]) || 0) + 1;
+    return true;
   }
+  return false;
 }
 
 function resolveLabel(kind, itemId, shopCatalogHints) {

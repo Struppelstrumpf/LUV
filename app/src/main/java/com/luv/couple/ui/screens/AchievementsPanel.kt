@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.times
 import androidx.compose.ui.window.Dialog
 import com.luv.couple.net.AchievementsBadge
 import com.luv.couple.net.LuvApiClient
+import com.luv.couple.shop.ItemLabels
 import com.luv.couple.profile.ProfileThemeBackdrop
 import com.luv.couple.ui.ItemGlyph
 import com.luv.couple.ui.rememberUiScale
@@ -107,8 +108,12 @@ fun AchievementsPanel(
                     state = result.state
                     onCoinsGranted(result.coinsGranted)
                     val msg = when {
-                        result.itemGranted != null ->
-                            "${result.itemGranted.emoji} ${result.itemGranted.label} erhalten"
+                        result.itemGranted != null -> {
+                            val g = result.itemGranted
+                            val name = g.label.takeIf { it.isNotBlank() && !ItemLabels.looksLikeRawId(it) }
+                                ?: ItemLabels.forKind(g.kind, g.emoji)
+                            "$name erhalten"
+                        }
                         result.coinsGranted > 0 -> "+${result.coinsGranted} Coins abgeholt"
                         else -> "Abgeholt"
                     }

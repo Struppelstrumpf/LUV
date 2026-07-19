@@ -12,6 +12,15 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.1",
+            listOf(
+                "Inventar: freie Items klar getrennt von platzierten/ausgerüsteten",
+                "Eigene Composer-Bilder ohne technische IDs in Markt & Hinweisen",
+                "Neuer Begleiter: Hexe (🧙) für 500 Coins",
+                "Vorlagen: gesamte Zeichenfläche nutzbar",
+            )
+        ),
+        Entry(
             "1.9.9944",
             listOf(
                 "Release-Build kleiner und etwas besser gegen Reverse-Engineering abgesichert",

@@ -61,6 +61,8 @@ import com.luv.couple.profile.ProfileCatalog
 import com.luv.couple.profile.ProfileElType
 import com.luv.couple.profile.ProfileThemeBackdrop
 import com.luv.couple.shop.InventoryAvailability
+import com.luv.couple.shop.ItemLabels
+import com.luv.couple.shop.LiveShopCatalog
 import com.luv.couple.shop.ShopCatalog
 import com.luv.couple.ui.UiScale
 import com.luv.couple.ui.rememberUiScale
@@ -86,6 +88,15 @@ private data class InventoryPick(
     val emoji: String,
     val count: Int
 )
+
+/** Nie raw img_/theme_-IDs in Markt-Texten zeigen. */
+private fun marketDisplayLabel(kind: String, itemId: String, fallbackLabel: String = ""): String {
+    val fromCatalog = ItemLabels.forKind(kind, itemId)
+    if (!ItemLabels.looksLikeRawId(fromCatalog)) return fromCatalog
+    val fb = fallbackLabel.trim()
+    if (fb.isNotEmpty() && !ItemLabels.looksLikeRawId(fb)) return fb
+    return ItemLabels.genericLabel(itemId)
+}
 
 @Composable
 fun PlayerMarketScreen(
@@ -185,29 +196,46 @@ fun PlayerMarketScreen(
         // Ausgerüstete / Profil-Items nicht anbieten (Server prüft zusätzlich)
         ownedPets.filter { it != ShopCatalog.DEFAULT_PET }.forEach { pet ->
             if (pet == equippedPet || pet == profileCompanion) return@forEach
-            val label = ShopCatalog.PETS.firstOrNull { it.emoji == pet }?.label ?: pet
+            val label = ItemLabels.petLabel(pet)
             add(InventoryPick("pets", pet, label, pet, 1))
         }
         ownedThemes.filter { it != ProfileCatalog.DEFAULT_THEME_ID }.forEach { themeId ->
             if (themeId == profileThemeId) return@forEach
             val theme = ShopCatalog.THEMES.firstOrNull { it.id == themeId }
+                ?: LiveShopCatalog.remoteThemes?.firstOrNull { it.id == themeId }
             add(
                 InventoryPick(
                     kind = "themes",
                     itemId = themeId,
-                    label = theme?.label ?: themeId,
-                    emoji = theme?.emoji ?: "🖼️",
+                    label = ItemLabels.themeLabel(themeId),
+                    emoji = theme?.emoji?.takeIf { !ItemLabels.looksLikeRawId(it) } ?: "🖼️",
                     count = 1
                 )
             )
         }
         val freeStickers = InventoryAvailability.freeStickers(ownedStickers, profilePlacedStickers)
         freeStickers.forEach { (emoji, free) ->
-            add(InventoryPick("stickers", emoji, emoji, emoji, free))
+            add(
+                InventoryPick(
+                    "stickers",
+                    emoji,
+                    ItemLabels.stickerLabel(emoji),
+                    emoji,
+                    free
+                )
+            )
         }
         InventoryAvailability.freeEmojis(ownedEmojis, emojiBar).forEach { (emoji, free) ->
             if (emoji in ShopCatalog.DEFAULT_BAR) return@forEach
-            add(InventoryPick("emojis", emoji, emoji, emoji, free))
+            add(
+                InventoryPick(
+                    "emojis",
+                    emoji,
+                    ItemLabels.emojiLabel(emoji),
+                    emoji,
+                    free
+                )
+            )
         }
     }
 
@@ -717,7 +745,11 @@ fun PlayerMarketScreen(
                             LuvApiClient.buyMarketListing(listing.id)
                         }.onSuccess {
                             syncInventory()
-                            Toast.makeText(context, "${listing.label} gekauft", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(
+                                context,
+                                "${marketDisplayLabel(listing.kind, listing.itemId, listing.label)} gekauft",
+                                Toast.LENGTH_SHORT
+                            ).show()
                             previewListing = null
                             refreshOffersIfOpen()
                             reloadMarket()
@@ -968,8 +1000,8 @@ private fun MarketListingPreviewDialog(
                             themeId = listing.itemId,
                             modifier = Modifier.fillMaxSize()
                         )
-                        Text(
-                            listing.emoji,
+                        ItemGlyph(
+                            id = listing.emoji.takeIf { !ItemLabels.looksLikeRawId(it) } ?: "🖼️",
                             fontSize = 28.sp,
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
@@ -993,7 +1025,7 @@ private fun MarketListingPreviewDialog(
                     }
                 }
                 Text(
-                    listing.label,
+                    marketDisplayLabel(listing.kind, listing.itemId, listing.label),
                     color = MarketBrown,
                     fontFamily = DisplayFont,
                     fontSize = 18.sp
@@ -1071,7 +1103,7 @@ private fun MarketItemRow(
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    item.label,
+                    marketDisplayLabel(item.kind, item.itemId, item.label),
                     color = MarketBrown,
                     fontFamily = DisplayFont,
                     fontSize = ui.ts(14.sp),
@@ -1189,7 +1221,12 @@ private fun MyListingRow(
     ) {
         ItemGlyph(id = listing.emoji, fontSize = 28.sp)
         Column(modifier = Modifier.weight(1f)) {
-            Text(listing.label, color = MarketBrown, fontFamily = DisplayFont, fontSize = 14.sp)
+            Text(
+                marketDisplayLabel(listing.kind, listing.itemId, listing.label),
+                color = MarketBrown,
+                fontFamily = DisplayFont,
+                fontSize = 14.sp
+            )
             Text(
                 if (listing.isPrivate) "Privat" else "Öffentlich",
                 color = MarketBrownMuted,

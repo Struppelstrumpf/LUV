@@ -387,6 +387,7 @@ object ShopCatalog {
         ShopPet("🐉", "Drache", 42),
         ShopPet("🐲", "Drachenkopf", 40),
         ShopPet("🦄", "Einhorn", 44),
+        ShopPet("🧙", "Hexe", 500),
         ShopPet("🐾", "Pfoten", 14)
     ).distinctBy { it.emoji }
 
@@ -424,7 +425,9 @@ data class ShopEmoji(
     val remainingMs: Long? = null,
     val searchText: String = "",
     /** Custom-Bild (img_*) für Sticker/Emoji — relativer oder absoluter URL. */
-    val imageUrl: String? = null
+    val imageUrl: String? = null,
+    /** Anzeigename (Admin/Composer) — nie raw img_-ID. */
+    val label: String = ""
 )
 
 data class ThemeVisualConfig(

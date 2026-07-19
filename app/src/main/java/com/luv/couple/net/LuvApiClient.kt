@@ -1317,12 +1317,12 @@ object LuvApiClient {
                 when (kind) {
                     "emojis" -> emojis.add(
                         com.luv.couple.shop.ShopEmoji(
-                            itemId, price, compare, rem, search, imageUrlFor()
+                            itemId, price, compare, rem, search, imageUrlFor(), label
                         )
                     )
                     "stickers" -> stickers.add(
                         com.luv.couple.shop.ShopEmoji(
-                            itemId, price, compare, rem, search, imageUrlFor()
+                            itemId, price, compare, rem, search, imageUrlFor(), label
                         )
                     )
                     "themes" -> {

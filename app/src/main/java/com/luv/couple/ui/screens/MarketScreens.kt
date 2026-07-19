@@ -157,6 +157,7 @@ import com.luv.couple.profile.ProfileElType
 import com.luv.couple.profile.ProfileState
 
 import com.luv.couple.shop.InventoryAvailability
+import com.luv.couple.shop.ItemLabels
 
 import com.luv.couple.shop.LiveShopCatalog
 
@@ -171,8 +172,6 @@ import com.luv.couple.shop.ShopTheme
 import androidx.compose.ui.text.style.TextDecoration
 
 import com.luv.couple.ui.ItemGlyph
-
-import com.luv.couple.ui.isImagePetId
 
 import com.luv.couple.ui.theme.AccentRose
 
@@ -1696,42 +1695,20 @@ private fun ItemShopContent(
 
         }
 
-        // Nie raw img_*-IDs als Titel zeigen
-
-        fun prettyLabel(raw: String, fallback: String): String =
-
-            if (isImagePetId(raw)) fallback else raw
-
         val titleLabel = when (pending) {
-
-            is ShopPendingBuy.Emoji ->
-
-                prettyLabel(pending.item.emoji, "Eigenes Emoji")
-
-            is ShopPendingBuy.Theme -> pending.item.label
-
-            is ShopPendingBuy.Sticker ->
-
-                prettyLabel(pending.item.emoji, "Eigener Sticker")
-
-            is ShopPendingBuy.Pet -> pending.item.label.ifBlank {
-
-                prettyLabel(pending.item.emoji, "Bild-Begleiter")
-
-            }
-
+            is ShopPendingBuy.Emoji -> ItemLabels.emojiLabel(pending.item.emoji)
+            is ShopPendingBuy.Theme -> ItemLabels.themeLabel(pending.item.id)
+            is ShopPendingBuy.Sticker -> ItemLabels.stickerLabel(pending.item.emoji)
+            is ShopPendingBuy.Pet ->
+                pending.item.label.takeIf { it.isNotBlank() && !ItemLabels.looksLikeRawId(it) }
+                    ?: ItemLabels.petLabel(pending.item.emoji)
         }
 
         val kindLabel = when (pending) {
-
             is ShopPendingBuy.Emoji -> "dieses Emoji"
-
-            is ShopPendingBuy.Theme -> "den Hintergrund „${pending.item.label}“"
-
+            is ShopPendingBuy.Theme -> "den Hintergrund „$titleLabel“"
             is ShopPendingBuy.Sticker -> "diesen Sticker"
-
-            is ShopPendingBuy.Pet -> "den Begleiter „${pending.item.label}“"
-
+            is ShopPendingBuy.Pet -> "den Begleiter „$titleLabel“"
         }
 
         val alreadyOwned = when (pending) {
@@ -2422,18 +2399,14 @@ private fun LootboxTab(
 
 
 
-    fun resolveLabel(result: com.luv.couple.net.LootboxResult): String = when (result.kind) {
-
-        "themes" -> ShopCatalog.THEMES.firstOrNull { it.id == result.itemId }?.label
-
-            ?: result.label
-
-        "pets" -> ShopCatalog.PETS.firstOrNull { it.emoji == result.itemId }?.label
-
-            ?: result.label
-
-        else -> result.emoji.ifBlank { result.label }
-
+    fun resolveLabel(result: com.luv.couple.net.LootboxResult): String {
+        val labeled = ItemLabels.forKind(result.kind, result.itemId)
+        if (!ItemLabels.looksLikeRawId(labeled)) return labeled
+        val fb = result.label.trim()
+        if (fb.isNotEmpty() && !ItemLabels.looksLikeRawId(fb)) return fb
+        val emo = result.emoji.trim()
+        if (emo.isNotEmpty() && !ItemLabels.looksLikeRawId(emo)) return emo
+        return ItemLabels.genericLabel(result.itemId)
     }
 
 
@@ -4167,7 +4140,7 @@ fun InventoryScreen(
 
                     Text(
 
-                        "Tippe das Emoji an, das durch $newEmoji ersetzt werden soll.",
+                        "Tippe das Emoji an, das ersetzt werden soll.",
 
                         fontFamily = BodyFont,
 

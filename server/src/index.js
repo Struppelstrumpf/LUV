@@ -541,6 +541,7 @@ const PET_SHOP_PRICES = {
   "🐉": 42,
   "🐲": 40,
   "🦄": 44,
+  "🧙": 500,
   "🐾": 14,
 };
 
@@ -760,11 +761,19 @@ function purgeShopItemEverywhere(kind, itemId) {
     }
   }
 
-  // Nur Markt-Angebote genau dieses Items
+  // Markt-Angebote: Escrow zuerst an Verkäufer zurück, dann cancel
   const listings = market.ensureMarket(db);
   for (const entry of Object.values(listings)) {
     if (!entry || entry.status !== "open") continue;
     if (String(entry.kind) === k && sameId(entry.itemId)) {
+      const seller = db.users?.[entry.sellerId];
+      if (seller) {
+        try {
+          safeGiveItem(seller, k, id);
+        } catch (_) {
+          /* ignore */
+        }
+      }
       entry.status = "cancelled";
       entry.cancelledAt = Date.now();
       entry.cancelReason = "item_deleted";
@@ -7796,6 +7805,24 @@ app.post("/v1/shop/buy-theme", (req, res) => {
   if (inv.themes.includes(themeId)) {
     return res.json({ ok: true, themeId, alreadyOwned: true, user: publicUser(ctx.user) });
   }
+  // Offenes Markt-Listing zählt als Besitz — kein Doppel-Kauf
+  {
+    const listings = market.ensureMarket(getDb());
+    const listed = Object.values(listings).some(
+      (e) =>
+        e &&
+        e.status === "open" &&
+        e.sellerId === ctx.user.id &&
+        e.kind === "themes" &&
+        String(e.itemId) === themeId
+    );
+    if (listed) {
+      return res.status(400).json({
+        error: "listed",
+        message: "Dieser Hintergrund liegt noch als Angebot auf dem Markt.",
+      });
+    }
+  }
   const check = shopCatalog.canBuy(getDb(), ctx.user, "themes", themeId);
   if (!check.ok) {
     if (check.error !== "unknown_item" || THEME_SHOP_PRICES[themeId] == null) {
@@ -7890,6 +7917,23 @@ app.post("/v1/shop/buy-pet", (req, res) => {
   const inv = ensureInventory(ctx.user);
   if (inv.pets.includes(emoji)) {
     return res.json({ ok: true, emoji, alreadyOwned: true, user: publicUser(ctx.user) });
+  }
+  {
+    const listings = market.ensureMarket(getDb());
+    const listed = Object.values(listings).some(
+      (e) =>
+        e &&
+        e.status === "open" &&
+        e.sellerId === ctx.user.id &&
+        e.kind === "pets" &&
+        String(e.itemId) === emoji
+    );
+    if (listed) {
+      return res.status(400).json({
+        error: "listed",
+        message: "Dieser Begleiter liegt noch als Angebot auf dem Markt.",
+      });
+    }
   }
   const check = shopCatalog.canBuy(getDb(), ctx.user, "pets", emoji);
   if (!check.ok) {
@@ -8190,6 +8234,16 @@ function clipMarketItemId(raw) {
   return e.slice(0, PET_ID_MAX);
 }
 
+function friendlyMarketLabel(kind, id, rawLabel) {
+  const lab = String(rawLabel || "").trim();
+  if (lab && !/^img_/i.test(lab) && !/^theme_/i.test(lab)) return lab.slice(0, 40);
+  if (kind === "pets") return /^img_/i.test(id) ? "Bild-Begleiter" : id;
+  if (kind === "stickers") return /^img_/i.test(id) ? "Eigener Sticker" : id;
+  if (kind === "emojis") return /^img_/i.test(id) ? "Eigenes Emoji" : id;
+  if (kind === "themes") return /^theme_/i.test(id) ? "Eigener Hintergrund" : id;
+  return "Item";
+}
+
 function marketItemMeta(kind, itemId) {
   const id = clipMarketItemId(itemId);
   if (!id || !["pets", "themes", "stickers", "emojis"].includes(kind)) return null;
@@ -8204,7 +8258,7 @@ function marketItemMeta(kind, itemId) {
         ? marriage.MARRIAGE_PET_LABEL
         : kind === "stickers" && id === marriage.MARRIAGE_CHAPEL_STICKER
           ? "Kapelle"
-          : id;
+          : friendlyMarketLabel(kind, id, id);
     return {
       category: kind,
       emoji: kind === "themes" ? "🖼️" : id,
@@ -8220,7 +8274,7 @@ function marketItemMeta(kind, itemId) {
     return {
       category: kind,
       emoji: (pub && pub.emoji) || (kind === "themes" ? "🖼️" : id),
-      label: (pub && pub.label) || cat.label || id,
+      label: friendlyMarketLabel(kind, id, (pub && pub.label) || cat.label || id),
       sellable: true,
     };
   }
@@ -8745,8 +8799,14 @@ app.post("/v1/market/:id/buy", (req, res) => {
     soldAt: Date.now(),
     buyerNickname: String(ctx.user.nickname || "Jemand").slice(0, 18),
   });
-  if (seller.pendingMarketSales.length > 80) {
-    seller.pendingMarketSales = seller.pendingMarketSales.slice(-80);
+  // Nie unverrechnete Verkäufe droppen — älteste zuerst auszahlen
+  while (seller.pendingMarketSales.length > 80) {
+    const old = seller.pendingMarketSales.shift();
+    if (!old) break;
+    const credit = Math.max(0, Math.floor(Number(old.priceCoins) || 0));
+    if (credit > 0) {
+      applyLedger(seller.id, credit, "market_sale_auto", String(old.id || ""));
+    }
   }
   safeGiveItem(ctx.user, entry.kind, entry.itemId);
   market.recordSale(getDb(), entry.kind, entry.itemId, price);
