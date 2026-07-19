@@ -53,6 +53,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.luv.couple.profile.ProfileCatalog
 import com.luv.couple.profile.ProfileTheme
 import com.luv.couple.profile.ProfileThemeBackdrop
+import com.luv.couple.net.LuvApiClient
 import com.luv.couple.shop.InventoryAvailability
 import com.luv.couple.shop.ItemLabels
 import com.luv.couple.ui.theme.AccentRose
@@ -150,6 +151,11 @@ fun ProfileInventoryPanel(
     }
     var searchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    var labelsEpoch by remember { mutableIntStateOf(LiveShopCatalog.displayLabelsEpoch) }
+    LaunchedEffect(Unit) {
+        runCatching { LuvApiClient.refreshItemDisplayLabels() }
+        labelsEpoch = LiveShopCatalog.displayLabelsEpoch
+    }
     LaunchedEffect(selectedTab, tabs.size) {
         tab = selectedTab.coerceIn(0, tabs.lastIndex)
     }
@@ -163,12 +169,18 @@ fun ProfileInventoryPanel(
     val freeEmojis = remember(ownedEmojis, emojiBar) {
         InventoryAvailability.freeEmojis(ownedEmojis, emojiBar)
     }
-    val themeItems = remember(ownedThemes, searchQuery) {
+    val themeItems = remember(ownedThemes, searchQuery, labelsEpoch) {
         val owned = ownedThemes.map { it.trim() }.filter { it.isNotEmpty() }.distinct().toSet()
         ProfileCatalog.THEMES.filter { it.id in owned }
-            .filter { LiveShopCatalog.matchesQuery(searchQuery, it.emoji, it.label) }
+            .filter {
+                LiveShopCatalog.matchesQuery(
+                    searchQuery,
+                    it.emoji,
+                    ItemLabels.themeLabel(it.id)
+                )
+            }
     }
-    val petItems = remember(ownedPets, searchQuery) {
+    val petItems = remember(ownedPets, searchQuery, labelsEpoch) {
         ownedPets.map { it.trim() }.filter { it.isNotEmpty() }.distinct().ifEmpty {
             if (readOnly) listOf("🐣") else emptyList()
         }.filter { id ->
@@ -437,7 +449,7 @@ fun ProfileInventoryPanel(
                                             fontSize = ts(16.sp)
                                         )
                                         Text(
-                                            theme.label,
+                                            ItemLabels.themeLabel(theme.id),
                                             color = Color.White,
                                             fontFamily = BodyFont,
                                             fontSize = ts(10.sp),

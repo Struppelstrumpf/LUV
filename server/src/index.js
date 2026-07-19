@@ -8387,14 +8387,28 @@ app.get("/v1/shop/catalog", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   seedShopCatalogIfNeeded();
-  shopCatalog.deactivateExpired(getDb());
+  const db = getDb();
+  shopCatalog.deactivateExpired(db);
   const kind = String(req.query?.kind || "").trim() || null;
   const q = String(req.query?.q || "").trim().slice(0, 40);
-  const items = shopCatalog.listPublicCatalog(getDb(), { kind: kind || undefined, q });
+  const items = shopCatalog.listPublicCatalog(db, { kind: kind || undefined, q });
+  // Admin-Anzeigenamen (auch für Items außerhalb des öffentlichen Shops)
+  const displayLabels = { ...itemLabels.ensureItemLabels(db) };
   return res.json({
     ok: true,
     items,
+    displayLabels,
     coins: ctx.user.coins || 0,
+  });
+});
+
+/** Schlanke Label-Overrides für Inventar/Markt (ohne vollen Katalog). */
+app.get("/v1/item-labels", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  return res.json({
+    ok: true,
+    displayLabels: { ...itemLabels.ensureItemLabels(getDb()) },
   });
 });
 
@@ -8919,6 +8933,8 @@ function clipMarketItemId(raw) {
 }
 
 function friendlyMarketLabel(kind, id, rawLabel) {
+  const override = itemLabels.getDisplayLabel(getDb(), kind, id);
+  if (override) return override.slice(0, 40);
   const lab = String(rawLabel || "").trim();
   const looksRaw = /^img_/i.test(lab) || /^theme_/i.test(lab);
   // Eigenes Label nutzen, solange es nicht nur die technische ID / das nackte Emoji ist
@@ -8956,7 +8972,7 @@ function marketItemMeta(kind, itemId) {
   seedShopCatalogIfNeeded();
   const cat = shopCatalog.getItem(getDb(), kind, id);
   if (cat) {
-    const pub = shopCatalog.publicItem(cat, Date.now(), { admin: false });
+    const pub = shopCatalog.publicItem(cat, Date.now(), { admin: false, db: getDb() });
     return {
       category: kind,
       emoji: (pub && pub.emoji) || (kind === "themes" ? "🖼️" : id),

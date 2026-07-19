@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.1.6",
+            listOf(
+                "Admin-Itemnamen erscheinen sofort in Inventar und Shop",
+            )
+        ),
+        Entry(
             "2.1.5",
             listOf(
                 "Day-Streak steigt wieder zuverlässig jeden aktiven Tag",

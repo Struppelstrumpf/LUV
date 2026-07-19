@@ -21,7 +21,11 @@ object ItemLabels {
     }
 
     fun petLabel(id: String): String {
+        LiveShopCatalog.displayLabel("pets", id)?.let { return it }
         LiveShopCatalog.remotePets?.firstOrNull { it.emoji == id }?.label
+            ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) && it != id }
+            ?.let { return it }
+        LiveShopCatalog.pets().firstOrNull { it.emoji == id }?.label
             ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) && it != id }
             ?.let { return it }
         ShopCatalog.PETS.firstOrNull { it.emoji == id }?.label
@@ -32,6 +36,7 @@ object ItemLabels {
     }
 
     fun stickerLabel(id: String): String {
+        LiveShopCatalog.displayLabel("stickers", id)?.let { return it }
         LiveShopCatalog.remoteStickers?.firstOrNull { it.emoji == id }?.label
             ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) && it != id }
             ?.let { return it }
@@ -43,6 +48,7 @@ object ItemLabels {
     }
 
     fun emojiLabel(id: String): String {
+        LiveShopCatalog.displayLabel("emojis", id)?.let { return it }
         LiveShopCatalog.remoteEmojis?.firstOrNull { it.emoji == id }?.label
             ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) && it != id }
             ?.let { return it }
@@ -54,6 +60,7 @@ object ItemLabels {
     }
 
     fun themeLabel(id: String): String {
+        LiveShopCatalog.displayLabel("themes", id)?.let { return it }
         LiveShopCatalog.remoteThemes?.firstOrNull { it.id == id }?.label
             ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) }
             ?.let { return it }
@@ -95,6 +102,10 @@ object ItemLabels {
     fun forKindGuess(itemId: String): String {
         val id = itemId.trim()
         if (id.isEmpty()) return ""
+        LiveShopCatalog.displayLabel("themes", id)?.let { return it }
+        LiveShopCatalog.displayLabel("pets", id)?.let { return it }
+        LiveShopCatalog.displayLabel("stickers", id)?.let { return it }
+        LiveShopCatalog.displayLabel("emojis", id)?.let { return it }
         ProfileCatalog.THEMES.firstOrNull { it.id == id }?.label?.let { return it }
         LiveShopCatalog.remoteThemes?.firstOrNull { it.id == id }?.label
             ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) }

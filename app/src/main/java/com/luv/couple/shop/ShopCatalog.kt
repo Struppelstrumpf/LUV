@@ -475,6 +475,24 @@ object LiveShopCatalog {
     @Volatile var remoteStickers: List<ShopEmoji>? = null
     @Volatile var remoteThemes: List<ShopTheme>? = null
     @Volatile var remotePets: List<ShopPet>? = null
+    /** Admin-Anzeigenamen: "pets:🐯" → "Tiger" (gewinnt über lokale Fallbacks). */
+    @Volatile var displayLabels: Map<String, String> = emptyMap()
+        private set
+    /** Steigt bei jedem Label-Sync — Compose kann darauf reagieren. */
+    @Volatile var displayLabelsEpoch: Int = 0
+        private set
+
+    fun setDisplayLabels(map: Map<String, String>) {
+        displayLabels = map
+        displayLabelsEpoch++
+    }
+
+    fun displayLabel(kind: String, itemId: String): String? {
+        val k = kind.trim().lowercase()
+        val id = itemId.trim()
+        if (k.isEmpty() || id.isEmpty()) return null
+        return displayLabels["$k:$id"]?.trim()?.takeIf { it.isNotEmpty() }
+    }
 
     fun emojis(): List<ShopEmoji> =
         mergeEmojiLists(ShopCatalog.EMOJIS, remoteEmojis)

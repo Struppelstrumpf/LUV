@@ -1477,6 +1477,37 @@ object LuvApiClient {
             if (pets.isNotEmpty()) {
                 com.luv.couple.shop.LiveShopCatalog.remotePets = pets.sortedBy { it.priceCoins }
             }
+            val labelsObj = json.optJSONObject("displayLabels")
+            if (labelsObj != null) {
+                applyDisplayLabelsJson(labelsObj)
+            } else {
+                // Ältere API ohne Feld → eigener Endpoint
+                runCatching {
+                    applyDisplayLabelsJson(
+                        authedGet("/v1/item-labels").optJSONObject("displayLabels")
+                    )
+                }
+            }
+        }
+    }
+
+    private fun applyDisplayLabelsJson(labelsObj: org.json.JSONObject?) {
+        if (labelsObj == null) return
+        val map = buildMap {
+            labelsObj.keys().forEach { key ->
+                val v = labelsObj.optString(key, "").trim()
+                if (key.isNotBlank() && v.isNotEmpty()) put(key, v)
+            }
+        }
+        // Immer ersetzen (auch leer), sonst bleiben gelöschte Overrides lokal hängen
+        com.luv.couple.shop.LiveShopCatalog.setDisplayLabels(map)
+    }
+
+    suspend fun refreshItemDisplayLabels() = withContext(Dispatchers.IO) {
+        runCatching {
+            applyDisplayLabelsJson(
+                authedGet("/v1/item-labels").optJSONObject("displayLabels")
+            )
         }
     }
 
