@@ -22,35 +22,35 @@ object ItemLabels {
 
     fun petLabel(id: String): String {
         LiveShopCatalog.remotePets?.firstOrNull { it.emoji == id }?.label
-            ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) }
+            ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) && it != id }
             ?.let { return it }
         ShopCatalog.PETS.firstOrNull { it.emoji == id }?.label
-            ?.takeIf { it.isNotBlank() }
+            ?.takeIf { it.isNotBlank() && it != id }
             ?.let { return it }
         if (isImagePetId(id)) return "Bild-Begleiter"
-        return id
+        return EmojiNamesDe.name(id)
     }
 
     fun stickerLabel(id: String): String {
         LiveShopCatalog.remoteStickers?.firstOrNull { it.emoji == id }?.label
-            ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) }
+            ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) && it != id }
             ?.let { return it }
         LiveShopCatalog.stickers().firstOrNull { it.emoji == id }?.label
-            ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) }
+            ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) && it != id }
             ?.let { return it }
         if (isImagePetId(id)) return "Eigener Sticker"
-        return id
+        return EmojiNamesDe.name(id)
     }
 
     fun emojiLabel(id: String): String {
         LiveShopCatalog.remoteEmojis?.firstOrNull { it.emoji == id }?.label
-            ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) }
+            ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) && it != id }
             ?.let { return it }
         LiveShopCatalog.emojis().firstOrNull { it.emoji == id }?.label
-            ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) }
+            ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) && it != id }
             ?.let { return it }
         if (isImagePetId(id)) return "Eigenes Emoji"
-        return id
+        return EmojiNamesDe.name(id)
     }
 
     fun themeLabel(id: String): String {
@@ -89,5 +89,20 @@ object ItemLabels {
         val t = raw.trim()
         return t.startsWith("img_", ignoreCase = true) ||
             t.startsWith("theme_", ignoreCase = true)
+    }
+
+    /** Beste Rate für Suche: Theme-ID, Pet-Label oder Emoji-Name. */
+    fun forKindGuess(itemId: String): String {
+        val id = itemId.trim()
+        if (id.isEmpty()) return ""
+        ProfileCatalog.THEMES.firstOrNull { it.id == id }?.label?.let { return it }
+        LiveShopCatalog.remoteThemes?.firstOrNull { it.id == id }?.label
+            ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) }
+            ?.let { return it }
+        ShopCatalog.PETS.firstOrNull { it.emoji == id }?.label?.let { return it }
+        LiveShopCatalog.remotePets?.firstOrNull { it.emoji == id }?.label
+            ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) }
+            ?.let { return it }
+        return EmojiNamesDe.name(id)
     }
 }

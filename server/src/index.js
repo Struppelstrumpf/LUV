@@ -8364,12 +8364,24 @@ function clipMarketItemId(raw) {
 
 function friendlyMarketLabel(kind, id, rawLabel) {
   const lab = String(rawLabel || "").trim();
-  if (lab && !/^img_/i.test(lab) && !/^theme_/i.test(lab)) return lab.slice(0, 40);
-  if (kind === "pets") return /^img_/i.test(id) ? "Bild-Begleiter" : id;
-  if (kind === "stickers") return /^img_/i.test(id) ? "Eigener Sticker" : id;
-  if (kind === "emojis") return /^img_/i.test(id) ? "Eigenes Emoji" : id;
-  if (kind === "themes") return /^theme_/i.test(id) ? "Eigener Hintergrund" : id;
-  return "Item";
+  const looksRaw = /^img_/i.test(lab) || /^theme_/i.test(lab);
+  // Eigenes Label nutzen, solange es nicht nur die technische ID / das nackte Emoji ist
+  if (lab && !looksRaw && lab !== id) return lab.slice(0, 40);
+  if (kind === "pets") {
+    if (/^img_/i.test(id)) return "Bild-Begleiter";
+    const named = shopCatalog.displayNameForEmoji(id);
+    return named && named !== id ? named.slice(0, 40) : id;
+  }
+  if (kind === "stickers") {
+    if (/^img_/i.test(id)) return "Eigener Sticker";
+    return shopCatalog.displayNameForEmoji(id).slice(0, 40);
+  }
+  if (kind === "emojis") {
+    if (/^img_/i.test(id)) return "Eigenes Emoji";
+    return shopCatalog.displayNameForEmoji(id).slice(0, 40);
+  }
+  if (kind === "themes") return /^theme_/i.test(id) ? "Eigener Hintergrund" : (lab || id).slice(0, 40);
+  return shopCatalog.displayNameForEmoji(id).slice(0, 40) || "Item";
 }
 
 function marketItemMeta(kind, itemId) {

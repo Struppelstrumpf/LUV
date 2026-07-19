@@ -327,6 +327,7 @@ const EMOJI_SEARCH_KEYWORDS = {
   "⛰️": "berg gebirge mountain",
   "🌖": "abnehmend drittes mondviertel mond gibbous moon space waning",
   "🌲": "baum nadelbaum pflanze tannenbaum christmas evergreen forest pine tree",
+  "🌳": "baum laubbaum gruener baum pflanze wald deciduous round tree green",
   "🍉": "frucht melone obst wasser wassermelone fruit watermelon",
   "🍞": "brot brotlaib essen kohlenhydrate laib toast weissbrot weizen bread carbs food grain loaf restaurant wheat",
   "🍭": "lolli lutscher suessigkeit candy dessert food lollipop restaurant sweet",

@@ -35,6 +35,7 @@ import androidx.compose.runtime.setValue
 import com.luv.couple.shop.LiveShopCatalog
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -51,6 +52,7 @@ import com.luv.couple.profile.ProfileCatalog
 import com.luv.couple.profile.ProfileTheme
 import com.luv.couple.profile.ProfileThemeBackdrop
 import com.luv.couple.shop.InventoryAvailability
+import com.luv.couple.shop.ItemLabels
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -150,35 +152,23 @@ fun ProfileInventoryPanel(
     LaunchedEffect(tab, tabs) {
         tabs.getOrNull(tab)?.kindPrefix?.let(onKindVisited)
     }
-    // Frei = Besitz − in Verwendung (platziert / Leiste / ausgerüstet)
+    // Frei = Besitz − in Verwendung (platziert / Leiste / ausgerüstet) — für Ausgrauung
     val freeStickers = remember(ownedStickers, placedStickers) {
         InventoryAvailability.freeStickers(ownedStickers, placedStickers)
     }
     val freeEmojis = remember(ownedEmojis, emojiBar) {
         InventoryAvailability.freeEmojis(ownedEmojis, emojiBar)
     }
-    val freeThemeIds = remember(ownedThemes, currentThemeId, readOnly) {
-        if (readOnly) ownedThemes.distinct()
-        else InventoryAvailability.freeThemes(ownedThemes, currentThemeId)
-    }
-    val freePetIds = remember(ownedPets, currentCompanion, readOnly) {
-        if (readOnly) ownedPets.distinct().ifEmpty { listOf("🐣") }
-        else {
-            val free = InventoryAvailability.freePets(ownedPets, currentCompanion)
-            // Wenn alles ausgerüstet: leere Liste (nicht Default wieder einblenden)
-            free
-        }
-    }
-    val themeItems = remember(freeThemeIds, searchQuery) {
-        val owned = freeThemeIds.toSet()
+    val themeItems = remember(ownedThemes, searchQuery) {
+        val owned = ownedThemes.map { it.trim() }.filter { it.isNotEmpty() }.distinct().toSet()
         ProfileCatalog.THEMES.filter { it.id in owned }
             .filter { LiveShopCatalog.matchesQuery(searchQuery, it.emoji, it.label) }
     }
-    val petItems = remember(freePetIds, searchQuery) {
-        freePetIds.filter { id ->
-            val label = LiveShopCatalog.remotePets?.firstOrNull { it.emoji == id }?.label
-                ?: com.luv.couple.shop.ShopCatalog.PETS.firstOrNull { it.emoji == id }?.label
-                ?: ""
+    val petItems = remember(ownedPets, searchQuery) {
+        ownedPets.map { it.trim() }.filter { it.isNotEmpty() }.distinct().ifEmpty {
+            if (readOnly) listOf("🐣") else emptyList()
+        }.filter { id ->
+            val label = ItemLabels.petLabel(id)
             val search = LiveShopCatalog.remotePets?.firstOrNull { it.emoji == id }?.searchText.orEmpty()
             LiveShopCatalog.matchesQuery(searchQuery, id, label, search)
         }
@@ -317,8 +307,8 @@ fun ProfileInventoryPanel(
 
             when (tabs.getOrNull(tab)) {
                 InvTab.Emojis -> {
-                    val entries = freeEmojis.entries
-                        .filter { LiveShopCatalog.matchesQuery(q, it.key) }
+                    val entries = ownedEmojis.entries
+                        .filter { LiveShopCatalog.matchesQuery(q, it.key, ItemLabels.emojiLabel(it.key)) }
                         .sortedBy { it.key }
                     if (entries.isEmpty()) {
                         Box(modifier = gridMod, contentAlignment = Alignment.Center) {
@@ -339,6 +329,8 @@ fun ProfileInventoryPanel(
                             verticalArrangement = Arrangement.spacedBy(s(8.dp))
                         ) {
                             items(entries, key = { it.key }) { (emoji, count) ->
+                                val free = freeEmojis[emoji] ?: 0
+                                val dimmed = !readOnly && free <= 0
                                 val itemKey = "emojis:$emoji"
                                 ItemNewGlowBorder(
                                     active = itemKey in highlightKeys,
@@ -350,7 +342,8 @@ fun ProfileInventoryPanel(
                                             .fillMaxSize()
                                             .clip(RoundedCornerShape(s(14.dp)))
                                             .background(BgSoft)
-                                            .clickable { onEmoji(emoji) }
+                                            .alpha(if (dimmed) 0.38f else 1f)
+                                            .clickable(enabled = readOnly || free > 0) { onEmoji(emoji) }
                                             .padding(s(6.dp))
                                     ) {
                                         com.luv.couple.ui.ItemGlyph(
@@ -391,6 +384,7 @@ fun ProfileInventoryPanel(
                     ) {
                         items(themeItems, key = { it.id }) { theme ->
                             val on = theme.id == currentThemeId
+                            val dimmed = !readOnly && on
                             val itemKey = "themes:${theme.id}"
                             ItemNewGlowBorder(
                                 active = itemKey in highlightKeys,
@@ -401,12 +395,13 @@ fun ProfileInventoryPanel(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .clip(RoundedCornerShape(s(14.dp)))
+                                        .alpha(if (dimmed) 0.45f else 1f)
                                         .border(
                                             1.dp,
                                             if (on) AccentRose.copy(0.85f) else Color.White.copy(0.08f),
                                             RoundedCornerShape(s(14.dp))
                                         )
-                                        .clickable { onTheme(theme) }
+                                        .clickable(enabled = readOnly || !on) { onTheme(theme) }
                                 ) {
                                     ProfileThemeBackdrop(
                                         theme = theme,
@@ -438,8 +433,8 @@ fun ProfileInventoryPanel(
                     }
                 }
                 InvTab.Stickers -> {
-                    val stickerEntries = freeStickers.entries
-                        .filter { LiveShopCatalog.matchesQuery(q, it.key) }
+                    val stickerEntries = ownedStickers.entries
+                        .filter { LiveShopCatalog.matchesQuery(q, it.key, ItemLabels.stickerLabel(it.key)) }
                         .sortedBy { it.key }
                     if (stickerEntries.isEmpty()) {
                         InvEmptyHint(
@@ -458,6 +453,8 @@ fun ProfileInventoryPanel(
                             verticalArrangement = Arrangement.spacedBy(s(8.dp))
                         ) {
                             items(stickerEntries, key = { it.key }) { (emoji, count) ->
+                                val free = freeStickers[emoji] ?: 0
+                                val dimmed = !readOnly && free <= 0
                                 val itemKey = "stickers:$emoji"
                                 ItemNewGlowBorder(
                                     active = itemKey in highlightKeys,
@@ -469,7 +466,8 @@ fun ProfileInventoryPanel(
                                             .fillMaxSize()
                                             .clip(RoundedCornerShape(s(14.dp)))
                                             .background(BgSoft)
-                                            .clickable { onSticker(emoji) }
+                                            .alpha(if (dimmed) 0.38f else 1f)
+                                            .clickable(enabled = readOnly || free > 0) { onSticker(emoji) }
                                             .padding(s(4.dp))
                                     ) {
                                         com.luv.couple.ui.ItemGlyph(
@@ -496,7 +494,7 @@ fun ProfileInventoryPanel(
                     Box(modifier = gridMod, contentAlignment = Alignment.Center) {
                         Text(
                             if (readOnly) "Kein Begleiter."
-                            else "Aktiver Begleiter ist ausgerüstet.\nAndere Begleiter erscheinen hier.",
+                            else "Noch keine Begleiter — im Itemshop kaufen.",
                             color = TextMuted,
                             fontFamily = BodyFont,
                             fontSize = ts(13.sp),
@@ -512,6 +510,8 @@ fun ProfileInventoryPanel(
                         verticalArrangement = Arrangement.spacedBy(s(8.dp))
                     ) {
                         items(petItems, key = { it }) { emoji ->
+                            val equipped = emoji == currentCompanion
+                            val dimmed = !readOnly && equipped
                             val itemKey = "pets:$emoji"
                             ItemNewGlowBorder(
                                 active = itemKey in highlightKeys,
@@ -523,12 +523,13 @@ fun ProfileInventoryPanel(
                                         .fillMaxSize()
                                         .clip(RoundedCornerShape(s(14.dp)))
                                         .background(BgSoft)
+                                        .alpha(if (dimmed) 0.38f else 1f)
                                         .border(
                                             1.dp,
-                                            Color.White.copy(0.08f),
+                                            if (equipped) AccentRose.copy(0.55f) else Color.White.copy(0.08f),
                                             RoundedCornerShape(s(14.dp))
                                         )
-                                        .clickable { onCompanion(emoji) },
+                                        .clickable(enabled = readOnly || !equipped) { onCompanion(emoji) },
                                     contentAlignment = Alignment.Center
                                 ) {
                                     com.luv.couple.ui.CompanionGlyph(

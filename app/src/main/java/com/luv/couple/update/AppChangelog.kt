@@ -12,6 +12,14 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.1.2",
+            listOf(
+                "Suche in Itemshop, Marktplatz & Inventar zuverlässiger (auch mehrere Wörter)",
+                "Items mit klaren deutschen Namen (z. B. Grüner Baum, Rotes Herz)",
+                "Inventar: platzierte Items sichtbar, ausgegraut wenn keines frei",
+            )
+        ),
+        Entry(
             "2.1.1",
             listOf(
                 "Papierkorb: Mitspieler werden wieder zuverlässig gefragt",

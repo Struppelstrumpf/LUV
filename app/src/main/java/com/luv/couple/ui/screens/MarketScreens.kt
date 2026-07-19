@@ -1719,9 +1719,9 @@ private fun ItemShopContent(
         }
 
         val kindLabel = when (pending) {
-            is ShopPendingBuy.Emoji -> "dieses Emoji"
+            is ShopPendingBuy.Emoji -> "dieses Emoji „$titleLabel“"
             is ShopPendingBuy.Theme -> "den Hintergrund „$titleLabel“"
-            is ShopPendingBuy.Sticker -> "diesen Sticker"
+            is ShopPendingBuy.Sticker -> "diesen Sticker „$titleLabel“"
             is ShopPendingBuy.Pet -> "den Begleiter „$titleLabel“"
         }
 
@@ -2111,7 +2111,12 @@ private fun ItemShopContent(
 
             LiveShopCatalog.stickers().filter {
 
-                LiveShopCatalog.matchesQuery(q, it.emoji, searchText = it.searchText)
+                LiveShopCatalog.matchesQuery(
+                    q,
+                    it.emoji,
+                    label = it.label.ifBlank { ItemLabels.stickerLabel(it.emoji) },
+                    searchText = it.searchText
+                )
 
             }
 
@@ -2141,7 +2146,12 @@ private fun ItemShopContent(
 
             LiveShopCatalog.emojis().filter {
 
-                LiveShopCatalog.matchesQuery(q, it.emoji, searchText = it.searchText)
+                LiveShopCatalog.matchesQuery(
+                    q,
+                    it.emoji,
+                    label = it.label.ifBlank { ItemLabels.emojiLabel(it.emoji) },
+                    searchText = it.searchText
+                )
 
             }
 

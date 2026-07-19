@@ -515,8 +515,16 @@ object LiveShopCatalog {
     fun matchesQuery(query: String, emoji: String, label: String = "", searchText: String = ""): Boolean {
         val tokens = normalizeSearch(query).split(' ').filter { it.isNotEmpty() }
         if (tokens.isEmpty()) return true
+        val displayName = when {
+            label.isNotBlank() && label != emoji -> label
+            else -> ItemLabels.forKindGuess(emoji)
+        }
         val catalogBits = buildString {
             append(EmojiSearchKeywords.forEmoji(emoji))
+            append(' ')
+            append(displayName)
+            append(' ')
+            append(EmojiNamesDe.name(emoji))
             append(' ')
             remoteEmojis?.firstOrNull { it.emoji == emoji }?.searchText?.let { append(it); append(' ') }
             remoteStickers?.firstOrNull { it.emoji == emoji }?.searchText?.let { append(it); append(' ') }
@@ -535,12 +543,18 @@ object LiveShopCatalog {
             ShopCatalog.EMOJIS.firstOrNull { it.emoji == emoji }?.searchText?.let { append(it); append(' ') }
             ShopCatalog.STICKERS.firstOrNull { it.emoji == emoji }?.searchText?.let { append(it); append(' ') }
         }
-        val hayWords = normalizeSearch("$emoji $label $searchText $catalogBits")
-            .split(' ')
-            .filter { it.isNotEmpty() }
+        val hay = normalizeSearch("$emoji $label $searchText $catalogBits")
+        val hayWords = hay.split(' ').filter { it.isNotEmpty() }
+        // Alle Query-Wörter (Leerzeichen-getrennt) müssen vorkommen —
+        // auch als Teilwort in Keywords ("baum" in "nadelbaum" / "laubbaum").
         return tokens.all { token ->
-            emoji.contains(token) ||
-                hayWords.any { w -> w == token || w.startsWith(token) }
+            when {
+                token.length <= 1 -> hayWords.any { it == token }
+                else ->
+                    emoji.contains(token) ||
+                        hay.contains(token) ||
+                        hayWords.any { w -> w == token || w.startsWith(token) || w.contains(token) }
+            }
         }
     }
 

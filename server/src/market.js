@@ -5,6 +5,7 @@
 
 const crypto = require("crypto");
 const { isAchievementSticker } = require("./sticker_catalog");
+const shopCatalog = require("./shop_catalog");
 
 // Gleiche Reihenfolge/Namen wie Itemshop & Inventar
 const CATEGORIES = [
@@ -278,8 +279,16 @@ function aggregateMarket(db, viewerId, { category, q, mode }) {
   for (const e of active) {
     if (category && category !== "all" && e.category !== category) continue;
     if (q) {
-      const hay = `${e.label} ${e.emoji} ${e.sellerNickname}`.toLowerCase();
-      if (!hay.includes(q.toLowerCase())) continue;
+      const itemMatch = shopCatalog.matchesSearchQuery(
+        {
+          itemId: e.itemId,
+          label: e.label,
+          kind: e.kind,
+          searchText: `${e.emoji || ""} ${e.sellerNickname || ""}`,
+        },
+        q
+      );
+      if (!itemMatch) continue;
     }
     const key = `${e.kind}|${e.itemId}`;
     if (!groups.has(key)) {

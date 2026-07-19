@@ -92,9 +92,10 @@ private data class InventoryPick(
 /** Nie raw img_/theme_-IDs in Markt-Texten zeigen. */
 private fun marketDisplayLabel(kind: String, itemId: String, fallbackLabel: String = ""): String {
     val fromCatalog = ItemLabels.forKind(kind, itemId)
-    if (!ItemLabels.looksLikeRawId(fromCatalog)) return fromCatalog
+    if (!ItemLabels.looksLikeRawId(fromCatalog) && fromCatalog != itemId) return fromCatalog
     val fb = fallbackLabel.trim()
-    if (fb.isNotEmpty() && !ItemLabels.looksLikeRawId(fb)) return fb
+    if (fb.isNotEmpty() && !ItemLabels.looksLikeRawId(fb) && fb != itemId) return fb
+    if (!ItemLabels.looksLikeRawId(fromCatalog)) return fromCatalog
     return ItemLabels.genericLabel(itemId)
 }
 

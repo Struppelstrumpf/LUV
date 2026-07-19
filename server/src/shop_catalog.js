@@ -4,6 +4,7 @@
  */
 
 const { keywordsForEmoji } = require("./emoji_search_keywords");
+const { displayNameForEmoji } = require("./emoji_display_names");
 
 const EXTRA_EMOJI_PRICES = {
   // Premium / teuer
@@ -365,14 +366,23 @@ function defaultSearchText(kind, itemId) {
 
 function itemSearchHaystack(item) {
   const id = String(item?.itemId || "");
-  return mergeSearchText(id, item?.label, item?.searchText, keywordsForEmoji(id), item?.kind);
+  return mergeSearchText(
+    id,
+    item?.label,
+    displayNameForEmoji(id),
+    item?.searchText,
+    keywordsForEmoji(id),
+    item?.kind
+  );
 }
 
-function tokenMatchesHay(token, hayWords, itemId) {
+function tokenMatchesHay(token, hayWords, hay, itemId) {
   if (!token) return true;
   if (String(itemId || "").includes(token)) return true;
+  if (token.length <= 1) return hayWords.some((w) => w === token);
+  if (hay.includes(token)) return true;
   for (const w of hayWords) {
-    if (w === token || w.startsWith(token)) return true;
+    if (w === token || w.startsWith(token) || w.includes(token)) return true;
   }
   return false;
 }
@@ -380,8 +390,9 @@ function tokenMatchesHay(token, hayWords, itemId) {
 function matchesSearchQuery(item, query) {
   const tokens = normalizeSearch(query).split(" ").filter(Boolean);
   if (!tokens.length) return true;
-  const hayWords = itemSearchHaystack(item).split(" ").filter(Boolean);
-  return tokens.every((token) => tokenMatchesHay(token, hayWords, item?.itemId));
+  const hay = itemSearchHaystack(item);
+  const hayWords = hay.split(" ").filter(Boolean);
+  return tokens.every((token) => tokenMatchesHay(token, hayWords, hay, item?.itemId));
 }
 
 function normalizeItem(raw) {
@@ -688,4 +699,8 @@ module.exports = {
   deactivateExpired,
   itemKey,
   publicItem,
+  matchesSearchQuery,
+  normalizeSearch,
+  itemSearchHaystack,
+  displayNameForEmoji,
 };

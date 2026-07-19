@@ -330,6 +330,7 @@ object EmojiSearchKeywords {
         "⛰️" to "berg gebirge mountain",
         "🌖" to "abnehmend drittes mondviertel mond gibbous moon space waning",
         "🌲" to "baum nadelbaum pflanze tannenbaum christmas evergreen forest pine tree",
+        "🌳" to "baum laubbaum gruener baum pflanze wald deciduous round tree green",
         "🍉" to "frucht melone obst wasser wassermelone fruit watermelon",
         "🍞" to "brot brotlaib essen kohlenhydrate laib toast weissbrot weizen bread carbs food grain loaf restaurant wheat",
         "🍭" to "lolli lutscher suessigkeit candy dessert food lollipop restaurant sweet",
