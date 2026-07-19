@@ -22,6 +22,7 @@ const DEFAULT = {
   marketListings: {},
   marketMeta: { priceHistory: {} },
   economySettings: { achievementDailyCap: 12 },
+  itemTradeFlags: {},
   marriages: {},
   guestbookReports: [],
   shopCatalog: { items: {}, version: 1 },
@@ -83,6 +84,10 @@ function load() {
         raw.economySettings && typeof raw.economySettings === "object"
           ? raw.economySettings
           : { achievementDailyCap: 12 },
+      itemTradeFlags:
+        raw.itemTradeFlags && typeof raw.itemTradeFlags === "object"
+          ? raw.itemTradeFlags
+          : {},
       marriages:
         raw.marriages && typeof raw.marriages === "object" ? raw.marriages : {},
       guestbookReports: Array.isArray(raw.guestbookReports)

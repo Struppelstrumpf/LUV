@@ -22,6 +22,7 @@ const shopCatalog = require("./shop_catalog");
 const petImages = require("./pet_images");
 const playBilling = require("./play_billing");
 const playIntegrity = require("./play_integrity");
+const itemTrade = require("./item_trade");
 const {
   STICKER_SHOP_PRICES,
   isKnownSticker,
@@ -813,13 +814,33 @@ function catalogLootboxExtras() {
     }));
 }
 
-/** Heirats-Boni & Erfolgs-Exclusives — nie handelbar. */
+/** System-gebunden (Starter/Ehe) — immer gesperrt. Erfolge über itemTrade-Flags. */
 function isBoundInventoryItem(kind, itemId) {
+  return itemTrade.isLockedStarter(kind, itemId, {
+    defaultPet: DEFAULT_PET,
+    starterEmojis: STARTER_EMOJIS,
+  });
+}
+
+function marketSellableFor(kind, itemId) {
   const id = String(itemId || "").trim();
-  if (!id) return false;
-  if (kind === "pets" && id === marriage.MARRIAGE_PET) return true;
-  if (kind === "stickers" && isAchievementSticker(id)) return true;
-  return false;
+  const sources = [];
+  if (shopCatalog.isShopKnown(getDb(), kind, id)) sources.push("shop");
+  if (ach.isAchievementRewardItem(kind, id) || (kind === "stickers" && isAchievementSticker(id))) {
+    sources.push("achievement");
+  }
+  if (kind === "pets" && id === marriage.MARRIAGE_PET) sources.push("marriage");
+  if (
+    (kind === "pets" && id === DEFAULT_PET) ||
+    (kind === "themes" && id === "meadow") ||
+    (kind === "emojis" && STARTER_EMOJIS.includes(id))
+  ) {
+    sources.push("starter");
+  }
+  return itemTrade.getMarketSellable(getDb(), kind, id, sources, {
+    defaultPet: DEFAULT_PET,
+    starterEmojis: STARTER_EMOJIS,
+  });
 }
 
 function achDailyCap() {
@@ -8400,65 +8421,45 @@ function friendlyMarketLabel(kind, id, rawLabel) {
 function marketItemMeta(kind, itemId) {
   const id = clipMarketItemId(itemId);
   if (!id || !["pets", "themes", "stickers", "emojis"].includes(kind)) return null;
-  const unsellable =
-    isBoundInventoryItem(kind, id) ||
-    (kind === "pets" && id === DEFAULT_PET) ||
-    (kind === "themes" && id === "meadow") ||
-    (kind === "stickers" && isAchievementSticker(id));
-  if (unsellable) {
-    const label =
-      kind === "pets" && id === marriage.MARRIAGE_PET
-        ? marriage.MARRIAGE_PET_LABEL
-        : kind === "stickers" && id === marriage.MARRIAGE_CHAPEL_STICKER
-          ? "Kapelle"
-          : friendlyMarketLabel(kind, id, id);
-    return {
-      category: kind,
-      emoji: kind === "themes" ? "🖼️" : id,
-      label,
-      sellable: false,
-    };
+  if (!isKnownInventoryItem(kind, id) && !shopCatalog.isDeleted(getDb(), kind, id)) {
+    // Legacy-/Composer ohne Katalog: weiter erlauben, wenn Flag/Default greift
   }
+  const sellable = marketSellableFor(kind, id);
+  const label =
+    kind === "pets" && id === marriage.MARRIAGE_PET
+      ? marriage.MARRIAGE_PET_LABEL
+      : kind === "stickers" && id === marriage.MARRIAGE_CHAPEL_STICKER
+        ? "Kapelle"
+        : friendlyMarketLabel(kind, id, id);
   seedShopCatalogIfNeeded();
-  // Gelöscht aus Shop, aber Besitz darf weiterverkauft werden
-  if (shopCatalog.isDeleted(getDb(), kind, id)) {
-    return {
-      category: kind,
-      emoji: kind === "themes" ? "🖼️" : id,
-      label: friendlyMarketLabel(kind, id, id),
-      sellable: true,
-    };
-  }
   const cat = shopCatalog.getItem(getDb(), kind, id);
   if (cat) {
     const pub = shopCatalog.publicItem(cat, Date.now(), { admin: false });
     return {
       category: kind,
       emoji: (pub && pub.emoji) || (kind === "themes" ? "🖼️" : id),
-      label: friendlyMarketLabel(kind, id, (pub && pub.label) || cat.label || id),
-      sellable: true,
+      label: friendlyMarketLabel(kind, id, (pub && pub.label) || cat.label || label),
+      sellable,
     };
   }
-  // Static-Fallback (Seed noch nicht / Legacy)
   if (kind === "pets" && PET_SHOP_PRICES[id] != null) {
-    return { category: "pets", emoji: id, label: id, sellable: true };
+    return { category: "pets", emoji: id, label: friendlyMarketLabel(kind, id, label), sellable };
   }
   if (kind === "themes" && THEME_SHOP_PRICES[id] != null) {
-    return { category: "themes", emoji: "🖼️", label: id, sellable: true };
+    return { category: "themes", emoji: "🖼️", label: friendlyMarketLabel(kind, id, label), sellable };
   }
   if (kind === "stickers" && STICKER_SHOP_PRICES[id] != null) {
-    return { category: "stickers", emoji: id, label: id, sellable: true };
+    return { category: "stickers", emoji: id, label: friendlyMarketLabel(kind, id, label), sellable };
   }
   if (kind === "emojis" && EMOJI_SHOP_PRICES[id] != null) {
-    return { category: "emojis", emoji: id, label: id, sellable: true };
+    return { category: "emojis", emoji: id, label: friendlyMarketLabel(kind, id, label), sellable };
   }
-  // Legacy-/Composer-Items ohne Katalogeintrag: trotzdem anbietbar
   if (kind === "stickers" || kind === "emojis" || kind === "pets" || kind === "themes") {
     return {
       category: kind,
       emoji: kind === "themes" ? "🖼️" : id,
-      label: friendlyMarketLabel(kind, id, id),
-      sellable: true,
+      label: friendlyMarketLabel(kind, id, label),
+      sellable,
     };
   }
   return null;
@@ -8601,6 +8602,48 @@ function applyMarketSettings(req, res) {
 }
 app.put("/v1/admin/market-settings", applyMarketSettings);
 app.post("/v1/admin/market-settings", applyMarketSettings);
+
+/** Alle Items (Shop + Erfolg + Code + Starter) inkl. Markt-Handelbarkeit */
+app.get("/v1/admin/items/universe", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  shopCatalog.deactivateExpired(getDb());
+  const data = itemTrade.listItemUniverse(getDb(), {
+    shopCatalog,
+    prices: {
+      emojiPrices: EMOJI_SHOP_PRICES,
+      themePrices: THEME_SHOP_PRICES,
+      petPrices: PET_SHOP_PRICES,
+      stickerPrices: STICKER_SHOP_PRICES,
+    },
+    defaultPet: DEFAULT_PET,
+    starterEmojis: STARTER_EMOJIS,
+    q: String(req.query?.q || "").trim().slice(0, 40),
+    kind: String(req.query?.kind || "").trim(),
+    source: String(req.query?.source || "").trim(),
+  });
+  return res.json({ ok: true, ...data });
+});
+
+function applyItemMarketSellable(req, res) {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const kind = String(req.params.kind || "").trim();
+  const itemId = clipMarketItemId(req.params.itemId);
+  const want = Boolean(req.body?.marketSellable ?? req.body?.sellable ?? true);
+  const result = itemTrade.setMarketSellable(getDb(), kind, itemId, want, {
+    defaultPet: DEFAULT_PET,
+    starterEmojis: STARTER_EMOJIS,
+  });
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  return res.json({ ok: true, ...result });
+}
+app.put("/v1/admin/items/:kind/:itemId/market-sellable", applyItemMarketSellable);
+app.post("/v1/admin/items/:kind/:itemId/market-sellable", applyItemMarketSellable);
 
 /** Itemshop-Katalog (Staff) */
 app.get("/v1/admin/shop/items", (req, res) => {

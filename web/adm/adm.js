@@ -10,6 +10,8 @@
     shopItems: [],
     shopKind: "",
     shopQ: "",
+    shopSource: "",
+    shopUniverse: [],
   };
 
   try {
@@ -30,7 +32,7 @@
 
   const TABS = [
     { id: "overview", label: "Übersicht", hint: "Live-Zahlen und Räume auf einen Blick." },
-    { id: "shop", label: "Itemshop", hint: "Preise, Angebote, Timer und Limits — Änderungen gelten sofort in der App.", perm: "market.settings" },
+    { id: "shop", label: "Itemshop", hint: "Alle Items: Shop, Erfolge, Codes — Preise, Handelbarkeit und Limits.", perm: "market.settings" },
     { id: "reports", label: "Meldungen", hint: "Gemeldete Lobby-/Galerie-Bilder prüfen.", perm: "reports.view" },
     { id: "codes", label: "Codes", hint: "Gutscheincodes erstellen und widerrufen.", perm: "codes.view" },
     { id: "users", label: "Nutzer", hint: "Spieler suchen, Coins und Nick anpassen.", perm: "gm.search" },
@@ -333,22 +335,45 @@
       { id: "themes", label: "Hintergründe", emoji: "🖼️", hint: "Profil-Hintergründe" },
       { id: "pets", label: "Begleiter", emoji: "🐾", hint: "Avatar-Begleiter" },
     ];
+    const SOURCE_FILTERS = [
+      { id: "", label: "Alle Quellen" },
+      { id: "shop", label: "Itemshop" },
+      { id: "achievement", label: "Erfolg" },
+      { id: "code", label: "Code" },
+      { id: "starter", label: "Starter" },
+      { id: "marriage", label: "Ehe" },
+      { id: "tradeable", label: "Handelbar" },
+      { id: "locked", label: "Gesperrt" },
+    ];
+    const SRC_LABEL = {
+      shop: "Shop",
+      achievement: "Erfolg",
+      code: "Code",
+      starter: "Starter",
+      marriage: "Ehe",
+    };
+
     const q = new URLSearchParams();
     if (state.shopQ) q.set("q", state.shopQ);
-    const data = await api("/admin/shop/items?" + q.toString());
-    state.shopItems = data.items || [];
+    if (state.shopKind) q.set("kind", state.shopKind);
+    if (state.shopSource) q.set("source", state.shopSource);
+    const data = await api("/admin/items/universe?" + q.toString());
+    state.shopUniverse = data.items || [];
+
+    // Shop-Katalog parallel für Bearbeiten/Preis/Bild
+    const shopData = await api(
+      "/admin/shop/items?" +
+        new URLSearchParams(state.shopQ ? { q: state.shopQ } : {}).toString()
+    );
+    state.shopItems = shopData.items || [];
+    const shopByKey = Object.fromEntries(
+      state.shopItems.map((it) => [`${it.kind}:${it.itemId}`, it])
+    );
 
     const byKind = Object.fromEntries(SHOP_CATS.map((c) => [c.id, []]));
-    for (const it of state.shopItems) {
+    for (const it of state.shopUniverse) {
       if (!byKind[it.kind]) byKind[it.kind] = [];
       byKind[it.kind].push(it);
-    }
-    for (const list of Object.values(byKind)) {
-      list.sort(
-        (a, b) =>
-          (Number(a.priceCoins) || 0) - (Number(b.priceCoins) || 0) ||
-          String(a.label || a.itemId).localeCompare(String(b.label || b.itemId), "de")
-      );
     }
 
     const activeKind = state.shopKind || "";
@@ -356,53 +381,68 @@
       ? SHOP_CATS.filter((c) => c.id === activeKind)
       : SHOP_CATS;
 
+    function sourceBadges(sources) {
+      return (sources || [])
+        .map((s) => `<span class="badge src-${esc(s)}">${esc(SRC_LABEL[s] || s)}</span>`)
+        .join(" ");
+    }
+
     function cardHtml(it) {
-      const sale =
-        it.onSale && it.compareAtPrice
-          ? `<span class="price-old">${it.compareAtPrice}</span><strong class="shop-price">${it.priceCoins}</strong>`
-          : `<strong class="shop-price">${it.priceCoins}</strong>`;
-      const timer = it.availableUntil
-        ? `<span class="shop-meta-chip">⏱ ${esc(fmtMs(it.remainingMs))}</span>`
-        : "";
+      const shop = shopByKey[`${it.kind}:${it.itemId}`];
       const thumb =
-        it.hasImage && it.imageUrl
-          ? `<img class="shop-card-thumb" src="${esc(it.imageUrl)}" alt="" />`
-          : it.kind === "themes" && it.visualConfig
+        shop?.hasImage && shop?.imageUrl
+          ? `<img class="shop-card-thumb" src="${esc(shop.imageUrl)}" alt="" />`
+          : shop?.kind === "themes" && shop?.visualConfig
             ? `<span class="shop-card-theme" style="background:linear-gradient(160deg,${esc(
-                it.visualConfig.skyTop || "#7EB8D8"
-              )},${esc(it.visualConfig.skyBottom || "#B8D4E8")} 55%,${esc(
-                it.visualConfig.groundTop || "#2F5D2E"
+                shop.visualConfig.skyTop || "#7EB8D8"
+              )},${esc(shop.visualConfig.skyBottom || "#B8D4E8")} 55%,${esc(
+                shop.visualConfig.groundTop || "#2F5D2E"
               )})"></span>`
             : `<span class="shop-card-emoji">${esc(it.emoji || it.itemId)}</span>`;
-      return `<article class="shop-card ${it.enabled ? "" : "is-off"}">
-        <div class="shop-card-visual">${thumb}</div>
+      const price =
+        it.priceCoins != null
+          ? `<strong class="shop-price">${it.priceCoins}</strong> <span class="muted">Coins</span>`
+          : `<span class="muted">kein Shop-Preis</span>`;
+      const marketBtn = it.marketLocked
+        ? `<span class="market-lock" title="Dauerhaft gesperrt (Starter/Ehe)">🔒</span>`
+        : `<button type="button" class="btn-market ${
+            it.marketSellable ? "is-on" : "is-off"
+          }" data-market="${esc(it.kind)}|${esc(it.itemId)}|${
+            it.marketSellable ? "0" : "1"
+          }" title="${
+            it.marketSellable ? "Marktplatz: handelbar — klicken zum Sperren" : "Marktplatz: gesperrt — klicken zum Freigeben"
+          }">${it.marketSellable ? "🏪" : "🚫"}</button>`;
+      const shopOff = shop && shop.enabled === false;
+      return `<article class="shop-card ${shopOff ? "is-off" : ""} ${
+        it.marketSellable ? "is-tradeable" : "is-untradeable"
+      }">
+        <div class="shop-card-visual">${thumb}
+          <div class="shop-card-market">${marketBtn}</div>
+        </div>
         <div class="shop-card-body">
           <strong class="shop-card-title">${esc(it.label || it.itemId)}</strong>
           <div class="muted mono shop-card-id">${esc(it.itemId)}</div>
-          <div class="shop-card-price-row">${sale} <span class="muted">Coins</span>
-            ${it.onSale ? '<span class="badge sale">Angebot</span>' : ""}
-            ${it.enabled ? "" : '<span class="badge off">aus</span>'}
-          </div>
-          <div class="shop-card-meta">
-            ${timer}
+          <div class="shop-card-price-row">${price}
+            ${shopOff ? '<span class="badge off">Shop aus</span>' : ""}
+            ${!shop && it.sources.includes("shop") ? "" : ""}
             ${
-              it.maxPerUser != null
-                ? `<span class="shop-meta-chip">p.P. ${it.maxPerUser}</span>`
-                : ""
-            }
-            ${
-              it.maxTotalSales != null
-                ? `<span class="shop-meta-chip">${it.soldTotal || 0}/${it.maxTotalSales}</span>`
+              !it.sources.includes("shop")
+                ? '<span class="badge src-noshop">nicht im Shop</span>'
                 : ""
             }
           </div>
+          <div class="shop-card-meta source-row">${sourceBadges(it.sources)}</div>
         </div>
         <div class="shop-card-actions">
-          <button type="button" class="btn secondary btn-edit" data-edit="${esc(it.kind)}|${esc(it.itemId)}">Bearbeiten</button>
-          <button type="button" class="btn ghost btn-toggle" data-toggle="${esc(it.kind)}|${esc(it.itemId)}|${it.enabled ? "off" : "on"}" title="${it.enabled ? "Im Shop ausblenden" : "Im Shop aktivieren"}">${
-            it.enabled ? "Aus" : "An"
-          }</button>
-          <button type="button" class="btn btn-del" data-del="${esc(it.kind)}|${esc(it.itemId)}" title="Endgültig löschen">Löschen</button>
+          ${
+            shop
+              ? `<button type="button" class="btn secondary btn-edit" data-edit="${esc(it.kind)}|${esc(it.itemId)}">Bearbeiten</button>
+          <button type="button" class="btn ghost btn-toggle" data-toggle="${esc(it.kind)}|${esc(it.itemId)}|${shop.enabled ? "off" : "on"}" title="${shop.enabled ? "Im Shop ausblenden" : "Im Shop aktivieren"}">${
+                  shop.enabled ? "Shop aus" : "Shop an"
+                }</button>
+          <button type="button" class="btn btn-del" data-del="${esc(it.kind)}|${esc(it.itemId)}" title="Aus Shop löschen">Löschen</button>`
+              : `<span class="muted" style="font-size:0.78rem;padding:0.35rem 0">Nur Herkunft / Markt</span>`
+          }
         </div>
       </article>`;
     }
@@ -418,7 +458,7 @@
             </div>
             <button type="button" class="btn teal" data-new-kind="${cat.id}">＋ Neu</button>
           </header>
-          <p class="help">Noch keine Einträge${state.shopQ ? " für diese Suche" : ""}.</p>
+          <p class="help">Keine Einträge für diesen Filter.</p>
         </section>`;
       }
       if (!items.length) return "";
@@ -434,18 +474,19 @@
       </section>`;
     }
 
-    const total = state.shopItems.length;
+    const total = state.shopUniverse.length;
     content.innerHTML = `
       <div class="panel shop-hero">
         <div class="shop-top">
           <div>
-            <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">Itemshop</h3>
-            <p class="help" style="margin:0.4rem 0 0;max-width:36rem">
-              Eigene Emojis, Sticker, Begleiter und animierte Hintergründe anlegen.
+            <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">Items</h3>
+            <p class="help" style="margin:0.4rem 0 0;max-width:40rem">
+              Alle Items aus Shop, Erfolgen und Codes. Farben = Herkunft.
+              🏪 = am Marktplatz handelbar, 🚫 = gesperrt, 🔒 = dauerhaft gesperrt.
               ${total} Items${state.shopQ ? ` · „${esc(state.shopQ)}“` : ""}.
             </p>
           </div>
-          <button class="btn teal" id="shopWizard">＋ Neues Item</button>
+          <button class="btn teal" id="shopWizard">＋ Neues Shop-Item</button>
         </div>
 
         <div class="shop-cats" id="shopCats">
@@ -458,10 +499,26 @@
           }).join("")}
         </div>
 
+        <div class="shop-cats shop-source-cats" id="shopSources">
+          ${SOURCE_FILTERS.map(
+            (s) =>
+              `<button type="button" class="shop-cat src-filter ${
+                (state.shopSource || "") === s.id ? "on" : ""
+              }" data-source="${s.id}">${esc(s.label)}</button>`
+          ).join("")}
+        </div>
+
         <div class="toolbar shop-search-bar">
-          <input id="shopQ" placeholder="Suchen (Name, ID, Suchworte)…" value="${esc(state.shopQ)}" />
+          <input id="shopQ" placeholder="Suchen (Name, ID, Quelle)…" value="${esc(state.shopQ)}" />
           <button class="btn secondary" id="shopFilter">Suchen</button>
-          ${state.shopQ ? `<button class="btn ghost" id="shopClearQ">Zurücksetzen</button>` : ""}
+          ${state.shopQ || state.shopSource ? `<button class="btn ghost" id="shopClearQ">Zurücksetzen</button>` : ""}
+        </div>
+        <div class="source-legend">
+          <span class="badge src-shop">Shop</span>
+          <span class="badge src-achievement">Erfolg</span>
+          <span class="badge src-code">Code</span>
+          <span class="badge src-starter">Starter</span>
+          <span class="badge src-marriage">Ehe</span>
         </div>
       </div>
 
@@ -488,12 +545,38 @@
     if (clearQ)
       clearQ.onclick = () => {
         state.shopQ = "";
+        state.shopSource = "";
         renderShop();
       };
     content.querySelectorAll("#shopCats [data-kind]").forEach((btn) => {
       btn.onclick = () => {
         state.shopKind = btn.getAttribute("data-kind") || "";
         renderShop();
+      };
+    });
+    content.querySelectorAll("#shopSources [data-source]").forEach((btn) => {
+      btn.onclick = () => {
+        state.shopSource = btn.getAttribute("data-source") || "";
+        renderShop();
+      };
+    });
+    content.querySelectorAll("[data-market]").forEach((btn) => {
+      btn.onclick = async () => {
+        const [kind, itemId, mode] = btn.getAttribute("data-market").split("|");
+        btn.disabled = true;
+        try {
+          await api(
+            `/admin/items/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/market-sellable`,
+            {
+              method: "PUT",
+              body: JSON.stringify({ marketSellable: mode === "1" }),
+            }
+          );
+          renderShop();
+        } catch (err) {
+          alert(err?.message || "Handelbarkeit speichern fehlgeschlagen.");
+          btn.disabled = false;
+        }
       };
     });
     content.querySelectorAll("[data-edit]").forEach((btn) => {
@@ -518,7 +601,9 @@
       btn.onclick = async () => {
         const [kind, itemId] = btn.getAttribute("data-del").split("|");
         const label =
-          state.shopItems.find((x) => x.kind === kind && x.itemId === itemId)?.label || itemId;
+          state.shopUniverse.find((x) => x.kind === kind && x.itemId === itemId)?.label ||
+          state.shopItems.find((x) => x.kind === kind && x.itemId === itemId)?.label ||
+          itemId;
         if (
           !confirm(
             `Nur dieses eine Item löschen?\n\n` +
