@@ -54,9 +54,11 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.min
 import kotlin.math.roundToInt
 import com.luv.couple.data.DrawTemplate
 import com.luv.couple.data.PeerPalette
@@ -501,20 +503,27 @@ fun TemplateEditorSheet(
             }
         }
         Spacer(modifier = Modifier.height(6.dp))
-        // Gesamte Restfläche zum Zeichnen (Hochformat) — Touch + Render 0…1 auf voller Box.
+        // Feste 9:16-Zeichenfläche (Letterbox) — gleiche AR wie Stempel/Preview auf allen Geräten.
         BoxWithConstraints(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(18.dp))
                 .background(Color(0xFF0A1018))
-                .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(18.dp))
+                .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(18.dp)),
+            contentAlignment = Alignment.Center
         ) {
-            val areaW = maxWidth
-            val areaH = maxHeight
+            val boxWpx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
+            val boxHpx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
+            val (fitW, fitH, _) = CanvasStore.templateFitRect(boxWpx, boxHpx, "canvas")
+            val areaW = with(LocalDensity.current) { fitW.toDp() }
+            val areaH = with(LocalDensity.current) { fitH.toDp() }
             Canvas(
                 modifier = Modifier
                     .size(areaW, areaH)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF0E1622))
+                    .border(1.dp, Color.White.copy(0.06f), RoundedCornerShape(12.dp))
                     .pointerInput(colorIndex, brushWidth, eraserOn, areaW, areaH) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
@@ -711,30 +720,9 @@ fun TemplatePreviewCanvas(
         val boxW = size.width.coerceAtLeast(1f)
         val boxH = size.height.coerceAtLeast(1f)
         val space = CanvasStore.templateCoordSpace(parts, coordSpace)
-        // Letterbox: Inhalt proportional in die Kachel
-        var drawW = boxW
-        var drawH = boxH
-        var ox = 0f
-        var oy = 0f
-        if (space == "square") {
-            val side = min(boxW, boxH)
-            drawW = side
-            drawH = side
-            ox = (boxW - side) / 2f
-            oy = (boxH - side) / 2f
-        } else {
-            val target = 9f / 16f
-            val boxAr = boxW / boxH
-            if (boxAr > target) {
-                drawH = boxH
-                drawW = boxH * target
-                ox = (boxW - drawW) / 2f
-            } else {
-                drawW = boxW
-                drawH = boxW / target
-                oy = (boxH - drawH) / 2f
-            }
-        }
+        val (drawW, drawH, origin) = CanvasStore.templateFitRect(boxW, boxH, space)
+        val ox = origin.x
+        val oy = origin.y
         val strokeRef = min(drawW, drawH)
         parts.forEach { part ->
             if (part.points.size < 2) return@forEach

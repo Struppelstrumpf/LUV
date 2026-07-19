@@ -2564,8 +2564,8 @@ class LockDrawActivity : ComponentActivity() {
     }
 
     /**
-     * Leinwand endet direkt über den Avatar-Kreisen (über dem Button-Dock).
-     * Nur im Querformat zusätzlich 9:16-Letterbox (links/rechts), damit nichts verzerrt.
+     * Leinwand endet über den Avatar-Kreisen und ist immer 9:16 (Letterbox),
+     * damit Striche und Vorlagen auf allen Geräten gleich aussehen — ohne Verzerrung.
      */
     private fun applyPortraitCanvasLetterbox(root: FrameLayout) {
         if (!::drawingView.isInitialized || !::bottomDock.isInitialized) return
@@ -2581,21 +2581,16 @@ class LockDrawActivity : ComponentActivity() {
         val bottomReserve = dockH + legendH + legendGap
         val availW = root.width.coerceAtLeast(1)
         val availH = (root.height - bottomReserve).coerceAtLeast(1)
-        val landscape = availW > availH
-        var canvasW: Int
-        var canvasH: Int
-        if (landscape) {
-            val targetAr = 9f / 16f
+        val targetAr = CanvasStore.TEMPLATE_CANVAS_AR
+        val availAr = availW.toFloat() / availH.toFloat()
+        val canvasW: Int
+        val canvasH: Int
+        if (availAr > targetAr) {
             canvasH = availH
             canvasW = (canvasH * targetAr).toInt().coerceAtLeast(1)
-            if (canvasW > availW) {
-                canvasW = availW
-                canvasH = (canvasW / targetAr).toInt().coerceAtLeast(1)
-            }
         } else {
-            // Hochformat: volle Breite, Höhe bis an die Avatare — keine Letterbox-Lücke
             canvasW = availW
-            canvasH = availH
+            canvasH = (canvasW / targetAr).toInt().coerceAtLeast(1)
         }
         val drawLp = drawingView.layoutParams as FrameLayout.LayoutParams
         drawLp.width = canvasW

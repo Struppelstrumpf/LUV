@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.1.3",
+            listOf(
+                "Vorlagen & Leinwand: überall gleiche Größe ohne Verzerrung (9:16)",
+                "Platzierte Vorlagen bei allen Mitspielern korrekt dargestellt",
+            )
+        ),
+        Entry(
             "2.1.2",
             listOf(
                 "Suche in Itemshop, Marktplatz & Inventar zuverlässiger (auch mehrere Wörter)",

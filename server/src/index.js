@@ -2143,6 +2143,8 @@ function sanitizeStoredStroke(raw) {
       : 1;
     const rot = Number(raw.templateRotation);
     out.templateRotation = Number.isFinite(rot) ? rot : 0;
+    const space = String(raw.templateCoordSpace || "").trim().toLowerCase();
+    out.templateCoordSpace = space === "square" ? "square" : "canvas";
   }
   return out;
 }
@@ -2242,6 +2244,7 @@ function strokeFromSocketMessage(json, socket) {
     templateParts: json?.templateParts,
     templateScale: json?.templateScale,
     templateRotation: json?.templateRotation,
+    templateCoordSpace: json?.templateCoordSpace,
   });
   return base;
 }
@@ -12002,6 +12005,9 @@ wss.on("connection", (socket, req) => {
         relayPayload.templateParts = stored.templateParts;
         relayPayload.templateScale = stored.templateScale;
         relayPayload.templateRotation = stored.templateRotation;
+        if (stored.templateCoordSpace) {
+          relayPayload.templateCoordSpace = stored.templateCoordSpace;
+        }
       }
       const relay = JSON.stringify(relayPayload);
       relayToPeers(room, relay, peerId);

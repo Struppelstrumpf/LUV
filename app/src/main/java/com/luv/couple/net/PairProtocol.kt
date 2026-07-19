@@ -178,7 +178,7 @@ object PairProtocol {
                                 .coerceIn(0.2f, 4f),
                             templateRotation = json.optDouble("templateRotation", 0.0).toFloat(),
                             templateCoordSpace = json.optString("templateCoordSpace")
-                                .takeIf { it.isNotBlank() && it != "null" }
+                                .takeIf { it.equals("canvas", true) || it.equals("square", true) }
                         )
                     )
                 }

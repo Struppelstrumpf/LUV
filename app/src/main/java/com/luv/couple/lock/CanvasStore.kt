@@ -46,6 +46,39 @@ object CanvasStore {
     /** Anteil der Leinwand für Vorlagen-Stempel. */
     const val TEMPLATE_PLACE_FRAC = 0.92f
 
+    /** Kanonisches Hochformat für Vorlagen (wie Preview/Editor). */
+    const val TEMPLATE_CANVAS_AR = 9f / 16f
+
+    /**
+     * Zeichnet eine 9:16- bzw. Quadrat-Fläche zentriert in [boxW]×[boxH] ein
+     * (Letterbox — keine Verzerrung).
+     * @return Triple(drawW, drawH, Offset(ox, oy))
+     */
+    fun templateFitRect(
+        boxW: Float,
+        boxH: Float,
+        coordSpace: String
+    ): Triple<Float, Float, android.graphics.PointF> {
+        val w = boxW.coerceAtLeast(1f)
+        val h = boxH.coerceAtLeast(1f)
+        return if (coordSpace == "square") {
+            val side = min(w, h)
+            Triple(side, side, android.graphics.PointF((w - side) / 2f, (h - side) / 2f))
+        } else {
+            val target = TEMPLATE_CANVAS_AR
+            val boxAr = w / h
+            if (boxAr > target) {
+                val drawH = h
+                val drawW = h * target
+                Triple(drawW, drawH, android.graphics.PointF((w - drawW) / 2f, 0f))
+            } else {
+                val drawW = w
+                val drawH = w / target
+                Triple(drawW, drawH, android.graphics.PointF(0f, (h - drawH) / 2f))
+            }
+        }
+    }
+
     /** Koordinatenraum einer Vorlage / platzierten Vorlage. */
     fun templateCoordSpace(parts: List<com.luv.couple.data.TemplateStrokePart>, hint: String? = null): String {
         val h = hint?.trim()?.lowercase()
@@ -58,10 +91,14 @@ object CanvasStore {
         val maxY = pts.maxOf { it.y }
         val bw = (maxX - minX).coerceAtLeast(0.01f)
         val bh = (maxY - minY).coerceAtLeast(0.01f)
-        // Hohes Bounding-Box → eher Hochformat-Vorlage; sonst Legacy-Quadrat
-        return if (bh / bw > 1.12f) "canvas" else "square"
+        // Nur klar flache Legacy-Zeichnungen → Quadrat; sonst immer 9:16-Canvas
+        return if (bh / bw < 0.85f) "square" else "canvas"
     }
 
+    /**
+     * Stempelgröße in der Leinwand — immer gleiche AR für alle Geräte
+     * (9:16 letterboxed bzw. Quadrat), dann × Fraktion × Scale.
+     */
     fun templateStampSize(
         viewW: Float,
         viewH: Float,
@@ -69,12 +106,8 @@ object CanvasStore {
         coordSpace: String
     ): Pair<Float, Float> {
         val s = scale.coerceIn(0.2f, 4f)
-        return if (coordSpace == "square") {
-            val side = min(viewW, viewH) * TEMPLATE_PLACE_FRAC * s
-            side to side
-        } else {
-            viewW * TEMPLATE_PLACE_FRAC * s to viewH * TEMPLATE_PLACE_FRAC * s
-        }
+        val (fitW, fitH, _) = templateFitRect(viewW, viewH, coordSpace)
+        return fitW * TEMPLATE_PLACE_FRAC * s to fitH * TEMPLATE_PLACE_FRAC * s
     }
 
     private sealed class LocalUndo {
@@ -1020,7 +1053,7 @@ object CanvasStore {
                     templateScale = o.optDouble("templateScale", 1.0).toFloat().coerceIn(0.2f, 4f),
                     templateRotation = o.optDouble("templateRotation", 0.0).toFloat(),
                     templateCoordSpace = o.optString("templateCoordSpace")
-                        .takeIf { it.isNotBlank() && it != "null" }
+                        .takeIf { it.equals("canvas", ignoreCase = true) || it.equals("square", ignoreCase = true) }
                 )
                 if (target.strokes.any { it.id == stroke.id }) continue
                 target.strokes.add(stroke)
