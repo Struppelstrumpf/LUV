@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.9943",
+            listOf(
+                "Querformat: Leinwand und Vorlagen bleiben im Hochformat (Letterbox)",
+            )
+        ),
+        Entry(
             "1.9.9942",
             listOf(
                 "Sozial: neuer Tab „Bilder“ mit Splash-Bild und Community-Fotos",

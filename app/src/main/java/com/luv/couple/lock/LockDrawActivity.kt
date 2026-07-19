@@ -269,23 +269,14 @@ class LockDrawActivity : ComponentActivity() {
             )
             statusView.visibility = View.GONE
             // Leinwand und Avatare enden über dem Button-Kasten
-            bottomDock.post {
-                val dockH = bottomDock.height
-                val canvasH = (root.height - dockH).coerceAtLeast(1)
-                val drawLp = drawingView.layoutParams as FrameLayout.LayoutParams
-                drawLp.height = canvasH
-                drawLp.bottomMargin = 0
-                drawingView.layoutParams = drawLp
-                val stickerLp = stickerOverlay.layoutParams as FrameLayout.LayoutParams
-                stickerLp.height = canvasH
-                stickerLp.bottomMargin = 0
-                stickerOverlay.layoutParams = stickerLp
-                val legendScroll = findViewById<View>(R.id.legendScroll)
-                val lp = legendScroll.layoutParams as FrameLayout.LayoutParams
-                lp.bottomMargin = dockH + (6 * dp).toInt()
-                legendScroll.layoutParams = lp
-            }
+            bottomDock.post { applyPortraitCanvasLetterbox(root) }
             insets
+        }
+        // Querformat / Größenwechsel: künstliches Hochformat neu berechnen
+        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            if (::bottomDock.isInitialized && ::drawingView.isInitialized) {
+                bottomDock.post { applyPortraitCanvasLetterbox(root) }
+            }
         }
 
         lifecycleScope.launch {
@@ -2449,6 +2440,42 @@ class LockDrawActivity : ComponentActivity() {
                 if (strokeMemoryView === tv) strokeMemoryView = null
             }.start()
         }, 3200L)
+    }
+
+    /**
+     * Leinwand immer im Hochformat (9:16) — im Querformat Letterbox links/rechts,
+     * damit Striche/Vorlagen nicht verzerrt werden.
+     */
+    private fun applyPortraitCanvasLetterbox(root: FrameLayout) {
+        if (!::drawingView.isInitialized || !::bottomDock.isInitialized) return
+        val dockH = bottomDock.height.coerceAtLeast(0)
+        val availW = root.width.coerceAtLeast(1)
+        val availH = (root.height - dockH).coerceAtLeast(1)
+        val targetAr = 9f / 16f // Breite / Höhe — wie Capture 1080×1920
+        var canvasH = availH
+        var canvasW = (canvasH * targetAr).toInt().coerceAtLeast(1)
+        if (canvasW > availW) {
+            canvasW = availW
+            canvasH = (canvasW / targetAr).toInt().coerceAtLeast(1)
+        }
+        val drawLp = drawingView.layoutParams as FrameLayout.LayoutParams
+        drawLp.width = canvasW
+        drawLp.height = canvasH
+        drawLp.bottomMargin = 0
+        drawLp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        drawingView.layoutParams = drawLp
+        if (::stickerOverlay.isInitialized) {
+            val stickerLp = stickerOverlay.layoutParams as FrameLayout.LayoutParams
+            stickerLp.width = canvasW
+            stickerLp.height = canvasH
+            stickerLp.bottomMargin = 0
+            stickerLp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            stickerOverlay.layoutParams = stickerLp
+        }
+        val legendScroll = findViewById<View>(R.id.legendScroll)
+        val lp = legendScroll.layoutParams as FrameLayout.LayoutParams
+        lp.bottomMargin = dockH + (6 * resources.displayMetrics.density).toInt()
+        legendScroll.layoutParams = lp
     }
 
     companion object {

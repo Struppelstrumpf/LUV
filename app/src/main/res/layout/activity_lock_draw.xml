@@ -5,19 +5,19 @@
     android:layout_height="match_parent"
     android:background="#FF1A1F2E">
 
-    <!-- Leinwand endet über dem Dock (bottomMargin wird in Code gesetzt) -->
+    <!-- Leinwand: Größe/Gravity im Code (Portrait-Letterbox im Querformat) -->
     <com.luv.couple.lock.DrawingView
         android:id="@+id/drawingView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_gravity="top" />
+        android:layout_gravity="top|center_horizontal" />
 
     <!-- Platzierte Emoji-Sticker — Touches gehen zur Leinwand durch -->
     <com.luv.couple.lock.PassThroughFrameLayout
         android:id="@+id/stickerOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_gravity="top"
+        android:layout_gravity="top|center_horizontal"
         android:clickable="false"
         android:focusable="false"
         android:clipChildren="false"

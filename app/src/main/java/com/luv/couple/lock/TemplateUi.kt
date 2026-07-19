@@ -501,7 +501,7 @@ fun TemplateEditorSheet(
             }
         }
         Spacer(modifier = Modifier.height(6.dp))
-        // Quadrat = ganze Zeichenfläche (0…1), kein Rechteck-Crop beim Speichern
+        // Künstliches Hochformat (9:16) — im Querformat Letterbox links/rechts
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -510,9 +510,8 @@ fun TemplateEditorSheet(
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
                     .fillMaxHeight()
-                    .aspectRatio(1f, matchHeightConstraintsFirst = true)
+                    .aspectRatio(9f / 16f)
                     .clip(RoundedCornerShape(18.dp))
                     .background(Color(0xFF0A1018))
                     .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(18.dp))
