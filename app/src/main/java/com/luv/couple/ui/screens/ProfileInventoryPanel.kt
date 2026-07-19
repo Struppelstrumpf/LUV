@@ -50,6 +50,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.luv.couple.profile.ProfileCatalog
 import com.luv.couple.profile.ProfileTheme
 import com.luv.couple.profile.ProfileThemeBackdrop
+import com.luv.couple.shop.InventoryAvailability
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -96,6 +97,10 @@ fun ProfileInventoryPanel(
     ownedEmojis: Map<String, Int> = emptyMap(),
     ownedThemes: List<String> = listOf(ProfileCatalog.DEFAULT_THEME_ID),
     ownedPets: List<String> = listOf("🐣"),
+    /** Auf Profil platzierte Sticker (emoji → Anzahl) — reduziert freie Anzeige */
+    placedStickers: Map<String, Int> = emptyMap(),
+    /** Emojis in der Reaktionsleiste — je 1× als in Verwendung */
+    emojiBar: Collection<String> = emptyList(),
     currentThemeId: String,
     currentCompanion: String,
     hasGlass: Boolean,
@@ -145,20 +150,38 @@ fun ProfileInventoryPanel(
     LaunchedEffect(tab, tabs) {
         tabs.getOrNull(tab)?.kindPrefix?.let(onKindVisited)
     }
-    val themeItems = remember(ownedThemes, searchQuery) {
-        val owned = ownedThemes.toSet()
+    // Frei = Besitz − in Verwendung (platziert / Leiste / ausgerüstet)
+    val freeStickers = remember(ownedStickers, placedStickers) {
+        InventoryAvailability.freeStickers(ownedStickers, placedStickers)
+    }
+    val freeEmojis = remember(ownedEmojis, emojiBar) {
+        InventoryAvailability.freeEmojis(ownedEmojis, emojiBar)
+    }
+    val freeThemeIds = remember(ownedThemes, currentThemeId, readOnly) {
+        if (readOnly) ownedThemes.distinct()
+        else InventoryAvailability.freeThemes(ownedThemes, currentThemeId)
+    }
+    val freePetIds = remember(ownedPets, currentCompanion, readOnly) {
+        if (readOnly) ownedPets.distinct().ifEmpty { listOf("🐣") }
+        else {
+            val free = InventoryAvailability.freePets(ownedPets, currentCompanion)
+            // Wenn alles ausgerüstet: leere Liste (nicht Default wieder einblenden)
+            free
+        }
+    }
+    val themeItems = remember(freeThemeIds, searchQuery) {
+        val owned = freeThemeIds.toSet()
         ProfileCatalog.THEMES.filter { it.id in owned }
             .filter { LiveShopCatalog.matchesQuery(searchQuery, it.emoji, it.label) }
     }
-    val petItems = remember(ownedPets, searchQuery) {
-        val owned = ownedPets.distinct().ifEmpty { listOf("🐣") }
-        owned.filter { id ->
+    val petItems = remember(freePetIds, searchQuery) {
+        freePetIds.filter { id ->
             val label = LiveShopCatalog.remotePets?.firstOrNull { it.emoji == id }?.label
                 ?: com.luv.couple.shop.ShopCatalog.PETS.firstOrNull { it.emoji == id }?.label
                 ?: ""
             val search = LiveShopCatalog.remotePets?.firstOrNull { it.emoji == id }?.searchText.orEmpty()
             LiveShopCatalog.matchesQuery(searchQuery, id, label, search)
-        }.ifEmpty { if (searchQuery.isBlank()) listOf("🐣") else emptyList() }
+        }
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -294,8 +317,7 @@ fun ProfileInventoryPanel(
 
             when (tabs.getOrNull(tab)) {
                 InvTab.Emojis -> {
-                    val entries = ownedEmojis.entries
-                        .filter { it.value > 0 }
+                    val entries = freeEmojis.entries
                         .filter { LiveShopCatalog.matchesQuery(q, it.key) }
                         .sortedBy { it.key }
                     if (entries.isEmpty()) {
@@ -416,8 +438,7 @@ fun ProfileInventoryPanel(
                     }
                 }
                 InvTab.Stickers -> {
-                    val stickerEntries = ownedStickers.entries
-                        .filter { it.value > 0 }
+                    val stickerEntries = freeStickers.entries
                         .filter { LiveShopCatalog.matchesQuery(q, it.key) }
                         .sortedBy { it.key }
                     if (stickerEntries.isEmpty()) {
@@ -471,37 +492,50 @@ fun ProfileInventoryPanel(
                         }
                     }
                 }
-                InvTab.Companions -> LazyVerticalGrid(
-                    columns = GridCells.Fixed(4),
-                    modifier = gridMod,
-                    horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
-                    verticalArrangement = Arrangement.spacedBy(s(8.dp))
-                ) {
-                    items(petItems, key = { it }) { emoji ->
-                        val on = emoji == currentCompanion
-                        val itemKey = "pets:$emoji"
-                        ItemNewGlowBorder(
-                            active = itemKey in highlightKeys,
-                            corner = s(14.dp),
-                            modifier = Modifier.aspectRatio(1f)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clip(RoundedCornerShape(s(14.dp)))
-                                    .background(if (on) AccentRose.copy(0.22f) else BgSoft)
-                                    .border(
-                                        1.dp,
-                                        if (on) AccentRose.copy(0.65f) else Color.White.copy(0.08f),
-                                        RoundedCornerShape(s(14.dp))
-                                    )
-                                    .clickable { onCompanion(emoji) },
-                                contentAlignment = Alignment.Center
+                InvTab.Companions -> if (petItems.isEmpty()) {
+                    Box(modifier = gridMod, contentAlignment = Alignment.Center) {
+                        Text(
+                            if (readOnly) "Kein Begleiter."
+                            else "Aktiver Begleiter ist ausgerüstet.\nAndere Begleiter erscheinen hier.",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = ts(13.sp),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(s(12.dp))
+                        )
+                    }
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(4),
+                        modifier = gridMod,
+                        horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
+                        verticalArrangement = Arrangement.spacedBy(s(8.dp))
+                    ) {
+                        items(petItems, key = { it }) { emoji ->
+                            val itemKey = "pets:$emoji"
+                            ItemNewGlowBorder(
+                                active = itemKey in highlightKeys,
+                                corner = s(14.dp),
+                                modifier = Modifier.aspectRatio(1f)
                             ) {
-                                com.luv.couple.ui.CompanionGlyph(
-                                    petId = emoji,
-                                    fontSize = ts(28.sp)
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(RoundedCornerShape(s(14.dp)))
+                                        .background(BgSoft)
+                                        .border(
+                                            1.dp,
+                                            Color.White.copy(0.08f),
+                                            RoundedCornerShape(s(14.dp))
+                                        )
+                                        .clickable { onCompanion(emoji) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    com.luv.couple.ui.CompanionGlyph(
+                                        petId = emoji,
+                                        fontSize = ts(28.sp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -671,6 +705,8 @@ fun ProfileChestDialog(
     ownedStickers: Map<String, Int>,
     ownedThemes: List<String> = listOf(ProfileCatalog.DEFAULT_THEME_ID),
     ownedPets: List<String> = listOf("🐣"),
+    placedStickers: Map<String, Int> = emptyMap(),
+    emojiBar: Collection<String> = emptyList(),
     currentThemeId: String,
     currentCompanion: String,
     hasGlass: Boolean,
@@ -703,6 +739,8 @@ fun ProfileChestDialog(
             ownedStickers = ownedStickers,
             ownedThemes = ownedThemes,
             ownedPets = ownedPets,
+            placedStickers = placedStickers,
+            emojiBar = emojiBar,
             currentThemeId = currentThemeId,
             currentCompanion = currentCompanion,
             hasGlass = hasGlass,
