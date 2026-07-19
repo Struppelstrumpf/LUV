@@ -109,6 +109,7 @@ fun ProfileInventoryPanel(
     currentCompanion: String,
     hasGlass: Boolean,
     hasBio: Boolean,
+    hasStreak: Boolean = false,
     spouseName: String? = null,
     engagedName: String? = null,
     hasSpouse: Boolean = false,
@@ -123,6 +124,7 @@ fun ProfileInventoryPanel(
     onEmoji: (String) -> Unit = {},
     onGlass: () -> Unit = {},
     onBio: () -> Unit = {},
+    onStreak: () -> Unit = {},
     onSpouse: () -> Unit = {},
     onEngaged: () -> Unit = {},
     onOpenMarketplace: () -> Unit,
@@ -589,7 +591,7 @@ fun ProfileInventoryPanel(
                     modifier = gridMod,
                     verticalArrangement = Arrangement.spacedBy(s(10.dp))
                 ) {
-                    // Day Streak — für alle sichtbar (auch Fremdprofil)
+                    // Day Streak — platzierbar auf der Profilleinwand (Extras)
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -600,7 +602,15 @@ fun ProfileInventoryPanel(
                                     listOf(Color(0xFF2A1A22), BgSoft, Color(0xFF1E2430))
                                 )
                             )
-                            .border(1.dp, AccentRose.copy(0.35f), RoundedCornerShape(s(16.dp))),
+                            .border(
+                                1.dp,
+                                if (hasStreak) AccentRose.copy(0.55f) else AccentRose.copy(0.35f),
+                                RoundedCornerShape(s(16.dp))
+                            )
+                            .then(
+                                if (!readOnly) Modifier.clickable(onClick = onStreak)
+                                else Modifier
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Row(
@@ -634,9 +644,15 @@ fun ProfileInventoryPanel(
                                     fontSize = ts(16.sp)
                                 )
                                 Text(
-                                    if (dayStreak <= 0) "Noch kein Streak"
-                                    else if (dayStreak == 1) "1 Tag in Folge"
-                                    else "$dayStreak Tage in Folge",
+                                    when {
+                                        readOnly && dayStreak <= 0 -> "Noch kein Streak"
+                                        readOnly && dayStreak == 1 -> "1 Tag in Folge"
+                                        readOnly -> "$dayStreak Tage in Folge"
+                                        hasStreak -> "Auf der Leinwand · tippen zum Auswählen"
+                                        dayStreak <= 0 -> "Platzieren (noch 0 Tage)"
+                                        dayStreak == 1 -> "Feuer-Kreis platzieren · 1 Tag"
+                                        else -> "Feuer-Kreis platzieren · $dayStreak Tage"
+                                    },
                                     color = TextMuted,
                                     fontFamily = BodyFont,
                                     fontSize = ts(13.sp)
@@ -764,6 +780,7 @@ fun ProfileChestDialog(
     currentCompanion: String,
     hasGlass: Boolean,
     hasBio: Boolean,
+    hasStreak: Boolean = false,
     spouseName: String? = null,
     engagedName: String? = null,
     hasSpouse: Boolean = false,
@@ -775,6 +792,7 @@ fun ProfileChestDialog(
     onCompanion: (String) -> Unit,
     onGlass: () -> Unit,
     onBio: () -> Unit,
+    onStreak: () -> Unit = {},
     onSpouse: () -> Unit = {},
     onEngaged: () -> Unit = {},
     onOpenMarketplace: () -> Unit,
@@ -798,6 +816,7 @@ fun ProfileChestDialog(
             currentCompanion = currentCompanion,
             hasGlass = hasGlass,
             hasBio = hasBio,
+            hasStreak = hasStreak,
             spouseName = spouseName,
             engagedName = engagedName,
             hasSpouse = hasSpouse,
@@ -809,6 +828,7 @@ fun ProfileChestDialog(
             onCompanion = onCompanion,
             onGlass = onGlass,
             onBio = onBio,
+            onStreak = onStreak,
             onSpouse = onSpouse,
             onEngaged = onEngaged,
             onOpenMarketplace = onOpenMarketplace,

@@ -12,6 +12,14 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.1.5",
+            listOf(
+                "Day-Streak steigt wieder zuverlässig jeden aktiven Tag",
+                "Day-Streak als Feuer-Kreis auf dem Profil platzierbar",
+                "Push-Sprüche mit wählbarem Tap-Ziel (Admin)",
+            )
+        ),
+        Entry(
             "2.1.4",
             listOf(
                 "Profil gestalten: nach Platzieren aus dem Inventar zurück mit Speichern oder ✕",

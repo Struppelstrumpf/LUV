@@ -25,6 +25,7 @@ const DEFAULT = {
   itemTradeFlags: {},
   itemDisplayLabels: {},
   achievementDefs: {},
+  notifyPhrases: { phrases: [], version: 1 },
   marriages: {},
   guestbookReports: [],
   shopCatalog: { items: {}, version: 1 },
@@ -98,6 +99,10 @@ function load() {
         raw.achievementDefs && typeof raw.achievementDefs === "object"
           ? raw.achievementDefs
           : {},
+      notifyPhrases:
+        raw.notifyPhrases && typeof raw.notifyPhrases === "object"
+          ? raw.notifyPhrases
+          : { phrases: [], version: 1 },
       marriages:
         raw.marriages && typeof raw.marriages === "object" ? raw.marriages : {},
       guestbookReports: Array.isArray(raw.guestbookReports)

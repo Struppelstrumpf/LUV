@@ -24,6 +24,7 @@ const playBilling = require("./play_billing");
 const playIntegrity = require("./play_integrity");
 const itemTrade = require("./item_trade");
 const itemLabels = require("./item_labels");
+const notifyPhrases = require("./notify_phrases");
 ach.bindGetDb(getDb);
 const {
   STICKER_SHOP_PRICES,
@@ -3124,6 +3125,8 @@ function ensureDailyGrant(user) {
   }
   user.dailyBalance = DAILY_COINS;
   user.lastDailyGrantDate = day;
+  // Day-Streak: aktiver Tag (Coins abholen / App öffnen)
+  ach.touchDayStreak(user, day);
   syncCoinTotal(user);
   const db = getDb();
   db.ledger.push({
@@ -6039,6 +6042,7 @@ function sanitizeProfileCanvas(raw) {
     "text",
     "spouse",
     "engaged",
+    "streak",
   ]);
   for (const el of layoutIn.slice(0, 48)) {
     if (!el || typeof el !== "object") continue;
@@ -6256,6 +6260,13 @@ app.get("/v1/users/:userId/profile", (req, res) => {
     0,
     Math.floor(Number(ach.ensureAchievements(user).streak) || 0)
   );
+  if (Array.isArray(profile.layout)) {
+    profile.layout = profile.layout.map((el) =>
+      el && el.type === "streak"
+        ? { ...el, text: String(dayStreak), emoji: el.emoji || "🔥" }
+        : el
+    );
+  }
   return res.json({
     nickname: user.nickname || "Jemand",
     userId: user.id,
@@ -7794,8 +7805,13 @@ app.post("/v1/admin/users/:userId/streak", (req, res) => {
   const a = ach.ensureAchievements(target);
   a.streak = streak;
   a.progress.daily_streak = Math.max(Number(a.progress.daily_streak) || 0, streak);
-  if (streak > 0 && !a.lastDailyCompleteDate) {
-    a.lastDailyCompleteDate = todayKey();
+  // Gestern setzen, damit der nächste echte Tag +1 macht (nicht diff=0 → Reset)
+  if (streak > 0) {
+    a.lastStreakDate = ach.yesterdayKeyFrom(todayKey()) || todayKey();
+    a.lastDailyCompleteDate = a.lastStreakDate;
+  } else {
+    a.lastStreakDate = null;
+    a.lastDailyCompleteDate = null;
   }
   scheduleSave();
   staffAudit(ctx.user, "streak_set", { targetId: uid, streak });
@@ -8128,6 +8144,76 @@ function applyItemDisplayLabel(req, res) {
 }
 app.put("/v1/admin/items/:kind/:itemId/display-label", applyItemDisplayLabel);
 app.post("/v1/admin/items/:kind/:itemId/display-label", applyItemDisplayLabel);
+
+/** Benachrichtigungs-/Share-Sprüche (Admin) */
+app.get("/v1/admin/notify-phrases", (req, res) => {
+  const ctx = requireStaff(req, res, "live.notify");
+  if (!ctx) return;
+  const pool = String(req.query?.pool || "").trim() || null;
+  const q = String(req.query?.q || "").trim();
+  const all = notifyPhrases.listPhrases(getDb(), {});
+  const phrases = notifyPhrases.listPhrases(getDb(), { pool, q });
+  return res.json({
+    ok: true,
+    phrases,
+    targets: notifyPhrases.TARGETS,
+    counts: {
+      mood: all.filter((p) => p.pool === "mood").length,
+      share: all.filter((p) => p.pool === "share").length,
+      all: all.length,
+    },
+  });
+});
+
+app.post("/v1/admin/notify-phrases", (req, res) => {
+  const ctx = requireStaff(req, res, "live.notify");
+  if (!ctx) return;
+  const result = notifyPhrases.upsertPhrase(getDb(), req.body || {}, { create: true });
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "phrase_create", { id: result.phrase.id });
+  return res.json({ ok: true, phrase: result.phrase });
+});
+
+app.put("/v1/admin/notify-phrases/:id", (req, res) => {
+  const ctx = requireStaff(req, res, "live.notify");
+  if (!ctx) return;
+  const result = notifyPhrases.upsertPhrase(
+    getDb(),
+    { ...(req.body || {}), id: req.params.id },
+    { create: false }
+  );
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "phrase_update", { id: result.phrase.id });
+  return res.json({ ok: true, phrase: result.phrase });
+});
+
+app.delete("/v1/admin/notify-phrases/:id", (req, res) => {
+  const ctx = requireStaff(req, res, "live.notify");
+  if (!ctx) return;
+  const result = notifyPhrases.deletePhrase(getDb(), req.params.id);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "phrase_delete", { id: req.params.id });
+  return res.json({ ok: true });
+});
+
+/** App: zufälligen Mood-Spruch inkl. Tap-Ziel holen */
+app.get("/v1/notify-phrases/pick", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const pool = String(req.query?.pool || "mood").trim();
+  const excludingId = String(req.query?.excluding || "").trim() || null;
+  const phrase = notifyPhrases.pickPhrase(getDb(), { pool, excludingId });
+  return res.json({ ok: true, phrase });
+});
 
 app.get("/v1/live-notice", (req, res) => {
   const ctx = requireAuth(req, res);
@@ -8713,6 +8799,7 @@ app.get("/v1/me/achievements", (req, res) => {
   if (a.progress._activeDayMarked !== todayKey()) {
     a.progress._activeDayMarked = todayKey();
     trackAch(ctx.user, "active_days", 1);
+    ach.touchDayStreak(ctx.user, todayKey());
   }
   // Nachträglich Items nachreichen (z. B. Kapelle nach Katalog-Fix)
   if (repairAchievementItemRewards(ctx.user) > 0) {
@@ -10751,7 +10838,7 @@ function escapeHtml(value) {
 }
 
 app.get("/v1/share-line", (_req, res) => {
-  return res.json({ line: pickShareLine() });
+  return res.json({ line: notifyPhrases.pickShareLineFromDb(getDb()) });
 });
 
 app.get("/v1/public-canvases/random", (req, res) => {
@@ -11107,7 +11194,7 @@ app.post("/v1/admin/public-reports/:id/delete", (req, res) => {
 
 /** Landing /luv — OG-Preview mit zufälligem cozy Spruch (für WhatsApp & Co.). */
 function serveLandingHtml(req, res) {
-  const line = pickShareLine();
+  const line = notifyPhrases.pickShareLineFromDb(getDb());
   const picked = pickRandomPublicCanvas()?.entry || null;
   const ogImage = picked
     ? publicCanvasImageUrl(picked.id)
@@ -11215,7 +11302,7 @@ app.get("/invite/:code", (req, res) => {
     : "LUV — Nähe, die mitgeht";
   const description = room
     ? inviteShareDescription(host, picked)
-    : landingShareDescription(pickShareLine(), picked);
+    : landingShareDescription(notifyPhrases.pickShareLineFromDb(getDb()), picked);
   const inviteLede = room
     ? invitePublicBlurb(room, host)
     : "Diese Verbindung ist gerade still. Der Host muss online sein — dann seid ihr wieder nah.";

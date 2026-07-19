@@ -775,9 +775,183 @@
     }
   }
 
+  async function renderPhrases() {
+    const content = contentEl();
+    const pool = host().state.phrasePool || "";
+    const q = host().state.phraseQ || "";
+    const qs = new URLSearchParams();
+    if (pool) qs.set("pool", pool);
+    if (q) qs.set("q", q);
+    const data = await api("/admin/notify-phrases?" + qs.toString());
+    const phrases = data.phrases || [];
+    const targets = data.targets || [];
+    const targetLabel = Object.fromEntries(targets.map((t) => [t.id, t.label]));
+
+    content.innerHTML = `
+      <div class="panel ach-hero">
+        <div class="shop-top">
+          <div>
+            <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">Sprüche</h3>
+            <p class="help" style="margin:0.4rem 0 0;max-width:44rem">
+              Mood = Push-Benachrichtigungen in der App. Share = OG-/Einladungs-Texte.
+              Pro Spruch entscheidest du, wohin Tippen führt (Leinwand, Markt, Inventar, Profil …).
+            </p>
+          </div>
+          <button class="btn teal" id="phrNew">＋ Neuer Spruch</button>
+        </div>
+        <div class="shop-cats">
+          <button type="button" class="shop-cat ${!pool ? "on" : ""}" data-pool="">Alle <span class="shop-cat-n">${data.counts?.all ?? phrases.length}</span></button>
+          <button type="button" class="shop-cat ${pool === "mood" ? "on" : ""}" data-pool="mood">Mood / Push <span class="shop-cat-n">${data.counts?.mood ?? 0}</span></button>
+          <button type="button" class="shop-cat ${pool === "share" ? "on" : ""}" data-pool="share">Share / OG <span class="shop-cat-n">${data.counts?.share ?? 0}</span></button>
+        </div>
+        <div class="toolbar shop-search-bar">
+          <input id="phrQ" placeholder="Suchen…" value="${esc(q)}" />
+          <button class="btn secondary" id="phrFilter">Suchen</button>
+        </div>
+      </div>
+      <div class="ach-grid">
+        ${
+          phrases.length
+            ? phrases
+                .map(
+                  (p) => `<article class="ach-card ${p.enabled ? "" : "is-off"}">
+            <header>
+              <div>
+                <strong style="font-size:0.95rem;line-height:1.35">${esc(p.text)}</strong>
+                <div class="muted" style="margin-top:0.35rem;font-size:0.8rem">${esc(p.subtitle || "—")}</div>
+              </div>
+              <span class="badge ${p.pool === "mood" ? "src-achievement" : "src-code"}">${esc(p.pool)}</span>
+            </header>
+            <div class="ach-meta">
+              <span>Ziel: <strong>${esc(targetLabel[p.target] || p.target)}</strong></span>
+              ${p.enabled ? '<span class="badge src-shop">Aktiv</span>' : '<span class="badge off">Aus</span>'}
+            </div>
+            <div class="actions">
+              <button type="button" class="btn secondary" data-edit-phr="${esc(p.id)}">Bearbeiten</button>
+              <button type="button" class="btn ghost" data-tog-phr="${esc(p.id)}|${p.enabled ? "0" : "1"}">${p.enabled ? "Deaktivieren" : "Aktivieren"}</button>
+              <button type="button" class="btn btn-del" data-del-phr="${esc(p.id)}">Löschen</button>
+            </div>
+          </article>`
+                )
+                .join("")
+            : `<div class="panel"><p class="help">Keine Sprüche.</p></div>`
+        }
+      </div>`;
+
+    content.querySelectorAll("[data-pool]").forEach((b) => {
+      b.onclick = () => {
+        host().state.phrasePool = b.getAttribute("data-pool") || "";
+        renderPhrases();
+      };
+    });
+    $("phrFilter").onclick = () => {
+      host().state.phraseQ = $("phrQ").value.trim();
+      renderPhrases();
+    };
+    $("phrNew").onclick = () => openPhraseEditor(null, targets);
+    content.querySelectorAll("[data-edit-phr]").forEach((b) => {
+      b.onclick = () => {
+        const id = b.getAttribute("data-edit-phr");
+        const p = phrases.find((x) => x.id === id);
+        if (p) openPhraseEditor(p, targets);
+      };
+    });
+    content.querySelectorAll("[data-tog-phr]").forEach((b) => {
+      b.onclick = async () => {
+        const [id, mode] = b.getAttribute("data-tog-phr").split("|");
+        const p = phrases.find((x) => x.id === id);
+        if (!p) return;
+        await api(`/admin/notify-phrases/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          body: JSON.stringify({ ...p, enabled: mode === "1" }),
+        });
+        renderPhrases();
+      };
+    });
+    content.querySelectorAll("[data-del-phr]").forEach((b) => {
+      b.onclick = async () => {
+        const id = b.getAttribute("data-del-phr");
+        if (!confirm("Spruch wirklich löschen?")) return;
+        await api(`/admin/notify-phrases/${encodeURIComponent(id)}`, { method: "DELETE" });
+        renderPhrases();
+      };
+    });
+  }
+
+  function openPhraseEditor(existing, targets) {
+    const isEdit = Boolean(existing);
+    openModal(
+      `
+      <h3 style="font-family:var(--display);margin:0 0 0.4rem">${isEdit ? "Spruch bearbeiten" : "Neuer Spruch"}</h3>
+      <form id="phrForm">
+        <label class="field">Text
+          <textarea name="text" maxlength="200" rows="3" required>${esc(existing?.text || "")}</textarea>
+        </label>
+        <label class="field">Untertitel (Push)
+          <input name="subtitle" maxlength="120" value="${esc(existing?.subtitle || "Tippen — und kurz vorbeischauen")}" />
+        </label>
+        <div class="grid-2">
+          <label class="field">Pool
+            <select name="pool">
+              <option value="mood" ${existing?.pool !== "share" ? "selected" : ""}>Mood / Push</option>
+              <option value="share" ${existing?.pool === "share" ? "selected" : ""}>Share / OG</option>
+            </select>
+          </label>
+          <label class="field">Tap-Ziel
+            <select name="target">
+              ${(targets || [])
+                .map(
+                  (t) =>
+                    `<option value="${esc(t.id)}" ${
+                      (existing?.target || "home") === t.id ? "selected" : ""
+                    }>${esc(t.label)}</option>`
+                )
+                .join("")}
+            </select>
+          </label>
+        </div>
+        <label class="field" style="margin-top:0.75rem;flex-direction:row;align-items:center;gap:0.5rem">
+          <input type="checkbox" name="enabled" ${existing?.enabled !== false ? "checked" : ""} /> Aktiv
+        </label>
+        <div class="actions" style="margin-top:1rem">
+          <button type="submit" class="btn">Speichern</button>
+          <button type="button" class="btn ghost" id="cancelModal">Abbrechen</button>
+        </div>
+      </form>`,
+      true
+    );
+    $("cancelModal").onclick = closeModal;
+    $("phrForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const body = {
+        text: String(fd.get("text") || "").trim(),
+        subtitle: String(fd.get("subtitle") || "").trim(),
+        pool: String(fd.get("pool") || "mood"),
+        target: String(fd.get("target") || "home"),
+        enabled: e.target.querySelector('[name="enabled"]').checked,
+      };
+      try {
+        if (isEdit) {
+          await api(`/admin/notify-phrases/${encodeURIComponent(existing.id)}`, {
+            method: "PUT",
+            body: JSON.stringify(body),
+          });
+        } else {
+          await api("/admin/notify-phrases", { method: "POST", body: JSON.stringify(body) });
+        }
+        closeModal();
+        renderPhrases();
+      } catch (err) {
+        alert(err?.message || "Speichern fehlgeschlagen");
+      }
+    };
+  }
+
   window.LuvAdmPanels = {
     renderAchievements,
     renderUsers,
+    renderPhrases,
     openAchievementWizard,
     openUserDetail,
   };

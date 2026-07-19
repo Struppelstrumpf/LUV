@@ -4,6 +4,10 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import com.luv.couple.net.LuvApiClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 /**
  * Sanfte Stimmungs-Hinweise — maximal eine alle 12 Stunden.
@@ -13,6 +17,7 @@ object MoodNudgeScheduler {
     private const val KEY_LAST_SHOWN_MS = "last_shown_ms"
     private const val KEY_NEXT_AT_MS = "next_at_ms"
     private const val KEY_LAST_LINE = "last_line"
+    private const val KEY_LAST_PHRASE_ID = "last_phrase_id"
     private const val REQUEST_CODE = 4100
     private const val INTERVAL_MS = 12 * 60 * 60 * 1000L
     private const val MIN_DELAY_MS = 15 * 60 * 1000L
@@ -65,7 +70,13 @@ object MoodNudgeScheduler {
             .putLong(KEY_LAST_SHOWN_MS, now)
             .putLong(KEY_NEXT_AT_MS, now + INTERVAL_MS)
             .apply()
-        LuvAlertNotifier.showMoodNudge(app, nextLine(prefs))
+        val picked = nextPhrase(prefs)
+        LuvAlertNotifier.showMoodNudge(
+            app,
+            text = picked.text,
+            subtitle = picked.subtitle,
+            deepTarget = picked.target
+        )
         scheduleAlarm(app, now + INTERVAL_MS)
     }
 
@@ -101,10 +112,31 @@ object MoodNudgeScheduler {
         )
     }
 
-    private fun nextLine(prefs: android.content.SharedPreferences): String {
+    private data class Picked(
+        val text: String,
+        val subtitle: String?,
+        val target: String?
+    )
+
+    private fun nextPhrase(prefs: android.content.SharedPreferences): Picked {
+        val excluding = prefs.getString(KEY_LAST_PHRASE_ID, null)
+        val remote = runCatching {
+            if (LuvApiClient.sessionToken.isNullOrBlank()) null
+            else {
+                runBlocking {
+                    withContext(Dispatchers.IO) {
+                        LuvApiClient.fetchNotifyPhrase(pool = "mood", excludingId = excluding)
+                    }
+                }
+            }
+        }.getOrNull()
+        if (remote != null && remote.text.isNotBlank()) {
+            prefs.edit().putString(KEY_LAST_PHRASE_ID, remote.id).apply()
+            return Picked(remote.text, remote.subtitle, remote.target)
+        }
         val last = prefs.getInt(KEY_LAST_LINE, -1)
         val (idx, text) = MoodLines.pick(excluding = last)
         prefs.edit().putInt(KEY_LAST_LINE, idx).apply()
-        return text
+        return Picked(text, null, "home")
     }
 }

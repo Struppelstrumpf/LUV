@@ -564,12 +564,69 @@ function ensureDaily(user, dayKey) {
       completed: false,
       rewardClaimed: false,
     };
+    // Pausentag(e): Streak ehrlich auf 0, bis heute wieder aktiv
+    const prev = a.lastStreakDate || a.lastDailyCompleteDate || null;
+    if (prev && prev !== dayKey) {
+      const gap = dayDiffBerlin(prev, dayKey);
+      if (gap > 1) {
+        a.streak = 0;
+        a.progress.daily_streak = Math.max(Number(a.progress.daily_streak) || 0, 0);
+      }
+    }
   }
   if (a.coinsEarnedDate !== dayKey) {
     a.coinsEarnedDate = dayKey;
     a.coinsEarnedToday = 0;
   }
   return a;
+}
+
+/** Kalendertage-Differenz (YYYY-MM-DD), Europe/Berlin-Keys ohne TZ-Drift. */
+function dayDiffBerlin(fromKey, toKey) {
+  const a = String(fromKey || "").trim();
+  const b = String(toKey || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(a) || !/^\d{4}-\d{2}-\d{2}$/.test(b)) return null;
+  const [ay, am, ad] = a.split("-").map(Number);
+  const [by, bm, bd] = b.split("-").map(Number);
+  const t0 = Date.UTC(ay, am - 1, ad);
+  const t1 = Date.UTC(by, bm - 1, bd);
+  return Math.round((t1 - t0) / 86400000);
+}
+
+/**
+ * Day-Streak: einmal pro Berlin-Tag +1 bei Aktivität (App öffnen / Daily).
+ * Aufeinanderfolgende Tage erhöhen, Lücke setzt auf 1 zurück.
+ */
+function touchDayStreak(user, dayKey) {
+  const a = ensureAchievements(user);
+  const day = String(dayKey || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return a.streak || 0;
+  const prev = a.lastStreakDate || a.lastDailyCompleteDate || null;
+  if (prev === day) {
+    a.progress.daily_streak = Math.max(Number(a.progress.daily_streak) || 0, a.streak || 0);
+    return a.streak || 0;
+  }
+  const diff = prev ? dayDiffBerlin(prev, day) : null;
+  if (diff === 1) {
+    a.streak = Math.max(1, (Number(a.streak) || 0) + 1);
+  } else {
+    a.streak = 1;
+  }
+  a.lastStreakDate = day;
+  a.progress.daily_streak = Math.max(Number(a.progress.daily_streak) || 0, a.streak);
+  return a.streak;
+}
+
+function yesterdayKeyFrom(dayKey) {
+  const diff = dayDiffBerlin("1970-01-01", dayKey);
+  if (diff == null) return null;
+  const [y, m, d] = String(dayKey).split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - 1);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
 }
 
 function remainingAchCoinsToday(user, dayKey, dailyCap = DEFAULT_ACHIEVEMENT_DAILY_CAP) {
@@ -630,17 +687,8 @@ function bumpMetric(user, metric, amount, dayKey, applyLedgerFn) {
       a.daily.completed = true;
       a.daily.rewardClaimed = false;
       dailyJustCompleted = true;
-      const prev = a.lastDailyCompleteDate;
-      if (prev) {
-        const prevDate = new Date(prev + "T12:00:00");
-        const curDate = new Date(dayKey + "T12:00:00");
-        const diff = Math.round((curDate - prevDate) / 86400000);
-        a.streak = diff === 1 ? (a.streak || 0) + 1 : 1;
-      } else {
-        a.streak = 1;
-      }
       a.lastDailyCompleteDate = dayKey;
-      a.progress.daily_streak = Math.max(Number(a.progress.daily_streak) || 0, a.streak);
+      touchDayStreak(user, dayKey);
       a.progress.dailies_completed = (Number(a.progress.dailies_completed) || 0) + 1;
     }
   }
@@ -1012,4 +1060,7 @@ module.exports = {
   deleteCustomAchievement,
   ensureAchievementDefs,
   itemReward,
+  touchDayStreak,
+  dayDiffBerlin,
+  yesterdayKeyFrom,
 };

@@ -455,6 +455,33 @@ fun ProfileCanvasScreen(
         closeChestAfterPlace(fromChest)
     }
 
+    fun placeStreak(fromChest: Boolean = false) {
+        if (!editable) return
+        val existing = state.layout.firstOrNull { it.type == ProfileElType.Streak }
+        if (existing != null) {
+            selectedId = existing.id
+            closeChestAfterPlace(fromChest)
+            return
+        }
+        val el = ProfileCatalog.newStreak(dayStreak)
+        patchLayout(state.layout + el)
+        selectedId = el.id
+        closeChestAfterPlace(fromChest)
+    }
+
+    fun syncStreakBadgeOnLayout() {
+        if (state.layout.none { it.type == ProfileElType.Streak }) return
+        val label = dayStreak.coerceAtLeast(0).toString()
+        val next = state.layout.map {
+            if (it.type == ProfileElType.Streak) it.copy(text = label, emoji = "🔥") else it
+        }
+        if (next != state.layout) patchLayout(next)
+    }
+
+    LaunchedEffect(dayStreak, profileReady) {
+        if (profileReady) syncStreakBadgeOnLayout()
+    }
+
     fun placeBio(fromChest: Boolean = false) {
         if (!editable) return
         val existing = state.layout.firstOrNull { it.type == ProfileElType.Bio }
@@ -1402,6 +1429,7 @@ fun ProfileCanvasScreen(
                 currentCompanion = state.companionEmoji.ifBlank { peerPetEmoji },
                 hasGlass = state.layout.any { it.type == ProfileElType.Glass },
                 hasBio = state.layout.any { it.type == ProfileElType.Bio },
+                hasStreak = state.layout.any { it.type == ProfileElType.Streak },
                 spouseName = spouseExtraName,
                 engagedName = engagedExtraName,
                 hasSpouse = state.layout.any { it.type == ProfileElType.Spouse },
@@ -1413,6 +1441,7 @@ fun ProfileCanvasScreen(
                 onCompanion = { if (editable) placeCompanion(it, fromChest = true) },
                 onGlass = { if (editable) placeGlass(fromChest = true) },
                 onBio = { if (editable) placeBio(fromChest = true) },
+                onStreak = { if (editable) placeStreak(fromChest = true) },
                 onSpouse = { if (editable) placeSpouse(fromChest = true) },
                 onEngaged = { if (editable) placeEngaged(fromChest = true) },
                 selectedTab = if (editable) chestTab else 0,
@@ -2365,6 +2394,28 @@ private fun ElementContent(
                     fontFamily = BodyFont,
                     fontSize = sp(9f)
                 )
+            }
+        }
+        ProfileElType.Streak -> {
+            val streakNum = el.text?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+            Box(
+                modifier = Modifier
+                    .fillMaxSize(0.92f)
+                    .clip(CircleShape)
+                    .background(AccentRose.copy(0.2f))
+                    .border((2f * f).dp, AccentRose.copy(0.55f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("🔥", fontSize = sp(22f))
+                    Text(
+                        "$streakNum",
+                        color = AccentRose,
+                        fontFamily = font,
+                        fontSize = sp(16f),
+                        maxLines = 1
+                    )
+                }
             }
         }
         ProfileElType.Spouse -> {

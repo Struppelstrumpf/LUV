@@ -88,6 +88,27 @@ class MainActivity : ComponentActivity() {
         if (intent?.getBooleanExtra(EXTRA_OPEN_HOME, false) == true) {
             com.luv.couple.net.PendingDeepLink.offer(com.luv.couple.net.DeepLinkTarget.Home)
         }
+        if (intent?.getBooleanExtra(EXTRA_OPEN_COINSHOP, false) == true) {
+            com.luv.couple.net.PendingDeepLink.offer(com.luv.couple.net.DeepLinkTarget.CoinShop)
+        }
+        if (intent?.getBooleanExtra(EXTRA_OPEN_PROFILE, false) == true) {
+            com.luv.couple.net.PendingDeepLink.offer(com.luv.couple.net.DeepLinkTarget.Profile)
+        }
+        if (intent?.getBooleanExtra(EXTRA_OPEN_LAST_CANVAS, false) == true) {
+            com.luv.couple.net.PendingDeepLink.offer(com.luv.couple.net.DeepLinkTarget.LastCanvas)
+        }
+        when (intent?.getStringExtra(EXTRA_DEEP_TARGET)?.trim()?.lowercase()) {
+            "home" -> com.luv.couple.net.PendingDeepLink.offer(com.luv.couple.net.DeepLinkTarget.Home)
+            "marketplace" -> com.luv.couple.net.PendingMarketplace.offer()
+            "itemshop", "shop" -> PendingShop.offer()
+            "coinshop" -> com.luv.couple.net.PendingDeepLink.offer(com.luv.couple.net.DeepLinkTarget.CoinShop)
+            "inventar" -> com.luv.couple.net.PendingDeepLink.offer(com.luv.couple.net.DeepLinkTarget.Inventar)
+            "profile" -> com.luv.couple.net.PendingDeepLink.offer(com.luv.couple.net.DeepLinkTarget.Profile)
+            "last_canvas" -> com.luv.couple.net.PendingDeepLink.offer(com.luv.couple.net.DeepLinkTarget.LastCanvas)
+            "sozial_friends" -> com.luv.couple.net.PendingDeepLink.offer(com.luv.couple.net.DeepLinkTarget.SozialFriends)
+            "sozial_achievements" ->
+                com.luv.couple.net.PendingDeepLink.offer(com.luv.couple.net.DeepLinkTarget.SozialAchievements)
+        }
     }
 
     private fun captureJoinIntent(intent: Intent?) {
@@ -122,6 +143,11 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_SOZIAL_TAB = "sozial_tab"
         const val EXTRA_OPEN_INVENTAR = "open_inventar"
         const val EXTRA_OPEN_HOME = "open_home"
+        const val EXTRA_OPEN_COINSHOP = "open_coinshop"
+        const val EXTRA_OPEN_PROFILE = "open_profile"
+        const val EXTRA_OPEN_LAST_CANVAS = "open_last_canvas"
+        /** Server-Spruch-Ziel: home|marketplace|itemshop|coinshop|inventar|profile|last_canvas|… */
+        const val EXTRA_DEEP_TARGET = "deep_target"
         const val EXTRA_FROM_NOTIFICATION = "from_notification"
     }
 }

@@ -7,7 +7,7 @@ import kotlin.math.abs
 import kotlin.math.min
 
 enum class ProfileElType {
-    Avatar, Name, Status, Bio, Glass, Pet, Sticker, Text, Spouse, Engaged;
+    Avatar, Name, Status, Bio, Glass, Pet, Sticker, Text, Spouse, Engaged, Streak;
 
     val wire: String
         get() = when (this) {
@@ -21,6 +21,7 @@ enum class ProfileElType {
             Text -> "text"
             Spouse -> "spouse"
             Engaged -> "engaged"
+            Streak -> "streak"
         }
 
     companion object {
@@ -34,6 +35,7 @@ enum class ProfileElType {
             "text" -> Text
             "spouse" -> Spouse
             "engaged" -> Engaged
+            "streak" -> Streak
             else -> Sticker
         }
     }
@@ -139,7 +141,7 @@ data class ProfileState(
                 // Begleiter sitzt mittig im Avatar — kein separates Pet-Element
                 ProfileElType.Pet -> false
                 ProfileElType.Sticker, ProfileElType.Glass, ProfileElType.Bio,
-                ProfileElType.Spouse, ProfileElType.Engaged -> true
+                ProfileElType.Spouse, ProfileElType.Engaged, ProfileElType.Streak -> true
             }
         }.take(ProfileCatalog.MAX_DECOR + 6)
         return copy(
@@ -186,6 +188,7 @@ object ProfileCatalog {
         ProfileElType.Bio,
         ProfileElType.Spouse,
         ProfileElType.Engaged
+        // Streak: Zahl kommt live vom Server — nur verschieben/skalieren
     )
 
     val TEXT_COLORS: List<String> = listOf(
@@ -349,6 +352,20 @@ object ProfileCatalog {
         fontFamily = ProfileFont.Cozy
     )
 
+    fun newStreak(days: Int): ProfileLayoutEl = ProfileLayoutEl(
+        id = "el-streak",
+        type = ProfileElType.Streak,
+        x = 50f,
+        y = 70f,
+        scale = 1f,
+        z = 11,
+        emoji = "🔥",
+        text = days.coerceAtLeast(0).toString(),
+        color = "#FF6B8A",
+        fontSize = 14f,
+        fontFamily = ProfileFont.Cozy
+    )
+
     fun newSpouse(nickname: String): ProfileLayoutEl = ProfileLayoutEl(
         id = "el-spouse",
         type = ProfileElType.Spouse,
@@ -456,6 +473,7 @@ object ProfileCatalog {
         return short * when (type) {
             ProfileElType.Bio -> 120f / ref
             ProfileElType.Glass -> 72f / ref
+            ProfileElType.Streak -> 68f / ref
             ProfileElType.Pet, ProfileElType.Spouse, ProfileElType.Engaged -> 64f / ref
             ProfileElType.Avatar -> 56f / ref
             ProfileElType.Name -> 40f / ref

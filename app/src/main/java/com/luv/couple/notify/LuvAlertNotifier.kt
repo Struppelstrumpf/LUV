@@ -105,22 +105,33 @@ object LuvAlertNotifier {
     }
 
     /** Sanfter Tages-Impuls — leise, kurz, emotional. */
-    fun showMoodNudge(context: Context, text: String) {
+    fun showMoodNudge(
+        context: Context,
+        text: String,
+        subtitle: String? = null,
+        deepTarget: String? = null
+    ) {
         if (QuietHoursGate.isQuietNow()) return
         val line = text.ifBlank { MoodLines.pickText() }
+        val sub = subtitle?.trim()?.takeIf { it.isNotBlank() }
+            ?: "Tippen — und kurz vorbeischauen"
         ensureChannel(context)
         val open = PendingIntent.getActivity(
             context,
             NOTIFY_MOOD,
             Intent(context, MainActivity::class.java).apply {
                 putExtra(MainActivity.EXTRA_FROM_NOTIFICATION, true)
+                val target = deepTarget?.trim()?.lowercase().orEmpty()
+                if (target.isNotBlank() && target != "none") {
+                    putExtra(MainActivity.EXTRA_DEEP_TARGET, target)
+                }
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val notification = NotificationCompat.Builder(context, MOOD_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(line)
-            .setContentText("Tippen — und kurz vorbeischauen")
+            .setContentText(sub)
             .setStyle(
                 NotificationCompat.BigTextStyle()
                     .bigText(line)

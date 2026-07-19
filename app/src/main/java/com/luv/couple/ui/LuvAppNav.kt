@@ -96,8 +96,10 @@ import com.luv.couple.ui.screens.SocialScreen
 import com.luv.couple.ui.screens.TutorialFlow
 import com.luv.couple.update.AppUpdater
 import com.luv.couple.update.UpdateUiState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 object Routes {
@@ -932,7 +934,33 @@ fun LuvAppNav() {
                 tab = 3
                 openMarketPanel = MarketPanel.Marketplace
             }
-            com.luv.couple.net.DeepLinkTarget.Shop -> openShopTab()
+            com.luv.couple.net.DeepLinkTarget.Shop -> {
+                tab = 3
+                openMarketPanel = MarketPanel.ItemShop
+            }
+            com.luv.couple.net.DeepLinkTarget.CoinShop -> openShopTab()
+            com.luv.couple.net.DeepLinkTarget.Profile -> {
+                tab = 0
+                navController.navigate(Routes.PROFILE)
+            }
+            com.luv.couple.net.DeepLinkTarget.LastCanvas -> {
+                tab = 0
+                scope.launch {
+                    val lobbyId = withContext(Dispatchers.IO) {
+                        val snap = prefs.snapshot()
+                        snap.activeLobbyId
+                            ?: snap.lobbies.maxByOrNull { it.lastCanvasAt }?.id
+                            ?: snap.lobbies.firstOrNull()?.id
+                    }
+                    if (!lobbyId.isNullOrBlank()) {
+                        context.startActivity(
+                            Intent(context, LockDrawActivity::class.java).apply {
+                                putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobbyId)
+                            }
+                        )
+                    }
+                }
+            }
         }
     }
 

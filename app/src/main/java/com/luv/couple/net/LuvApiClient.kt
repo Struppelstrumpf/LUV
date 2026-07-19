@@ -1205,6 +1205,38 @@ object LuvApiClient {
         Unit
     }
 
+    data class NotifyPhrase(
+        val id: String,
+        val text: String,
+        val subtitle: String?,
+        val target: String?,
+        val pool: String
+    )
+
+    suspend fun fetchNotifyPhrase(
+        pool: String = "mood",
+        excludingId: String? = null
+    ): NotifyPhrase? = withContext(Dispatchers.IO) {
+        val qs = buildString {
+            append("pool=").append(pool.trim().ifBlank { "mood" })
+            if (!excludingId.isNullOrBlank()) {
+                append("&excluding=").append(excludingId.trim().encodeURL())
+            }
+        }
+        val json = runCatching { authedGet("/v1/notify-phrases/pick?$qs") }.getOrNull()
+            ?: return@withContext null
+        val o = json.optJSONObject("phrase") ?: return@withContext null
+        val text = o.optString("text").trim()
+        if (text.isBlank()) return@withContext null
+        NotifyPhrase(
+            id = o.optString("id").ifBlank { "remote" },
+            text = text,
+            subtitle = o.optString("subtitle").trim().takeIf { it.isNotBlank() },
+            target = o.optString("target").trim().takeIf { it.isNotBlank() },
+            pool = o.optString("pool", pool)
+        )
+    }
+
     suspend fun fetchLiveNotice(): LiveNotice? = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/live-notice")
         val o = json.optJSONObject("notice") ?: return@withContext null

@@ -11,7 +11,10 @@ enum class DeepLinkTarget {
     SozialAchievements,
     Inventar,
     Marketplace,
-    Shop
+    Shop,
+    CoinShop,
+    Profile,
+    LastCanvas
 }
 
 object PendingDeepLink {
