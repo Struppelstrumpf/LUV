@@ -422,7 +422,9 @@ data class ShopEmoji(
     val priceCoins: Int,
     val compareAtPrice: Int? = null,
     val remainingMs: Long? = null,
-    val searchText: String = ""
+    val searchText: String = "",
+    /** Custom-Bild (img_*) für Sticker/Emoji — relativer oder absoluter URL. */
+    val imageUrl: String? = null
 )
 
 data class ThemeVisualConfig(

@@ -382,11 +382,11 @@
           </div>
         </div>
         <div class="shop-card-actions">
-          <button class="btn secondary" data-edit="${esc(it.kind)}|${esc(it.itemId)}">Bearbeiten</button>
-          <button class="btn ghost" data-toggle="${esc(it.kind)}|${esc(it.itemId)}|${it.enabled ? "off" : "on"}">${
+          <button type="button" class="btn secondary btn-edit" data-edit="${esc(it.kind)}|${esc(it.itemId)}">Bearbeiten</button>
+          <button type="button" class="btn ghost btn-toggle" data-toggle="${esc(it.kind)}|${esc(it.itemId)}|${it.enabled ? "off" : "on"}" title="${it.enabled ? "Im Shop ausblenden" : "Im Shop aktivieren"}">${
             it.enabled ? "Aus" : "An"
           }</button>
-          <button class="btn danger" data-del="${esc(it.kind)}|${esc(it.itemId)}" title="Endgültig löschen">Löschen</button>
+          <button type="button" class="btn btn-del" data-del="${esc(it.kind)}|${esc(it.itemId)}" title="Endgültig löschen">Löschen</button>
         </div>
       </article>`;
     }

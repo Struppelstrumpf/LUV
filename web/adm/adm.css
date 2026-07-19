@@ -351,11 +351,43 @@ body {
   color: var(--muted);
 }
 .shop-card-actions {
-  display: flex;
-  gap: 0.35rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.4rem;
   margin-top: auto;
+  align-items: stretch;
 }
-.shop-card-actions .btn { flex: 1; justify-content: center; }
+.shop-card-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.48rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.1;
+  white-space: nowrap;
+  min-width: 0;
+  border-radius: 10px;
+}
+.shop-card-actions .btn-edit {
+  grid-column: 1;
+}
+.shop-card-actions .btn-toggle {
+  grid-column: 2;
+  min-width: 3.1rem;
+}
+.shop-card-actions .btn-del {
+  grid-column: 1 / -1;
+  background: transparent;
+  color: #ff8a9a;
+  border: 1px solid rgba(255, 90, 110, 0.45);
+  font-weight: 500;
+}
+.shop-card-actions .btn-del:hover {
+  background: rgba(255, 90, 110, 0.14);
+  color: #ffc0c8;
+  border-color: rgba(255, 120, 140, 0.7);
+}
 
 .round-plus {
   width: 44px;

@@ -1306,12 +1306,24 @@ object LuvApiClient {
                 val rem = o.optLong("remainingMs", -1L).takeIf { it >= 0L }
                 val search = o.optString("searchText", "")
                 val label = o.optString("label", itemId)
+                fun imageUrlFor(): String? =
+                    o.optString("imageUrl", "").trim().ifBlank {
+                        if (o.optBoolean("hasImage", false) ||
+                            itemId.startsWith("img_", ignoreCase = true)
+                        ) {
+                            "${baseUrl()}/v1/shop/pet-image/${itemId.encodeURL()}"
+                        } else ""
+                    }.ifBlank { null }
                 when (kind) {
                     "emojis" -> emojis.add(
-                        com.luv.couple.shop.ShopEmoji(itemId, price, compare, rem, search)
+                        com.luv.couple.shop.ShopEmoji(
+                            itemId, price, compare, rem, search, imageUrlFor()
+                        )
                     )
                     "stickers" -> stickers.add(
-                        com.luv.couple.shop.ShopEmoji(itemId, price, compare, rem, search)
+                        com.luv.couple.shop.ShopEmoji(
+                            itemId, price, compare, rem, search, imageUrlFor()
+                        )
                     )
                     "themes" -> {
                         val vcObj = o.optJSONObject("visualConfig")
