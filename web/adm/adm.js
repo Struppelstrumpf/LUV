@@ -676,9 +676,29 @@
         };
       wireDesignStep();
       const form = $("wizForm");
+      // Enter in Suchworte/Name darf den Wizard NICHT speichern/schließen
+      form.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        const tag = (e.target && e.target.tagName) || "";
+        if (tag !== "INPUT" && tag !== "SELECT") return;
+        e.preventDefault();
+        if (step < steps.length - 1) {
+          if (!saveStep()) return;
+          step++;
+          paint();
+        }
+      });
       form.onsubmit = async (e) => {
         e.preventDefault();
+        // Nur auf dem letzten Schritt wirklich anlegen (Enter auf früheren Steps = weiter)
+        if (step < steps.length - 1) {
+          if (!saveStep()) return;
+          step++;
+          paint();
+          return;
+        }
         if (!saveStep()) return;
+        if (draft.kind === "themes") ensureThemeId();
         const body = {
           kind: draft.kind,
           itemId: draft.itemId,
@@ -695,6 +715,7 @@
         if (draft.kind === "themes" && draft.visualConfig) {
           body.visualConfig = draft.visualConfig;
           body.emoji = (draft.visualConfig.emojis && draft.visualConfig.emojis[0]) || "🖼️";
+          body.itemId = draft.itemId;
         }
         if (draft.source === "custom" && draft.imageDataUrl) {
           body.petSource = "image";
@@ -721,6 +742,21 @@
       if (!S?.isStableImageItemId?.(draft.itemId)) {
         draft.itemId = S?.newImageItemId?.() || `img_${Date.now().toString(36)}`;
       }
+    }
+
+    function isStableThemeId(id) {
+      const s = String(id || "").trim();
+      return /^theme_[a-z0-9]{4,24}$/i.test(s);
+    }
+
+    function ensureThemeId() {
+      if (isStableThemeId(draft.itemId)) return;
+      const bytes = new Uint8Array(4);
+      if (crypto && crypto.getRandomValues) crypto.getRandomValues(bytes);
+      else for (let i = 0; i < 4; i++) bytes[i] = (Math.random() * 256) | 0;
+      draft.itemId =
+        "theme_" +
+        Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
     }
 
     function wireDesignStep() {
@@ -796,9 +832,7 @@
           Studio()?.openThemeStudio(draft.visualConfig, (cfg) => {
             draft.visualConfig = cfg;
             if (!draft.label || draft.label === "Herz") draft.label = "Eigener Hintergrund";
-            if (!draft.itemId || draft.itemId === "💖") {
-              draft.itemId = `theme_${Math.random().toString(36).slice(2, 8)}`;
-            }
+            ensureThemeId();
             paint();
           });
         };
@@ -820,8 +854,7 @@
             alert("Bitte zuerst den Hintergrund-Designer öffnen.");
             return false;
           }
-          draft.itemId = String(fd.get("itemId") || draft.itemId || "").trim() ||
-            `theme_${Math.random().toString(36).slice(2, 8)}`;
+          ensureThemeId();
           if (!draft.label) draft.label = "Hintergrund";
         } else if (draft.source === "custom") {
           if (!draft.imageDataUrl) {
@@ -899,12 +932,11 @@
                   : ""
               }
             </div>
-            <div class="grid-2" style="margin-top:0.75rem">
-              <label class="field">Item-ID<input name="itemId" value="${esc(draft.itemId)}" placeholder="theme_snow" /></label>
-              <label class="field">Name<input name="label" value="${esc(draft.label)}" /></label>
-            </div>
+            <label class="field" style="margin-top:0.75rem">Name
+              <input name="label" value="${esc(draft.label === "Herz" ? "Eigener Hintergrund" : draft.label)}" />
+            </label>
             <label class="field" style="margin-top:0.6rem">Suchworte
-              <input name="searchText" value="${esc(draft.searchText)}" />
+              <input name="searchText" value="${esc(draft.searchText)}" placeholder="schnee winter cozy" />
             </label>`;
         }
         return `
@@ -925,11 +957,6 @@
                     ${draft.imageDataUrl ? `<button type="button" class="btn ghost" id="clearPetImage">Verwerfen</button>` : ""}
                   </div>
                   ${glyphPreviewHtml()}
-                  <p class="muted mono" style="margin:0.65rem 0 0">ID: ${esc(
-                    Studio()?.isStableImageItemId?.(draft.itemId)
-                      ? draft.itemId
-                      : "(wird beim Gestalten vergeben)"
-                  )}</p>
                 </div>
                 <label class="field" style="margin-top:0.75rem">Name
                   <input name="label" value="${esc(draft.label === "Herz" ? "Eigenes Emoji" : draft.label)}" />

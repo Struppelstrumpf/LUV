@@ -8175,6 +8175,21 @@ app.post("/v1/admin/shop/items", (req, res) => {
     }
     body.hasImage = Boolean(imgResult.hasImage);
   }
+  // Hintergründe: ID immer automatisch (theme_xxxxxxxx), nie manuell
+  if (kind === "themes") {
+    const db = getDb();
+    const stable = /^theme_[a-z0-9]{4,24}$/i.test(itemId);
+    if (!stable || shopCatalog.getItem(db, kind, itemId) || itemId === "💖") {
+      for (let i = 0; i < 40; i++) {
+        const id = `theme_${crypto.randomBytes(4).toString("hex")}`;
+        if (!shopCatalog.getItem(db, kind, id)) {
+          itemId = id;
+          break;
+        }
+      }
+    }
+    body.itemId = itemId;
+  }
   const result = shopCatalog.upsertItem(getDb(), body);
   if (!result.ok) {
     return res.status(400).json({ error: result.error, message: result.message });
