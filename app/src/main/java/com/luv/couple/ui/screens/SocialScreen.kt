@@ -1,11 +1,13 @@
 package com.luv.couple.ui.screens
 
+import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -44,15 +47,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -61,6 +68,8 @@ import com.luv.couple.data.PeerPalette
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.AchievementsBadge
 import com.luv.couple.net.LuvApiClient
+import com.luv.couple.net.PublicCanvasPreview
+import com.luv.couple.ui.PublicSplashCache
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgSoft
 import com.luv.couple.ui.theme.BodyFont
@@ -70,20 +79,22 @@ import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private val SocialGold = Color(0xFFFFD54F)
+
 @Composable
 fun SocialScreen(
     initialTab: Int = 0,
     onOpenFriendProfile: (userId: String, nickname: String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 1)) }
+    var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 2)) }
     val friendsTabDot by com.luv.couple.net.NotificationBadges.hasFriendsTabDot
         .collectAsStateWithLifecycle()
     val achievementsTabDot by com.luv.couple.net.NotificationBadges.hasAchievementsTabDot
         .collectAsStateWithLifecycle()
 
     LaunchedEffect(initialTab) {
-        tab = initialTab.coerceIn(0, 1)
+        tab = initialTab.coerceIn(0, 2)
     }
 
     LaunchedEffect(Unit) {
@@ -95,8 +106,10 @@ fun SocialScreen(
     }
 
     LaunchedEffect(tab) {
-        if (tab == 0) com.luv.couple.net.NotificationBadges.markFriendsTabSeen()
-        else com.luv.couple.net.NotificationBadges.markAchievementsTabSeen()
+        when (tab) {
+            0 -> com.luv.couple.net.NotificationBadges.markFriendsTabSeen()
+            2 -> com.luv.couple.net.NotificationBadges.markAchievementsTabSeen()
+        }
     }
 
     MenuBackdrop(includeNavigationBars = false) {
@@ -110,7 +123,7 @@ fun SocialScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf("Freunde", "Erfolge").forEachIndexed { index, label ->
+                listOf("Freunde", "Bilder", "Erfolge").forEachIndexed { index, label ->
                     val active = tab == index
                     Box(
                         modifier = Modifier
@@ -119,10 +132,9 @@ fun SocialScreen(
                             .background(if (active) AccentRose.copy(0.28f) else BgSoft)
                             .clickable {
                                 tab = index
-                                if (index == 0) {
-                                    com.luv.couple.net.NotificationBadges.markFriendsTabSeen()
-                                } else {
-                                    com.luv.couple.net.NotificationBadges.markAchievementsTabSeen()
+                                when (index) {
+                                    0 -> com.luv.couple.net.NotificationBadges.markFriendsTabSeen()
+                                    2 -> com.luv.couple.net.NotificationBadges.markAchievementsTabSeen()
                                 }
                             }
                             .padding(vertical = 10.dp),
@@ -132,16 +144,16 @@ fun SocialScreen(
                             label,
                             color = TextPrimary,
                             fontFamily = if (active) DisplayFont else BodyFont,
-                            fontSize = 14.sp,
+                            fontSize = 13.sp,
                             softWrap = false
                         )
                         val showDot = (index == 0 && friendsTabDot) ||
-                            (index == 1 && achievementsTabDot)
+                            (index == 2 && achievementsTabDot)
                         if (showDot) {
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .padding(top = 4.dp, end = 10.dp)
+                                    .padding(top = 4.dp, end = 8.dp)
                                     .size(8.dp)
                                     .clip(CircleShape)
                                     .background(AccentRose)
@@ -156,6 +168,7 @@ fun SocialScreen(
                     modifier = Modifier.weight(1f),
                     onOpenFriendProfile = onOpenFriendProfile
                 )
+                1 -> SocialBilderPanel(modifier = Modifier.weight(1f))
                 else -> AchievementsPanel(
                     modifier = Modifier
                         .weight(1f)
@@ -171,6 +184,170 @@ fun SocialScreen(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SocialBilderPanel(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var hero by remember { mutableStateOf<PublicSplashCache.Entry?>(null) }
+    var others by remember { mutableStateOf<List<Pair<PublicCanvasPreview, Bitmap>>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        loading = true
+        val cached = PublicSplashCache.loadLast(context)
+            ?: PublicSplashCache.memoryEntry()
+        hero = cached
+        val exclude = buildList {
+            cached?.preview?.id?.takeIf { it.isNotBlank() }?.let { add(it) }
+        }
+        val sample = LuvApiClient.fetchPublicCanvasSample(limit = 3, excludeIds = exclude)
+        val rest = mutableListOf<Pair<PublicCanvasPreview, Bitmap>>()
+        for (preview in sample) {
+            if (rest.size >= 2) break
+            if (preview.id == cached?.preview?.id) continue
+            val bmp = PublicSplashCache.downloadBitmap(preview.imageUrl) ?: continue
+            rest.add(preview to bmp)
+        }
+        // Falls Sample den Splash mitgeliefert hat / zu wenig: ohne Exclude nachfüllen
+        if (rest.size < 2) {
+            val more = LuvApiClient.fetchPublicCanvasSample(
+                limit = 4,
+                excludeIds = exclude + rest.map { it.first.id }
+            )
+            for (preview in more) {
+                if (rest.size >= 2) break
+                if (preview.id == cached?.preview?.id) continue
+                if (rest.any { it.first.id == preview.id }) continue
+                val bmp = PublicSplashCache.downloadBitmap(preview.imageUrl) ?: continue
+                rest.add(preview to bmp)
+            }
+        }
+        others = rest
+        loading = false
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            "Aus der Community",
+            color = TextMuted,
+            fontFamily = BodyFont,
+            fontSize = 13.sp
+        )
+        val h = hero
+        if (h != null) {
+            SocialPublicImageCard(
+                bitmap = h.bitmap,
+                title = h.preview.nameLine.ifBlank { h.preview.hostNickname },
+                goldFrame = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else if (loading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(0.85f)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(BgSoft)
+                    .border(2.dp, SocialGold.copy(0.35f), RoundedCornerShape(18.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Lädt…", color = TextMuted, fontFamily = BodyFont, fontSize = 14.sp)
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(0.85f)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(BgSoft)
+                    .border(2.dp, SocialGold.copy(0.35f), RoundedCornerShape(18.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "Noch kein Splash-Bild — öffne die App erneut,\nwenn öffentliche Bilder verfügbar sind.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        }
+        if (others.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                others.take(2).forEach { (preview, bmp) ->
+                    SocialPublicImageCard(
+                        bitmap = bmp,
+                        title = preview.nameLine.ifBlank { preview.hostNickname },
+                        goldFrame = false,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                if (others.size == 1) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        } else if (!loading) {
+            Text(
+                "Weitere öffentliche Bilder erscheinen hier,\nsobald mehr Galerie-Bilder online sind.",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 12.sp
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun SocialPublicImageCard(
+    bitmap: Bitmap,
+    title: String,
+    goldFrame: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val shape = RoundedCornerShape(if (goldFrame) 18.dp else 14.dp)
+    Column(modifier = modifier) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(if (goldFrame) 0.85f else 1f)
+                .clip(shape)
+                .background(BgSoft)
+                .then(
+                    if (goldFrame) {
+                        Modifier.border(2.5.dp, SocialGold, shape)
+                    } else {
+                        Modifier.border(1.dp, Color.White.copy(0.12f), shape)
+                    }
+                )
+        ) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            title,
+            color = if (goldFrame) SocialGold else TextMuted,
+            fontFamily = if (goldFrame) DisplayFont else BodyFont,
+            fontSize = if (goldFrame) 14.sp else 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

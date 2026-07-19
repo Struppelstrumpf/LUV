@@ -6,6 +6,13 @@ import com.luv.couple.data.TemplateStrokePart
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** Emoji kurz; Bild-Begleiter (img_*) länger behalten — Kompatibilität alt/neu. */
+private fun clipCanvasEmojiId(raw: String?, maxEmoji: Int = 16): String {
+    val e = raw?.trim().orEmpty()
+    if (e.isEmpty()) return ""
+    return if (e.startsWith("img_", ignoreCase = true)) e.take(32) else e.take(maxEmoji)
+}
+
 sealed class PairMessage {
     data class Hello(val token: String) : PairMessage()
     data class HelloOk(val ok: Boolean) : PairMessage()
@@ -95,12 +102,12 @@ object PairProtocol {
                 .put("colorIndex", message.colorIndex)
             is PairMessage.Reaction -> JSONObject()
                 .put("type", "reaction")
-                .put("emoji", message.emoji.take(8))
+                .put("emoji", clipCanvasEmojiId(message.emoji))
                 .put("nickname", message.nickname ?: JSONObject.NULL)
             is PairMessage.StickerPlace -> JSONObject()
                 .put("type", "sticker_place")
                 .put("id", message.id)
-                .put("emoji", message.emoji.take(8))
+                .put("emoji", clipCanvasEmojiId(message.emoji))
                 .put("x", message.x.toDouble())
                 .put("y", message.y.toDouble())
                 .put("nickname", message.nickname ?: JSONObject.NULL)
@@ -160,7 +167,8 @@ object PairProtocol {
                             colorIndex = colorIndex,
                             authorId = json.optString("authorId").takeIf { it.isNotBlank() && it != "null" },
                             gender = json.optString("gender").takeIf { it.isNotBlank() && it != "null" },
-                            emoji = json.optString("emoji").takeIf { it.isNotBlank() && it != "null" }?.take(8),
+                            emoji = json.optString("emoji").takeIf { it.isNotBlank() && it != "null" }
+                                ?.let { clipCanvasEmojiId(it) },
                             colorLocked = json.optBoolean("colorLocked", false),
                             templateParts = parseTemplateParts(json.optJSONArray("templateParts")),
                             templateScale = json.optDouble("templateScale", 1.0).toFloat()
@@ -194,12 +202,12 @@ object PairProtocol {
                     colorIndex = json.optInt("colorIndex", 0)
                 )
                 "reaction" -> PairMessage.Reaction(
-                    emoji = json.optString("emoji").take(8),
+                    emoji = clipCanvasEmojiId(json.optString("emoji")),
                     nickname = json.optString("nickname").takeIf { it.isNotBlank() && it != "null" }
                 )
                 "sticker_place" -> PairMessage.StickerPlace(
                     id = json.optString("id").ifBlank { java.util.UUID.randomUUID().toString() },
-                    emoji = json.optString("emoji").take(8),
+                    emoji = clipCanvasEmojiId(json.optString("emoji")),
                     x = json.optDouble("x", 0.5).toFloat().coerceIn(0f, 1f),
                     y = json.optDouble("y", 0.5).toFloat().coerceIn(0f, 1f),
                     nickname = json.optString("nickname").takeIf { it.isNotBlank() && it != "null" }

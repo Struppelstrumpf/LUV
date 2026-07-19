@@ -1642,10 +1642,18 @@ function scheduleStickerSave(code, room) {
   );
 }
 
+function clipCanvasEmojiId(raw) {
+  const e = String(raw || "").trim();
+  if (!e) return "";
+  // Bild-Begleiter img_xxxxxxxx brauchen mehr als 8 Zeichen
+  if (e.toLowerCase().startsWith("img_")) return e.slice(0, PET_ID_MAX);
+  return e.slice(0, 16);
+}
+
 function sanitizeStoredSticker(raw) {
   if (!raw || typeof raw !== "object") return null;
   const id = String(raw.id || "").trim();
-  const emoji = String(raw.emoji || "").trim().slice(0, 8);
+  const emoji = clipCanvasEmojiId(raw.emoji);
   if (!id || id.length > 80 || !emoji) return null;
   const x = Math.min(1, Math.max(0, Number(raw.x)));
   const y = Math.min(1, Math.max(0, Number(raw.y)));
@@ -5443,11 +5451,14 @@ app.post("/v1/auth/google", async (req, res) => {
         integrityNonce
       );
       if (!verdict.ok) {
+        const missing = !integrityToken || verdict.error === "missing_integrity";
         return res.status(403).json({
           error: verdict.error || "integrity_required",
-          message:
-            verdict.message ||
-            "Neue Konten nur über die echte Play-Store-App auf einem Android-Gerät.",
+          updateRequired: missing,
+          message: missing
+            ? "Bitte aktualisiere LUV im Play Store, um ein neues Konto zu erstellen. Bestehende Konten kannst du weiterhin anmelden."
+            : verdict.message ||
+              "Neue Konten nur über die echte Play-Store-App auf einem Android-Gerät.",
         });
       }
     }
@@ -9554,6 +9565,40 @@ app.get("/v1/public-canvases/random", (req, res) => {
     createdAt: entry.createdAt,
     expiresAt: entry.expiresAt || Number(entry.createdAt) + PUBLIC_TTL_MS,
   });
+});
+
+/** Mehrere öffentliche Bilder für Sozial → Bilder (ohne Auth). */
+app.get("/v1/public-canvases/sample", (req, res) => {
+  cleanupPublicCanvases();
+  const limit = Math.min(6, Math.max(1, Math.floor(Number(req.query.limit) || 3)));
+  const exclude = new Set(
+    String(req.query.exclude || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 80)
+  );
+  const list = listPublicCanvasEntries();
+  if (!list.length) return res.json({ items: [] });
+  const fresh = list.filter((e) => e && e.id && !exclude.has(e.id));
+  const pool = fresh.length ? fresh.slice() : list.slice();
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i + 1);
+    const tmp = pool[i];
+    pool[i] = pool[j];
+    pool[j] = tmp;
+  }
+  const items = pool.slice(0, limit).map((entry) => ({
+    id: entry.id,
+    lobbyName: entry.lobbyName || "Lobby",
+    hostNickname: entry.hostNickname || "Jemand",
+    memberNicknames: Array.isArray(entry.memberNicknames) ? entry.memberNicknames : [],
+    nameLine: entry.nameLine || splashNameLine(entry),
+    imageUrl: `/v1/public-canvases/${entry.id}/image`,
+    createdAt: entry.createdAt,
+    expiresAt: entry.expiresAt || Number(entry.createdAt) + PUBLIC_TTL_MS,
+  }));
+  return res.json({ items });
 });
 
 /** Eigene veröffentlichte Galerie-Bilder (für Geräte-Sync) */

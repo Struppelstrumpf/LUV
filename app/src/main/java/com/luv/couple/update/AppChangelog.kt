@@ -12,6 +12,14 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.9942",
+            listOf(
+                "Sozial: neuer Tab „Bilder“ mit Splash-Bild und Community-Fotos",
+                "Erfolge-Hinweis bleibt nach dem Ansehen weg (auch nach App-Neustart)",
+                "Begleiter & ältere App-Versionen arbeiten zuverlässiger zusammen",
+            )
+        ),
+        Entry(
             "1.9.9937",
             listOf(
                 "Update-Hinweis erscheint wieder, wenn im Play Store eine neue Version wartet",

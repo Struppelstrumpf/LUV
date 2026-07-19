@@ -683,7 +683,12 @@ class PairConnectionService : Service() {
                             for (i in 0 until stickersArr.length()) {
                                 val o = stickersArr.optJSONObject(i) ?: continue
                                 val sid = o.optString("id").trim()
-                                val emoji = o.optString("emoji").trim().take(8)
+                                val rawEmoji = o.optString("emoji").trim()
+                                val emoji = if (rawEmoji.startsWith("img_", ignoreCase = true)) {
+                                    rawEmoji.take(32)
+                                } else {
+                                    rawEmoji.take(16)
+                                }
                                 if (sid.isBlank() || emoji.isBlank()) continue
                                 add(
                                     Stroke(

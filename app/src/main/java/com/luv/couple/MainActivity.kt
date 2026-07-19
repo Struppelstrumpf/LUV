@@ -71,9 +71,13 @@ class MainActivity : ComponentActivity() {
         }
         if (intent?.getBooleanExtra(EXTRA_OPEN_SOZIAL, false) == true) {
             val sub = intent.getIntExtra(EXTRA_SOZIAL_TAB, 0)
+            // 0=Freunde, 1=Bilder (oder Legacy-Erfolge), 2=Erfolge
             com.luv.couple.net.PendingDeepLink.offer(
-                if (sub == 1) com.luv.couple.net.DeepLinkTarget.SozialAchievements
-                else com.luv.couple.net.DeepLinkTarget.SozialFriends
+                when (sub) {
+                    2 -> com.luv.couple.net.DeepLinkTarget.SozialAchievements
+                    1 -> com.luv.couple.net.DeepLinkTarget.SozialAchievements // Legacy-Push
+                    else -> com.luv.couple.net.DeepLinkTarget.SozialFriends
+                }
             )
         }
         if (intent?.getBooleanExtra(EXTRA_OPEN_INVENTAR, false) == true) {
@@ -112,7 +116,7 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_OPEN_SHOP = "open_shop"
         const val EXTRA_OPEN_MARKETPLACE = "open_marketplace"
         const val EXTRA_OPEN_SOZIAL = "open_sozial"
-        /** 0 = Freunde, 1 = Erfolge */
+        /** 0 = Freunde, 1 = Bilder, 2 = Erfolge (1 war früher Erfolge) */
         const val EXTRA_SOZIAL_TAB = "sozial_tab"
         const val EXTRA_OPEN_INVENTAR = "open_inventar"
         const val EXTRA_OPEN_HOME = "open_home"

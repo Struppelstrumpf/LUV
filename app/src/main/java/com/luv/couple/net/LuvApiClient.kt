@@ -3193,6 +3193,30 @@ object LuvApiClient {
         }
     }
 
+    private fun parsePublicCanvasPreview(json: JSONObject, cycled: Boolean = false): PublicCanvasPreview {
+        val names = buildList {
+            val arr = json.optJSONArray("memberNicknames")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    arr.optString(i).takeIf { it.isNotBlank() }?.let { add(it) }
+                }
+            }
+        }
+        return PublicCanvasPreview(
+            id = json.optString("id"),
+            lobbyName = json.optString("lobbyName", "Lobby"),
+            hostNickname = json.optString("hostNickname", "Jemand"),
+            memberNicknames = names,
+            nameLine = json.optString("nameLine").ifBlank {
+                json.optString("hostNickname", "Jemand")
+            },
+            imageUrl = json.optString("imageUrl"),
+            createdAt = json.optLong("createdAt", 0L),
+            expiresAt = json.optLong("expiresAt", 0L),
+            cycled = cycled
+        )
+    }
+
     suspend fun fetchRandomPublicCanvas(
         excludeIds: Collection<String> = emptyList()
     ): PublicCanvasPreview? = withContext(Dispatchers.IO) {
@@ -3217,29 +3241,46 @@ object LuvApiClient {
                 if (!response.isSuccessful) return@runCatching null
                 val json = JSONObject(raw)
                 if (!json.optBoolean("available", false)) return@runCatching null
-                val names = buildList {
-                    val arr = json.optJSONArray("memberNicknames")
-                    if (arr != null) {
-                        for (i in 0 until arr.length()) {
-                            arr.optString(i).takeIf { it.isNotBlank() }?.let { add(it) }
-                        }
-                    }
-                }
-                PublicCanvasPreview(
-                    id = json.optString("id"),
-                    lobbyName = json.optString("lobbyName", "Lobby"),
-                    hostNickname = json.optString("hostNickname", "Jemand"),
-                    memberNicknames = names,
-                    nameLine = json.optString("nameLine").ifBlank {
-                        json.optString("hostNickname", "Jemand")
-                    },
-                    imageUrl = json.optString("imageUrl"),
-                    createdAt = json.optLong("createdAt", 0L),
-                    expiresAt = json.optLong("expiresAt", 0L),
-                    cycled = json.optBoolean("cycled", false)
-                )
+                parsePublicCanvasPreview(json, cycled = json.optBoolean("cycled", false))
             }
         }.getOrNull()
+    }
+
+    /** Mehrere öffentliche Bilder (Sozial → Bilder). */
+    suspend fun fetchPublicCanvasSample(
+        limit: Int = 3,
+        excludeIds: Collection<String> = emptyList()
+    ): List<PublicCanvasPreview> = withContext(Dispatchers.IO) {
+        runCatching {
+            val exclude = excludeIds
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .take(80)
+                .joinToString(",")
+            val url = buildString {
+                append(baseUrl())
+                append("/v1/public-canvases/sample?limit=")
+                append(limit.coerceIn(1, 6))
+                if (exclude.isNotEmpty()) {
+                    append("&exclude=")
+                    append(java.net.URLEncoder.encode(exclude, Charsets.UTF_8.name()))
+                }
+            }
+            val request = Request.Builder().url(url).get().build()
+            http.newCall(request).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                if (!response.isSuccessful) return@runCatching emptyList()
+                val json = JSONObject(raw)
+                val arr = json.optJSONArray("items") ?: return@runCatching emptyList()
+                buildList {
+                    for (i in 0 until arr.length()) {
+                        val o = arr.optJSONObject(i) ?: continue
+                        add(parsePublicCanvasPreview(o))
+                    }
+                }
+            }
+        }.getOrDefault(emptyList())
     }
 
     suspend fun uploadCanvasSnapshot(code: String, token: String, imageBase64: String) =

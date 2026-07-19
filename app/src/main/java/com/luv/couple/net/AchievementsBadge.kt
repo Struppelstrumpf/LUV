@@ -16,10 +16,12 @@ object AchievementsBadge {
     fun updateFrom(state: LuvApiClient.AchievementsState?) {
         val claimable = state?.hasClaimable == true
         _hasClaimable.value = claimable
-        NotificationBadges.onAchievementsClaimable(claimable)
+        val fp = if (state != null) NotificationBadges.claimableFingerprint(state) else ""
+        NotificationBadges.onAchievementsClaimable(claimable, fp)
     }
 
     suspend fun refresh() {
+        NotificationBadges.ensureAchievementsFpLoaded()
         runCatching { LuvApiClient.fetchAchievements() }
             .onSuccess { updateFrom(it) }
     }

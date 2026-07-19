@@ -473,7 +473,7 @@ object LuvAlertNotifier {
                 text = "Du kannst Belohnungen abholen",
                 extras = {
                     putExtra(MainActivity.EXTRA_OPEN_SOZIAL, true)
-                    putExtra(MainActivity.EXTRA_SOZIAL_TAB, 1)
+                    putExtra(MainActivity.EXTRA_SOZIAL_TAB, 2)
                 }
             )
         }

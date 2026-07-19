@@ -77,6 +77,8 @@ class PrefsRepository(private val context: Context) {
     private val inventoryUnseenKey = stringPreferencesKey("inventory_unseen_ids_json")
     /** Zuletzt bekannte Anzahl pending Markt-Verkäufe (für Push bei Anstieg) */
     private val pendingSalesKnownKey = intPreferencesKey("pending_sales_known_count")
+    /** Fingerprint abholbarer Erfolge — Tab-Punkt nur bei neuen Claimables */
+    private val achievementsSeenFpKey = stringPreferencesKey("achievements_seen_fingerprint")
     /** Lootbox: vor Kauf bestätigen (Standard an) */
     private val lootboxConfirmBuyKey = booleanPreferencesKey("lootbox_confirm_buy")
 
@@ -784,6 +786,15 @@ class PrefsRepository(private val context: Context) {
     suspend fun setPendingSalesKnownCount(count: Int) {
         context.dataStore.edit { prefs ->
             prefs[pendingSalesKnownKey] = count.coerceAtLeast(0)
+        }
+    }
+
+    suspend fun achievementsSeenFingerprint(): String =
+        context.dataStore.data.first()[achievementsSeenFpKey].orEmpty()
+
+    suspend fun setAchievementsSeenFingerprint(fp: String) {
+        context.dataStore.edit { prefs ->
+            prefs[achievementsSeenFpKey] = fp.trim()
         }
     }
 

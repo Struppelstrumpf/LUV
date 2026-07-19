@@ -3,14 +3,19 @@ package com.luv.couple.net
 import android.content.Context
 import com.luv.couple.LuvApp
 import com.luv.couple.notify.LuvAlertNotifier
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * App-weite Hinweis-Punkte: Freundesanfragen, Erfolge, Markt, Inventar-Neuheiten.
  */
 object NotificationBadges {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _friendIncoming = MutableStateFlow(0)
     private val _achievementsClaimable = MutableStateFlow(false)
     private val _pendingSales = MutableStateFlow(0)
@@ -25,7 +30,10 @@ object NotificationBadges {
     private var sozialSeen = true
     /** Tab-Punkte innerhalb von Sozial (Session) */
     private var friendsTabSeen = true
-    private var achievementsTabSeen = true
+    /** Fingerprint der zuletzt im Erfolge-Tab gesehenen Claimables (persistiert). */
+    @Volatile private var achievementsSeenFp = ""
+    @Volatile private var achievementsCurrentFp = ""
+    private var achievementsFpLoaded = false
     /** Erster Sync setzt nur Baseline — keine Push beim App-Start. */
     private var friendsBaselineReady = false
     private var achievementsBaselineReady = false
@@ -42,26 +50,36 @@ object NotificationBadges {
     val hasAchievementsTabDot: StateFlow<Boolean> = _achievementsTabDot.asStateFlow()
     val totalCount: StateFlow<Int> = _totalCount.asStateFlow()
 
-    /** Freunde-Tab-Punkt (Anfragen o. ä.) — weg nach Besuch des Tabs. */
-    fun showFriendsTabDot(): Boolean = _friendsTabDot.value
-
-    /** Erfolge-Tab-Punkt — weg nach Besuch des Tabs; Coins bleiben abholbar. */
-    fun showAchievementsTabDot(): Boolean = _achievementsTabDot.value
+    private fun hasAchievementsNews(): Boolean =
+        _achievementsClaimable.value &&
+            achievementsCurrentFp.isNotBlank() &&
+            achievementsCurrentFp != achievementsSeenFp
 
     private fun recompute() {
-        val hasSozialNews = _friendIncoming.value > 0 || _achievementsClaimable.value
+        val hasSozialNews = _friendIncoming.value > 0 || hasAchievementsNews()
         _sozialDot.value = hasSozialNews && !sozialSeen
         _marketDot.value = _pendingSales.value > 0
         _inventoryDot.value = _inventoryUnseen.value > 0
         _friendsTabDot.value = _friendIncoming.value > 0 && !friendsTabSeen
-        _achievementsTabDot.value = _achievementsClaimable.value && !achievementsTabSeen
+        _achievementsTabDot.value = hasAchievementsNews()
         val sozialCount = if (!sozialSeen) {
-            _friendIncoming.value + if (_achievementsClaimable.value) 1 else 0
+            _friendIncoming.value + if (hasAchievementsNews()) 1 else 0
         } else {
             0
         }
         _totalCount.value = sozialCount + _pendingSales.value +
             if (_inventoryUnseen.value > 0) 1 else 0
+    }
+
+    fun ensureAchievementsFpLoaded() {
+        if (achievementsFpLoaded) return
+        achievementsFpLoaded = true
+        scope.launch {
+            achievementsSeenFp = runCatching {
+                LuvApp.instance.prefs.achievementsSeenFingerprint()
+            }.getOrDefault("")
+            recompute()
+        }
     }
 
     fun markSozialSeen() {
@@ -75,8 +93,13 @@ object NotificationBadges {
     }
 
     fun markAchievementsTabSeen() {
-        achievementsTabSeen = true
+        achievementsSeenFp = achievementsCurrentFp
         recompute()
+        scope.launch {
+            runCatching {
+                LuvApp.instance.prefs.setAchievementsSeenFingerprint(achievementsSeenFp)
+            }
+        }
     }
 
     fun setFriendIncoming(count: Int) {
@@ -100,15 +123,22 @@ object NotificationBadges {
         recompute()
     }
 
-    fun onAchievementsClaimable(claimable: Boolean) {
-        val newly = achievementsBaselineReady && claimable && !_achievementsClaimable.value
-        if (claimable && !_achievementsClaimable.value) {
+    /**
+     * @param fingerprint stabile ID-Liste der abholbaren Erfolge (leer = nichts abholbar)
+     */
+    fun onAchievementsClaimable(claimable: Boolean, fingerprint: String = "") {
+        ensureAchievementsFpLoaded()
+        val fp = if (claimable) fingerprint.trim() else ""
+        val newly = achievementsBaselineReady &&
+            claimable &&
+            fp.isNotBlank() &&
+            fp != achievementsSeenFp &&
+            fp != achievementsCurrentFp
+        achievementsCurrentFp = fp
+        if (newly) {
             sozialSeen = false
-            achievementsTabSeen = false
-            if (newly) {
-                runCatching {
-                    com.luv.couple.notify.LuvAlertNotifier.onAchievementsReady(LuvApp.instance)
-                }
+            runCatching {
+                com.luv.couple.notify.LuvAlertNotifier.onAchievementsReady(LuvApp.instance)
             }
         }
         _achievementsClaimable.value = claimable
@@ -116,21 +146,9 @@ object NotificationBadges {
         recompute()
     }
 
-    fun setAchievementsClaimable(claimable: Boolean) {
-        val newly = achievementsBaselineReady && claimable && !_achievementsClaimable.value
-        if (claimable && !_achievementsClaimable.value) {
-            sozialSeen = false
-            achievementsTabSeen = false
-            if (newly) {
-                runCatching {
-                    com.luv.couple.notify.LuvAlertNotifier.onAchievementsReady(LuvApp.instance)
-                }
-            }
-        }
-        _achievementsClaimable.value = claimable
-        achievementsBaselineReady = true
+    fun setAchievementsClaimable(claimable: Boolean, fingerprint: String = "") {
+        onAchievementsClaimable(claimable, fingerprint)
         AchievementsBadge.update(claimable)
-        recompute()
     }
 
     fun setPendingSales(count: Int) {
@@ -162,13 +180,14 @@ object NotificationBadges {
     }
 
     suspend fun refreshAll(context: Context? = null) {
+        ensureAchievementsFpLoaded()
         runCatching {
             val friends = LuvApiClient.fetchFriends()
             setFriendIncoming(friends.incoming.size + friends.marriageProposals.size)
         }
         runCatching {
             val ach = LuvApiClient.fetchAchievements()
-            setAchievementsClaimable(ach.hasClaimable)
+            setAchievementsClaimable(ach.hasClaimable, claimableFingerprint(ach))
         }
         runCatching {
             val sales = LuvApiClient.fetchPendingMarketSales()
@@ -191,5 +210,14 @@ object NotificationBadges {
         if (result != null) setPendingSales(result.count)
         context?.let { syncAppBadge(it) }
         return result
+    }
+
+    fun claimableFingerprint(state: LuvApiClient.AchievementsState): String {
+        val ids = state.achievements
+            .filter { it.claimable }
+            .map { it.id }
+            .sorted()
+        val daily = if (state.daily.claimable) "daily:${state.daily.date}" else null
+        return (listOfNotNull(daily) + ids).joinToString("|")
     }
 }

@@ -858,7 +858,7 @@ fun LuvAppNav() {
                 tab = 1
             }
             com.luv.couple.net.DeepLinkTarget.SozialAchievements -> {
-                sozialSubTab = 1
+                sozialSubTab = 2
                 tab = 1
             }
             com.luv.couple.net.DeepLinkTarget.Inventar -> tab = 2
