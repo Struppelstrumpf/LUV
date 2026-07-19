@@ -83,6 +83,8 @@ import com.luv.couple.shop.ShopEmoji
 import com.luv.couple.shop.ShopPet
 import com.luv.couple.shop.ShopTheme
 import androidx.compose.ui.text.style.TextDecoration
+import com.luv.couple.ui.ItemGlyph
+import com.luv.couple.ui.isImagePetId
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -832,7 +834,7 @@ private fun ItemShopContent(
     val catalogRev = catalogTick
 
     pendingBuy?.let { pending ->
-        val preview = when (pending) {
+        val previewId = when (pending) {
             is ShopPendingBuy.Emoji -> pending.item.emoji
             is ShopPendingBuy.Theme -> pending.item.emoji
             is ShopPendingBuy.Sticker -> pending.item.emoji
@@ -844,11 +846,18 @@ private fun ItemShopContent(
             is ShopPendingBuy.Sticker -> pending.item.priceCoins
             is ShopPendingBuy.Pet -> pending.item.priceCoins
         }
+        // Nie raw img_*-IDs als Titel zeigen
+        fun prettyLabel(raw: String, fallback: String): String =
+            if (isImagePetId(raw)) fallback else raw
         val titleLabel = when (pending) {
-            is ShopPendingBuy.Emoji -> "Emoji $preview"
+            is ShopPendingBuy.Emoji ->
+                prettyLabel(pending.item.emoji, "Eigenes Emoji")
             is ShopPendingBuy.Theme -> pending.item.label
-            is ShopPendingBuy.Sticker -> "Sticker $preview"
-            is ShopPendingBuy.Pet -> pending.item.label
+            is ShopPendingBuy.Sticker ->
+                prettyLabel(pending.item.emoji, "Eigener Sticker")
+            is ShopPendingBuy.Pet -> pending.item.label.ifBlank {
+                prettyLabel(pending.item.emoji, "Bild-Begleiter")
+            }
         }
         val kindLabel = when (pending) {
             is ShopPendingBuy.Emoji -> "dieses Emoji"
@@ -893,7 +902,7 @@ private fun ItemShopContent(
                                     .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(18.dp)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(preview, fontSize = 72.sp)
+                                ItemGlyph(id = previewId, fontSize = 72.sp)
                             }
                         }
                     }
@@ -938,7 +947,7 @@ private fun ItemShopContent(
                 } else TextButton(
                     enabled = busyKey == null,
                     onClick = {
-                        busyKey = preview
+                        busyKey = previewId
                         scope.launch {
                             runCatching {
                                 when (pending) {
@@ -963,7 +972,8 @@ private fun ItemShopContent(
                                 }
                                 Toast.makeText(
                                     context,
-                                    if (price <= 0) "$preview erhalten" else "$preview gekauft (−$price)",
+                                    if (price <= 0) "$titleLabel erhalten"
+                                    else "$titleLabel gekauft (−$price)",
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 pendingBuy = null
@@ -1650,7 +1660,7 @@ private fun ThemePreviewCard(themeId: String, emoji: String, label: String) {
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(emoji, fontSize = 22.sp)
+            ItemGlyph(id = emoji, fontSize = 22.sp)
             Text(
                 label,
                 color = Color.White,
@@ -1693,11 +1703,7 @@ private fun ShopGridCell(
             modifier = Modifier.align(Alignment.Center),
             contentAlignment = Alignment.Center
         ) {
-            if (com.luv.couple.ui.isImagePetId(emoji)) {
-                com.luv.couple.ui.CompanionGlyph(petId = emoji, fontSize = 32.sp)
-            } else {
-                Text(emoji, fontSize = 32.sp)
-            }
+            ItemGlyph(id = emoji, fontSize = 32.sp)
         }
         if (timer != null) {
             Text(
