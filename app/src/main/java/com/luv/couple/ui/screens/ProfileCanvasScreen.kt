@@ -192,10 +192,11 @@ fun ProfileCanvasScreen(
     var divorceStep2 by remember { mutableStateOf(false) }
     var showUnfriendConfirm by remember { mutableStateOf(false) }
     var showGuestbookFor by remember { mutableStateOf<String?>(null) }
-    // Fremdprofil: kein Default-Flash — erst Loader, dann fertiges Layout
+    // Immer erst laden (Inventar!), sonst Pending-Place mit owned=0 → „kein … mehr frei“
     var profileReady by remember(userId, editable) {
-        mutableStateOf(editable)
+        mutableStateOf(false)
     }
+    var emojiBar by remember { mutableStateOf<List<String>>(emptyList()) }
 
     LaunchedEffect(initialOpenChest) {
         if (initialOpenChest && editable) {
@@ -206,7 +207,7 @@ fun ProfileCanvasScreen(
     }
 
     LaunchedEffect(userId, editable, nickname) {
-        if (!editable) profileReady = false
+        profileReady = false
         val started = SystemClock.elapsedRealtime()
         if (editable) {
             val local = withContext(Dispatchers.IO) {
@@ -226,7 +227,7 @@ fun ProfileCanvasScreen(
             withContext(Dispatchers.IO) {
                 runCatching {
                     val remote = LuvApiClient.fetchInventory()
-                    prefs.applyInventoryBag(
+                    prefs.applyInventorySnap(
                         emojis = remote.emojis,
                         themes = remote.themes,
                         stickers = remote.stickers,
@@ -238,6 +239,9 @@ fun ProfileCanvasScreen(
             ownedStickers = withContext(Dispatchers.IO) { prefs.ownedStickers() }
             ownedThemes = withContext(Dispatchers.IO) { prefs.ownedThemes() }
             ownedPets = withContext(Dispatchers.IO) { prefs.ownedPets() }
+            emojiBar = withContext(Dispatchers.IO) {
+                runCatching { prefs.emojiBar() }.getOrDefault(com.luv.couple.shop.ShopCatalog.DEFAULT_BAR)
+            }
             // Server-Profil ist Quelle der Wahrheit — lokales Equipped nicht darüber stülpen
             val companion = state.companionEmoji.trim()
             if (companion.isNotBlank()) {
@@ -361,9 +365,29 @@ fun ProfileCanvasScreen(
 
     fun stickerCounts(layout: List<ProfileLayoutEl>): Map<String, Int> =
         layout.filter { it.type == ProfileElType.Sticker }
-            .mapNotNull { it.emoji?.trim()?.takeIf { e -> e.isNotBlank() } }
+            .mapNotNull {
+                ProfileCatalog.clipProfileItemId(it.emoji.orEmpty())
+                    .takeIf { e -> e.isNotBlank() }
+            }
             .groupingBy { it }
             .eachCount()
+
+    fun ownedStickerCount(emoji: String): Int {
+        val id = ProfileCatalog.clipProfileItemId(emoji)
+        if (id.isBlank()) return 0
+        ownedStickers[id]?.let { return it }
+        ownedStickers[emoji.trim()]?.let { return it }
+        // Fallback: Prefix-Match für ältere gekürzte IDs
+        if (id.startsWith("img_", ignoreCase = true)) {
+            val hit = ownedStickers.entries.firstOrNull { (k, _) ->
+                k.equals(id, ignoreCase = true) ||
+                    k.startsWith(id, ignoreCase = true) ||
+                    id.startsWith(k, ignoreCase = true)
+            }
+            if (hit != null) return hit.value
+        }
+        return 0
+    }
 
     /**
      * Layout setzen. Inventar = Gesamtpbesitz (stabil);
@@ -376,9 +400,9 @@ fun ProfileCanvasScreen(
         }
         val newC = stickerCounts(next)
         for ((e, n) in newC) {
-            val owned = ownedStickers[e] ?: 0
+            val owned = ownedStickerCount(e)
             if (owned < n) {
-                Toast.makeText(context, "Nicht genug $e im Inventar", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Nicht genug Sticker im Inventar", Toast.LENGTH_SHORT).show()
                 return
             }
         }
@@ -477,19 +501,41 @@ fun ProfileCanvasScreen(
         showChest = false
     }
 
-    fun placeSticker(emoji: String) {
+    fun placeSticker(emoji: String, afterInventoryRefresh: Boolean = false) {
         if (!editable) return
-        val owned = ownedStickers[emoji] ?: 0
-        val placed = stickerCounts(state.layout)[emoji] ?: 0
+        val id = ProfileCatalog.clipProfileItemId(emoji)
+        if (id.isBlank()) return
+        val owned = ownedStickerCount(id)
+        val placed = stickerCounts(state.layout)[id] ?: 0
         if (owned - placed < 1) {
-            Toast.makeText(context, "Kein $emoji mehr frei", Toast.LENGTH_SHORT).show()
+            if (!afterInventoryRefresh) {
+                // Einmal nachladen — verhindert false „kein … frei“ bei Race/Stale-Prefs
+                scope.launch {
+                    runCatching {
+                        val remote = LuvApiClient.fetchInventory()
+                        withContext(Dispatchers.IO) {
+                            prefs.applyInventorySnap(
+                                emojis = remote.emojis,
+                                themes = remote.themes,
+                                stickers = remote.stickers,
+                                pets = remote.pets,
+                                equippedPet = remote.equippedPet
+                            )
+                        }
+                        ownedStickers = remote.stickers
+                    }
+                    placeSticker(id, afterInventoryRefresh = true)
+                }
+                return
+            }
+            Toast.makeText(context, "Kein Sticker mehr frei", Toast.LENGTH_SHORT).show()
             return
         }
         if (state.layout.count { it.type == ProfileElType.Sticker } >= ProfileCatalog.MAX_DECOR) {
             Toast.makeText(context, "Maximal ${ProfileCatalog.MAX_DECOR} Sticker", Toast.LENGTH_SHORT).show()
             return
         }
-        val el = ProfileCatalog.newSticker(emoji, state.layout)
+        val el = ProfileCatalog.newSticker(id, state.layout)
         applyLayoutWithStickerStock(state.layout + el)
         selectedId = el.id
         showChest = false
@@ -505,10 +551,35 @@ fun ProfileCanvasScreen(
         }
     }
 
-    // Nach dem Laden: Item aus Menü-Inventar platzieren
-    LaunchedEffect(editable, savedSnapshot) {
-        if (!editable || savedSnapshot.isEmpty()) return@LaunchedEffect
-        val action = PendingProfilePlace.consume() ?: return@LaunchedEffect
+    // Nach Inventar-Load: Item aus Menü-Inventar platzieren (nicht vorher — sonst owned=0)
+    LaunchedEffect(editable, profileReady) {
+        if (!editable || !profileReady) return@LaunchedEffect
+        val action = PendingProfilePlace.peek() ?: return@LaunchedEffect
+        // Sticker: Inventar muss die ID kennen, sonst kurz warten/nachladen
+        if (action is ProfilePlaceAction.Sticker) {
+            val id = ProfileCatalog.clipProfileItemId(action.emoji)
+            if (ownedStickerCount(id) < 1) {
+                runCatching {
+                    val remote = LuvApiClient.fetchInventory()
+                    withContext(Dispatchers.IO) {
+                        prefs.applyInventorySnap(
+                            emojis = remote.emojis,
+                            themes = remote.themes,
+                            stickers = remote.stickers,
+                            pets = remote.pets,
+                            equippedPet = remote.equippedPet
+                        )
+                    }
+                    ownedStickers = remote.stickers
+                }
+            }
+            if (ownedStickerCount(id) < 1) {
+                PendingProfilePlace.consume()
+                Toast.makeText(context, "Kein Sticker mehr frei", Toast.LENGTH_SHORT).show()
+                return@LaunchedEffect
+            }
+        }
+        PendingProfilePlace.consume()
         applyPendingPlace(action)
     }
 
@@ -543,7 +614,7 @@ fun ProfileCanvasScreen(
                 ownedThemes = inv.themes
                 ownedPets = inv.pets
                 withContext(Dispatchers.IO) {
-                    prefs.applyInventoryBag(
+                    prefs.applyInventorySnap(
                         emojis = inv.emojis,
                         themes = inv.themes,
                         stickers = inv.stickers,
@@ -1307,6 +1378,8 @@ fun ProfileCanvasScreen(
                 ownedPets = if (editable) ownedPets else listOf(
                     state.companionEmoji.ifBlank { peerPetEmoji }
                 ),
+                placedStickers = if (editable) stickerCounts(state.layout) else emptyMap(),
+                emojiBar = if (editable) emojiBar else emptyList(),
                 currentThemeId = state.themeId,
                 currentCompanion = state.companionEmoji.ifBlank { peerPetEmoji },
                 hasGlass = state.layout.any { it.type == ProfileElType.Glass },

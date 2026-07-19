@@ -500,9 +500,8 @@ fun TemplateEditorSheet(
             }
         }
         Spacer(modifier = Modifier.height(6.dp))
-        // Volle Fläche (wie früher) — Koordinaten isotrop auf zentriertem Quadrat,
-        // damit Stempel/Vorschau nicht verzerren (kein künstliches 9:16).
-        Box(
+        // Gesamte Restfläche zum Zeichnen (Hochformat) — Touch + Render 0…1 auf voller Box.
+        BoxWithConstraints(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
@@ -510,18 +509,19 @@ fun TemplateEditorSheet(
                 .background(Color(0xFF0A1018))
                 .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(18.dp))
         ) {
+            val areaW = maxWidth
+            val areaH = maxHeight
             Canvas(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(colorIndex, brushWidth, eraserOn) {
+                    .size(areaW, areaH)
+                    .pointerInput(colorIndex, brushWidth, eraserOn, areaW, areaH) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
-                            val box = min(size.width.toFloat(), size.height.toFloat()).coerceAtLeast(1f)
-                            val ox = (size.width - box) / 2f
-                            val oy = (size.height - box) / 2f
+                            val w = size.width.toFloat().coerceAtLeast(1f)
+                            val h = size.height.toFloat().coerceAtLeast(1f)
                             fun norm(x: Float, y: Float) = StrokePoint(
-                                ((x - ox) / box).coerceIn(0f, 1f),
-                                ((y - oy) / box).coerceIn(0f, 1f)
+                                (x / w).coerceIn(0f, 1f),
+                                (y / h).coerceIn(0f, 1f)
                             )
                             var pts = listOf(norm(down.position.x, down.position.y))
                             currentPoints = pts
@@ -562,21 +562,21 @@ fun TemplateEditorSheet(
                         }
                     }
             ) {
-                val box = min(size.width, size.height).coerceAtLeast(1f)
-                val ox = (size.width - box) / 2f
-                val oy = (size.height - box) / 2f
+                val w = size.width.coerceAtLeast(1f)
+                val h = size.height.coerceAtLeast(1f)
+                val strokeRef = min(w, h)
                 fun drawPart(part: TemplateStrokePart, alpha: Float = 1f) {
                     if (part.points.isEmpty()) return
                     val path = Path()
                     part.points.forEachIndexed { idx, p ->
-                        val x = ox + p.x * box
-                        val y = oy + p.y * box
+                        val x = p.x * w
+                        val y = p.y * h
                         if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
                     }
                     if (part.points.size == 1) {
                         path.lineTo(
-                            ox + part.points[0].x * box + 0.01f,
-                            oy + part.points[0].y * box
+                            part.points[0].x * w + 0.01f,
+                            part.points[0].y * h
                         )
                     }
                     val col = Color(PeerPalette.strokeColor(part.colorIndex)).copy(alpha = alpha)
@@ -584,7 +584,7 @@ fun TemplateEditorSheet(
                         path,
                         color = col,
                         style = Stroke(
-                            width = (part.width / CanvasStore.WIDTH_REF) * box,
+                            width = (part.width / CanvasStore.WIDTH_REF) * strokeRef,
                             cap = StrokeCap.Round,
                             join = StrokeJoin.Round
                         )
@@ -595,15 +595,15 @@ fun TemplateEditorSheet(
                     if (eraserOn) {
                         val path = Path()
                         currentPoints.forEachIndexed { idx, p ->
-                            val x = ox + p.x * box
-                            val y = oy + p.y * box
+                            val x = p.x * w
+                            val y = p.y * h
                             if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
                         }
                         drawPath(
                             path,
                             color = Color.White.copy(alpha = 0.35f),
                             style = Stroke(
-                                width = (brushWidth / CanvasStore.WIDTH_REF) * box * 1.6f,
+                                width = (brushWidth / CanvasStore.WIDTH_REF) * strokeRef * 1.6f,
                                 cap = StrokeCap.Round,
                                 join = StrokeJoin.Round
                             )
@@ -706,23 +706,23 @@ fun TemplatePreviewCanvas(
     modifier: Modifier = Modifier
 ) {
     Canvas(modifier = modifier) {
-        // Wie Stempel: 0…1 auf zentriertem Quadrat (kurze Seite)
-        val box = min(size.width, size.height)
-        val ox = (size.width - box) / 2f
-        val oy = (size.height - box) / 2f
+        // Wie Editor: 0…1 auf der gesamten Fläche (Hochformat), nicht nur Quadrat
+        val w = size.width.coerceAtLeast(1f)
+        val h = size.height.coerceAtLeast(1f)
+        val strokeRef = min(w, h)
         parts.forEach { part ->
             if (part.points.size < 2) return@forEach
             val path = Path()
             part.points.forEachIndexed { idx, p ->
-                val x = ox + p.x * box
-                val y = oy + p.y * box
+                val x = p.x * w
+                val y = p.y * h
                 if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
             drawPath(
                 path,
                 color = Color(PeerPalette.strokeColor(part.colorIndex)),
                 style = Stroke(
-                    width = (part.width / CanvasStore.WIDTH_REF * box).coerceAtLeast(2f),
+                    width = (part.width / CanvasStore.WIDTH_REF * strokeRef).coerceAtLeast(2f),
                     cap = StrokeCap.Round,
                     join = StrokeJoin.Round
                 )
@@ -777,19 +777,21 @@ class TemplatePlacementView(
         if (width <= 0 || height <= 0) return
         val cx = centerXNorm * width
         val cy = centerYNorm * height
-        val box = min(width, height) * TEMPLATE_PLACE_FRAC * scaleFactor
+        // Volle Leinwand-Proportion (Hochformat), nicht mehr nur Quadrat
+        val stampW = width * TEMPLATE_PLACE_FRAC * scaleFactor
+        val stampH = height * TEMPLATE_PLACE_FRAC * scaleFactor
+        val strokeRef = min(stampW, stampH)
         val rad = Math.toRadians(rotationDeg.toDouble())
         val cos = kotlin.math.cos(rad).toFloat()
         val sin = kotlin.math.sin(rad).toFloat()
         parts.forEach { part ->
             if (part.points.isEmpty()) return@forEach
             paint.color = PeerPalette.strokeColor(part.colorIndex)
-            // Dicke proportional zur Stempel-Box — nicht zur Vollfläche (sonst Versatz/Dickenfehler)
-            paint.strokeWidth = (part.width / CanvasStore.WIDTH_REF) * box
+            paint.strokeWidth = (part.width / CanvasStore.WIDTH_REF) * strokeRef
             val path = android.graphics.Path()
             part.points.forEachIndexed { idx, p ->
-                val lx = (p.x - 0.5f) * box
-                val ly = (p.y - 0.5f) * box
+                val lx = (p.x - 0.5f) * stampW
+                val ly = (p.y - 0.5f) * stampH
                 val rx = lx * cos - ly * sin
                 val ry = lx * sin + ly * cos
                 val x = cx + rx

@@ -58,7 +58,9 @@ import com.luv.couple.LuvApp
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.profile.ProfileCatalog
+import com.luv.couple.profile.ProfileElType
 import com.luv.couple.profile.ProfileThemeBackdrop
+import com.luv.couple.shop.InventoryAvailability
 import com.luv.couple.shop.ShopCatalog
 import com.luv.couple.ui.UiScale
 import com.luv.couple.ui.rememberUiScale
@@ -163,16 +165,18 @@ fun PlayerMarketScreen(
     )
     var profileThemeId by remember { mutableStateOf(ProfileCatalog.DEFAULT_THEME_ID) }
     var profileCompanion by remember { mutableStateOf(ShopCatalog.DEFAULT_PET) }
+    var profilePlacedStickers by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
 
     LaunchedEffect(Unit) {
         val json = prefs.profileCanvasJson().orEmpty()
         if (json.isNotBlank()) {
             runCatching {
-                val o = org.json.JSONObject(json)
-                profileThemeId = o.optString("themeId", ProfileCatalog.DEFAULT_THEME_ID)
-                    .ifBlank { ProfileCatalog.DEFAULT_THEME_ID }
-                profileCompanion = o.optString("companionEmoji", ShopCatalog.DEFAULT_PET)
-                    .ifBlank { ShopCatalog.DEFAULT_PET }
+                val state = ProfileCatalog.decode(json, "")
+                profileThemeId = state.themeId.ifBlank { ProfileCatalog.DEFAULT_THEME_ID }
+                profileCompanion = state.companionEmoji.ifBlank { ShopCatalog.DEFAULT_PET }
+                profilePlacedStickers = InventoryAvailability.countPlacedStickers(
+                    state.layout.filter { it.type == ProfileElType.Sticker }.map { it.emoji }
+                )
             }
         }
     }
@@ -197,21 +201,20 @@ fun PlayerMarketScreen(
                 )
             )
         }
-        ownedStickers.forEach { (emoji, count) ->
-            if (count > 0) add(InventoryPick("stickers", emoji, emoji, emoji, count))
+        val freeStickers = InventoryAvailability.freeStickers(ownedStickers, profilePlacedStickers)
+        freeStickers.forEach { (emoji, free) ->
+            add(InventoryPick("stickers", emoji, emoji, emoji, free))
         }
-        ownedEmojis.forEach { (emoji, count) ->
-            if (count <= 0 || emoji in ShopCatalog.DEFAULT_BAR) return@forEach
-            // Letztes Exemplar in der Reaktionsleiste → nicht anbieten
-            if (emoji in emojiBar && count <= 1) return@forEach
-            add(InventoryPick("emojis", emoji, emoji, emoji, count))
+        InventoryAvailability.freeEmojis(ownedEmojis, emojiBar).forEach { (emoji, free) ->
+            if (emoji in ShopCatalog.DEFAULT_BAR) return@forEach
+            add(InventoryPick("emojis", emoji, emoji, emoji, free))
         }
     }
 
     suspend fun syncInventory(): Boolean {
         return runCatching {
             val remote = LuvApiClient.fetchInventory()
-            prefs.applyInventoryBag(
+            prefs.applyInventorySnap(
                 emojis = remote.emojis,
                 themes = remote.themes,
                 stickers = remote.stickers,

@@ -971,8 +971,8 @@ function ensureInventory(user) {
     inv.equippedPet = DEFAULT_PET;
   }
   user.inventory = inv;
-  // Sticker-Mode-Migration (Gesamtbesitz wiederherstellen) — ohne Re-entrancy
-  if (user && user.stickerInvMode !== 3) {
+  // Sticker-Mode-Migration + Unterzählungs-Heilung (owned ≥ placed)
+  if (user) {
     restoreStickerTotalOwnership(user);
   }
   return inv;
@@ -998,7 +998,7 @@ function clampProfileToInventory(user, profile) {
         return p ? String(p.nickname || "").trim().slice(0, 18) : "";
       })()
     : "";
-  // Sticker-Bestand: syncStickersOnProfileSave (Inventar = freier Stock, nicht auf der Leinwand)
+  // Sticker-Bestand: syncStickersOnProfileSave (Inventar = Gesamtpbesitz; frei = owned − platziert)
   const layout = Array.isArray(profile.layout)
     ? profile.layout.filter((el) => {
         if (!el) return false;
@@ -6066,7 +6066,7 @@ function countLayoutStickers(layout) {
  * Darf ensureInventory NICHT aufrufen (wird von dort getriggert).
  */
 function restoreStickerTotalOwnership(user) {
-  if (!user || user.stickerInvMode === 3) return;
+  if (!user) return;
   const inv = user.inventory;
   if (!inv || typeof inv.stickers !== "object") {
     user.stickerInvMode = 3;
@@ -6074,6 +6074,16 @@ function restoreStickerTotalOwnership(user) {
   }
   const onProfile = countLayoutStickers(user.profileCanvas?.layout);
   const prevMode = Number(user.stickerInvMode) || 0;
+  // Mode 3 schon aktiv: nur Unterzählungen heilen (owned >= placed)
+  if (user.stickerInvMode === 3) {
+    for (const [e, n] of Object.entries(onProfile)) {
+      const placed = Math.max(0, Math.floor(Number(n) || 0));
+      if (!e || placed <= 0) continue;
+      const owned = Math.max(0, Math.floor(Number(inv.stickers[e]) || 0));
+      if (owned < placed) inv.stickers[e] = placed;
+    }
+    return;
+  }
   for (const [e, n] of Object.entries(onProfile)) {
     const placed = Math.max(0, Math.floor(Number(n) || 0));
     if (!e || placed <= 0) continue;
@@ -6110,7 +6120,7 @@ app.put("/v1/me/profile", (req, res) => {
   const raw = sanitizeProfileCanvas(req.body?.profile || req.body);
   if (!raw) return res.status(400).json({ error: "invalid_profile" });
   migrateStickerInventoryIfNeeded(ctx.user);
-  // Sticker-Platzierung verbraucht Inventar (frei), Entfernen gibt zurück
+  // Sticker-Platzierung prüft nur owned ≥ placed (kein Burn); Anzeige = frei
   if (!syncStickersOnProfileSave(ctx.user, raw.layout)) {
     return res.status(400).json({
       error: "not_enough_stickers",

@@ -816,18 +816,20 @@ object CanvasStore {
                 val cx = center.x * width
                 val cy = center.y * height
                 val scale = stroke.templateScale.coerceIn(0.2f, 4f)
-                val box = min(width, height) * TEMPLATE_PLACE_FRAC * scale
+                val stampW = width * TEMPLATE_PLACE_FRAC * scale
+                val stampH = height * TEMPLATE_PLACE_FRAC * scale
+                val strokeRef = min(stampW, stampH)
                 val rad = Math.toRadians(stroke.templateRotation.toDouble())
                 val cos = kotlin.math.cos(rad).toFloat()
                 val sin = kotlin.math.sin(rad).toFloat()
                 parts.forEach { part ->
                     if (part.points.isEmpty()) return@forEach
                     paint.color = PeerPalette.strokeColor(part.colorIndex)
-                    paint.strokeWidth = (part.width / WIDTH_REF) * box
+                    paint.strokeWidth = (part.width / WIDTH_REF) * strokeRef
                     val path = Path()
                     part.points.forEachIndexed { idx, p ->
-                        val lx = (p.x - 0.5f) * box
-                        val ly = (p.y - 0.5f) * box
+                        val lx = (p.x - 0.5f) * stampW
+                        val ly = (p.y - 0.5f) * stampH
                         val rx = lx * cos - ly * sin
                         val ry = lx * sin + ly * cos
                         val x = cx + rx

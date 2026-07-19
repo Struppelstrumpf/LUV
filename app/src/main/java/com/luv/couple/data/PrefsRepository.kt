@@ -940,7 +940,7 @@ class PrefsRepository(private val context: Context) {
     }
 
     /** Volles Inventar vom Server in den lokalen Cache schreiben. */
-    suspend fun applyInventoryBag(
+    suspend fun applyInventorySnap(
         emojis: Map<String, Int>,
         themes: List<String>,
         stickers: Map<String, Int>,
