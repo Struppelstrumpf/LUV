@@ -282,7 +282,15 @@ function ensureShopCatalog(db) {
   if (!db.shopCatalog.items || typeof db.shopCatalog.items !== "object") {
     db.shopCatalog.items = {};
   }
+  if (!db.shopCatalog.deletedKeys || typeof db.shopCatalog.deletedKeys !== "object") {
+    db.shopCatalog.deletedKeys = {};
+  }
   return db.shopCatalog;
+}
+
+function isDeleted(db, kind, itemId) {
+  const cat = ensureShopCatalog(db);
+  return Boolean(cat.deletedKeys[itemKey(kind, itemId)]);
 }
 
 /**
@@ -301,6 +309,8 @@ function seedFromStatic(db, staticMaps) {
   ];
   for (const [kind, itemId, price] of all) {
     const key = itemKey(kind, itemId);
+    // Admin-gelöscht → nie wieder aus Static-Seed auferstehen
+    if (cat.deletedKeys[key]) continue;
     // Bestehenden Katalogeintrag nie anfassen (Preise/Timer/Disable bleiben)
     if (cat.items[key]) continue;
     const p = Math.max(0, Math.floor(Number(price) || 0));
@@ -612,6 +622,8 @@ function upsertItem(db, patch) {
   }
   const key = itemKey(kind, itemId);
   const prev = cat.items[key] || {};
+  // Neu anlegen nach Löschen → Tombstone aufheben
+  if (cat.deletedKeys[key]) delete cat.deletedKeys[key];
   const next = normalizeItem({
     ...prev,
     ...patch,
@@ -633,6 +645,24 @@ function setEnabled(db, kind, itemId, enabled) {
   return { ok: true, item: publicItem(item, Date.now(), { admin: true }) };
 }
 
+function deleteItem(db, kind, itemId) {
+  const cat = ensureShopCatalog(db);
+  const k = String(kind || "").trim();
+  const id = String(itemId || "").trim().slice(0, 32);
+  if (!["emojis", "themes", "pets", "stickers"].includes(k) || !id) {
+    return { ok: false, error: "bad_item", message: "Kategorie oder ID ungültig." };
+  }
+  const key = itemKey(k, id);
+  const prev = cat.items[key] || null;
+  if (cat.items[key]) delete cat.items[key];
+  cat.deletedKeys[key] = Date.now();
+  return {
+    ok: true,
+    item: prev ? publicItem(prev, Date.now(), { admin: true }) : { kind: k, itemId: id },
+    wasInCatalog: Boolean(prev),
+  };
+}
+
 function priceOf(db, kind, itemId) {
   const item = getItem(db, kind, itemId);
   if (!item || !item.enabled) return null;
@@ -646,11 +676,13 @@ module.exports = {
   seedFromStatic,
   getItem,
   isShopKnown,
+  isDeleted,
   canBuy,
   recordSale,
   listPublicCatalog,
   upsertItem,
   setEnabled,
+  deleteItem,
   priceOf,
   effectivePrice,
   deactivateExpired,

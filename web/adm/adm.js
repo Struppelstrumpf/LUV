@@ -386,6 +386,7 @@
           <button class="btn ghost" data-toggle="${esc(it.kind)}|${esc(it.itemId)}|${it.enabled ? "off" : "on"}">${
             it.enabled ? "Aus" : "An"
           }</button>
+          <button class="btn danger" data-del="${esc(it.kind)}|${esc(it.itemId)}" title="Endgültig löschen">Löschen</button>
         </div>
       </article>`;
     }
@@ -495,6 +496,40 @@
             : `/admin/shop/items/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/enable`;
         await api(path, { method: "POST", body: "{}" });
         renderShop();
+      };
+    });
+    content.querySelectorAll("[data-del]").forEach((btn) => {
+      btn.onclick = async () => {
+        const [kind, itemId] = btn.getAttribute("data-del").split("|");
+        const label =
+          state.shopItems.find((x) => x.kind === kind && x.itemId === itemId)?.label || itemId;
+        if (
+          !confirm(
+            `„${label}" (${itemId}) wirklich löschen?\n\n` +
+              `Das Item verschwindet aus dem Shop, allen Inventaren, Profilen und Lobby-Leinwänden.`
+          )
+        ) {
+          return;
+        }
+        btn.disabled = true;
+        try {
+          const res = await api(
+            `/admin/shop/items/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`,
+            { method: "DELETE", body: "{}" }
+          );
+          const p = res?.purged || {};
+          alert(
+            `Gelöscht.\n` +
+              `Nutzer bereinigt: ${p.users ?? 0}\n` +
+              `Leinwände: ${p.rooms ?? 0}\n` +
+              `Markt-Angebote: ${p.listings ?? 0}` +
+              (p.pendingRefunds ? `\nLootbox-Erstattungen: ${p.pendingRefunds}` : "")
+          );
+          renderShop();
+        } catch (err) {
+          alert(err?.message || "Löschen fehlgeschlagen.");
+          btn.disabled = false;
+        }
       };
     });
   }

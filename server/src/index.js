@@ -550,6 +550,8 @@ const STARTER_EMOJIS = ["👍", "❌", "❤️", "😂", "😱", "😡", "😭"]
 function isKnownInventoryItem(kind, itemId) {
   const id = String(itemId || "").trim();
   if (!id) return false;
+  // Admin-gelöscht → nirgends mehr kaufbar/gültig (auch nicht via Static-Fallback)
+  if (shopCatalog.isDeleted(getDb(), kind, id)) return false;
   if (ach.isAchievementRewardItem(kind, id)) return true;
   // Dynamischer Admin-Katalog (inkl. Bild-Begleiter)
   if (shopCatalog.isShopKnown(getDb(), kind, id)) return true;
@@ -567,6 +569,206 @@ function isKnownInventoryItem(kind, itemId) {
     return STARTER_EMOJIS.includes(id) || EMOJI_SHOP_PRICES[id] != null;
   }
   return false;
+}
+
+/** System-Items, die der Admin nicht löschen darf. */
+function isProtectedShopItem(kind, itemId) {
+  const id = String(itemId || "").trim();
+  if (!id) return true;
+  if (kind === "themes" && id === "meadow") return true;
+  if (kind === "pets" && (id === DEFAULT_PET || id === marriage.MARRIAGE_PET)) return true;
+  if (kind === "emojis" && STARTER_EMOJIS.includes(id)) return true;
+  if (kind === "stickers" && isAchievementSticker(id)) return true;
+  if (ach.isAchievementRewardItem(kind, id)) return true;
+  return false;
+}
+
+/**
+ * Item überall entfernen: Inventare, Profile, Lobby-Leinwände, Markt, Pending-Lootboxen.
+ */
+function purgeShopItemEverywhere(kind, itemId) {
+  const id = String(itemId || "").trim();
+  const k = String(kind || "").trim();
+  if (!id || !k) {
+    return { users: 0, rooms: 0, listings: 0, pendingRefunds: 0 };
+  }
+  const db = getDb();
+  let usersTouched = 0;
+  let roomsTouched = 0;
+  let listingsClosed = 0;
+  let pendingRefunds = 0;
+  const purchaseKey = `${k}:${id}`;
+
+  for (const user of Object.values(db.users || {})) {
+    if (!user) continue;
+    let changed = false;
+    if (!user.inventory || typeof user.inventory !== "object") user.inventory = {};
+    const inv = user.inventory;
+    if (!inv.emojis || typeof inv.emojis !== "object") inv.emojis = {};
+    if (!inv.stickers || typeof inv.stickers !== "object") inv.stickers = {};
+    if (!Array.isArray(inv.themes)) inv.themes = [];
+    if (!Array.isArray(inv.pets)) inv.pets = [];
+
+    if (k === "emojis" && inv.emojis[id] != null) {
+      delete inv.emojis[id];
+      changed = true;
+    }
+    if (k === "stickers" && inv.stickers[id] != null) {
+      delete inv.stickers[id];
+      changed = true;
+    }
+    if (k === "pets") {
+      const before = inv.pets.length;
+      inv.pets = inv.pets.filter((p) => String(p) !== id);
+      if (inv.pets.length !== before) changed = true;
+      if (!inv.pets.includes(DEFAULT_PET)) inv.pets.push(DEFAULT_PET);
+      if (String(inv.equippedPet || "") === id) {
+        inv.equippedPet = DEFAULT_PET;
+        changed = true;
+      }
+    }
+    if (k === "themes") {
+      const before = inv.themes.length;
+      inv.themes = inv.themes.filter((t) => String(t) !== id);
+      if (inv.themes.length !== before) changed = true;
+      if (!inv.themes.includes("meadow")) inv.themes.push("meadow");
+    }
+
+    if (user.shopPurchases && typeof user.shopPurchases === "object" && user.shopPurchases[purchaseKey] != null) {
+      delete user.shopPurchases[purchaseKey];
+      changed = true;
+    }
+
+    if (Array.isArray(user.pendingLootboxes) && user.pendingLootboxes.length) {
+      const keep = [];
+      for (const p of user.pendingLootboxes) {
+        if (p && String(p.kind) === k && String(p.itemId) === id) {
+          const refund = Math.max(1, Number(p.shopPrice) || LOOTBOX_PRICE);
+          applyLedger(user.id, refund, "lootbox_item_deleted", purchaseKey);
+          pendingRefunds += 1;
+          changed = true;
+        } else {
+          keep.push(p);
+        }
+      }
+      user.pendingLootboxes = keep;
+    }
+
+    if (user.profileCanvas && typeof user.profileCanvas === "object") {
+      const pc = user.profileCanvas;
+      if (k === "themes" && String(pc.themeId || "") === id) {
+        pc.themeId = "meadow";
+        changed = true;
+      }
+      if (k === "pets" && String(pc.companionEmoji || "") === id) {
+        pc.companionEmoji = DEFAULT_PET;
+        changed = true;
+      }
+      if (Array.isArray(pc.layout)) {
+        const before = pc.layout.length;
+        pc.layout = pc.layout.filter((el) => {
+          if (!el) return false;
+          const t = String(el.type || "").toLowerCase();
+          const e = String(el.emoji || el.text || "").trim();
+          if (e !== id) return true;
+          if (k === "stickers" && (t === "sticker" || !t)) return false;
+          if (k === "emojis" && t === "sticker") return false;
+          if (k === "pets" && t === "pet") return false;
+          return true;
+        });
+        if (pc.layout.length !== before) changed = true;
+      }
+    }
+
+    if (k === "emojis") {
+      const settings = ensureSettings(user);
+      if (Array.isArray(settings.emojiBar)) {
+        const before = settings.emojiBar.length;
+        settings.emojiBar = settings.emojiBar.filter((e) => String(e) !== id);
+        if (settings.emojiBar.length !== before) changed = true;
+      }
+    }
+
+    cleanupProfileAfterItemRemoved(user, k, id);
+    if (changed) usersTouched += 1;
+  }
+
+  const purgeStrokeList = (list) => {
+    if (!Array.isArray(list)) return list;
+    return list.filter((s) => String(s?.emoji || "").trim() !== id);
+  };
+
+  // Live-Räume
+  for (const [code, room] of rooms.entries()) {
+    if (!room) continue;
+    let changed = false;
+    if (k === "emojis" || k === "stickers" || k === "pets") {
+      if (Array.isArray(room.strokes)) {
+        const next = purgeStrokeList(room.strokes);
+        if (next.length !== room.strokes.length) {
+          room.strokes = next;
+          scheduleStrokeSave(code, room);
+          changed = true;
+        }
+      }
+      if (Array.isArray(room.stickers)) {
+        const next = purgeStrokeList(room.stickers);
+        if (next.length !== room.stickers.length) {
+          room.stickers = next;
+          scheduleStickerSave(code, room);
+          changed = true;
+        }
+      }
+    }
+    if (changed) roomsTouched += 1;
+  }
+
+  // Persistierte Leinwände auf Disk (auch wenn Raum nicht geladen)
+  try {
+    ensureStrokesDir();
+    const files = fs.readdirSync(STROKES_DIR);
+    for (const name of files) {
+      if (!name.endsWith(".json") || name.endsWith(".tmp")) continue;
+      const full = path.join(STROKES_DIR, name);
+      let arr;
+      try {
+        arr = JSON.parse(fs.readFileSync(full, "utf8"));
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(arr)) continue;
+      const next = purgeStrokeList(arr);
+      if (next.length === arr.length) continue;
+      const tmp = `${full}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(next));
+      fs.renameSync(tmp, full);
+      roomsTouched += 1;
+    }
+  } catch (err) {
+    console.warn("purge strokes dir failed", err?.message || err);
+  }
+
+  // Offene Markt-Angebote stornieren (Item existiert nicht mehr → nicht zurückgeben)
+  const listings = market.ensureMarket(db);
+  for (const entry of Object.values(listings)) {
+    if (!entry || entry.status !== "open") continue;
+    if (String(entry.kind) === k && String(entry.itemId) === id) {
+      entry.status = "cancelled";
+      entry.cancelledAt = Date.now();
+      entry.cancelReason = "item_deleted";
+      listingsClosed += 1;
+    }
+  }
+
+  if (id.toLowerCase().startsWith("img_")) {
+    try {
+      petImages.deleteImage(id);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  return { users: usersTouched, rooms: roomsTouched, listings: listingsClosed, pendingRefunds };
 }
 
 /** Alle aktivierten Shop-Katalog-Items für Lootbox (Preis = effektiver Shop-Preis). */
@@ -8268,6 +8470,47 @@ app.post("/v1/admin/shop/items/:kind/:itemId/enable", (req, res) => {
   if (!result.ok) return res.status(404).json({ error: "not_found" });
   scheduleSave();
   return res.json({ ok: true, item: result.item });
+});
+
+/** Item löschen: Katalog + Inventare + Profile + Lobby-Leinwände + Markt. */
+app.delete("/v1/admin/shop/items/:kind/:itemId", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  const kind = String(req.params.kind || "").trim();
+  const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
+  if (!["emojis", "stickers", "themes", "pets"].includes(kind) || !itemId) {
+    return res.status(400).json({ error: "bad_item", message: "Ungültiges Item." });
+  }
+  if (isProtectedShopItem(kind, itemId)) {
+    return res.status(400).json({
+      error: "protected",
+      message: "System-Item (Starter/Erfolg) kann nicht gelöscht werden.",
+    });
+  }
+  const existing = shopCatalog.getItem(getDb(), kind, itemId);
+  if (!existing && !shopCatalog.isDeleted(getDb(), kind, itemId)) {
+    // Auch ohne Katalogeintrag erlauben, wenn Bild/Inventar existieren (Legacy)
+    const maybeKnown =
+      (kind === "pets" && petImages.hasImage(itemId)) ||
+      PET_SHOP_PRICES[itemId] != null ||
+      EMOJI_SHOP_PRICES[itemId] != null ||
+      THEME_SHOP_PRICES[itemId] != null ||
+      (kind === "stickers" && isKnownSticker(itemId));
+    if (!maybeKnown) {
+      return res.status(404).json({ error: "not_found", message: "Item nicht gefunden." });
+    }
+  }
+  const purged = purgeShopItemEverywhere(kind, itemId);
+  const result = shopCatalog.deleteItem(getDb(), kind, itemId);
+  flushSave();
+  return res.json({
+    ok: true,
+    kind,
+    itemId,
+    purged,
+    item: result.item,
+  });
 });
 
 app.get("/v1/market/mine", (req, res) => {
