@@ -23,6 +23,7 @@ const DEFAULT = {
   marketMeta: { priceHistory: {} },
   marriages: {},
   guestbookReports: [],
+  shopCatalog: { items: {}, version: 1 },
 };
 
 function ensureDir() {
@@ -82,6 +83,10 @@ function load() {
       guestbookReports: Array.isArray(raw.guestbookReports)
         ? raw.guestbookReports
         : [],
+      shopCatalog:
+        raw.shopCatalog && typeof raw.shopCatalog === "object"
+          ? raw.shopCatalog
+          : { items: {}, version: 1 },
     };
   } catch {
     return structuredClone(DEFAULT);

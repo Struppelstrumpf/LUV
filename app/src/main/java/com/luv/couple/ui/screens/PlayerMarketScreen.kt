@@ -1274,7 +1274,7 @@ private fun CreateListingDialog(
             else -> null
         }
         if (suggest != null && suggest > 0) {
-            priceText = suggest.coerceIn(1, 500).toString()
+            priceText = suggest.coerceIn(1, 10_000).toString()
         }
     }
 
@@ -1452,7 +1452,7 @@ private fun CreateListingDialog(
                     )
                     BasicTextField(
                         value = priceText,
-                        onValueChange = { priceText = it.filter { ch -> ch.isDigit() }.take(3) },
+                        onValueChange = { priceText = it.filter { ch -> ch.isDigit() }.take(5) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         textStyle = TextStyle(

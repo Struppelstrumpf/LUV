@@ -858,6 +858,11 @@ class LockDrawActivity : ComponentActivity() {
                             templatesHost = null
                             beginTemplatePlacement(tpl.strokes)
                         },
+                        onEdit = { tpl ->
+                            root.removeView(host)
+                            templatesHost = null
+                            openTemplateEditor(tpl)
+                        },
                         onDelete = { tpl ->
                             lifecycleScope.launch {
                                 runCatching { LuvApiClient.deleteDrawTemplate(tpl.id) }
@@ -889,7 +894,7 @@ class LockDrawActivity : ComponentActivity() {
         templatesHost = host
     }
 
-    private fun openTemplateEditor() {
+    private fun openTemplateEditor(existing: DrawTemplate? = null) {
         val root = rootView ?: return
         if (templateEditorHost != null) return
         val host = fullscreenComposeHost()
@@ -897,11 +902,22 @@ class LockDrawActivity : ComponentActivity() {
             setContent {
                 LuvTheme {
                     TemplateEditorSheet(
+                        initialParts = existing?.strokes.orEmpty(),
+                        editing = existing != null,
                         onSave = { parts ->
                             lifecycleScope.launch {
-                                runCatching { LuvApiClient.saveDrawTemplate(parts) }
+                                runCatching {
+                                    if (existing != null) {
+                                        LuvApiClient.updateDrawTemplate(existing.id, parts)
+                                    } else {
+                                        LuvApiClient.saveDrawTemplate(parts)
+                                    }
+                                }
                                     .onSuccess {
-                                        flashStatus("Vorlage gespeichert")
+                                        flashStatus(
+                                            if (existing != null) "Vorlage aktualisiert"
+                                            else "Vorlage gespeichert"
+                                        )
                                         root.removeView(host)
                                         templateEditorHost = null
                                         openTemplatesBrowser()

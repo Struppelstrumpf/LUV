@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LUV Admin</title>
+  <meta name="robots" content="noindex,nofollow" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="adm.css" />
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+  <div class="bg" aria-hidden="true"></div>
+
+  <section id="loginView" class="login-view">
+    <div class="login-card">
+      <p class="brand"><span class="c-l">L</span><span class="c-u">U</span><span class="c-v">V</span></p>
+      <h1>Admin &amp; Moderation</h1>
+      <p class="lede">Melde dich mit Google an. Zugang nur für Admins und Moderatoren.</p>
+      <div id="googleBtn" class="google-slot"></div>
+      <p id="loginError" class="error" hidden></p>
+      <p class="hint">Gleiche Anmeldung wie in der App — Session bleibt auf diesem Gerät gespeichert.</p>
+    </div>
+  </section>
+
+  <section id="appView" class="app-view" hidden>
+    <aside class="sidebar">
+      <div class="side-brand">
+        <p class="brand small"><span class="c-l">L</span><span class="c-u">U</span><span class="c-v">V</span></p>
+        <p class="side-sub">Admin</p>
+      </div>
+      <nav id="nav" class="nav"></nav>
+      <div class="side-user">
+        <p id="userNick" class="nick">—</p>
+        <p id="userRole" class="role">—</p>
+        <button type="button" id="logoutBtn" class="btn ghost">Abmelden</button>
+      </div>
+    </aside>
+    <main class="main">
+      <header class="top">
+        <div>
+          <h2 id="pageTitle">Übersicht</h2>
+          <p id="pageHint" class="page-hint"></p>
+        </div>
+        <button type="button" id="refreshBtn" class="btn secondary">Aktualisieren</button>
+      </header>
+      <div id="content" class="content"></div>
+    </main>
+  </section>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card" id="modalCard"></div>
+  </div>
+
+  <script src="adm.js"></script>
+</body>
+</html>

@@ -1217,6 +1217,69 @@ object LuvApiClient {
         json.optString("equippedPet", emoji.trim().take(8))
     }
 
+    suspend fun fetchShopCatalog() = withContext(Dispatchers.IO) {
+        runCatching {
+            val json = authedGet("/v1/shop/catalog")
+            val arr = json.optJSONArray("items") ?: return@runCatching
+            val emojis = mutableListOf<com.luv.couple.shop.ShopEmoji>()
+            val stickers = mutableListOf<com.luv.couple.shop.ShopEmoji>()
+            val themes = mutableListOf<com.luv.couple.shop.ShopTheme>()
+            val pets = mutableListOf<com.luv.couple.shop.ShopPet>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val kind = o.optString("kind")
+                val itemId = o.optString("itemId").trim()
+                if (itemId.isBlank()) continue
+                val price = o.optInt("priceCoins", 0)
+                val compare = o.optInt("compareAtPrice", 0).takeIf { it > price }
+                val rem = o.optLong("remainingMs", -1L).takeIf { it >= 0L }
+                val search = o.optString("searchText", "")
+                val label = o.optString("label", itemId)
+                when (kind) {
+                    "emojis" -> emojis.add(
+                        com.luv.couple.shop.ShopEmoji(itemId, price, compare, rem, search)
+                    )
+                    "stickers" -> stickers.add(
+                        com.luv.couple.shop.ShopEmoji(itemId, price, compare, rem, search)
+                    )
+                    "themes" -> themes.add(
+                        com.luv.couple.shop.ShopTheme(
+                            id = itemId,
+                            label = label,
+                            emoji = o.optString("emoji", "🖼️").ifBlank { "🖼️" },
+                            priceCoins = price,
+                            compareAtPrice = compare,
+                            remainingMs = rem,
+                            searchText = search
+                        )
+                    )
+                    "pets" -> pets.add(
+                        com.luv.couple.shop.ShopPet(
+                            emoji = itemId,
+                            label = label,
+                            priceCoins = price,
+                            compareAtPrice = compare,
+                            remainingMs = rem,
+                            searchText = search
+                        )
+                    )
+                }
+            }
+            if (emojis.isNotEmpty()) {
+                com.luv.couple.shop.LiveShopCatalog.remoteEmojis = emojis.sortedBy { it.priceCoins }
+            }
+            if (stickers.isNotEmpty()) {
+                com.luv.couple.shop.LiveShopCatalog.remoteStickers = stickers.sortedBy { it.priceCoins }
+            }
+            if (themes.isNotEmpty()) {
+                com.luv.couple.shop.LiveShopCatalog.remoteThemes = themes.sortedBy { it.priceCoins }
+            }
+            if (pets.isNotEmpty()) {
+                com.luv.couple.shop.LiveShopCatalog.remotePets = pets.sortedBy { it.priceCoins }
+            }
+        }
+    }
+
     suspend fun fetchInventory(): InventoryBag = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/me/inventory")
         val emojis = buildMap {
@@ -1302,6 +1365,34 @@ object LuvApiClient {
                 ?: throw LuvApiException("Vorlage ungültig")
             com.luv.couple.data.DrawTemplate(
                 id = o.optString("id"),
+                strokes = parts,
+                createdAt = o.optLong("createdAt", System.currentTimeMillis())
+            )
+        }
+    }
+
+    suspend fun updateDrawTemplate(
+        id: String,
+        strokes: List<com.luv.couple.data.TemplateStrokePart>
+    ): com.luv.couple.data.DrawTemplate = withContext(Dispatchers.IO) {
+        val clean = id.trim().encodeURL()
+        val body = JSONObject()
+            .put("strokes", PairProtocol.encodeTemplateParts(strokes))
+            .toString()
+            .toRequestBody(jsonMedia)
+        val request = authedRequestBuilder("/v1/me/templates/$clean").put(body).build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            val json = runCatching { JSONObject(raw) }.getOrNull()
+            if (!response.isSuccessful) {
+                throw LuvApiException(json?.optString("message") ?: "Vorlage speichern fehlgeschlagen")
+            }
+            val o = json?.optJSONObject("template")
+                ?: throw LuvApiException("Vorlage speichern fehlgeschlagen")
+            val parts = PairProtocol.parseTemplateParts(o.optJSONArray("strokes"))
+                ?: throw LuvApiException("Vorlage ungültig")
+            com.luv.couple.data.DrawTemplate(
+                id = o.optString("id").ifBlank { id },
                 strokes = parts,
                 createdAt = o.optLong("createdAt", System.currentTimeMillis())
             )
@@ -2408,7 +2499,7 @@ object LuvApiClient {
         val body = JSONObject()
             .put("kind", kind)
             .put("itemId", itemId.trim().take(24))
-            .put("priceCoins", priceCoins.coerceIn(0, 500))
+            .put("priceCoins", priceCoins.coerceIn(0, 10_000))
             .put("allowTrade", allowTrade)
             .put("private", isPrivate)
         if (isPrivate && !targetUserId.isNullOrBlank()) {

@@ -77,10 +77,12 @@ import com.luv.couple.net.ShopPack
 import com.luv.couple.profile.ProfileCatalog
 import com.luv.couple.profile.ProfileElType
 import com.luv.couple.profile.ProfileState
+import com.luv.couple.shop.LiveShopCatalog
 import com.luv.couple.shop.ShopCatalog
 import com.luv.couple.shop.ShopEmoji
 import com.luv.couple.shop.ShopPet
 import com.luv.couple.shop.ShopTheme
+import androidx.compose.ui.text.style.TextDecoration
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -783,6 +785,9 @@ private fun ItemShopContent(
     )
     var busyKey by remember { mutableStateOf<String?>(null) }
     var pendingBuy by remember { mutableStateOf<ShopPendingBuy?>(null) }
+    var searchOpen by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var catalogTick by remember { mutableIntStateOf(0) }
 
     fun openBuy(pending: ShopPendingBuy) {
         if (!economyUnlocked) {
@@ -792,7 +797,9 @@ private fun ItemShopContent(
         pendingBuy = pending
     }
 
-    suspend fun reloadBag() {
+    suspend fun reloadShopAndInventory() {
+        runCatching { LuvApiClient.fetchShopCatalog() }
+        catalogTick++
         runCatching {
             val remote = LuvApiClient.fetchInventory()
             prefs.applyInventoryBag(
@@ -806,7 +813,9 @@ private fun ItemShopContent(
         onRefreshInventory()
     }
 
-    LaunchedEffect(Unit) { reloadBag() }
+    LaunchedEffect(Unit) { reloadShopAndInventory() }
+    @Suppress("UNUSED_VARIABLE")
+    val catalogRev = catalogTick
 
     pendingBuy?.let { pending ->
         val preview = when (pending) {
@@ -927,15 +936,15 @@ private fun ItemShopContent(
                                     }
                                     is ShopPendingBuy.Theme -> {
                                         LuvApiClient.buyTheme(pending.item.id)
-                                        reloadBag()
+                                        reloadShopAndInventory()
                                     }
                                     is ShopPendingBuy.Sticker -> {
                                         LuvApiClient.buySticker(pending.item.emoji)
-                                        reloadBag()
+                                        reloadShopAndInventory()
                                     }
                                     is ShopPendingBuy.Pet -> {
                                         LuvApiClient.buyPet(pending.item.emoji)
-                                        reloadBag()
+                                        reloadShopAndInventory()
                                     }
                                 }
                                 Toast.makeText(
@@ -1010,7 +1019,37 @@ private fun ItemShopContent(
                 }
             }
         }
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
+        if (tab != 4) {
+            ShopSearchToggleRow(
+                expanded = searchOpen,
+                query = searchQuery,
+                onExpandedChange = { searchOpen = it },
+                onQueryChange = { searchQuery = it }
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+        val q = searchQuery
+        val stickers = remember(catalogTick, q) {
+            LiveShopCatalog.stickers().filter {
+                LiveShopCatalog.matchesQuery(q, it.emoji, searchText = it.searchText)
+            }
+        }
+        val themes = remember(catalogTick, q) {
+            LiveShopCatalog.themes().filter {
+                LiveShopCatalog.matchesQuery(q, it.emoji, it.label, it.searchText)
+            }
+        }
+        val pets = remember(catalogTick, q) {
+            LiveShopCatalog.pets().filter {
+                LiveShopCatalog.matchesQuery(q, it.emoji, it.label, it.searchText)
+            }
+        }
+        val emojis = remember(catalogTick, q) {
+            LiveShopCatalog.emojis().filter {
+                LiveShopCatalog.matchesQuery(q, it.emoji, searchText = it.searchText)
+            }
+        }
         when (tab) {
             0 -> LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
@@ -1019,11 +1058,13 @@ private fun ItemShopContent(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(ShopCatalog.STICKERS, key = { "s-${it.emoji}" }) { item ->
+                items(stickers, key = { "s-${it.emoji}" }) { item ->
                     val count = ownedStickers[item.emoji] ?: 0
                     ShopGridCell(
                         emoji = item.emoji,
                         price = item.priceCoins,
+                        compareAtPrice = item.compareAtPrice,
+                        remainingMs = item.remainingMs,
                         ownedLabel = if (count > 0) "×$count" else null,
                         themeId = null,
                         enabled = busyKey == null,
@@ -1038,11 +1079,13 @@ private fun ItemShopContent(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(ShopCatalog.THEMES, key = { "t-${it.id}" }) { item ->
+                items(themes, key = { "t-${it.id}" }) { item ->
                     val have = item.id in ownedThemes
                     ShopGridCell(
                         emoji = item.emoji,
                         price = item.priceCoins,
+                        compareAtPrice = item.compareAtPrice,
+                        remainingMs = item.remainingMs,
                         ownedLabel = if (have) "✓" else null,
                         themeId = item.id,
                         enabled = busyKey == null,
@@ -1057,11 +1100,13 @@ private fun ItemShopContent(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(ShopCatalog.PETS, key = { it.emoji }) { item ->
+                items(pets, key = { it.emoji }) { item ->
                     val have = item.emoji in ownedPets
                     ShopGridCell(
                         emoji = item.emoji,
                         price = item.priceCoins,
+                        compareAtPrice = item.compareAtPrice,
+                        remainingMs = item.remainingMs,
                         ownedLabel = if (have) "✓" else null,
                         themeId = null,
                         enabled = busyKey == null,
@@ -1076,11 +1121,13 @@ private fun ItemShopContent(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(ShopCatalog.EMOJIS, key = { it.emoji }) { item ->
+                items(emojis, key = { it.emoji }) { item ->
                     val count = ownedEmojis[item.emoji] ?: 0
                     ShopGridCell(
                         emoji = item.emoji,
                         price = item.priceCoins,
+                        compareAtPrice = item.compareAtPrice,
+                        remainingMs = item.remainingMs,
                         ownedLabel = if (count > 0) "×$count" else null,
                         themeId = null,
                         enabled = busyKey == null,
@@ -1092,7 +1139,7 @@ private fun ItemShopContent(
                 coins = account?.coins ?: 0,
                 busy = busyKey != null,
                 onBusy = { busyKey = it },
-                onRefresh = { reloadBag() },
+                onRefresh = { reloadShopAndInventory() },
                 economyUnlocked = economyUnlocked,
                 onRequireGoogle = onRequireGoogle
             )
@@ -1605,8 +1652,11 @@ private fun ShopGridCell(
     ownedLabel: String?,
     themeId: String?,
     enabled: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    compareAtPrice: Int? = null,
+    remainingMs: Long? = null
 ) {
+    val timer = formatShopRemaining(remainingMs)
     Box(
         modifier = Modifier
             .aspectRatio(1f)
@@ -1628,15 +1678,40 @@ private fun ShopGridCell(
             fontSize = 32.sp,
             modifier = Modifier.align(Alignment.Center)
         )
-        Text(
-            if (price <= 0) "frei" else "$price",
-            color = if (themeId != null) Color.White else AccentRose,
-            fontFamily = DisplayFont,
-            fontSize = 12.sp,
+        if (timer != null) {
+            Text(
+                timer,
+                color = if (themeId != null) Color(0xFFFFD54F) else AccentRose,
+                fontFamily = BodyFont,
+                fontSize = 9.sp,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(6.dp)
+            )
+        }
+        Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(8.dp)
-        )
+        ) {
+            if (compareAtPrice != null && compareAtPrice > price) {
+                Text(
+                    "$compareAtPrice",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 10.sp,
+                    style = androidx.compose.ui.text.TextStyle(
+                        textDecoration = TextDecoration.LineThrough
+                    )
+                )
+            }
+            Text(
+                if (price <= 0) "frei" else "$price",
+                color = if (themeId != null) Color.White else AccentRose,
+                fontFamily = DisplayFont,
+                fontSize = 12.sp
+            )
+        }
         if (ownedLabel != null) {
             Text(
                 ownedLabel,

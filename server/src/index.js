@@ -18,6 +18,7 @@ const ach = require("./achievements");
 const market = require("./market");
 const lootbox = require("./lootbox");
 const marriage = require("./marriage");
+const shopCatalog = require("./shop_catalog");
 const {
   STICKER_SHOP_PRICES,
   isKnownSticker,
@@ -344,6 +345,8 @@ const EMOJI_SHOP_PRICES = {
   "💢": 8,
   "💬": 6,
 };
+// Teure / extrem teure Emojis (Overrides überschreiben bei gleichem Key)
+Object.assign(EMOJI_SHOP_PRICES, shopCatalog.EXTRA_EMOJI_PRICES);
 
 const DEFAULT_PET = "🐣";
 
@@ -514,7 +517,11 @@ function isKnownInventoryItem(kind, itemId) {
   if (kind === "themes") return id === "meadow" || THEME_SHOP_PRICES[id] != null;
   if (kind === "stickers") return isKnownSticker(id);
   if (kind === "emojis") {
-    return STARTER_EMOJIS.includes(id) || EMOJI_SHOP_PRICES[id] != null;
+    return (
+      STARTER_EMOJIS.includes(id) ||
+      EMOJI_SHOP_PRICES[id] != null ||
+      shopCatalog.isShopKnown(getDb(), "emojis", id)
+    );
   }
   return false;
 }
@@ -1578,23 +1585,58 @@ function removeRoomSticker(room, code, stickerId) {
   return true;
 }
 
+const TEMPLATE_MAX_PARTS = 200;
+const TEMPLATE_MAX_POINTS = 800;
+const TEMPLATE_MIN_POINT_DIST = 0.004; // ~0.4% der Fläche — lange Striche ohne Riesen-Payload
+
+/** Abstand-Downsampling: behält Form, reduziert Punktdichte. */
+function downsampleTemplatePoints(points, maxPoints, minDist) {
+  if (!Array.isArray(points) || points.length <= 2) return points || [];
+  const minD2 = minDist * minDist;
+  const kept = [points[0]];
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = kept[kept.length - 1];
+    const p = points[i];
+    const dx = p.x - prev.x;
+    const dy = p.y - prev.y;
+    if (dx * dx + dy * dy >= minD2) kept.push(p);
+  }
+  const last = points[points.length - 1];
+  const prev = kept[kept.length - 1];
+  if (prev.x !== last.x || prev.y !== last.y) kept.push(last);
+  if (kept.length <= maxPoints) return kept;
+  // Gleichmäßig auf maxPoints ausdünnen (Start+Ende bleiben)
+  const out = [kept[0]];
+  const step = (kept.length - 1) / (maxPoints - 1);
+  for (let i = 1; i < maxPoints - 1; i++) {
+    out.push(kept[Math.round(i * step)]);
+  }
+  out.push(kept[kept.length - 1]);
+  return out;
+}
+
 function sanitizeTemplateParts(rawParts) {
   if (!Array.isArray(rawParts)) return null;
   const out = [];
-  for (const part of rawParts.slice(0, 48)) {
+  for (const part of rawParts.slice(0, TEMPLATE_MAX_PARTS)) {
     if (!part || typeof part !== "object") continue;
     const pointsIn = Array.isArray(part.points) ? part.points : [];
-    const points = [];
-    for (const p of pointsIn.slice(0, 240)) {
+    const rawPts = [];
+    for (const p of pointsIn) {
       if (!p || typeof p !== "object") continue;
       const x = Number(p.x);
       const y = Number(p.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      points.push({
+      rawPts.push({
         x: Math.min(1, Math.max(0, x)),
         y: Math.min(1, Math.max(0, y)),
       });
     }
+    const points = downsampleTemplatePoints(
+      rawPts,
+      TEMPLATE_MAX_POINTS,
+      TEMPLATE_MIN_POINT_DIST
+    );
     if (points.length < 2) continue;
     out.push({
       points,
@@ -6977,18 +7019,58 @@ function requireCoins(ctx, price, res) {
   return true;
 }
 
-/** Itemshop: Emoji für Coins kaufen (Mehrfachkauf erlaubt). */
+app.get("/v1/shop/catalog", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  shopCatalog.deactivateExpired(getDb());
+  const kind = String(req.query?.kind || "").trim() || null;
+  const q = String(req.query?.q || "").trim().slice(0, 40);
+  const items = shopCatalog.listPublicCatalog(getDb(), { kind: kind || undefined, q });
+  return res.json({
+    ok: true,
+    items,
+    coins: ctx.user.coins || 0,
+  });
+});
+
+function seedShopCatalogIfNeeded() {
+  shopCatalog.seedFromStatic(getDb(), {
+    emojiPrices: EMOJI_SHOP_PRICES,
+    themePrices: THEME_SHOP_PRICES,
+    petPrices: PET_SHOP_PRICES,
+    stickerPrices: STICKER_SHOP_PRICES,
+  });
+}
+
+function resolveShopPrice(kind, itemId) {
+  seedShopCatalogIfNeeded();
+  const p = shopCatalog.priceOf(getDb(), kind, itemId);
+  if (p != null) return p;
+  if (kind === "emojis") return Number(EMOJI_SHOP_PRICES[itemId]) || 0;
+  if (kind === "themes") return Number(THEME_SHOP_PRICES[itemId]) || 0;
+  if (kind === "pets") return Number(PET_SHOP_PRICES[itemId]) || 0;
+  if (kind === "stickers") return Number(STICKER_SHOP_PRICES[itemId]) || 0;
+  return 0;
+}
+
+/** Itemshop: Emoji für Coins kaufen (Mehrfachkauf erlaubt, Limits möglich). */
 app.post("/v1/shop/buy-emoji", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
+  seedShopCatalogIfNeeded();
   const emoji = String(req.body?.emoji || "").trim().slice(0, 8);
-  if (!emoji || !EMOJI_SHOP_PRICES[emoji]) {
-    return res.status(400).json({
-      error: "unknown_item",
-      message: "Dieses Emoji gibt es im Shop nicht.",
-    });
+  if (!emoji) {
+    return res.status(400).json({ error: "unknown_item", message: "Dieses Emoji gibt es im Shop nicht." });
   }
-  const price = Number(EMOJI_SHOP_PRICES[emoji]) || 0;
+  const check = shopCatalog.canBuy(getDb(), ctx.user, "emojis", emoji);
+  if (!check.ok) {
+    // Fallback: noch nicht im dynamischen Katalog, aber in Static-Map
+    if (!EMOJI_SHOP_PRICES[emoji]) {
+      return res.status(400).json({ error: check.error, message: check.message });
+    }
+  }
+  const price = check.ok ? check.price : Number(EMOJI_SHOP_PRICES[emoji]) || 0;
   if (price < 1) return res.status(400).json({ error: "bad_price" });
   if (!isKnownInventoryItem("emojis", emoji)) {
     return res.status(400).json({ error: "unknown_item", message: "Dieses Emoji gibt es im Shop nicht." });
@@ -7000,6 +7082,9 @@ app.post("/v1/shop/buy-emoji", (req, res) => {
   const inv = ensureInventory(ctx.user);
   inv.emojis[emoji] = Math.min(999, (Number(inv.emojis[emoji]) || 0) + 1);
   bumpShopPurchase("emojis", emoji);
+  shopCatalog.recordSale(getDb(), ctx.user, "emojis", emoji);
+  trackAch(ctx.user, "emojis_bought", 1);
+  trackAch(ctx.user, "coins_spent", price);
   flushSave();
   return res.json({
     ok: true,
@@ -7013,14 +7098,26 @@ app.post("/v1/shop/buy-emoji", (req, res) => {
 app.post("/v1/shop/buy-theme", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
+  seedShopCatalogIfNeeded();
   const themeId = String(req.body?.themeId || "").trim().slice(0, 32);
-  if (!themeId || THEME_SHOP_PRICES[themeId] == null) {
+  if (!themeId) {
     return res.status(400).json({ error: "unknown_item", message: "Hintergrund unbekannt." });
   }
-  const price = Number(THEME_SHOP_PRICES[themeId]) || 0;
   const inv = ensureInventory(ctx.user);
   if (inv.themes.includes(themeId)) {
     return res.json({ ok: true, themeId, alreadyOwned: true, user: publicUser(ctx.user) });
+  }
+  const check = shopCatalog.canBuy(getDb(), ctx.user, "themes", themeId);
+  const price = check.ok
+    ? check.price
+    : THEME_SHOP_PRICES[themeId] != null
+      ? Number(THEME_SHOP_PRICES[themeId]) || 0
+      : -1;
+  if (price < 0) {
+    return res.status(400).json({
+      error: check.error || "unknown_item",
+      message: check.message || "Hintergrund unbekannt.",
+    });
   }
   if (price > 0 && !requireCoins(ctx, price, res)) return;
   if (price > 0 && !applyLedger(ctx.user.id, -price, "buy_theme", themeId)) {
@@ -7028,6 +7125,9 @@ app.post("/v1/shop/buy-theme", (req, res) => {
   }
   inv.themes.push(themeId);
   bumpShopPurchase("themes", themeId);
+  shopCatalog.recordSale(getDb(), ctx.user, "themes", themeId);
+  if (price > 0) trackAch(ctx.user, "coins_spent", price);
+  trackAch(ctx.user, "themes_bought", 1);
   flushSave();
   return res.json({ ok: true, themeId, price, user: publicUser(ctx.user) });
 });
@@ -7035,12 +7135,23 @@ app.post("/v1/shop/buy-theme", (req, res) => {
 app.post("/v1/shop/buy-sticker", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
+  seedShopCatalogIfNeeded();
   const emoji = String(req.body?.emoji || "").trim().slice(0, 8);
-  if (!emoji || STICKER_SHOP_PRICES[emoji] == null) {
+  if (!emoji) {
     return res.status(400).json({ error: "unknown_item", message: "Sticker unbekannt." });
   }
-  const price = Number(STICKER_SHOP_PRICES[emoji]) || 0;
-  if (price < 1) return res.status(400).json({ error: "bad_price" });
+  const check = shopCatalog.canBuy(getDb(), ctx.user, "stickers", emoji);
+  const price = check.ok
+    ? check.price
+    : STICKER_SHOP_PRICES[emoji] != null
+      ? Number(STICKER_SHOP_PRICES[emoji]) || 0
+      : -1;
+  if (price < 1) {
+    return res.status(400).json({
+      error: check.error || "unknown_item",
+      message: check.message || "Sticker unbekannt.",
+    });
+  }
   if (!isKnownInventoryItem("stickers", emoji)) {
     return res.status(400).json({ error: "unknown_item", message: "Sticker unbekannt." });
   }
@@ -7051,6 +7162,9 @@ app.post("/v1/shop/buy-sticker", (req, res) => {
   const inv = ensureInventory(ctx.user);
   inv.stickers[emoji] = Math.min(999, (Number(inv.stickers[emoji]) || 0) + 1);
   bumpShopPurchase("stickers", emoji);
+  shopCatalog.recordSale(getDb(), ctx.user, "stickers", emoji);
+  trackAch(ctx.user, "stickers_bought", 1);
+  trackAch(ctx.user, "coins_spent", price);
   flushSave();
   return res.json({
     ok: true,
@@ -7064,14 +7178,26 @@ app.post("/v1/shop/buy-sticker", (req, res) => {
 app.post("/v1/shop/buy-pet", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
+  seedShopCatalogIfNeeded();
   const emoji = String(req.body?.emoji || "").trim().slice(0, 8);
-  if (!emoji || PET_SHOP_PRICES[emoji] == null) {
+  if (!emoji) {
     return res.status(400).json({ error: "unknown_item", message: "Begleiter unbekannt." });
   }
-  const price = Number(PET_SHOP_PRICES[emoji]) || 0;
   const inv = ensureInventory(ctx.user);
   if (inv.pets.includes(emoji)) {
     return res.json({ ok: true, emoji, alreadyOwned: true, user: publicUser(ctx.user) });
+  }
+  const check = shopCatalog.canBuy(getDb(), ctx.user, "pets", emoji);
+  const price = check.ok
+    ? check.price
+    : PET_SHOP_PRICES[emoji] != null
+      ? Number(PET_SHOP_PRICES[emoji]) || 0
+      : -1;
+  if (price < 0) {
+    return res.status(400).json({
+      error: check.error || "unknown_item",
+      message: check.message || "Begleiter unbekannt.",
+    });
   }
   if (price > 0 && !requireCoins(ctx, price, res)) return;
   if (price > 0) {
@@ -7082,6 +7208,7 @@ app.post("/v1/shop/buy-pet", (req, res) => {
   }
   inv.pets.push(emoji);
   bumpShopPurchase("pets", emoji);
+  shopCatalog.recordSale(getDb(), ctx.user, "pets", emoji);
   trackAch(ctx.user, "pets_bought", 1);
   syncAchInventoryMetrics(ctx.user);
   flushSave();
@@ -7190,11 +7317,29 @@ app.post("/v1/me/templates", (req, res) => {
     id: `tpl_${crypto.randomBytes(8).toString("hex")}`,
     strokes,
     createdAt: Date.now(),
+    updatedAt: Date.now(),
   };
   list.push(entry);
   trackAch(ctx.user, "templates_created", 1);
   scheduleSave();
   return res.status(201).json({ ok: true, template: publicDrawTemplate(entry) });
+});
+
+app.put("/v1/me/templates/:id", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const id = String(req.params.id || "").trim();
+  const strokes = sanitizeTemplateParts(req.body?.strokes);
+  if (!strokes || !strokes.length) {
+    return res.status(400).json({ error: "empty", message: "Bitte etwas zeichnen." });
+  }
+  const list = ensureDrawTemplates(ctx.user);
+  const entry = list.find((t) => t && t.id === id);
+  if (!entry) return res.status(404).json({ error: "not_found" });
+  entry.strokes = strokes;
+  entry.updatedAt = Date.now();
+  scheduleSave();
+  return res.json({ ok: true, template: publicDrawTemplate(entry) });
 });
 
 app.delete("/v1/me/templates/:id", (req, res) => {
@@ -7514,6 +7659,75 @@ function applyMarketSettings(req, res) {
 app.put("/v1/admin/market-settings", applyMarketSettings);
 app.post("/v1/admin/market-settings", applyMarketSettings);
 
+/** Itemshop-Katalog (Staff) */
+app.get("/v1/admin/shop/items", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  shopCatalog.deactivateExpired(getDb());
+  const kind = String(req.query?.kind || "").trim() || null;
+  const q = String(req.query?.q || "").trim().slice(0, 40);
+  const items = shopCatalog.listPublicCatalog(getDb(), {
+    admin: true,
+    kind: kind || undefined,
+    q,
+  });
+  scheduleSave();
+  return res.json({ ok: true, items, count: items.length });
+});
+
+app.post("/v1/admin/shop/items", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  const result = shopCatalog.upsertItem(getDb(), req.body || {});
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  scheduleSave();
+  return res.json({ ok: true, item: result.item });
+});
+
+app.put("/v1/admin/shop/items/:kind/:itemId", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  const kind = String(req.params.kind || "").trim();
+  const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
+  const result = shopCatalog.upsertItem(getDb(), {
+    ...(req.body || {}),
+    kind,
+    itemId,
+  });
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  scheduleSave();
+  return res.json({ ok: true, item: result.item });
+});
+
+app.post("/v1/admin/shop/items/:kind/:itemId/disable", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const kind = String(req.params.kind || "").trim();
+  const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
+  const result = shopCatalog.setEnabled(getDb(), kind, itemId, false);
+  if (!result.ok) return res.status(404).json({ error: "not_found" });
+  scheduleSave();
+  return res.json({ ok: true, item: result.item });
+});
+
+app.post("/v1/admin/shop/items/:kind/:itemId/enable", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const kind = String(req.params.kind || "").trim();
+  const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
+  const result = shopCatalog.setEnabled(getDb(), kind, itemId, true);
+  if (!result.ok) return res.status(404).json({ error: "not_found" });
+  scheduleSave();
+  return res.json({ ok: true, item: result.item });
+});
+
 app.get("/v1/market/mine", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
@@ -7532,7 +7746,7 @@ app.post("/v1/market/list", (req, res) => {
   if (!ctx) return;
   const kind = String(req.body?.kind || "").trim();
   const itemId = String(req.body?.itemId || "").trim().slice(0, 24);
-  const priceCoins = Math.max(0, Math.min(500, Math.floor(Number(req.body?.priceCoins) || 0)));
+  const priceCoins = Math.max(0, Math.min(10_000, Math.floor(Number(req.body?.priceCoins) || 0)));
   const allowTrade = Boolean(req.body?.allowTrade);
   const isPrivate = Boolean(req.body?.private);
   const targetUserId = String(req.body?.targetUserId || "").trim() || null;
@@ -10822,5 +11036,15 @@ server.listen(PORT, "0.0.0.0", () => {
     }
   } catch (e) {
     console.error("[marriage] boot recover failed", e);
+  }
+  try {
+    seedShopCatalogIfNeeded();
+    const expired = shopCatalog.deactivateExpired(getDb());
+    scheduleSave();
+    console.log(
+      `[shop] catalog items=${Object.keys(shopCatalog.ensureShopCatalog(getDb()).items).length} expiredOff=${expired}`
+    );
+  } catch (e) {
+    console.error("[shop] seed failed", e);
   }
 });

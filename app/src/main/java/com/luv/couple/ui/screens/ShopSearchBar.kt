@@ -1,0 +1,98 @@
+package com.luv.couple.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.luv.couple.ui.theme.AccentRose
+import com.luv.couple.ui.theme.BgSoft
+import com.luv.couple.ui.theme.BodyFont
+import com.luv.couple.ui.theme.TextMuted
+import com.luv.couple.ui.theme.TextPrimary
+
+@Composable
+fun ShopSearchToggleRow(
+    expanded: Boolean,
+    query: String,
+    onExpandedChange: (Boolean) -> Unit,
+    onQueryChange: (String) -> Unit,
+    placeholder: String = "Suchen… z. B. herz"
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(if (expanded) AccentRose.copy(0.28f) else BgSoft)
+                .border(1.dp, Color.White.copy(0.1f), CircleShape)
+                .clickable {
+                    val next = !expanded
+                    onExpandedChange(next)
+                    if (!next) onQueryChange("")
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Text("🔍", fontSize = 18.sp)
+        }
+        if (expanded) {
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                cursorBrush = SolidColor(AccentRose),
+                textStyle = TextStyle(
+                    color = TextPrimary,
+                    fontFamily = BodyFont,
+                    fontSize = 15.sp
+                ),
+                modifier = Modifier
+                    .padding(start = 8.dp)
+                    .weight(1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(BgSoft)
+                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                decorationBox = { inner ->
+                    if (query.isEmpty()) {
+                        Text(placeholder, color = TextMuted, fontFamily = BodyFont, fontSize = 14.sp)
+                    }
+                    inner()
+                }
+            )
+        }
+    }
+}
+
+fun formatShopRemaining(ms: Long?): String? {
+    if (ms == null || ms <= 0L) return null
+    val totalMin = ms / 60_000L
+    val days = totalMin / (60 * 24)
+    val hours = (totalMin / 60) % 24
+    val mins = totalMin % 60
+    return when {
+        days >= 1 -> "noch ${days}d ${hours}h"
+        hours >= 1 -> "noch ${hours}h ${mins}m"
+        else -> "noch ${mins.coerceAtLeast(1)}m"
+    }
+}

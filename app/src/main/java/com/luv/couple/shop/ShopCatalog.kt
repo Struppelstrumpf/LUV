@@ -55,7 +55,24 @@ object ShopCatalog {
         ShopEmoji("🤟", 8), ShopEmoji("🤘", 8), ShopEmoji("👏", 8), ShopEmoji("🙌", 10),
         ShopEmoji("👋", 6), ShopEmoji("🫡", 10), ShopEmoji("💅", 10), ShopEmoji("🤳", 8),
         ShopEmoji("🫂", 12), ShopEmoji("💤", 6), ShopEmoji("💢", 8), ShopEmoji("💬", 6),
-        ShopEmoji("🫡", 10)
+        ShopEmoji("🫡", 10),
+        // Premium → extrem teuer
+        ShopEmoji("💋", 22), ShopEmoji("🫦", 28), ShopEmoji("💐", 30), ShopEmoji("🥂", 32),
+        ShopEmoji("🍾", 36), ShopEmoji("🪽", 90), ShopEmoji("🦢", 70), ShopEmoji("🪷", 55),
+        ShopEmoji("🫧", 40), ShopEmoji("🪄", 95), ShopEmoji("🪞", 60), ShopEmoji("🕯️", 45),
+        ShopEmoji("⚔️", 130), ShopEmoji("🛡️", 125), ShopEmoji("🗡️", 115), ShopEmoji("🏹", 90),
+        ShopEmoji("💠", 220), ShopEmoji("🔮", 280), ShopEmoji("🧿", 300), ShopEmoji("🛸", 2000),
+        ShopEmoji("🚀", 1800), ShopEmoji("🛰️", 1700), ShopEmoji("🧬", 1600), ShopEmoji("🧠", 1600),
+        ShopEmoji("🫀", 1500), ShopEmoji("🎭", 1200), ShopEmoji("🏆", 1100), ShopEmoji("🥇", 1300),
+        ShopEmoji("🎖️", 800), ShopEmoji("♾️", 6000), ShopEmoji("🔱", 4500), ShopEmoji("⚛️", 4000),
+        ShopEmoji("🐉", 10000), ShopEmoji("🐲", 1400), ShopEmoji("🐆", 600), ShopEmoji("🐅", 700),
+        ShopEmoji("🦁", 750), ShopEmoji("🦅", 550), ShopEmoji("🐺", 480), ShopEmoji("🐯", 850),
+        ShopEmoji("🐘", 900), ShopEmoji("🐋", 1000), ShopEmoji("🦈", 950), ShopEmoji("🦑", 700),
+        ShopEmoji("🏯", 2000), ShopEmoji("🗼", 1800), ShopEmoji("🗽", 2200), ShopEmoji("⛪", 1500),
+        ShopEmoji("🌌", 450), ShopEmoji("🪐", 520), ShopEmoji("☄️", 380), ShopEmoji("🌠", 400),
+        ShopEmoji("💎", 650), ShopEmoji("👑", 800), ShopEmoji("🦄", 1200), ShopEmoji("⚜️", 5000),
+        ShopEmoji("💖", 400), ShopEmoji("💕", 380), ShopEmoji("💗", 420), ShopEmoji("💘", 500),
+        ShopEmoji("💝", 550), ShopEmoji("💞", 480), ShopEmoji("❤️‍🔥", 900), ShopEmoji("💯", 600)
     ).distinctBy { it.emoji }
 
     /** Profil-Hintergründe (meadow ist Starter, gratis). */
@@ -384,18 +401,55 @@ object ShopCatalog {
 
 data class ShopEmoji(
     val emoji: String,
-    val priceCoins: Int
+    val priceCoins: Int,
+    val compareAtPrice: Int? = null,
+    val remainingMs: Long? = null,
+    val searchText: String = ""
 )
 
 data class ShopTheme(
     val id: String,
     val label: String,
     val emoji: String,
-    val priceCoins: Int
+    val priceCoins: Int,
+    val compareAtPrice: Int? = null,
+    val remainingMs: Long? = null,
+    val searchText: String = ""
 )
 
 data class ShopPet(
     val emoji: String,
     val label: String,
-    val priceCoins: Int
+    val priceCoins: Int,
+    val compareAtPrice: Int? = null,
+    val remainingMs: Long? = null,
+    val searchText: String = ""
 )
+
+/** Remote-Katalog vom Server (Angebote, Timer) — Fallback = lokale Listen. */
+object LiveShopCatalog {
+    @Volatile var remoteEmojis: List<ShopEmoji>? = null
+    @Volatile var remoteStickers: List<ShopEmoji>? = null
+    @Volatile var remoteThemes: List<ShopTheme>? = null
+    @Volatile var remotePets: List<ShopPet>? = null
+
+    fun emojis(): List<ShopEmoji> =
+        (remoteEmojis ?: ShopCatalog.EMOJIS).sortedBy { it.priceCoins }
+
+    fun stickers(): List<ShopEmoji> =
+        (remoteStickers ?: ShopCatalog.STICKERS).sortedBy { it.priceCoins }
+
+    fun themes(): List<ShopTheme> =
+        (remoteThemes ?: ShopCatalog.THEMES.filter { it.priceCoins > 0 || it.id == "meadow" })
+            .sortedBy { it.priceCoins }
+
+    fun pets(): List<ShopPet> =
+        (remotePets ?: ShopCatalog.PETS).sortedBy { it.priceCoins }
+
+    fun matchesQuery(query: String, emoji: String, label: String = "", searchText: String = ""): Boolean {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) return true
+        val hay = "$emoji $label $searchText".lowercase()
+        return hay.contains(q) || emoji.contains(q)
+    }
+}

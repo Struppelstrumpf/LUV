@@ -224,11 +224,45 @@ object PairProtocol {
         }.getOrNull()
     }
 
+    const val TEMPLATE_MAX_PARTS = 200
+    const val TEMPLATE_MAX_POINTS = 800
+    private const val TEMPLATE_MIN_POINT_DIST = 0.004f
+
+    /** Abstand-Downsampling — behält Form bei langen Dauerstrichen. */
+    fun downsampleTemplatePoints(
+        points: List<StrokePoint>,
+        maxPoints: Int = TEMPLATE_MAX_POINTS,
+        minDist: Float = TEMPLATE_MIN_POINT_DIST
+    ): List<StrokePoint> {
+        if (points.size <= 2) return points
+        val minD2 = minDist * minDist
+        val kept = ArrayList<StrokePoint>(points.size.coerceAtMost(maxPoints))
+        kept.add(points.first())
+        for (i in 1 until points.lastIndex) {
+            val prev = kept.last()
+            val p = points[i]
+            val dx = p.x - prev.x
+            val dy = p.y - prev.y
+            if (dx * dx + dy * dy >= minD2) kept.add(p)
+        }
+        val last = points.last()
+        if (kept.last().x != last.x || kept.last().y != last.y) kept.add(last)
+        if (kept.size <= maxPoints) return kept
+        val out = ArrayList<StrokePoint>(maxPoints)
+        out.add(kept.first())
+        val step = (kept.size - 1).toFloat() / (maxPoints - 1)
+        for (i in 1 until maxPoints - 1) {
+            out.add(kept[kotlin.math.round(i * step).toInt().coerceIn(0, kept.lastIndex)])
+        }
+        out.add(kept.last())
+        return out
+    }
+
     fun encodeTemplateParts(parts: List<TemplateStrokePart>): JSONArray {
         val arr = JSONArray()
-        parts.take(48).forEach { part ->
+        parts.take(TEMPLATE_MAX_PARTS).forEach { part ->
             val pts = JSONArray()
-            part.points.take(240).forEach { p ->
+            downsampleTemplatePoints(part.points).forEach { p ->
                 pts.put(JSONObject().put("x", p.x.toDouble()).put("y", p.y.toDouble()))
             }
             if (pts.length() >= 2) {
@@ -246,11 +280,11 @@ object PairProtocol {
     fun parseTemplateParts(arr: JSONArray?): List<TemplateStrokePart>? {
         if (arr == null || arr.length() == 0) return null
         val out = buildList {
-            for (i in 0 until minOf(arr.length(), 48)) {
+            for (i in 0 until minOf(arr.length(), TEMPLATE_MAX_PARTS)) {
                 val o = arr.optJSONObject(i) ?: continue
                 val ptsJson = o.optJSONArray("points") ?: continue
                 val points = buildList {
-                    for (pi in 0 until minOf(ptsJson.length(), 240)) {
+                    for (pi in 0 until minOf(ptsJson.length(), TEMPLATE_MAX_POINTS)) {
                         val p = ptsJson.optJSONObject(pi) ?: continue
                         add(
                             StrokePoint(

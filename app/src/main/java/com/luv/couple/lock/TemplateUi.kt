@@ -85,6 +85,7 @@ fun TemplatesBrowserSheet(
     onRefresh: () -> Unit,
     onCreate: () -> Unit,
     onSelect: (DrawTemplate) -> Unit,
+    onEdit: (DrawTemplate) -> Unit,
     onDelete: (DrawTemplate) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -120,7 +121,7 @@ fun TemplatesBrowserSheet(
                     )
                     if (templates.isNotEmpty()) {
                         Text(
-                            "Tippen = platzieren · Papierkorb = löschen",
+                            "Tippen = platzieren · Stift = bearbeiten · Papierkorb = löschen",
                             color = TextMuted,
                             fontFamily = BodyFont,
                             fontSize = 11.sp
@@ -192,6 +193,7 @@ fun TemplatesBrowserSheet(
                         TemplateThumb(
                             template = tpl,
                             onClick = { onSelect(tpl) },
+                            onEdit = { onEdit(tpl) },
                             onDelete = { pendingDelete = tpl }
                         )
                     }
@@ -241,6 +243,7 @@ fun TemplatesBrowserSheet(
 private fun TemplateThumb(
     template: DrawTemplate,
     onClick: () -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     Box(
@@ -258,17 +261,32 @@ private fun TemplateThumb(
                 .clickable(onClick = onClick)
                 .padding(8.dp)
         )
-        Box(
+        Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(6.dp)
-                .size(30.dp)
-                .clip(CircleShape)
-                .background(Color.Black.copy(0.45f))
-                .clickable(onClick = onDelete),
-            contentAlignment = Alignment.Center
+                .padding(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Text("🗑", fontSize = 14.sp)
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(0.45f))
+                    .clickable(onClick = onEdit),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("✏️", fontSize = 13.sp)
+            }
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(0.45f))
+                    .clickable(onClick = onDelete),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("🗑", fontSize = 14.sp)
+            }
         }
     }
 }
@@ -276,10 +294,14 @@ private fun TemplateThumb(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TemplateEditorSheet(
+    initialParts: List<TemplateStrokePart> = emptyList(),
+    editing: Boolean = false,
     onSave: (List<TemplateStrokePart>) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val parts = remember { mutableStateListOf<TemplateStrokePart>() }
+    val parts = remember {
+        mutableStateListOf<TemplateStrokePart>().also { it.addAll(initialParts) }
+    }
     val undoStack = remember { mutableStateListOf<List<TemplateStrokePart>>() }
     var colorIndex by remember { mutableIntStateOf(0) }
     var brushWidth by remember { mutableFloatStateOf(18f) }
@@ -318,7 +340,7 @@ fun TemplateEditorSheet(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                "Neue Vorlage",
+                if (editing) "Vorlage bearbeiten" else "Neue Vorlage",
                 color = TextPrimary,
                 fontFamily = DisplayFont,
                 fontSize = 20.sp,

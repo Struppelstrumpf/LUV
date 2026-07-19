@@ -12,6 +12,14 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "1.9.9930",
+            listOf(
+                "Vorlagen: längere Zeichnungen speichern & bearbeiten",
+                "Itemshop/Inventar: Suche, Preis-Sortierung, zeitlich begrenzte Angebote",
+                "Marktplatz: Angebote bis 10.000 Coins",
+            )
+        ),
+        Entry(
             "1.9.9929",
             listOf(
                 "Erfolge: Item-Belohnungen zuverlässig (u. a. Kapelle nach Heirat)",

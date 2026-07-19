@@ -29,8 +29,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.luv.couple.shop.LiveShopCatalog
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -126,21 +128,25 @@ fun ProfileInventoryPanel(
 ) {
     val tabs = remember(mode) { tabsFor(mode) }
     var tab by remember(mode) { mutableIntStateOf(selectedTab.coerceIn(0, tabs.lastIndex)) }
+    var searchOpen by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
     LaunchedEffect(selectedTab, tabs.size) {
         tab = selectedTab.coerceIn(0, tabs.lastIndex)
     }
     LaunchedEffect(tab, tabs) {
         tabs.getOrNull(tab)?.kindPrefix?.let(onKindVisited)
     }
-    val themeItems = remember(ownedThemes) {
+    val themeItems = remember(ownedThemes, searchQuery) {
         val owned = ownedThemes.toSet()
         ProfileCatalog.THEMES.filter { it.id in owned }
+            .filter { LiveShopCatalog.matchesQuery(searchQuery, it.emoji, it.label) }
     }
-    val petItems = remember(ownedPets) {
+    val petItems = remember(ownedPets, searchQuery) {
         val owned = ownedPets.toSet()
         com.luv.couple.shop.ShopCatalog.PETS.map { it.emoji }
             .filter { it in owned }
-            .ifEmpty { listOf("🐣") }
+            .filter { LiveShopCatalog.matchesQuery(searchQuery, it) }
+            .ifEmpty { if (searchQuery.isBlank()) listOf("🐣") else emptyList() }
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -250,16 +256,28 @@ fun ProfileInventoryPanel(
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(s(12.dp)))
+            Spacer(modifier = Modifier.height(s(10.dp)))
+            ShopSearchToggleRow(
+                expanded = searchOpen,
+                query = searchQuery,
+                onExpandedChange = { searchOpen = it },
+                onQueryChange = { searchQuery = it },
+                placeholder = "Inventar filtern…"
+            )
+            Spacer(modifier = Modifier.height(s(10.dp)))
 
             val gridMod = Modifier
                 .fillMaxWidth()
                 .weight(1f, fill = true)
                 .fillMaxHeight()
+            val q = searchQuery
 
             when (tabs.getOrNull(tab)) {
                 InvTab.Emojis -> {
-                    val entries = ownedEmojis.entries.filter { it.value > 0 }.sortedBy { it.key }
+                    val entries = ownedEmojis.entries
+                        .filter { it.value > 0 }
+                        .filter { LiveShopCatalog.matchesQuery(q, it.key) }
+                        .sortedBy { it.key }
                     if (entries.isEmpty()) {
                         Box(modifier = gridMod, contentAlignment = Alignment.Center) {
                             Text(
@@ -375,7 +393,10 @@ fun ProfileInventoryPanel(
                     }
                 }
                 InvTab.Stickers -> {
-                    val stickerEntries = ownedStickers.entries.filter { it.value > 0 }.sortedBy { it.key }
+                    val stickerEntries = ownedStickers.entries
+                        .filter { it.value > 0 }
+                        .filter { LiveShopCatalog.matchesQuery(q, it.key) }
+                        .sortedBy { it.key }
                     if (stickerEntries.isEmpty()) {
                         InvEmptyHint(
                             title = "Noch keine Sticker.",
