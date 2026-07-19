@@ -1,9 +1,12 @@
 package com.luv.couple.ui
 
+import android.app.Activity
 import android.content.Intent
 import android.util.Log
 import android.widget.Toast
 import com.luv.couple.data.Stroke
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -470,6 +473,76 @@ fun LuvAppNav() {
         AchievementsBadge.refresh()
     }
 
+    suspend fun completeGoogleLogin(google: GoogleAuth.Result) {
+        val activity = context.findActivity()
+        val attestation = runCatching {
+            kotlinx.coroutines.withTimeoutOrNull(12_000L) {
+                com.luv.couple.ui.security.PlayIntegrityGate.attestForSignup(
+                    activity ?: context
+                )
+            }
+        }.getOrNull()
+        val result = LuvApiClient.authGoogle(
+            idToken = google.idToken,
+            integrityToken = attestation?.integrityToken,
+            integrityNonce = attestation?.nonce
+        )
+        val inTutorial = navController.currentDestination?.route == Routes.TUTORIAL
+        val returning = !result.created && isChosenNickname(result.user.nickname)
+        if (inTutorial && !returning) {
+            applyAuthResult(
+                result,
+                fromGoogle = true,
+                finishOnboarding = false,
+                applyNickname = false
+            )
+            accountMessage = "Angemeldet — wie sollen wir dich nennen?"
+            Toast.makeText(context, "Angemeldet", Toast.LENGTH_SHORT).show()
+        } else {
+            applyAuthResult(result, fromGoogle = true)
+            accountMessage = if (result.linked) {
+                "Mit Google angemeldet — Konto wiederhergestellt."
+            } else {
+                "Angemeldet. Willkommen zurück."
+            }
+            Toast.makeText(context, accountMessage, Toast.LENGTH_SHORT).show()
+            if (inTutorial) {
+                navController.navigate(Routes.MAIN) {
+                    popUpTo(Routes.TUTORIAL) { inclusive = true }
+                }
+            } else {
+                tab = 0
+            }
+        }
+    }
+
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { activityResult ->
+        scope.launch {
+            try {
+                if (activityResult.resultCode != Activity.RESULT_OK) {
+                    throw LuvApiException("Abgebrochen.", error = "cancelled")
+                }
+                val google = GoogleAuth.parseSignInIntentResult(activityResult.data)
+                completeGoogleLogin(google)
+            } catch (e: Exception) {
+                if (e is LuvApiException && e.error == "cancelled") {
+                    // echter Abbruch — kurz und klar
+                    Toast.makeText(context, "Abgebrochen", Toast.LENGTH_SHORT).show()
+                } else {
+                    val msg = e.message ?: "Google-Anmeldung fehlgeschlagen."
+                    joinError = msg
+                    accountMessage = msg
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                }
+            } finally {
+                googleBusy = false
+                busy = false
+            }
+        }
+    }
+
     fun connectGoogle() {
         if (googleBusy) return
         val activity = context.findActivity()
@@ -487,54 +560,20 @@ fun LuvAppNav() {
             joinError = null
             accountMessage = null
             try {
-                val google = GoogleAuth.signIn(activity)
-                // Vor Neukonto: Play Integrity — mit Timeout, damit Login nicht hängt
-                val attestation = runCatching {
-                    kotlinx.coroutines.withTimeoutOrNull(12_000L) {
-                        com.luv.couple.ui.security.PlayIntegrityGate.attestForSignup(activity)
-                    }
-                }.getOrNull()
-                val result = LuvApiClient.authGoogle(
-                    idToken = google.idToken,
-                    integrityToken = attestation?.integrityToken,
-                    integrityNonce = attestation?.nonce
-                )
-                val inTutorial = navController.currentDestination?.route == Routes.TUTORIAL
-                val returning =
-                    !result.created && isChosenNickname(result.user.nickname)
-                if (inTutorial && !returning) {
-                    // Erstes Mal: Session sichern, Name selbst wählen, Tutorial weiter.
-                    applyAuthResult(
-                        result,
-                        fromGoogle = true,
-                        finishOnboarding = false,
-                        applyNickname = false
+                // Klassischer Google-Intent — umgeht „No credentials available“
+                val webClientId = GoogleAuth.fetchWebClientId()
+                    ?: throw LuvApiException(
+                        "Google-Login ist noch nicht eingerichtet. Bitte später erneut versuchen.",
+                        error = "google_disabled"
                     )
-                    accountMessage = "Angemeldet — wie sollen wir dich nennen?"
-                    Toast.makeText(context, "Angemeldet", Toast.LENGTH_SHORT).show()
-                } else {
-                    applyAuthResult(result, fromGoogle = true)
-                    accountMessage = if (result.linked) {
-                        "Mit Google angemeldet — Konto wiederhergestellt."
-                    } else {
-                        "Angemeldet. Willkommen zurück."
-                    }
-                    Toast.makeText(context, accountMessage, Toast.LENGTH_SHORT).show()
-                    if (inTutorial) {
-                        navController.navigate(Routes.MAIN) {
-                            popUpTo(Routes.TUTORIAL) { inclusive = true }
-                        }
-                    } else {
-                        tab = 0
-                    }
-                }
+                val intent = GoogleAuth.prepareSignInIntent(activity, webClientId)
+                googleSignInLauncher.launch(intent)
+                // busy bleibt bis zum Activity-Result
             } catch (e: Exception) {
                 val msg = e.message ?: "Google-Anmeldung fehlgeschlagen."
-                // Auch „Abbruch“/Cancel sichtbar machen — oft ist es ein OAuth-Fehler
                 joinError = msg
                 accountMessage = msg
                 Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-            } finally {
                 googleBusy = false
                 busy = false
             }
