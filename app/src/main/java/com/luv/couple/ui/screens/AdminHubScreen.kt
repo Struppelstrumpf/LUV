@@ -157,6 +157,10 @@ fun AdminHubScreen(
     var banner by remember { mutableStateOf<String?>(null) }
     var marketWindowDays by remember { mutableIntStateOf(90) }
     var marketWindowOptions by remember { mutableStateOf(listOf(7, 14, 30, 60, 90, 180)) }
+    var achievementDailyCap by remember { mutableIntStateOf(12) }
+    var achievementDailyCapMin by remember { mutableIntStateOf(0) }
+    var achievementDailyCapMax by remember { mutableIntStateOf(500) }
+    var achievementDailyCapText by remember { mutableStateOf("12") }
 
     fun toast(msg: String) =
         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
@@ -238,8 +242,12 @@ fun AdminHubScreen(
             AdminTab.Market -> if (can("market.settings")) {
                 runCatching { LuvApiClient.fetchAdminMarketSettings() }
                     .onSuccess {
-                        marketWindowDays = it.first
-                        marketWindowOptions = it.second
+                        marketWindowDays = it.priceWindowDays
+                        marketWindowOptions = it.options
+                        achievementDailyCap = it.achievementDailyCap
+                        achievementDailyCapMin = it.achievementDailyCapMin
+                        achievementDailyCapMax = it.achievementDailyCapMax
+                        achievementDailyCapText = it.achievementDailyCap.toString()
                     }
                     .onFailure { banner = it.message }
             }
@@ -1100,6 +1108,79 @@ fun AdminHubScreen(
                                 fontFamily = BodyFont,
                                 fontSize = 12.sp
                             )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        AdminCard {
+                            Text(
+                                "Erfolge · Coins pro Tag",
+                                fontFamily = DisplayFont,
+                                color = TextPrimary,
+                                fontSize = 20.sp
+                            )
+                            Text(
+                                "Maximal so viele Coins darf ein Spieler pro Tag durch Erfolge abholen. " +
+                                    "Ist das Limit teilweise erreicht, wird nur noch die Differenz gutgeschrieben.",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 13.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Aktuell: $achievementDailyCap Coins/Tag",
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 15.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            AdminField(
+                                achievementDailyCapText,
+                                {
+                                    achievementDailyCapText = it.filter { ch -> ch.isDigit() }.take(3)
+                                },
+                                "z. B. 12"
+                            )
+                            Text(
+                                "Erlaubt: $achievementDailyCapMin–$achievementDailyCapMax",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 12.sp
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(AccentRose.copy(0.28f))
+                                    .clickable(enabled = !busy) {
+                                        val n = achievementDailyCapText.toIntOrNull()
+                                        if (n == null || n < achievementDailyCapMin || n > achievementDailyCapMax) {
+                                            toast("Wert $achievementDailyCapMin–$achievementDailyCapMax")
+                                            return@clickable
+                                        }
+                                        busy = true
+                                        scope.launch {
+                                            runCatching {
+                                                LuvApiClient.setAdminAchievementDailyCap(n)
+                                            }.onSuccess {
+                                                achievementDailyCap = it
+                                                achievementDailyCapText = it.toString()
+                                                toast("Erfolgs-Limit: $it Coins/Tag")
+                                            }.onFailure {
+                                                toast(it.message ?: "Speichern fehlgeschlagen")
+                                            }
+                                            busy = false
+                                        }
+                                    }
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "Limit speichern",
+                                    color = TextPrimary,
+                                    fontFamily = DisplayFont,
+                                    fontSize = 15.sp
+                                )
+                            }
                         }
                     }
 

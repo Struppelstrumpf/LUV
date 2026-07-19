@@ -1,9 +1,48 @@
 /**
  * Erfolge, Daily-Aufgaben, Day-Streak.
- * Belohnung 1–3 Coins (Tageslimit 12) — seltene Erfolge können stattdessen ein Item geben.
+ * Belohnung 1–3 Coins (Tageslimit konfigurierbar) — seltene Erfolge können stattdessen ein Item geben.
  */
 
-const ACHIEVEMENT_DAILY_CAP = 12;
+const DEFAULT_ACHIEVEMENT_DAILY_CAP = 12;
+const ACHIEVEMENT_DAILY_CAP_MIN = 0;
+const ACHIEVEMENT_DAILY_CAP_MAX = 500;
+
+/** @deprecated Nutze getAchievementDailyCap(db) — bleibt als Fallback-Export. */
+const ACHIEVEMENT_DAILY_CAP = DEFAULT_ACHIEVEMENT_DAILY_CAP;
+
+function ensureEconomySettings(db) {
+  if (!db || typeof db !== "object") return { achievementDailyCap: DEFAULT_ACHIEVEMENT_DAILY_CAP };
+  if (!db.economySettings || typeof db.economySettings !== "object") {
+    db.economySettings = { achievementDailyCap: DEFAULT_ACHIEVEMENT_DAILY_CAP };
+  }
+  if (
+    db.economySettings.achievementDailyCap === undefined ||
+    db.economySettings.achievementDailyCap === null
+  ) {
+    db.economySettings.achievementDailyCap = DEFAULT_ACHIEVEMENT_DAILY_CAP;
+  }
+  return db.economySettings;
+}
+
+function getAchievementDailyCap(db) {
+  const s = ensureEconomySettings(db);
+  const n = Math.floor(Number(s.achievementDailyCap));
+  if (!Number.isFinite(n)) return DEFAULT_ACHIEVEMENT_DAILY_CAP;
+  return Math.max(ACHIEVEMENT_DAILY_CAP_MIN, Math.min(ACHIEVEMENT_DAILY_CAP_MAX, n));
+}
+
+function setAchievementDailyCap(db, raw) {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < ACHIEVEMENT_DAILY_CAP_MIN || n > ACHIEVEMENT_DAILY_CAP_MAX) {
+    return {
+      ok: false,
+      message: `Erlaubt: ${ACHIEVEMENT_DAILY_CAP_MIN}–${ACHIEVEMENT_DAILY_CAP_MAX} Coins/Tag.`,
+    };
+  }
+  const s = ensureEconomySettings(db);
+  s.achievementDailyCap = n;
+  return { ok: true, achievementDailyCap: n };
+}
 
 /** Item-Belohnung (statt Coins). kind: pets|themes|stickers|emojis */
 function itemReward(kind, itemId, emoji, label) {
@@ -228,9 +267,13 @@ function ensureDaily(user, dayKey) {
   return a;
 }
 
-function remainingAchCoinsToday(user, dayKey) {
+function remainingAchCoinsToday(user, dayKey, dailyCap = DEFAULT_ACHIEVEMENT_DAILY_CAP) {
   const a = ensureDaily(user, dayKey);
-  return Math.max(0, ACHIEVEMENT_DAILY_CAP - (a.coinsEarnedToday || 0));
+  const cap = Math.max(
+    ACHIEVEMENT_DAILY_CAP_MIN,
+    Math.min(ACHIEVEMENT_DAILY_CAP_MAX, Math.floor(Number(dailyCap) || 0))
+  );
+  return Math.max(0, cap - (a.coinsEarnedToday || 0));
 }
 
 function publicRewardItem(def) {
@@ -381,7 +424,15 @@ function repairMissingRewardItems(user, giveItemFn, ownsUniqueFn) {
   return repaired;
 }
 
-function claimAchievement(user, achievementId, dayKey, applyLedgerFn, giveItemFn, ownsUniqueFn) {
+function claimAchievement(
+  user,
+  achievementId,
+  dayKey,
+  applyLedgerFn,
+  giveItemFn,
+  ownsUniqueFn,
+  dailyCap = DEFAULT_ACHIEVEMENT_DAILY_CAP
+) {
   const a = ensureDaily(user, dayKey);
   const id = String(achievementId || "").trim();
   const def = ACHIEVEMENTS.find((d) => d.id === id);
@@ -397,6 +448,7 @@ function claimAchievement(user, achievementId, dayKey, applyLedgerFn, giveItemFn
   const reward = publicRewardItem(def);
   let grantItem = null;
   let grantCoins = 0;
+  let requestedCoins = 0;
 
   if (reward && typeof giveItemFn === "function") {
     const uniqueOwned =
@@ -423,8 +475,10 @@ function claimAchievement(user, achievementId, dayKey, applyLedgerFn, giveItemFn
     grantCoins = Math.max(0, Number(def.coins) || 0);
   }
 
+  requestedCoins = grantCoins;
+  let partial = false;
   if (grantCoins > 0) {
-    const room = remainingAchCoinsToday(user, dayKey);
+    const room = remainingAchCoinsToday(user, dayKey, dailyCap);
     if (room <= 0) {
       return {
         ok: false,
@@ -432,12 +486,10 @@ function claimAchievement(user, achievementId, dayKey, applyLedgerFn, giveItemFn
         message: "Tageslimit erreicht — hol die Belohnung morgen ab.",
       };
     }
+    // Differenz bis zum Tageslimit abholen (Erfolg gilt trotzdem als abgeholt)
     if (room < grantCoins) {
-      return {
-        ok: false,
-        error: "cap_reached",
-        message: `Heute nur noch ${room} Coin(s) frei — hol „${def.title}“ (${grantCoins}) morgen vollständig ab.`,
-      };
+      grantCoins = room;
+      partial = true;
     }
   }
 
@@ -456,6 +508,8 @@ function claimAchievement(user, achievementId, dayKey, applyLedgerFn, giveItemFn
   return {
     ok: true,
     coinsGranted: grantCoins,
+    coinsRequested: requestedCoins,
+    partial,
     itemGranted: grantItem,
     achievementId: id,
   };
@@ -495,8 +549,12 @@ function setMetricAtLeast(user, metric, value, dayKey, applyLedgerFn) {
   return bumpMetric(user, metric, target - cur, dayKey, applyLedgerFn);
 }
 
-function publicAchievementsState(user, dayKey) {
+function publicAchievementsState(user, dayKey, dailyCap = DEFAULT_ACHIEVEMENT_DAILY_CAP) {
   const a = ensureDaily(user, dayKey);
+  const rawCap = Math.floor(Number(dailyCap));
+  const cap = Number.isFinite(rawCap)
+    ? Math.max(ACHIEVEMENT_DAILY_CAP_MIN, Math.min(ACHIEVEMENT_DAILY_CAP_MAX, rawCap))
+    : DEFAULT_ACHIEVEMENT_DAILY_CAP;
   const unlockedIds = new Set(Object.keys(a.unlocked));
   const dailyClaimable =
     Boolean(a.daily?.completed) && !Boolean(a.daily?.rewardClaimed);
@@ -532,8 +590,8 @@ function publicAchievementsState(user, dayKey) {
   return {
     streak: a.streak || 0,
     coinsEarnedToday: a.coinsEarnedToday || 0,
-    coinsCapToday: ACHIEVEMENT_DAILY_CAP,
-    coinsRemainingToday: remainingAchCoinsToday(user, dayKey),
+    coinsCapToday: cap,
+    coinsRemainingToday: remainingAchCoinsToday(user, dayKey, cap),
     hasClaimable,
     claimableCount: claimableAchievements + (dailyClaimable ? 1 : 0),
     daily: {
@@ -618,6 +676,12 @@ function mergeAchievements(target, source) {
 module.exports = {
   ACHIEVEMENTS,
   ACHIEVEMENT_DAILY_CAP,
+  DEFAULT_ACHIEVEMENT_DAILY_CAP,
+  ACHIEVEMENT_DAILY_CAP_MIN,
+  ACHIEVEMENT_DAILY_CAP_MAX,
+  getAchievementDailyCap,
+  setAchievementDailyCap,
+  ensureEconomySettings,
   ensureAchievements,
   ensureDaily,
   bumpMetric,

@@ -21,6 +21,7 @@ const DEFAULT = {
   liveNotice: null,
   marketListings: {},
   marketMeta: { priceHistory: {} },
+  economySettings: { achievementDailyCap: 12 },
   marriages: {},
   guestbookReports: [],
   shopCatalog: { items: {}, version: 1 },
@@ -78,6 +79,10 @@ function load() {
         raw.marketMeta && typeof raw.marketMeta === "object"
           ? raw.marketMeta
           : { priceHistory: {} },
+      economySettings:
+        raw.economySettings && typeof raw.economySettings === "object"
+          ? raw.economySettings
+          : { achievementDailyCap: 12 },
       marriages:
         raw.marriages && typeof raw.marriages === "object" ? raw.marriages : {},
       guestbookReports: Array.isArray(raw.guestbookReports)

@@ -35,7 +35,7 @@
     { id: "codes", label: "Codes", hint: "Gutscheincodes erstellen und widerrufen.", perm: "codes.view" },
     { id: "users", label: "Nutzer", hint: "Spieler suchen, Coins und Nick anpassen.", perm: "gm.search" },
     { id: "mods", label: "Moderatoren", hint: "Mods einladen und Rechte setzen.", perm: "mods.manage", adminOnly: true },
-    { id: "market", label: "Markt-Fenster", hint: "Preis-Zeitfenster für Marktplatz-Statistik.", perm: "market.settings" },
+    { id: "market", label: "Einstellungen", hint: "Markt-Preisfenster und Erfolgs-Tageslimit.", perm: "market.settings" },
     { id: "live", label: "Live-Hinweis", hint: "Nachricht an alle App-Nutzer senden.", perm: "live.notify" },
   ];
 
@@ -1336,6 +1336,8 @@
 
   async function renderMarketSettings() {
     const s = await api("/admin/market-settings");
+    const capMin = Number(s.achievementDailyCapMin ?? 0);
+    const capMax = Number(s.achievementDailyCapMax ?? 500);
     content.innerHTML = `
       <div class="panel">
         <h3>Markt-Preisfenster</h3>
@@ -1344,6 +1346,20 @@
           <input id="priceDays" type="number" min="1" max="90" value="${esc(s.priceWindowDays ?? 14)}" />
           <button class="btn" id="saveMarket">Speichern</button>
         </div>
+      </div>
+      <div class="panel" style="margin-top:16px">
+        <h3>Erfolge · Coins pro Tag</h3>
+        <p class="help">
+          Maximal so viele Coins darf ein Spieler pro Tag durch Erfolge abholen.
+          Ist das Limit teilweise erreicht, wird nur noch die Differenz gutgeschrieben —
+          der Erfolg gilt trotzdem als abgeholt. Bei 0 gibt es keine Erfolgs-Coins mehr.
+        </p>
+        <div class="toolbar">
+          <input id="achDailyCap" type="number" min="${capMin}" max="${capMax}"
+            value="${esc(s.achievementDailyCap ?? 12)}" />
+          <button class="btn" id="saveAchCap">Speichern</button>
+        </div>
+        <p class="help">Erlaubt: ${capMin}–${capMax} · Aktuell: ${esc(s.achievementDailyCap ?? 12)}</p>
       </div>`;
     $("saveMarket").onclick = async () => {
       await api("/admin/market-settings", {
@@ -1351,6 +1367,15 @@
         body: JSON.stringify({ priceWindowDays: Number($("priceDays").value || 14) }),
       });
       alert("Gespeichert");
+    };
+    $("saveAchCap").onclick = async () => {
+      const n = Number($("achDailyCap").value);
+      await api("/admin/market-settings", {
+        method: "PUT",
+        body: JSON.stringify({ achievementDailyCap: n }),
+      });
+      alert("Erfolgs-Tageslimit gespeichert");
+      renderMarketSettings();
     };
   }
 

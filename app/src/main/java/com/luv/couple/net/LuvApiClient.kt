@@ -2623,7 +2623,15 @@ object LuvApiClient {
             ?: MarketPriceInsight(windowDays = json.optInt("priceWindowDays", 90))
     }
 
-    suspend fun fetchAdminMarketSettings(): Pair<Int, List<Int>> = withContext(Dispatchers.IO) {
+    data class AdminMarketSettings(
+        val priceWindowDays: Int,
+        val options: List<Int>,
+        val achievementDailyCap: Int,
+        val achievementDailyCapMin: Int,
+        val achievementDailyCapMax: Int
+    )
+
+    suspend fun fetchAdminMarketSettings(): AdminMarketSettings = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/admin/market-settings")
         val options = buildList {
             val arr = json.optJSONArray("options")
@@ -2634,13 +2642,25 @@ object LuvApiClient {
                 }
             }
         }.ifEmpty { listOf(7, 14, 30, 60, 90, 180) }
-        json.optInt("priceWindowDays", 90) to options
+        AdminMarketSettings(
+            priceWindowDays = json.optInt("priceWindowDays", 90),
+            options = options,
+            achievementDailyCap = json.optInt("achievementDailyCap", 12),
+            achievementDailyCapMin = json.optInt("achievementDailyCapMin", 0),
+            achievementDailyCapMax = json.optInt("achievementDailyCapMax", 500)
+        )
     }
 
     suspend fun setAdminMarketPriceWindow(days: Int): Int = withContext(Dispatchers.IO) {
         val body = JSONObject().put("priceWindowDays", days).toString()
         val json = authedPost("/v1/admin/market-settings", body)
         json.optInt("priceWindowDays", days)
+    }
+
+    suspend fun setAdminAchievementDailyCap(cap: Int): Int = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("achievementDailyCap", cap).toString()
+        val json = authedPost("/v1/admin/market-settings", body)
+        json.optInt("achievementDailyCap", cap)
     }
 
     suspend fun fetchMyMarketListings(): List<MarketListing> = withContext(Dispatchers.IO) {

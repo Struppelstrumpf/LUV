@@ -135,7 +135,7 @@ const MOD_PERMISSION_GROUPS = [
     label: "Marktplatz",
     description: "Preis-Anzeige und Markt-Einstellungen",
     permissions: [
-      { id: "market.settings", label: "Preis-Zeitfenster einstellen" },
+      { id: "market.settings", label: "Markt- & Economy-Einstellungen" },
     ],
   },
   {
@@ -822,6 +822,14 @@ function isBoundInventoryItem(kind, itemId) {
   return false;
 }
 
+function achDailyCap() {
+  return ach.getAchievementDailyCap(getDb());
+}
+
+function achPublicState(user) {
+  return ach.publicAchievementsState(user, todayKey(), achDailyCap());
+}
+
 function tryClaimAchievementReward(user, achievementId) {
   return ach.claimAchievement(
     user,
@@ -829,7 +837,8 @@ function tryClaimAchievementReward(user, achievementId) {
     todayKey(),
     (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref),
     (u, k, itemId) => safeGiveItem(u, k, itemId),
-    (u, k, itemId) => userAlreadyOwnsUnique(u, k, itemId)
+    (u, k, itemId) => userAlreadyOwnsUnique(u, k, itemId),
+    achDailyCap()
   );
 }
 
@@ -5526,6 +5535,7 @@ app.get("/health", (_req, res) => {
     liveAppUsers: countActiveAppUsers(),
     economy: {
       dailyCoins: DAILY_COINS,
+      achievementDailyCap: achDailyCap(),
       glassTipDailyMax: GLASS_TIP_DAILY_MAX,
       freeSessionsPerDay: FREE_SESSIONS_PER_DAY,
       sessionCost: SESSION_COST,
@@ -8253,7 +8263,7 @@ app.get("/v1/me/achievements", (req, res) => {
     syncAchInventoryMetrics(ctx.user);
   }
   scheduleSave();
-  return res.json({ ok: true, ...ach.publicAchievementsState(ctx.user, todayKey()) });
+  return res.json({ ok: true, ...achPublicState(ctx.user) });
 });
 
 app.post("/v1/me/achievements/ping", (req, res) => {
@@ -8293,7 +8303,7 @@ app.post("/v1/me/achievements/ping", (req, res) => {
     coinsGranted: result?.coinsGranted || 0,
     dailyJustCompleted: Boolean(result?.dailyJustCompleted),
     streak: result?.streak || 0,
-    state: ach.publicAchievementsState(ctx.user, todayKey()),
+    state: achPublicState(ctx.user),
     user: publicUser(ctx.user),
   });
 });
@@ -8316,7 +8326,7 @@ app.post("/v1/me/achievements/daily/claim", (req, res) => {
   return res.json({
     ok: true,
     coinsGranted: result.coinsGranted,
-    state: ach.publicAchievementsState(ctx.user, todayKey()),
+    state: achPublicState(ctx.user),
     user: publicUser(ctx.user),
   });
 });
@@ -8330,7 +8340,8 @@ app.post("/v1/me/achievements/:id/claim", (req, res) => {
     todayKey(),
     (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref),
     (user, kind, itemId) => safeGiveItem(user, kind, itemId),
-    (user, kind, itemId) => userAlreadyOwnsUnique(user, kind, itemId)
+    (user, kind, itemId) => userAlreadyOwnsUnique(user, kind, itemId),
+    achDailyCap()
   );
   if (!result.ok) {
     return res.status(400).json({
@@ -8345,9 +8356,11 @@ app.post("/v1/me/achievements/:id/claim", (req, res) => {
   return res.json({
     ok: true,
     coinsGranted: result.coinsGranted || 0,
+    coinsRequested: result.coinsRequested || 0,
+    partial: Boolean(result.partial),
     itemGranted: result.itemGranted || null,
     achievementId: result.achievementId,
-    state: ach.publicAchievementsState(ctx.user, todayKey()),
+    state: achPublicState(ctx.user),
     user: publicUser(ctx.user),
   });
 });
@@ -8540,25 +8553,51 @@ app.get("/v1/admin/market-settings", (req, res) => {
     ok: true,
     priceWindowDays: market.priceWindowDays(getDb()),
     options: market.PRICE_WINDOW_OPTIONS,
+    achievementDailyCap: achDailyCap(),
+    achievementDailyCapMin: ach.ACHIEVEMENT_DAILY_CAP_MIN,
+    achievementDailyCapMax: ach.ACHIEVEMENT_DAILY_CAP_MAX,
   });
 });
 
 function applyMarketSettings(req, res) {
   const ctx = requireStaff(req, res, "market.settings");
   if (!ctx) return;
-  const result = market.setPriceWindowDays(getDb(), req.body?.priceWindowDays);
-  if (!result.ok) {
-    return res.status(400).json({
-      error: "bad_window",
-      message: `Erlaubt: ${market.PRICE_WINDOW_OPTIONS.join(", ")} Tage.`,
-    });
+  const db = getDb();
+  const out = {
+    ok: true,
+    priceWindowDays: market.priceWindowDays(db),
+    options: market.PRICE_WINDOW_OPTIONS,
+    achievementDailyCap: achDailyCap(),
+    achievementDailyCapMin: ach.ACHIEVEMENT_DAILY_CAP_MIN,
+    achievementDailyCapMax: ach.ACHIEVEMENT_DAILY_CAP_MAX,
+  };
+  if (req.body?.priceWindowDays !== undefined && req.body?.priceWindowDays !== null) {
+    const result = market.setPriceWindowDays(db, req.body.priceWindowDays);
+    if (!result.ok) {
+      return res.status(400).json({
+        error: "bad_window",
+        message: `Erlaubt: ${market.PRICE_WINDOW_OPTIONS.join(", ")} Tage.`,
+      });
+    }
+    out.priceWindowDays = result.priceWindowDays;
+    out.options = result.options;
+  }
+  if (
+    req.body?.achievementDailyCap !== undefined &&
+    req.body?.achievementDailyCap !== null &&
+    req.body?.achievementDailyCap !== ""
+  ) {
+    const capResult = ach.setAchievementDailyCap(db, req.body.achievementDailyCap);
+    if (!capResult.ok) {
+      return res.status(400).json({
+        error: "bad_achievement_cap",
+        message: capResult.message,
+      });
+    }
+    out.achievementDailyCap = capResult.achievementDailyCap;
   }
   flushSave();
-  return res.json({
-    ok: true,
-    priceWindowDays: result.priceWindowDays,
-    options: result.options,
-  });
+  return res.json(out);
 }
 app.put("/v1/admin/market-settings", applyMarketSettings);
 app.post("/v1/admin/market-settings", applyMarketSettings);
