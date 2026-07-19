@@ -4,6 +4,7 @@
  */
 
 const crypto = require("crypto");
+const { isAchievementSticker } = require("./sticker_catalog");
 
 // Gleiche Reihenfolge/Namen wie Itemshop & Inventar
 const CATEGORIES = [
@@ -436,6 +437,11 @@ function giveItemToUser(user, ensureInventory, kind, itemId) {
     return;
   }
   if (kind === "stickers") {
+    // Kapelle & andere Erfolgs-Sticker: immer genau 1×
+    if (isAchievementSticker(itemId)) {
+      inv.stickers[itemId] = 1;
+      return;
+    }
     inv.stickers[itemId] = (Number(inv.stickers[itemId]) || 0) + 1;
     return;
   }

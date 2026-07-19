@@ -75,11 +75,12 @@ private enum class InvTab(val label: String, val kindPrefix: String?) {
  * Gleiche Reihenfolge wie Itemshop: Sticker → Hintergründe → Begleiter → Emojis.
  * Profil-Truhe: Extras statt Emojis (Münzglas/Bio).
  */
-private fun tabsFor(mode: InventoryPanelMode): List<InvTab> = when (mode) {
-    InventoryPanelMode.Menu -> listOf(
+private fun tabsFor(mode: InventoryPanelMode, readOnly: Boolean): List<InvTab> = when {
+    readOnly && mode == InventoryPanelMode.ProfileChest -> listOf(InvTab.Extras)
+    mode == InventoryPanelMode.Menu -> listOf(
         InvTab.Stickers, InvTab.Themes, InvTab.Companions, InvTab.Emojis
     )
-    InventoryPanelMode.ProfileChest -> listOf(
+    else -> listOf(
         InvTab.Stickers, InvTab.Themes, InvTab.Companions, InvTab.Extras
     )
 }
@@ -103,6 +104,10 @@ fun ProfileInventoryPanel(
     engagedName: String? = null,
     hasSpouse: Boolean = false,
     hasEngaged: Boolean = false,
+    /** Day-Streak (🔥) — auch für Profilbesucher sichtbar */
+    dayStreak: Int = 0,
+    /** Fremdprofil: nur anschauen, nichts platzieren */
+    readOnly: Boolean = false,
     onTheme: (ProfileTheme) -> Unit,
     onSticker: (String) -> Unit,
     onCompanion: (String) -> Unit,
@@ -126,8 +131,12 @@ fun ProfileInventoryPanel(
     modifier: Modifier = Modifier,
     showCardChrome: Boolean = true
 ) {
-    val tabs = remember(mode) { tabsFor(mode) }
-    var tab by remember(mode) { mutableIntStateOf(selectedTab.coerceIn(0, tabs.lastIndex)) }
+    val tabs = remember(mode, readOnly) { tabsFor(mode, readOnly) }
+    var tab by remember(mode, readOnly) {
+        mutableIntStateOf(
+            if (readOnly) 0 else selectedTab.coerceIn(0, tabs.lastIndex.coerceAtLeast(0))
+        )
+    }
     var searchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     LaunchedEffect(selectedTab, tabs.size) {
@@ -498,6 +507,62 @@ fun ProfileInventoryPanel(
                     modifier = gridMod,
                     verticalArrangement = Arrangement.spacedBy(s(10.dp))
                 ) {
+                    // Day Streak — für alle sichtbar (auch Fremdprofil)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .clip(RoundedCornerShape(s(16.dp)))
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(Color(0xFF2A1A22), BgSoft, Color(0xFF1E2430))
+                                )
+                            )
+                            .border(1.dp, AccentRose.copy(0.35f), RoundedCornerShape(s(16.dp))),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(s(14.dp)),
+                            modifier = Modifier.padding(horizontal = s(16.dp))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(s(56.dp))
+                                    .clip(CircleShape)
+                                    .background(AccentRose.copy(0.18f))
+                                    .border(1.dp, AccentRose.copy(0.4f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("🔥", fontSize = ts(18.sp))
+                                    Text(
+                                        "$dayStreak",
+                                        color = AccentRose,
+                                        fontFamily = DisplayFont,
+                                        fontSize = ts(16.sp)
+                                    )
+                                }
+                            }
+                            Column {
+                                Text(
+                                    "Day Streak",
+                                    color = TextPrimary,
+                                    fontFamily = DisplayFont,
+                                    fontSize = ts(16.sp)
+                                )
+                                Text(
+                                    if (dayStreak <= 0) "Noch kein Streak"
+                                    else if (dayStreak == 1) "1 Tag in Folge"
+                                    else "$dayStreak Tage in Folge",
+                                    color = TextMuted,
+                                    fontFamily = BodyFont,
+                                    fontSize = ts(13.sp)
+                                )
+                            }
+                        }
+                    }
+                    if (!readOnly) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -540,7 +605,8 @@ fun ProfileInventoryPanel(
                             )
                         }
                     }
-                    if (!spouseName.isNullOrBlank()) {
+                    }
+                    if (!readOnly && !spouseName.isNullOrBlank()) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -565,7 +631,7 @@ fun ProfileInventoryPanel(
                             }
                         }
                     }
-                    if (!engagedName.isNullOrBlank()) {
+                    if (!readOnly && !engagedName.isNullOrBlank()) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -610,6 +676,8 @@ fun ProfileChestDialog(
     engagedName: String? = null,
     hasSpouse: Boolean = false,
     hasEngaged: Boolean = false,
+    dayStreak: Int = 0,
+    readOnly: Boolean = false,
     onTheme: (ProfileTheme) -> Unit,
     onSticker: (String) -> Unit,
     onCompanion: (String) -> Unit,
@@ -640,6 +708,8 @@ fun ProfileChestDialog(
             engagedName = engagedName,
             hasSpouse = hasSpouse,
             hasEngaged = hasEngaged,
+            dayStreak = dayStreak,
+            readOnly = readOnly,
             onTheme = onTheme,
             onSticker = onSticker,
             onCompanion = onCompanion,
@@ -649,7 +719,7 @@ fun ProfileChestDialog(
             onEngaged = onEngaged,
             onOpenMarketplace = onOpenMarketplace,
             onOpenItemShop = onOpenItemShop,
-            selectedTab = selectedTab,
+            selectedTab = if (readOnly) 0 else selectedTab,
             onTabChange = onTabChange,
             onDismiss = onDismiss,
             modifier = Modifier

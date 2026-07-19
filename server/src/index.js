@@ -620,49 +620,118 @@ function normalizePetId(raw) {
 }
 
 /** Durch slice(0,8) gekürzte img_*-IDs anhand Katalog wiederherstellen. */
-function expandTruncatedPetId(raw) {
+function expandTruncatedPetId(raw, kindHint = null) {
   const id = normalizePetId(raw);
   if (!id.startsWith("img_") || id.length >= 12) return id;
   try {
     seedShopCatalogIfNeeded();
-    const items = shopCatalog.listPublicCatalog(getDb(), { admin: true, kind: "pets" }) || [];
-    const hits = items.filter(
-      (i) => i && String(i.itemId || "").startsWith(id) && String(i.itemId).length >= 12
-    );
-    if (hits.length === 1) return String(hits[0].itemId).slice(0, PET_ID_MAX);
+    const kinds = kindHint
+      ? [kindHint]
+      : ["pets", "stickers", "emojis"];
+    const hits = [];
+    for (const kind of kinds) {
+      const items =
+        shopCatalog.listPublicCatalog(getDb(), { admin: true, kind }) || [];
+      for (const i of items) {
+        if (
+          i &&
+          String(i.itemId || "").startsWith(id) &&
+          String(i.itemId).length >= 12
+        ) {
+          hits.push(String(i.itemId).slice(0, PET_ID_MAX));
+        }
+      }
+    }
+    const uniq = [...new Set(hits)];
+    if (uniq.length === 1) return uniq[0];
   } catch (_) {
     /* ignore */
   }
   return id;
 }
 
+function isPlaceholderImageItemId(id) {
+  const s = String(id || "")
+    .trim()
+    .toLowerCase();
+  return !s || s === "img_new" || s === "new" || s === "img_" || s === "auto";
+}
+
+function isStableImageItemId(id) {
+  const s = String(id || "").trim();
+  return /^img_[a-z0-9]{6,28}$/i.test(s) && !isPlaceholderImageItemId(s);
+}
+
+/** Neue Bild-Item-ID — nie img_new, nie Kollision mit Katalog/Datei. */
+function allocateImageItemId(db, kind) {
+  for (let i = 0; i < 40; i++) {
+    const id = `img_${crypto.randomBytes(4).toString("hex")}`;
+    if (!shopCatalog.getItem(db, kind, id) && !petImages.hasImage(id)) return id;
+  }
+  return `img_${Date.now().toString(36)}${crypto.randomBytes(2).toString("hex")}`.slice(
+    0,
+    PET_ID_MAX
+  );
+}
+
+/**
+ * Besitz NIEMALS wegen Katalog-Änderungen löschen.
+ * Nur IDs normalisieren / Zähler säubern — Ownership bleibt stabil.
+ */
 function scrubInventoryCatalog(inv) {
   inv.pets = (inv.pets || [])
     .map((p) => expandTruncatedPetId(p))
-    .filter((p) => isKnownInventoryItem("pets", p));
+    .map((p) => String(p || "").trim().slice(0, PET_ID_MAX))
+    .filter((p) => p.length > 0);
   // Duplikate entfernen, Reihenfolge behalten
   inv.pets = inv.pets.filter((p, i, a) => a.indexOf(p) === i);
   if (inv.equippedPet) {
     inv.equippedPet = expandTruncatedPetId(inv.equippedPet);
   }
-  inv.themes = (inv.themes || []).filter((t) => isKnownInventoryItem("themes", t));
-  for (const e of Object.keys(inv.stickers || {})) {
-    if (!isKnownInventoryItem("stickers", e)) delete inv.stickers[e];
-    else inv.stickers[e] = Math.min(999, Math.max(0, Math.floor(Number(inv.stickers[e]) || 0)));
-    if (inv.stickers[e] <= 0) delete inv.stickers[e];
+  inv.themes = (inv.themes || [])
+    .map((t) => String(t || "").trim().slice(0, 32))
+    .filter((t) => t.length > 0)
+    .filter((t, i, a) => a.indexOf(t) === i);
+  const nextStickers = {};
+  for (const [e0, rawN] of Object.entries(inv.stickers || {})) {
+    let n = Math.min(999, Math.max(0, Math.floor(Number(rawN) || 0)));
+    if (n <= 0 || !String(e0 || "").trim()) continue;
+    const e = expandTruncatedPetId(e0, "stickers");
+    // Erfolgs-/Heirats-Sticker (z. B. Kapelle 💒) nie stapeln
+    if (isAchievementSticker(e) && n > 1) n = 1;
+    nextStickers[e] = Math.min(999, (Number(nextStickers[e]) || 0) + n);
+    if (isAchievementSticker(e) && nextStickers[e] > 1) nextStickers[e] = 1;
   }
-  for (const e of Object.keys(inv.emojis || {})) {
-    if (!isKnownInventoryItem("emojis", e)) delete inv.emojis[e];
-    else inv.emojis[e] = Math.min(999, Math.max(0, Math.floor(Number(inv.emojis[e]) || 0)));
-    if (inv.emojis[e] <= 0) delete inv.emojis[e];
+  inv.stickers = nextStickers;
+  const nextEmojis = {};
+  for (const [e0, rawN] of Object.entries(inv.emojis || {})) {
+    const n = Math.min(999, Math.max(0, Math.floor(Number(rawN) || 0)));
+    if (n <= 0 || !String(e0 || "").trim()) continue;
+    const e = expandTruncatedPetId(e0, "emojis");
+    nextEmojis[e] = Math.min(999, (Number(nextEmojis[e]) || 0) + n);
   }
+  inv.emojis = nextEmojis;
 }
 
-/** Item nur gutschreiben, wenn es im Shop-Katalog existiert. */
+/**
+ * Item gutschreiben. Besitz vor Katalog — auch Legacy-/Admin-Items zurückgeben.
+ * Kauf/Lootbox müssen separat mit isKnownInventoryItem prüfen.
+ */
 function safeGiveItem(user, kind, itemId) {
-  if (!isKnownInventoryItem(kind, itemId)) return false;
-  market.giveItemToUser(user, ensureInventory, kind, itemId);
+  const id = String(itemId || "").trim();
+  if (!id || !kind) return false;
+  market.giveItemToUser(user, ensureInventory, kind, id);
   return true;
+}
+
+/** Freier Sticker-Bestand = owned − auf dem Profil platziert. */
+function stickerFreeStock(user, emoji) {
+  const e = String(emoji || "").trim().slice(0, 32);
+  if (!e) return 0;
+  const inv = ensureInventory(user);
+  const owned = Math.max(0, Math.floor(Number(inv.stickers[e]) || 0));
+  const placed = countLayoutStickers(user.profileCanvas?.layout)[e] || 0;
+  return Math.max(0, owned - placed);
 }
 
 function ensureInventory(user) {
@@ -674,7 +743,7 @@ function ensureInventory(user) {
   if (!Array.isArray(inv.themes)) inv.themes = [];
   if (!inv.stickers || typeof inv.stickers !== "object") inv.stickers = {};
   if (!Array.isArray(inv.pets)) inv.pets = [];
-  // Fremde/Fake-Items aus Mods oder alten Bugs entfernen
+  // Nur normalisieren — niemals Besitz löschen
   scrubInventoryCatalog(inv);
   // Starter
   for (const e of STARTER_EMOJIS) {
@@ -687,6 +756,10 @@ function ensureInventory(user) {
     inv.equippedPet = DEFAULT_PET;
   }
   user.inventory = inv;
+  // Sticker-Mode-Migration (Gesamtbesitz wiederherstellen) — ohne Re-entrancy
+  if (user && user.stickerInvMode !== 3) {
+    restoreStickerTotalOwnership(user);
+  }
   return inv;
 }
 
@@ -731,7 +804,7 @@ function clampProfileToInventory(user, profile) {
 }
 
 function userOwnsCanvasEmoji(user, emoji) {
-  const e = String(emoji || "").trim().slice(0, 8);
+  const e = String(emoji || "").trim().slice(0, 32);
   if (!e) return false;
   const inv = ensureInventory(user);
   if ((Number(inv.emojis[e]) || 0) > 0) return true;
@@ -808,7 +881,11 @@ function marketItemEquippedLock(user, kind, itemId) {
     }
     return null;
   }
-  // Stickers: freier Bestand ist schon ohne Profil-Platzierungen
+  if (kind === "stickers") {
+    if (stickerFreeStock(user, id) < 1) {
+      return "Sticker ist auf dem Profil platziert — zuerst entfernen.";
+    }
+  }
   return null;
 }
 
@@ -917,7 +994,7 @@ function sanitizeSettings(raw) {
   let emojiBar = [];
   if (Array.isArray(src.emojiBar)) {
     emojiBar = src.emojiBar
-      .map((e) => String(e || "").trim().slice(0, 8))
+      .map((e) => clipCanvasEmojiId(e))
       .filter(Boolean)
       .filter((e, i, a) => a.indexOf(e) === i)
       .slice(0, 8);
@@ -1764,7 +1841,7 @@ function sanitizeStoredStroke(raw) {
   if (!raw || typeof raw !== "object") return null;
   const id = String(raw.id || "").trim();
   if (!id || id.length > 80) return null;
-  const emoji = String(raw.emoji || "").trim().slice(0, 8) || null;
+  const emoji = clipCanvasEmojiId(raw.emoji) || null;
   const templateParts = sanitizeTemplateParts(raw.templateParts);
   const pointsIn = Array.isArray(raw.points) ? raw.points : [];
   const points = [];
@@ -5713,7 +5790,7 @@ function sanitizeProfileCanvas(raw) {
       flipX: Boolean(el.flipX),
       visible: el.visible !== false,
       z: Math.max(0, Math.min(500, Number(el.z) || 10)),
-      emoji: String(el.emoji || "").trim().slice(0, 8) || null,
+      emoji: clipCanvasEmojiId(el.emoji) || null,
       text: String(el.text || "").trim().slice(0, 500) || null,
       color: String(el.color || "").trim().slice(0, 16) || null,
       fontSize,
@@ -5748,7 +5825,7 @@ function countLayoutStickers(layout) {
   if (!Array.isArray(layout)) return out;
   for (const el of layout) {
     if (!el || String(el.type).toLowerCase() !== "sticker") continue;
-    const e = String(el.emoji || el.text || "").trim().slice(0, 8);
+    const e = String(el.emoji || el.text || "").trim().slice(0, 32);
     if (!e) continue;
     out[e] = (out[e] || 0) + 1;
   }
@@ -5756,41 +5833,40 @@ function countLayoutStickers(layout) {
 }
 
 /**
- * Sticker-Inventar = freier Bestand (nicht auf Profil / Markt).
- * Beim Platzieren abziehen, beim Entfernen zurückgeben.
- * Einmalige Migration: Profil-Sticker vom Inventar abziehen.
+ * Sticker-Inventar = Gesamtpbesitz (stabil).
+ * Mode 2 hatte fälschlich Profil-Sticker vom Inventar abgezogen → wirkte wie Verlust.
+ * Mode 3: Gesamtpbesitz; Platzieren prüft nur owned ≥ placed.
+ * Darf ensureInventory NICHT aufrufen (wird von dort getriggert).
  */
-function migrateStickerInventoryIfNeeded(user) {
-  if (user.stickerInvMode === 2) return;
-  const inv = ensureInventory(user);
+function restoreStickerTotalOwnership(user) {
+  if (!user || user.stickerInvMode === 3) return;
+  const inv = user.inventory;
+  if (!inv || typeof inv.stickers !== "object") {
+    user.stickerInvMode = 3;
+    return;
+  }
   const onProfile = countLayoutStickers(user.profileCanvas?.layout);
-  for (const [e, n] of Object.entries(onProfile)) {
-    const have = Number(inv.stickers[e]) || 0;
-    if (have > 0 && n > 0) {
-      inv.stickers[e] = Math.max(0, have - n);
-      if (inv.stickers[e] <= 0) delete inv.stickers[e];
+  if (user.stickerInvMode === 2) {
+    for (const [e, n] of Object.entries(onProfile)) {
+      const add = Math.max(0, Math.floor(Number(n) || 0));
+      if (!e || add <= 0) continue;
+      inv.stickers[e] = Math.min(999, (Number(inv.stickers[e]) || 0) + add);
     }
   }
-  user.stickerInvMode = 2;
+  user.stickerInvMode = 3;
 }
 
-/** Profil-Sticker vs. Inventar abgleichen (delta). Gibt false wenn nicht genug Bestand. */
+function migrateStickerInventoryIfNeeded(user) {
+  ensureInventory(user);
+}
+
+/** Profil-Sticker prüfen: nie mehr Inventarzähler mutieren. */
 function syncStickersOnProfileSave(user, newLayout) {
-  migrateStickerInventoryIfNeeded(user);
   const inv = ensureInventory(user);
-  const oldC = countLayoutStickers(user.profileCanvas?.layout);
   const newC = countLayoutStickers(newLayout);
-  const keys = new Set([...Object.keys(oldC), ...Object.keys(newC)]);
-  for (const e of keys) {
-    const delta = (newC[e] || 0) - (oldC[e] || 0);
-    if (delta > 0) {
-      const have = Number(inv.stickers[e]) || 0;
-      if (have < delta) return false;
-      inv.stickers[e] = have - delta;
-      if (inv.stickers[e] <= 0) delete inv.stickers[e];
-    } else if (delta < 0) {
-      inv.stickers[e] = (Number(inv.stickers[e]) || 0) + -delta;
-    }
+  for (const [e, n] of Object.entries(newC)) {
+    const owned = Math.max(0, Math.floor(Number(inv.stickers[e]) || 0));
+    if (owned < n) return false;
   }
   return true;
 }
@@ -5878,11 +5954,16 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   // Partner-Wartezeit nur zeigen, wenn sie die Heirat mit DIESEM Profil blockiert
   const showPartnerCooldown =
     areFriends && slotsFree && theirCooldownMs > 0 && !myMarriageBusy;
+  const dayStreak = Math.max(
+    0,
+    Math.floor(Number(ach.ensureAchievements(user).streak) || 0)
+  );
   return res.json({
     nickname: user.nickname || "Jemand",
     userId: user.id,
     // Coins nur fürs eigene Profil — sonst Wealth-Scouting / Cheats
     ...(isSelf ? { coins: user.coins || 0 } : {}),
+    dayStreak,
     profile,
     petEmoji,
     friendStatus: isSelf ? "self" : friendRelation(ctx.user, uid),
@@ -7418,7 +7499,7 @@ app.post("/v1/shop/buy-emoji", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   seedShopCatalogIfNeeded();
-  const emoji = String(req.body?.emoji || "").trim().slice(0, 8);
+  const emoji = clipCanvasEmojiId(req.body?.emoji);
   if (!emoji) {
     return res.status(400).json({ error: "unknown_item", message: "Dieses Emoji gibt es im Shop nicht." });
   }
@@ -7504,7 +7585,7 @@ app.post("/v1/shop/buy-sticker", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   seedShopCatalogIfNeeded();
-  const emoji = String(req.body?.emoji || "").trim().slice(0, 8);
+  const emoji = clipCanvasEmojiId(req.body?.emoji);
   if (!emoji) {
     return res.status(400).json({ error: "unknown_item", message: "Sticker unbekannt." });
   }
@@ -8063,7 +8144,7 @@ function applyPetImageFromBody(body, itemId) {
   }
   const saved = petImages.saveImage(itemId, img);
   if (!saved.ok) return saved;
-  return { ok: true, hasImage: true };
+  return { ok: true, hasImage: true, itemId: saved.itemId || itemId };
 }
 
 app.post("/v1/admin/shop/items", (req, res) => {
@@ -8073,11 +8154,19 @@ app.post("/v1/admin/shop/items", (req, res) => {
   const body = { ...(req.body || {}) };
   let itemId = String(body.itemId || "").trim();
   const kind = String(body.kind || "").trim();
-  // Bild-Begleiter: ID automatisch, wenn leer oder Modus Bild
-  if (kind === "pets" && (body.petSource === "image" || body.imageBase64 || body.imageDataUrl)) {
-    const looksLikeEmoji = !itemId || itemId.length <= 4 || /[^\x00-\x7F]/.test(itemId);
-    if (looksLikeEmoji || !/^img_[a-z0-9]+$/i.test(itemId)) {
-      itemId = `img_${crypto.randomBytes(4).toString("hex")}`;
+  // Custom-Bild (Begleiter / Emoji / Sticker): stabile, eindeutige ID
+  const imageKinds = new Set(["pets", "emojis", "stickers"]);
+  if (
+    imageKinds.has(kind) &&
+    (body.petSource === "image" || body.imageBase64 || body.imageDataUrl)
+  ) {
+    const db = getDb();
+    // img_new / Emoji / Kollision → immer neue ID (sonst falsches Bild für alle)
+    if (
+      !isStableImageItemId(itemId) ||
+      shopCatalog.getItem(db, kind, itemId)
+    ) {
+      itemId = allocateImageItemId(db, kind);
     }
     body.itemId = itemId;
     const imgResult = applyPetImageFromBody(body, itemId);
@@ -8106,13 +8195,14 @@ app.put("/v1/admin/shop/items/:kind/:itemId", (req, res) => {
   const kind = String(req.params.kind || "").trim();
   const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
   const body = { ...(req.body || {}), kind, itemId };
-  if (kind === "pets" && (body.imageBase64 || body.imageDataUrl)) {
+  const imageKindsPut = new Set(["pets", "emojis", "stickers"]);
+  if (imageKindsPut.has(kind) && (body.imageBase64 || body.imageDataUrl)) {
     const imgResult = applyPetImageFromBody(body, itemId);
     if (imgResult.ok === false) {
       return res.status(400).json({ error: imgResult.error, message: imgResult.message });
     }
     body.hasImage = true;
-  } else if (kind === "pets" && petImages.hasImage(itemId)) {
+  } else if (imageKindsPut.has(kind) && petImages.hasImage(itemId)) {
     body.hasImage = true;
   }
   const result = shopCatalog.upsertItem(getDb(), body);
@@ -8139,7 +8229,7 @@ app.get("/v1/admin/shop/chroma-key", (req, res) => {
   return res.json({
     ok: true,
     chromaKey: petImages.CHROMA_KEY_HEX,
-    tip: "Grüner Hintergrund #00FF00 wird transparent. Motiv mittig, ruhiger Rand.",
+    tip: "Mit der Pipette eine Farbe im Bild wählen — die wird transparent. Standard-Vorschlag #00FF00.",
   });
 });
 

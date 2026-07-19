@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>LUV Alpha-Anleitung — Was du beachten musst</title>
+  <meta name="description" content="Anleitung für LUV Alpha-Tester: Anmeldung, App installieren, 14 Tage angemeldet bleiben, testen und Feedback geben." />
+  <meta name="theme-color" content="#0B0E14" />
+  <link rel="canonical" href="https://reineke.pro/luv/anleitung.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="LUV" />
+  <meta property="og:url" content="https://reineke.pro/luv/anleitung.html" />
+  <meta property="og:title" content="LUV Alpha-Anleitung" />
+  <meta property="og:description" content="Was Alpha-Tester beachten müssen: angemeldet bleiben, App nutzen, 14 Tage durchhalten." />
+  <meta property="og:image" content="https://reineke.pro/luv/og-alpha.jpg?v=1" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;700&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .guide-wrap {
+      position: relative;
+      z-index: 1;
+      max-width: 42rem;
+      margin: 0 auto;
+      padding: var(--page-pad);
+      padding-top: 2.5rem;
+      padding-bottom: 4rem;
+    }
+    .guide-back {
+      display: inline-block;
+      margin-bottom: 1.5rem;
+      color: var(--gold);
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .guide-brand {
+      font-family: var(--font-display);
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      font-size: clamp(2.4rem, 7vw, 3.4rem);
+      line-height: 0.9;
+      margin: 0 0 0.75rem;
+    }
+    .guide-brand .c-l { color: var(--blue); }
+    .guide-brand .c-u { color: var(--text); }
+    .guide-brand .c-v { color: var(--magenta); }
+    .guide-wrap h1 {
+      font-family: var(--font-display);
+      font-size: clamp(1.55rem, 4vw, 2.1rem);
+      margin: 0 0 0.75rem;
+      line-height: 1.2;
+    }
+    .guide-lede {
+      color: var(--muted);
+      line-height: 1.55;
+      margin: 0 0 2rem;
+    }
+    .guide-wrap h2 {
+      font-family: var(--font-display);
+      font-size: 1.3rem;
+      margin: 2rem 0 0.7rem;
+      color: var(--text);
+    }
+    .guide-wrap p,
+    .guide-wrap li {
+      color: var(--muted);
+      line-height: 1.55;
+      margin-bottom: 0.7rem;
+    }
+    .guide-wrap ol,
+    .guide-wrap ul {
+      padding-left: 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .guide-wrap a { color: var(--blue); }
+    .guide-warn {
+      margin: 1.25rem 0;
+      padding: 1rem 0;
+      border-top: 1px solid rgba(255, 213, 79, 0.35);
+      border-bottom: 1px solid rgba(255, 213, 79, 0.35);
+    }
+    .guide-warn strong {
+      color: var(--gold);
+      display: block;
+      margin-bottom: 0.4rem;
+      font-size: 1.05rem;
+    }
+    .guide-mono {
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 0.92em;
+      color: var(--text);
+      word-break: break-all;
+    }
+    .guide-cta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-top: 2rem;
+    }
+    .guide-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.9rem 1.3rem;
+      border-radius: 999px;
+      font-weight: 600;
+      text-decoration: none;
+      font-size: 0.95rem;
+    }
+    .guide-btn-primary {
+      background: linear-gradient(120deg, var(--blue), #5ec8ff 45%, var(--magenta));
+      color: #0b0e14;
+    }
+    .guide-btn-ghost {
+      border: 1px solid rgba(244, 241, 236, 0.28);
+      color: var(--text);
+    }
+    .guide-figure {
+      margin: 1.25rem 0 0.5rem;
+      text-align: center;
+    }
+    .guide-figure img {
+      width: min(100%, 280px);
+      height: auto;
+      border-radius: 1rem;
+      background: #fff;
+      display: inline-block;
+    }
+    .guide-figure figcaption {
+      margin-top: 0.65rem;
+      font-size: 0.88rem;
+      color: rgba(244, 241, 236, 0.55);
+    }
+  </style>
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true">
+    <div class="wash wash-a"></div>
+    <div class="wash wash-b"></div>
+    <div class="grain"></div>
+  </div>
+
+  <main class="guide-wrap">
+    <a class="guide-back" href="/luv/alpha.html">← Zurück zum Alpha-Test</a>
+    <p class="guide-brand" aria-label="LUV">
+      <span class="c-l">L</span><span class="c-u">U</span><span class="c-v">V</span>
+    </p>
+    <h1>Anleitung für Alpha-Tester</h1>
+    <p class="guide-lede">
+      Damit Google den Closed Test anerkennt und wir LUV im Play Store veröffentlichen können,
+      brauchst du ein paar klare Schritte — und vor allem: dauerhaft angemeldet bleiben.
+    </p>
+
+    <h2>1. Einmalig einrichten</h2>
+    <ol>
+      <li>
+        Tritt der Google-Gruppe
+        <span class="guide-mono">luv-test@googlegroups.com</span> bei:
+        <a href="https://groups.google.com/g/luv-test" target="_blank" rel="noopener noreferrer">Gruppe öffnen</a>
+      </li>
+      <li>
+        Öffne den Play-Alpha-Link und tippe auf <strong>Tester werden</strong>:<br />
+        <a href="https://play.google.com/apps/testing/com.luv.couple" target="_blank" rel="noopener noreferrer">play.google.com/apps/testing/com.luv.couple</a>
+      </li>
+      <li>
+        Installiere LUV <strong>nur über den Google Play Store</strong> (nicht über APK-Dateien von anderswo).
+      </li>
+      <li>
+        Öffne die App, melde dich an (idealerweise mit Google) und nutze sie kurz
+        (Lobby, zeichnen, Profil).
+      </li>
+    </ol>
+
+    <h2>2. „Nicht gefunden“ im Play Store?</h2>
+    <p>
+      Nach dem Beitreten siehst du manchmal diese Meldung (Satellit mit „Nicht gefunden“).
+      Das ist normal — die Alpha-App ist dann noch nicht überall sichtbar.
+    </p>
+    <figure class="guide-figure">
+      <img
+        src="/luv/play-nicht-gefunden.png"
+        alt="Google Play: Nicht gefunden — Wiederholen"
+        width="560"
+        height="960"
+        loading="lazy"
+      />
+      <figcaption>Beispiel: Play Store zeigt „Nicht gefunden“</figcaption>
+    </figure>
+    <p>
+      <strong>Einfach warten</strong> und später erneut den Alpha-Link öffnen oder auf
+      <strong>Wiederholen</strong> tippen. Oft dauert es nur wenige Stunden — manchmal
+      <strong>bis zu 24–48 Stunden</strong>, bis LUV bei dir im Play Store erscheint.
+      Am besten mit demselben Google-Konto, mit dem du „Tester werden“ bestätigt hast.
+    </p>
+
+    <div class="guide-warn">
+      <strong>Wichtig: Fortwährend angemeldet bleiben</strong>
+      <p style="margin:0">
+        Für Google zählt der Test nur, wenn du die ganze Zeit (mindestens die 14 Tage)
+        als Closed-Test-Tester eingetragen bleibst. Bitte:
+      </p>
+      <ul style="margin-top:0.75rem;margin-bottom:0">
+        <li>nicht auf „Programm verlassen“ / Testerschaft beenden tippen</li>
+        <li>die App nicht dauerhaft deinstallieren und den Test abbrechen</li>
+        <li>wenn möglich dasselbe Google-Konto behalten, mit dem du beigetreten bist</li>
+        <li>Updates aus dem Play Store annehmen, wenn eine neue Alpha-Version kommt</li>
+      </ul>
+    </div>
+
+    <h2>3. Während der 14 Tage — was du tun solltest</h2>
+    <ul>
+      <li>App <strong>regelmäßig öffnen</strong> (z. B. ein paar Mal pro Woche reicht)</li>
+      <li>Normal nutzen: Lobby erstellen/beitreten, gemeinsam zeichnen, Freunde, Markt, Profil</li>
+      <li>Bei Absturz oder Fehler: kurz notieren (was hast du getan?) und melden</li>
+      <li>Feedback in die Google-Gruppe oder an
+        <a href="mailto:info@reineke.pro?subject=LUV%20Alpha%20Feedback">info@reineke.pro</a>
+      </li>
+    </ul>
+
+    <h2>4. Was du nicht tun solltest</h2>
+    <ul>
+      <li>Testerschaft im Play Store kündigen, bevor die 14 Tage um sind</li>
+      <li>Nur beitreten und die App nie installieren (zählt für Google oft nicht richtig)</li>
+      <li>Interne Test-Links statt Alpha/Closed Test nutzen (hilft uns bei der 12‑Tester‑Regel nicht)</li>
+      <li>Die App für andere „stellvertretend“ mit demselben Google-Konto teilen — jeder Tester braucht ein eigenes Konto</li>
+    </ul>
+
+    <h2>5. Wann die Testphase offiziell läuft</h2>
+    <p>
+      Sobald <strong>12 Personen</strong> dem Alpha beigetreten sind <strong>und</strong> LUV
+      über Play installiert haben, starten die 14 Tage. Danach können wir den
+      Produktionszugriff bei Google beantragen. Alle, die dabei bleiben, bekommen ein
+      <strong>Dankeschön / eine Belohnung</strong>.
+    </p>
+
+    <h2>6. Kurz-Checkliste</h2>
+    <ul>
+      <li>☐ Google-Gruppe beigetreten</li>
+      <li>☐ Play: „Tester werden“ bestätigt</li>
+      <li>☐ Bei „Nicht gefunden“: warten (bis 24–48 Std.), dann erneut versuchen</li>
+      <li>☐ LUV aus dem Play Store installiert</li>
+      <li>☐ App geöffnet und kurz genutzt</li>
+      <li>☐ Testerschaft aktiv gelassen (nicht verlassen)</li>
+      <li>☐ Gelegentlich weiter nutzen + Feedback bei Problemen</li>
+    </ul>
+
+    <div class="guide-cta">
+      <a class="guide-btn guide-btn-primary" href="https://play.google.com/apps/testing/com.luv.couple" target="_blank" rel="noopener noreferrer">Play-Alpha öffnen</a>
+      <a class="guide-btn guide-btn-ghost" href="/luv/alpha.html">Zur Alpha-Seite</a>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <a class="impressum-link" href="/luv/">LUV</a>
+    <a class="impressum-link" href="/luv/alpha.html">Alpha-Test</a>
+    <a class="impressum-link" href="/luv/datenschutz.html">Datenschutz</a>
+  </footer>
+</body>
+</html>

@@ -184,6 +184,7 @@ fun ProfileCanvasScreen(
     var canDivorce by remember { mutableStateOf(false) }
     var spouseExtraName by remember { mutableStateOf<String?>(null) }
     var engagedExtraName by remember { mutableStateOf<String?>(null) }
+    var dayStreak by remember { mutableIntStateOf(0) }
     var showPreview by remember { mutableStateOf(false) }
     var showMarryInfo by remember { mutableStateOf(false) }
     var showDivorce by remember { mutableStateOf(false) }
@@ -250,6 +251,7 @@ fun ProfileCanvasScreen(
                 runCatching { LuvApiClient.fetchUserProfileCanvas(myId) }.getOrNull()?.let { me ->
                     spouseExtraName = me.spousePublic?.nickname
                     engagedExtraName = me.fiancePublic?.nickname
+                    dayStreak = me.dayStreak
                 }
             } else {
                 runCatching { LuvApiClient.fetchFriends() }.getOrNull()?.myMarriage?.let { m ->
@@ -280,6 +282,7 @@ fun ProfileCanvasScreen(
                 canDivorce = remote.canDivorce
                 spouseExtraName = remote.spousePublic?.nickname
                 engagedExtraName = remote.fiancePublic?.nickname
+                dayStreak = remote.dayStreak
             } else {
                 loadedNick = nickname
                 state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname)).normalized(nickname)
@@ -296,6 +299,7 @@ fun ProfileCanvasScreen(
                 marriageCooldownSkipCost = 0
                 partnerCooldownLabel = null
                 canDivorce = false
+                dayStreak = 0
             }
             savedSnapshot = state.snapshotKey()
             val minMs = 1100L
@@ -361,43 +365,24 @@ fun ProfileCanvasScreen(
             .groupingBy { it }
             .eachCount()
 
-    /** Layout setzen und freien Sticker-Bestand anpassen (Platzieren verbraucht, Entfernen gibt zurück). */
+    /**
+     * Layout setzen. Inventar = Gesamtpbesitz (stabil);
+     * Platzieren prüft nur owned ≥ auf dem Profil, ohne Bestand zu vernichten.
+     */
     fun applyLayoutWithStickerStock(next: List<ProfileLayoutEl>) {
         if (!editable) {
             patchLayout(next)
             return
         }
-        val oldC = stickerCounts(state.layout)
         val newC = stickerCounts(next)
-        val keys = oldC.keys + newC.keys
-        val stock = ownedStickers.toMutableMap()
-        for (e in keys) {
-            val delta = (newC[e] ?: 0) - (oldC[e] ?: 0)
-            if (delta > 0) {
-                val have = stock[e] ?: 0
-                if (have < delta) {
-                    Toast.makeText(context, "Nicht genug $e im Inventar", Toast.LENGTH_SHORT).show()
-                    return
-                }
-                val left = have - delta
-                if (left <= 0) stock.remove(e) else stock[e] = left
-            } else if (delta < 0) {
-                stock[e] = (stock[e] ?: 0) - delta
+        for ((e, n) in newC) {
+            val owned = ownedStickers[e] ?: 0
+            if (owned < n) {
+                Toast.makeText(context, "Nicht genug $e im Inventar", Toast.LENGTH_SHORT).show()
+                return
             }
         }
-        ownedStickers = stock
         patchLayout(next)
-        scope.launch {
-            val emojis = withContext(Dispatchers.IO) { prefs.ownedEmojis() }
-            val equipped = withContext(Dispatchers.IO) { prefs.equippedPet() }
-            prefs.applyInventoryBag(
-                emojis = emojis,
-                themes = ownedThemes,
-                stickers = stock,
-                pets = ownedPets,
-                equippedPet = equipped
-            )
-        }
     }
 
     fun updateEl(updated: ProfileLayoutEl) {
@@ -494,8 +479,10 @@ fun ProfileCanvasScreen(
 
     fun placeSticker(emoji: String) {
         if (!editable) return
-        if ((ownedStickers[emoji] ?: 0) < 1) {
-            Toast.makeText(context, "Kein $emoji mehr im Inventar", Toast.LENGTH_SHORT).show()
+        val owned = ownedStickers[emoji] ?: 0
+        val placed = stickerCounts(state.layout)[emoji] ?: 0
+        if (owned - placed < 1) {
+            Toast.makeText(context, "Kein $emoji mehr frei", Toast.LENGTH_SHORT).show()
             return
         }
         if (state.layout.count { it.type == ProfileElType.Sticker } >= ProfileCatalog.MAX_DECOR) {
@@ -681,7 +668,10 @@ fun ProfileCanvasScreen(
                     marriageCelebration = isMarriedProfile,
                     onSelect = { selectedId = it },
                     onLayoutChange = { applyLayoutWithStickerStock(it) },
-                    onOpenChest = { if (editable) showChest = true },
+                    onOpenChest = {
+                        if (!editable) chestTab = 3 // Extras
+                        showChest = true
+                    },
                     onEdit = { if (editable) editElId = it },
                     onTipGlass = if (!editable && !userId.isNullOrBlank() && canTipGlass && !tipBusy) {
                         { tipGlassOnce() }
@@ -1310,29 +1300,34 @@ fun ProfileCanvasScreen(
             }
         }
 
-        if (showChest && editable) {
+        if (showChest) {
             ProfileChestDialog(
-                ownedStickers = ownedStickers,
-                ownedThemes = ownedThemes,
-                ownedPets = ownedPets,
+                ownedStickers = if (editable) ownedStickers else emptyMap(),
+                ownedThemes = if (editable) ownedThemes else listOf(state.themeId),
+                ownedPets = if (editable) ownedPets else listOf(
+                    state.companionEmoji.ifBlank { peerPetEmoji }
+                ),
                 currentThemeId = state.themeId,
-                currentCompanion = state.companionEmoji,
+                currentCompanion = state.companionEmoji.ifBlank { peerPetEmoji },
                 hasGlass = state.layout.any { it.type == ProfileElType.Glass },
                 hasBio = state.layout.any { it.type == ProfileElType.Bio },
                 spouseName = spouseExtraName,
                 engagedName = engagedExtraName,
                 hasSpouse = state.layout.any { it.type == ProfileElType.Spouse },
                 hasEngaged = state.layout.any { it.type == ProfileElType.Engaged },
-                onTheme = { setTheme(it) },
-                onSticker = { placeSticker(it) },
-                onCompanion = { placeCompanion(it) },
-                onGlass = { placeGlass() },
-                onBio = { placeBio() },
-                onSpouse = { placeSpouse() },
-                onEngaged = { placeEngaged() },
-                selectedTab = chestTab,
-                onTabChange = { chestTab = it },
+                dayStreak = dayStreak,
+                readOnly = !editable,
+                onTheme = { if (editable) setTheme(it) },
+                onSticker = { if (editable) placeSticker(it) },
+                onCompanion = { if (editable) placeCompanion(it) },
+                onGlass = { if (editable) placeGlass() },
+                onBio = { if (editable) placeBio() },
+                onSpouse = { if (editable) placeSpouse() },
+                onEngaged = { if (editable) placeEngaged() },
+                selectedTab = if (editable) chestTab else 0,
+                onTabChange = { if (editable) chestTab = it },
                 onOpenMarketplace = {
+                    if (!editable) return@ProfileChestDialog
                     showChest = false
                     if (onOpenMarketplace != null) onOpenMarketplace(chestTab)
                     else {
@@ -1342,6 +1337,7 @@ fun ProfileCanvasScreen(
                     }
                 },
                 onOpenItemShop = {
+                    if (!editable) return@ProfileChestDialog
                     showChest = false
                     if (onOpenItemShop != null) onOpenItemShop(chestTab)
                     else {

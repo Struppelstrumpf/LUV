@@ -462,7 +462,8 @@ function claimAchievement(user, achievementId, dayKey, applyLedgerFn, giveItemFn
 }
 
 /**
- * Tagesaufgaben-Belohnung (+1 Coin) einmalig abholen.
+ * Tagesaufgaben-Belohnung (+3 Coins) einmalig abholen.
+ * Unabhängig vom Achievement-Tageslimit (Cap) — immer abholbar wenn fertig.
  */
 function claimDailyReward(user, dayKey, applyLedgerFn) {
   const a = ensureDaily(user, dayKey);
@@ -472,15 +473,7 @@ function claimDailyReward(user, dayKey, applyLedgerFn) {
   if (a.daily.rewardClaimed) {
     return { ok: false, error: "already_claimed", message: "Tagesbelohnung schon abgeholt." };
   }
-  const room = remainingAchCoinsToday(user, dayKey);
-  const grant = Math.min(1, room);
-  if (grant <= 0) {
-    return {
-      ok: false,
-      error: "cap_reached",
-      message: "Tageslimit erreicht — hol die Belohnung morgen ab.",
-    };
-  }
+  const grant = 3;
   a.daily.rewardClaimed = true;
   a.daily.claimedAt = Date.now();
   if (applyLedgerFn) {

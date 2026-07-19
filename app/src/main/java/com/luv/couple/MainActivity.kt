@@ -16,6 +16,7 @@ import com.luv.couple.net.PendingShop
 import com.luv.couple.net.PendingShopReturn
 import com.luv.couple.net.PendingSplashSkip
 import com.luv.couple.ui.LuvAppNav
+import com.luv.couple.ui.applyPortraitOnPhonesOnly
 import com.luv.couple.ui.theme.LuvTheme
 import com.luv.couple.update.AppUpdater
 
@@ -25,10 +26,11 @@ class MainActivity : ComponentActivity() {
     ) { /* optional */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        applyPortraitOnPhonesOnly()
         // Solange die App im Vordergrund ist, bleibt der Bildschirm an
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        enableEdgeToEdge()
         maybeRequestNotificationPermission()
         captureNotificationFlag(intent)
         captureJoinIntent(intent)

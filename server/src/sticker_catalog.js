@@ -9,6 +9,7 @@
 const ACHIEVEMENT_STICKERS = ["🦔", "🎨", "💌", "🪄", "💒"];
 
 const STICKER_SHOP_PRICES = {
+  "🌙": 5,
   "❄️": 5,
   "🌎": 5,
   "🌛": 5,

@@ -132,7 +132,7 @@ object ShopCatalog {
      * Getrennt von Begleitern und Reaktions-Emojis.
      */
     val STICKERS: List<ShopEmoji> = listOf(
-        ShopEmoji("❄️", 5), ShopEmoji("🌎", 5), ShopEmoji("🌛", 5), ShopEmoji("🌪️", 5),
+        ShopEmoji("🌙", 5), ShopEmoji("❄️", 5), ShopEmoji("🌎", 5), ShopEmoji("🌛", 5), ShopEmoji("🌪️", 5),
         ShopEmoji("🌼", 5), ShopEmoji("🍔", 5), ShopEmoji("🍥", 5), ShopEmoji("🍰", 5),
         ShopEmoji("🍺", 5), ShopEmoji("🎉", 5), ShopEmoji("🎲", 5), ShopEmoji("🐀", 5),
         ShopEmoji("🐖", 5), ShopEmoji("🐙", 5), ShopEmoji("🐸", 5), ShopEmoji("👓", 5),
@@ -425,6 +425,19 @@ data class ShopEmoji(
     val searchText: String = ""
 )
 
+data class ThemeVisualConfig(
+    val skyTop: String = "#7EB8D8",
+    val skyBottom: String = "#B8D4E8",
+    val groundTop: String = "#2F5D2E",
+    val groundBottom: String = "#1E3D1E",
+    val emojis: List<String> = listOf("✨"),
+    val motion: String = "fall",
+    val coverage: String = "full",
+    val speed: Float = 1f,
+    val density: Float = 0.7f,
+    val size: Float = 1f
+)
+
 data class ShopTheme(
     val id: String,
     val label: String,
@@ -432,7 +445,8 @@ data class ShopTheme(
     val priceCoins: Int,
     val compareAtPrice: Int? = null,
     val remainingMs: Long? = null,
-    val searchText: String = ""
+    val searchText: String = "",
+    val visualConfig: ThemeVisualConfig? = null
 )
 
 data class ShopPet(
@@ -446,7 +460,11 @@ data class ShopPet(
     val imageUrl: String? = null
 )
 
-/** Remote-Katalog vom Server (Angebote, Timer) — Fallback = lokale Listen. */
+/**
+ * Remote-Katalog vom Server (Angebote, Timer).
+ * Wichtig: Remote **ergänzt** lokale Listen, ersetzt sie nicht —
+ * sonst verschwinden Items aus dem Sortiment, wenn der Server kurz unvollständig ist.
+ */
 object LiveShopCatalog {
     @Volatile var remoteEmojis: List<ShopEmoji>? = null
     @Volatile var remoteStickers: List<ShopEmoji>? = null
@@ -454,17 +472,40 @@ object LiveShopCatalog {
     @Volatile var remotePets: List<ShopPet>? = null
 
     fun emojis(): List<ShopEmoji> =
-        (remoteEmojis ?: ShopCatalog.EMOJIS).sortedBy { it.priceCoins }
+        mergeEmojiLists(ShopCatalog.EMOJIS, remoteEmojis)
 
     fun stickers(): List<ShopEmoji> =
-        (remoteStickers ?: ShopCatalog.STICKERS).sortedBy { it.priceCoins }
+        mergeEmojiLists(ShopCatalog.STICKERS, remoteStickers)
 
-    fun themes(): List<ShopTheme> =
-        (remoteThemes ?: ShopCatalog.THEMES.filter { it.priceCoins > 0 || it.id == "meadow" })
-            .sortedBy { it.priceCoins }
+    fun themes(): List<ShopTheme> {
+        val local = ShopCatalog.THEMES.filter { it.priceCoins > 0 || it.id == "meadow" }
+        val remote = remoteThemes
+        if (remote.isNullOrEmpty()) return local.sortedBy { it.priceCoins }
+        val byId = LinkedHashMap<String, ShopTheme>()
+        local.forEach { byId[it.id] = it }
+        remote.forEach { byId[it.id] = it } // Remote gewinnt bei Preis/Angebot
+        return byId.values.sortedBy { it.priceCoins }
+    }
 
-    fun pets(): List<ShopPet> =
-        (remotePets ?: ShopCatalog.PETS).sortedBy { it.priceCoins }
+    fun pets(): List<ShopPet> {
+        val remote = remotePets
+        if (remote.isNullOrEmpty()) return ShopCatalog.PETS.sortedBy { it.priceCoins }
+        val byId = LinkedHashMap<String, ShopPet>()
+        ShopCatalog.PETS.forEach { byId[it.emoji] = it }
+        remote.forEach { byId[it.emoji] = it }
+        return byId.values.sortedBy { it.priceCoins }
+    }
+
+    private fun mergeEmojiLists(
+        local: List<ShopEmoji>,
+        remote: List<ShopEmoji>?
+    ): List<ShopEmoji> {
+        if (remote.isNullOrEmpty()) return local.sortedBy { it.priceCoins }
+        val byId = LinkedHashMap<String, ShopEmoji>()
+        local.forEach { byId[it.emoji] = it }
+        remote.forEach { byId[it.emoji] = it }
+        return byId.values.sortedBy { it.priceCoins }
+    }
 
     fun matchesQuery(query: String, emoji: String, label: String = "", searchText: String = ""): Boolean {
         val tokens = normalizeSearch(query).split(' ').filter { it.isNotEmpty() }

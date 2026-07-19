@@ -8,6 +8,8 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import com.luv.couple.ui.applyPortraitOnPhonesOnly
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -68,7 +70,9 @@ import java.util.concurrent.TimeUnit
  */
 class MemoryActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        applyPortraitOnPhonesOnly()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val lobbyCode = intent.getStringExtra(EXTRA_LOBBY_CODE).orEmpty()
         val lobbyName = intent.getStringExtra(EXTRA_LOBBY_NAME).orEmpty().ifBlank { "Lobby" }

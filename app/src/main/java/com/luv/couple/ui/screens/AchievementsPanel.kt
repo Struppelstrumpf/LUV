@@ -371,7 +371,7 @@ private fun DailyTasksCard(
                 )
             }
             Text(
-                "+1 Coin",
+                "+3 Coins",
                 color = AccentRose,
                 fontFamily = DisplayFont,
                 fontSize = ts(14.sp),

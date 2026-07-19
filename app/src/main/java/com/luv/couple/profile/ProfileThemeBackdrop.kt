@@ -66,9 +66,100 @@ fun ProfileThemeBackdrop(
                 size = androidx.compose.ui.geometry.Size(size.width, size.height * 0.52f)
             )
         }
-        ThemeFxOverlay(theme.effect)
+        if (theme.effect == "emoji_fx" && theme.particleEmojis.isNotEmpty()) {
+            EmojiParticleOverlay(theme)
+        } else {
+            ThemeFxOverlay(theme.effect)
+        }
         if (marriageCelebration) {
             WeddingBlessingRain()
+        }
+    }
+}
+
+@Composable
+private fun EmojiParticleOverlay(theme: ProfileTheme) {
+    val duration = (4200 / theme.particleSpeed.coerceIn(0.3f, 2.5f)).toInt().coerceIn(1600, 9000)
+    val t = rememberInfiniteTransition(label = "emojiFx")
+    val phase by t.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(duration, easing = LinearEasing), RepeatMode.Restart),
+        label = "ePhase"
+    )
+    val glyphs = theme.particleEmojis.ifEmpty { listOf("✨") }
+    val count = (18 * theme.particleDensity.coerceIn(0.2f, 1.8f)).roundToInt().coerceIn(6, 40)
+    val flakes = remember(theme.id, glyphs, count) {
+        List(count) { i ->
+            val rnd = Random(i * 31 + theme.id.hashCode())
+            WeddingFlake(
+                glyph = glyphs[i % glyphs.size],
+                xFrac = rnd.nextFloat(),
+                speed = 0.55f + rnd.nextFloat() * 0.7f,
+                drift = (rnd.nextFloat() - 0.5f) * 0.14f,
+                sizeSp = (11f + rnd.nextFloat() * 12f) * theme.particleSize.coerceIn(0.5f, 2f),
+                wobble = rnd.nextFloat() * 6.28f,
+                delay = rnd.nextFloat()
+            )
+        }
+    }
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val w = constraints.maxWidth.toFloat().coerceAtLeast(1f)
+        val h = constraints.maxHeight.toFloat().coerceAtLeast(1f)
+        flakes.forEach { flake ->
+            val p = ((phase * flake.speed) + flake.delay) % 1f
+            var xN = flake.xFrac
+            var yN = p
+            when (theme.particleMotion) {
+                "rise" -> yN = 1f - p
+                "sway" -> {
+                    xN = (flake.xFrac + sin((phase + flake.wobble) * 4.0).toFloat() * 0.08f)
+                    yN = 0.2f + ((flake.delay + phase * 0.2f) % 0.6f)
+                }
+                "drift" -> {
+                    xN = (flake.xFrac + phase * 0.2f * flake.speed) % 1f
+                    yN = (0.15f + flake.delay * 0.55f + sin((phase + flake.wobble) * 3.0).toFloat() * 0.06f)
+                }
+                "roll" -> {
+                    xN = (flake.xFrac + phase * 0.45f) % 1f
+                    yN = 0.55f + sin((phase + flake.wobble) * 6.0).toFloat() * 0.08f
+                }
+                else -> {
+                    xN = (flake.xFrac + flake.drift * p +
+                        sin((phase + flake.wobble) * 4.0).toFloat() * 0.03f)
+                }
+            }
+            when (theme.particleCoverage) {
+                "band" -> yN = 0.42f + (p % 1f) * 0.12f
+                "sky" -> yN = yN * 0.48f
+                "ground" -> yN = 0.5f + yN * 0.48f
+            }
+            while (xN < 0f) xN += 1f
+            while (xN > 1f) xN -= 1f
+            val alpha = when {
+                p < 0.08f -> p / 0.08f
+                p > 0.88f -> (1f - p) / 0.12f
+                else -> 0.9f
+            }.coerceIn(0f, 0.95f)
+            Text(
+                flake.glyph,
+                fontSize = flake.sizeSp.sp,
+                modifier = Modifier
+                    .graphicsLayer {
+                        this.alpha = alpha
+                        rotationZ = if (theme.particleMotion == "roll") {
+                            phase * 360f + flake.wobble * 40f
+                        } else {
+                            sin((phase + flake.wobble) * 5.0).toFloat() * 16f
+                        }
+                    }
+                    .offset {
+                        IntOffset(
+                            x = (xN * w - 10f).roundToInt(),
+                            y = (yN * h - 8f).roundToInt()
+                        )
+                    }
+            )
         }
     }
 }

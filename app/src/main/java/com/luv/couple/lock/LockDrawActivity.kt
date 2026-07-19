@@ -4,6 +4,7 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -25,9 +26,10 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.platform.ComposeView
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
+import androidx.activity.enableEdgeToEdge
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.luv.couple.ui.applyPortraitOnPhonesOnly
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.luv.couple.LuvApp
@@ -52,6 +54,8 @@ import com.luv.couple.net.PublicVoteEvent
 import com.luv.couple.notify.LiveProximity
 import com.luv.couple.shop.ShopCatalog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.luv.couple.ui.isImagePetId
+import com.luv.couple.ui.petImageUrl
 import com.luv.couple.ui.screens.BrushStudioSheet
 import com.luv.couple.ui.screens.EmojiBarEditorDialog
 import com.luv.couple.ui.screens.ForcedUpdateDialog
@@ -156,14 +160,15 @@ class LockDrawActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        applyPortraitOnPhonesOnly()
         setShowWhenLocked(true)
         setTurnScreenOn(true)
         window.addFlags(
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
                 WindowManager.LayoutParams.FLAG_ALLOW_LOCK_WHILE_SCREEN_ON
         )
-        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_lock_draw)
 
         val root = findViewById<android.widget.FrameLayout>(R.id.lockRoot)
@@ -1980,7 +1985,11 @@ class LockDrawActivity : ComponentActivity() {
         val live = PairSessionState.legendPeers(
             id, nickname, myColor, myUserId, myPetEmoji
         ).map { peer ->
-            if (peer.peerKey == "me") {
+            val isMe = peer.peerKey == "me" ||
+                (!myUserId.isNullOrBlank() && peer.userId == myUserId) ||
+                (!nickname.isNullOrBlank() &&
+                    peer.nickname.equals(nickname, ignoreCase = true))
+            if (isMe) {
                 peer.copy(colorIndex = myColor, petEmoji = myPetEmoji)
             } else {
                 val drawn = drawColorByNick[peer.nickname.trim().lowercase(Locale.getDefault())]
@@ -2074,7 +2083,13 @@ class LockDrawActivity : ComponentActivity() {
         }
 
         val painting = LiveProximity.isPeerPainting(lobbyId, peer.nickname)
-        val onCanvas = !peer.departed && (peer.active || peer.peerKey == "me" || painting)
+        val myId = AccountSession.account.value?.id
+        val myNick = CanvasStore.cachedNickname
+            ?: AccountSession.account.value?.nickname
+        val isMeLegend = peer.peerKey == "me" ||
+            (!myId.isNullOrBlank() && peer.userId == myId) ||
+            (!myNick.isNullOrBlank() && peer.nickname.equals(myNick, ignoreCase = true))
+        val onCanvas = !peer.departed && (peer.active || isMeLegend || painting)
         val ringPad = if (onCanvas) (3 * dp).toInt() else 0
         val wrap = FrameLayout(this).apply {
             clipChildren = true
@@ -2095,32 +2110,73 @@ class LockDrawActivity : ComponentActivity() {
             PeerPalette.strokeColor(peer.colorIndex)
         }
         val pet = peer.petEmoji.trim().ifBlank { ShopCatalog.DEFAULT_PET }
-        val circle = TextView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(size, size).apply {
+        val ovalBg = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(fillColor)
+            setStroke(
+                (2 * dp).toInt(),
+                if (hasCheck) 0xFF2EE68A.toInt() else 0x00000000
+            )
+        }
+        val circleAlpha = when {
+            peer.departed -> 0.45f
+            onCanvas -> 1f
+            else -> 0.65f
+        }
+        val circle: View = if (isImagePetId(pet)) {
+            FrameLayout(this).apply {
+                layoutParams = FrameLayout.LayoutParams(size, size).apply {
+                    gravity = Gravity.CENTER
+                }
+                background = ovalBg
+                outlineProvider = ViewOutlineProvider.BACKGROUND
+                clipToOutline = true
+                alpha = circleAlpha
+                contentDescription = peer.nickname
+                elevation = 0f
+                val img = ImageView(this@LockDrawActivity).apply {
+                    layoutParams = FrameLayout.LayoutParams(
+                        (size * 0.72f).toInt(),
+                        (size * 0.72f).toInt()
+                    ).apply { gravity = Gravity.CENTER }
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    adjustViewBounds = true
+                }
+                addView(img)
+                val url = petImageUrl(pet)
+                if (!url.isNullOrBlank()) {
+                    lifecycleScope.launch {
+                        val bmp = withContext(Dispatchers.IO) {
+                            runCatching {
+                                val req = okhttp3.Request.Builder().url(url).get().build()
+                                LuvApiClient.httpClient().newCall(req).execute().use { resp ->
+                                    if (!resp.isSuccessful) return@runCatching null
+                                    val bytes = resp.body?.bytes() ?: return@runCatching null
+                                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                }
+                            }.getOrNull()
+                        }
+                        if (bmp != null) img.setImageBitmap(bmp)
+                    }
+                }
+            }
+        } else {
+            TextView(this).apply {
+                layoutParams = FrameLayout.LayoutParams(size, size).apply {
+                    gravity = Gravity.CENTER
+                }
                 gravity = Gravity.CENTER
+                text = pet
+                includeFontPadding = false
+                setTextColor(if (peer.departed) 0xFFD1D5DB.toInt() else 0xFF1A1F2E.toInt())
+                textSize = 16f
+                background = ovalBg
+                outlineProvider = ViewOutlineProvider.BACKGROUND
+                clipToOutline = true
+                alpha = circleAlpha
+                contentDescription = peer.nickname
+                elevation = 0f
             }
-            gravity = Gravity.CENTER
-            text = pet
-            includeFontPadding = false
-            setTextColor(if (peer.departed) 0xFFD1D5DB.toInt() else 0xFF1A1F2E.toInt())
-            textSize = 16f
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(fillColor)
-                setStroke(
-                    (2 * dp).toInt(),
-                    if (hasCheck) 0xFF2EE68A.toInt() else 0x00000000
-                )
-            }
-            outlineProvider = ViewOutlineProvider.BACKGROUND
-            clipToOutline = true
-            alpha = when {
-                peer.departed -> 0.45f
-                onCanvas -> 1f
-                else -> 0.65f
-            }
-            contentDescription = peer.nickname
-            elevation = 0f
         }
         wrap.addView(circle)
         wrap.isClickable = true
@@ -2443,38 +2499,55 @@ class LockDrawActivity : ComponentActivity() {
     }
 
     /**
-     * Leinwand immer im Hochformat (9:16) — im Querformat Letterbox links/rechts,
-     * damit Striche/Vorlagen nicht verzerrt werden.
+     * Leinwand endet direkt über den Avatar-Kreisen (über dem Button-Dock).
+     * Nur im Querformat zusätzlich 9:16-Letterbox (links/rechts), damit nichts verzerrt.
      */
     private fun applyPortraitCanvasLetterbox(root: FrameLayout) {
         if (!::drawingView.isInitialized || !::bottomDock.isInitialized) return
+        val density = resources.displayMetrics.density
         val dockH = bottomDock.height.coerceAtLeast(0)
+        val legendScroll = findViewById<View>(R.id.legendScroll)
+        val legendGap = (4 * density).toInt()
+        val legendH = when {
+            legendScroll.height > 0 -> legendScroll.height
+            else -> (56 * density).toInt()
+        }
+        // Avatare sitzen knapp über dem Dock; Leinwand endet direkt darüber.
+        val bottomReserve = dockH + legendH + legendGap
         val availW = root.width.coerceAtLeast(1)
-        val availH = (root.height - dockH).coerceAtLeast(1)
-        val targetAr = 9f / 16f // Breite / Höhe — wie Capture 1080×1920
-        var canvasH = availH
-        var canvasW = (canvasH * targetAr).toInt().coerceAtLeast(1)
-        if (canvasW > availW) {
+        val availH = (root.height - bottomReserve).coerceAtLeast(1)
+        val landscape = availW > availH
+        var canvasW: Int
+        var canvasH: Int
+        if (landscape) {
+            val targetAr = 9f / 16f
+            canvasH = availH
+            canvasW = (canvasH * targetAr).toInt().coerceAtLeast(1)
+            if (canvasW > availW) {
+                canvasW = availW
+                canvasH = (canvasW / targetAr).toInt().coerceAtLeast(1)
+            }
+        } else {
+            // Hochformat: volle Breite, Höhe bis an die Avatare — keine Letterbox-Lücke
             canvasW = availW
-            canvasH = (canvasW / targetAr).toInt().coerceAtLeast(1)
+            canvasH = availH
         }
         val drawLp = drawingView.layoutParams as FrameLayout.LayoutParams
         drawLp.width = canvasW
         drawLp.height = canvasH
-        drawLp.bottomMargin = 0
-        drawLp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        drawLp.bottomMargin = bottomReserve
+        drawLp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
         drawingView.layoutParams = drawLp
         if (::stickerOverlay.isInitialized) {
             val stickerLp = stickerOverlay.layoutParams as FrameLayout.LayoutParams
             stickerLp.width = canvasW
             stickerLp.height = canvasH
-            stickerLp.bottomMargin = 0
-            stickerLp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            stickerLp.bottomMargin = bottomReserve
+            stickerLp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
             stickerOverlay.layoutParams = stickerLp
         }
-        val legendScroll = findViewById<View>(R.id.legendScroll)
         val lp = legendScroll.layoutParams as FrameLayout.LayoutParams
-        lp.bottomMargin = dockH + (6 * resources.displayMetrics.density).toInt()
+        lp.bottomMargin = dockH + legendGap
         legendScroll.layoutParams = lp
     }
 

@@ -78,8 +78,14 @@ data class ProfileTheme(
     val skyBottom: Long,
     val groundTop: Long,
     val groundBottom: Long,
-    /** rain | snow | stars | fire | petals | leaves | bubbles | sparkles | meteors | aurora | fog | storm | galaxy | none */
-    val effect: String = "none"
+    /** rain | snow | stars | fire | petals | leaves | bubbles | sparkles | meteors | aurora | fog | storm | galaxy | emoji_fx | none */
+    val effect: String = "none",
+    val particleEmojis: List<String> = emptyList(),
+    val particleMotion: String = "fall",
+    val particleCoverage: String = "full",
+    val particleSpeed: Float = 1f,
+    val particleDensity: Float = 0.7f,
+    val particleSize: Float = 1f
 )
 
 data class ProfileMood(
@@ -280,8 +286,36 @@ object ProfileCatalog {
         "", "😊", "🥰", "😎", "😍", "🤗", "😇", "🤠", "😺", "🐶", "🎨", "✏️"
     )
 
-    fun theme(id: String): ProfileTheme =
-        THEMES.firstOrNull { it.id == id } ?: THEMES.first()
+    fun theme(id: String): ProfileTheme {
+        val remote = com.luv.couple.shop.LiveShopCatalog.remoteThemes
+            ?.firstOrNull { it.id == id }
+        val vc = remote?.visualConfig
+        if (vc != null) {
+            return ProfileTheme(
+                id = id,
+                label = remote.label.ifBlank { id },
+                emoji = remote.emoji.ifBlank { vc.emojis.firstOrNull() ?: "🖼️" },
+                skyTop = parseThemeHex(vc.skyTop, 0xFF7EB8D8),
+                skyBottom = parseThemeHex(vc.skyBottom, 0xFFB8D4E8),
+                groundTop = parseThemeHex(vc.groundTop, 0xFF2F5D2E),
+                groundBottom = parseThemeHex(vc.groundBottom, 0xFF1E3D1E),
+                effect = "emoji_fx",
+                particleEmojis = vc.emojis.ifEmpty { listOf("✨") },
+                particleMotion = vc.motion,
+                particleCoverage = vc.coverage,
+                particleSpeed = vc.speed,
+                particleDensity = vc.density,
+                particleSize = vc.size
+            )
+        }
+        return THEMES.firstOrNull { it.id == id } ?: THEMES.first()
+    }
+
+    private fun parseThemeHex(raw: String?, fallback: Long): Long {
+        val h = raw?.trim()?.removePrefix("#").orEmpty()
+        if (h.length != 6) return fallback
+        return runCatching { (0xFF000000L or h.toLong(16)) }.getOrDefault(fallback)
+    }
 
     /** Nur Avatar + Name darunter — wie Referenzbild. */
     fun defaultLayout(nickname: String): List<ProfileLayoutEl> = listOf(
@@ -367,8 +401,15 @@ object ProfileCatalog {
             y = (DECOR_Y_MIN + row * 12f).coerceIn(DECOR_Y_MIN, 90f),
             scale = 1f,
             z = (25 + n).coerceAtMost(MAX_DECOR_Z),
-            emoji = emoji.take(8)
+            emoji = clipProfileItemId(emoji)
         )
+    }
+
+    /** Emoji kurz; Bild-Sticker/Pets (img_*) vollständig behalten. */
+    fun clipProfileItemId(raw: String, maxEmoji: Int = 16): String {
+        val e = raw.trim()
+        if (e.isEmpty()) return ""
+        return if (e.startsWith("img_", ignoreCase = true)) e.take(32) else e.take(maxEmoji)
     }
 
     fun newText(color: String, layout: List<ProfileLayoutEl>): ProfileLayoutEl {

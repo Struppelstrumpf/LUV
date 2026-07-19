@@ -370,8 +370,10 @@ object AppUpdater {
                     openPlayStoreListing(context)
                     true
                 }
-                UpdateChannel.WebsiteApk -> withContext(Dispatchers.IO) {
-                    downloadWebsiteApk(context, targetRelease)
+                UpdateChannel.WebsiteApk -> {
+                    // Kein Sideload-Install mehr (Play-Policy) — immer über Play Store.
+                    withContext(Dispatchers.Main) { openPlayStoreListing(context) }
+                    true
                 }
             }
         }

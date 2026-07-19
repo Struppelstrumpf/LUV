@@ -524,7 +524,7 @@ fun LobbiesScreen(
                         .clickable(onClick = onOpenProfile),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(equippedPet, fontSize = 22.sp)
+                    com.luv.couple.ui.CompanionGlyph(petId = equippedPet, fontSize = 22.sp)
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Row(

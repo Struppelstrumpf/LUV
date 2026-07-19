@@ -265,6 +265,258 @@ body {
   border: 1px solid rgba(255,255,255,0.25);
   flex-shrink: 0;
 }
+
+.shop-hero {
+  background:
+    radial-gradient(500px 220px at 10% 0%, rgba(46, 230, 168, 0.12), transparent 60%),
+    radial-gradient(420px 200px at 90% 10%, rgba(233, 78, 119, 0.12), transparent 55%),
+    var(--panel);
+}
+.shop-search-bar { margin-top: 0.9rem; margin-bottom: 0; }
+.shop-search-bar input { flex: 1; min-width: 180px; }
+.shop-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+.shop-card {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.shop-card:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  transform: translateY(-1px);
+}
+.shop-card.is-off { opacity: 0.55; }
+.shop-card-visual {
+  height: 88px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(45deg, #1a2230 25%, transparent 25%),
+    linear-gradient(-45deg, #1a2230 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #1a2230 75%),
+    linear-gradient(-45deg, transparent 75%, #1a2230 75%);
+  background-size: 14px 14px;
+  background-position: 0 0, 0 7px, 7px -7px, -7px 0;
+  border: 1px solid rgba(255,255,255,0.06);
+  overflow: hidden;
+}
+.shop-card-emoji { font-size: 2.4rem; line-height: 1; }
+.shop-card-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  border-radius: 50%;
+  background: #3d6b9e;
+  border: 2px solid rgba(255,255,255,0.35);
+}
+.shop-card-theme {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.shop-card-title {
+  display: block;
+  font-size: 1rem;
+  color: var(--text);
+}
+.shop-card-id { font-size: 0.72rem; margin-top: 0.15rem; }
+.shop-card-price-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+}
+.shop-price { font-size: 1.05rem; color: var(--gold); }
+.shop-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  min-height: 1.2rem;
+}
+.shop-meta-chip {
+  font-size: 0.72rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  color: var(--muted);
+}
+.shop-card-actions {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: auto;
+}
+.shop-card-actions .btn { flex: 1; justify-content: center; }
+
+.round-plus {
+  width: 44px;
+  height: 44px;
+  border-radius: 50% !important;
+  padding: 0 !important;
+  font-size: 1.4rem;
+  line-height: 1;
+  display: inline-grid;
+  place-items: center;
+}
+.emoji-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.emoji-pick-current {
+  font-size: 2.6rem;
+  line-height: 1;
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+}
+.emoji-search {
+  width: 100%;
+  margin-bottom: 0.65rem;
+}
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  gap: 0.3rem;
+  max-height: 50vh;
+  overflow: auto;
+  padding: 0.25rem;
+}
+.emoji-cell {
+  border: 1px solid transparent;
+  background: var(--panel2);
+  border-radius: 10px;
+  font-size: 1.45rem;
+  padding: 0.35rem;
+  cursor: pointer;
+  line-height: 1;
+}
+.emoji-cell:hover {
+  border-color: rgba(233, 78, 119, 0.45);
+  background: rgba(233, 78, 119, 0.12);
+}
+.wide-card { width: min(920px, 100%) !important; }
+.chroma-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+}
+.inline-field {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.45rem !important;
+}
+.inline-field input[type="range"] { width: 120px; }
+.pet-paste-stage.pick-mode { cursor: crosshair; }
+.pet-paste-stage.pick-mode .crop { opacity: 0.35; }
+.btn.on, #chromaPick.on {
+  background: rgba(46, 230, 168, 0.22);
+  border-color: rgba(46, 230, 168, 0.5);
+  color: var(--text);
+}
+.glyph-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 1rem;
+}
+@media (max-width: 720px) {
+  .glyph-layout { grid-template-columns: 1fr; }
+}
+.glyph-stage-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+}
+.glyph-stage-wrap canvas {
+  width: 220px;
+  height: 220px;
+  border-radius: 20px;
+  background:
+    linear-gradient(45deg, #2a3142 25%, transparent 25%),
+    linear-gradient(-45deg, #2a3142 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a3142 75%),
+    linear-gradient(-45deg, transparent 75%, #2a3142 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  border: 1px solid var(--line);
+}
+.glyph-layer-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  min-height: 2rem;
+}
+.glyph-layer-chip {
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  border-radius: 12px;
+  padding: 0.35rem 0.55rem;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+.glyph-layer-chip.on {
+  border-color: rgba(233, 78, 119, 0.55);
+  background: rgba(233, 78, 119, 0.18);
+}
+.glyph-controls { margin-top: 0.65rem; }
+.theme-studio {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 1rem;
+}
+@media (max-width: 720px) {
+  .theme-studio { grid-template-columns: 1fr; }
+}
+.theme-preview {
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  aspect-ratio: 2/3;
+  background: #111;
+}
+.theme-preview canvas { width: 100%; height: 100%; display: block; }
+.theme-emoji-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+.theme-emoji-chip {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+.theme-emoji-chip:hover { border-color: var(--danger); }
+.theme-mini-preview {
+  height: 96px;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  border: 1px solid var(--line);
+  font-size: 1.4rem;
+}
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.78rem; }
 table tr.is-off { opacity: 0.55; }
 td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }

@@ -128,8 +128,17 @@
     modalCard.classList.remove("wide");
     modalCard.innerHTML = "";
   }
+  function studioOverlayOpen() {
+    return Boolean(
+      document.getElementById("glyphComposerLayer") ||
+        document.getElementById("petPasteLayer") ||
+        document.getElementById("emojiPickerLayer") ||
+        document.getElementById("themeStudioLayer")
+    );
+  }
   modal.addEventListener("click", (e) => {
-    if (e.target === modal) closeModal();
+    // Nicht schließen während Composer/Pipette/Picker offen (auch kein Click-through)
+    if (e.target === modal && !studioOverlayOpen()) closeModal();
   });
 
   async function googleCredential(idToken) {
@@ -303,10 +312,10 @@
 
   async function renderShop() {
     const SHOP_CATS = [
-      { id: "emojis", label: "Emojis", emoji: "😊" },
-      { id: "stickers", label: "Sticker", emoji: "🏷️" },
-      { id: "themes", label: "Hintergründe", emoji: "🖼️" },
-      { id: "pets", label: "Begleiter", emoji: "🐾" },
+      { id: "emojis", label: "Emojis", emoji: "😊", hint: "Reaktionen in der Leinwand" },
+      { id: "stickers", label: "Sticker", emoji: "🏷️", hint: "Profil-Sticker" },
+      { id: "themes", label: "Hintergründe", emoji: "🖼️", hint: "Profil-Hintergründe" },
+      { id: "pets", label: "Begleiter", emoji: "🐾", hint: "Avatar-Begleiter" },
     ];
     const q = new URLSearchParams();
     if (state.shopQ) q.set("q", state.shopQ);
@@ -331,42 +340,54 @@
       ? SHOP_CATS.filter((c) => c.id === activeKind)
       : SHOP_CATS;
 
-    function rowHtml(it) {
+    function cardHtml(it) {
       const sale =
         it.onSale && it.compareAtPrice
-          ? `<span class="price-old">${it.compareAtPrice}</span> <strong>${it.priceCoins}</strong>`
-          : `<strong>${it.priceCoins}</strong>`;
+          ? `<span class="price-old">${it.compareAtPrice}</span><strong class="shop-price">${it.priceCoins}</strong>`
+          : `<strong class="shop-price">${it.priceCoins}</strong>`;
       const timer = it.availableUntil
-        ? fmtMs(it.remainingMs) + (it.enabled ? "" : " (aus)")
-        : "—";
-      const limits = [
-        it.maxTotalSales != null ? `gesamt ${it.soldTotal || 0}/${it.maxTotalSales}` : "gesamt ∞",
-        it.maxPerUser != null ? `p.P. ${it.maxPerUser}` : "p.P. ∞",
-      ].join(" · ");
+        ? `<span class="shop-meta-chip">⏱ ${esc(fmtMs(it.remainingMs))}</span>`
+        : "";
       const thumb =
         it.hasImage && it.imageUrl
-          ? `<img class="shop-thumb" src="${esc(it.imageUrl)}" alt="" />`
-          : `<span class="shop-emoji">${esc(it.emoji || it.itemId)}</span>`;
-      return `<tr class="${it.enabled ? "" : "is-off"}">
-        <td>
-          <div class="shop-item-cell">
-            ${thumb}
-            <div>
-              <strong>${esc(it.label || it.itemId)}</strong>
-              <div class="muted mono">${esc(it.itemId)}</div>
-            </div>
+          ? `<img class="shop-card-thumb" src="${esc(it.imageUrl)}" alt="" />`
+          : it.kind === "themes" && it.visualConfig
+            ? `<span class="shop-card-theme" style="background:linear-gradient(160deg,${esc(
+                it.visualConfig.skyTop || "#7EB8D8"
+              )},${esc(it.visualConfig.skyBottom || "#B8D4E8")} 55%,${esc(
+                it.visualConfig.groundTop || "#2F5D2E"
+              )})"></span>`
+            : `<span class="shop-card-emoji">${esc(it.emoji || it.itemId)}</span>`;
+      return `<article class="shop-card ${it.enabled ? "" : "is-off"}">
+        <div class="shop-card-visual">${thumb}</div>
+        <div class="shop-card-body">
+          <strong class="shop-card-title">${esc(it.label || it.itemId)}</strong>
+          <div class="muted mono shop-card-id">${esc(it.itemId)}</div>
+          <div class="shop-card-price-row">${sale} <span class="muted">Coins</span>
+            ${it.onSale ? '<span class="badge sale">Angebot</span>' : ""}
+            ${it.enabled ? "" : '<span class="badge off">aus</span>'}
           </div>
-        </td>
-        <td class="num">${it.listPrice ?? it.priceCoins}</td>
-        <td class="num">${sale}${it.onSale ? ' <span class="badge sale">Angebot</span>' : ""}</td>
-        <td>${esc(timer)}</td>
-        <td class="muted">${esc(limits)}</td>
-        <td>${it.enabled ? '<span class="badge">aktiv</span>' : '<span class="badge off">aus</span>'}</td>
-        <td class="actions">
+          <div class="shop-card-meta">
+            ${timer}
+            ${
+              it.maxPerUser != null
+                ? `<span class="shop-meta-chip">p.P. ${it.maxPerUser}</span>`
+                : ""
+            }
+            ${
+              it.maxTotalSales != null
+                ? `<span class="shop-meta-chip">${it.soldTotal || 0}/${it.maxTotalSales}</span>`
+                : ""
+            }
+          </div>
+        </div>
+        <div class="shop-card-actions">
           <button class="btn secondary" data-edit="${esc(it.kind)}|${esc(it.itemId)}">Bearbeiten</button>
-          <button class="btn ghost" data-toggle="${esc(it.kind)}|${esc(it.itemId)}|${it.enabled ? "off" : "on"}">${it.enabled ? "Aus" : "An"}</button>
-        </td>
-      </tr>`;
+          <button class="btn ghost" data-toggle="${esc(it.kind)}|${esc(it.itemId)}|${it.enabled ? "off" : "on"}">${
+            it.enabled ? "Aus" : "An"
+          }</button>
+        </div>
+      </article>`;
     }
 
     function sectionHtml(cat) {
@@ -374,43 +395,40 @@
       if (!items.length && activeKind) {
         return `<section class="shop-section" id="cat-${cat.id}">
           <header class="shop-section-head">
-            <h3>${cat.emoji} ${cat.label}</h3>
-            <span class="muted">0 Items</span>
+            <div>
+              <h3>${cat.emoji} ${cat.label}</h3>
+              <p class="help" style="margin:0.2rem 0 0">${cat.hint}</p>
+            </div>
+            <button type="button" class="btn teal" data-new-kind="${cat.id}">＋ Neu</button>
           </header>
-          <p class="help">Keine Einträge in dieser Kategorie${state.shopQ ? " für diese Suche" : ""}.</p>
+          <p class="help">Noch keine Einträge${state.shopQ ? " für diese Suche" : ""}.</p>
         </section>`;
       }
       if (!items.length) return "";
       return `<section class="shop-section" id="cat-${cat.id}">
         <header class="shop-section-head">
-          <h3>${cat.emoji} ${cat.label}</h3>
-          <span class="muted">${items.length} · nach Preis sortiert</span>
+          <div>
+            <h3>${cat.emoji} ${cat.label}</h3>
+            <p class="help" style="margin:0.2rem 0 0">${cat.hint} · ${items.length} Items</p>
+          </div>
+          <button type="button" class="btn teal" data-new-kind="${cat.id}">＋ Neu</button>
         </header>
-        <div class="shop-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Item</th><th>Listenpreis</th><th>Effektiver Preis</th><th>Timer</th><th>Limits</th><th>Status</th><th></th>
-              </tr>
-            </thead>
-            <tbody>${items.map(rowHtml).join("")}</tbody>
-          </table>
-        </div>
+        <div class="shop-card-grid">${items.map(cardHtml).join("")}</div>
       </section>`;
     }
 
     const total = state.shopItems.length;
     content.innerHTML = `
-      <div class="panel">
+      <div class="panel shop-hero">
         <div class="shop-top">
           <div>
-            <h3 style="margin:0">Itemshop</h3>
-            <p class="help" style="margin:0.35rem 0 0">
-              Kategorien getrennt · innerhalb jeder Kategorie nach Preis (aufsteigend).
-              ${total} Items gesamt${state.shopQ ? ` · Suche „${esc(state.shopQ)}“` : ""}.
+            <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">Itemshop</h3>
+            <p class="help" style="margin:0.4rem 0 0;max-width:36rem">
+              Eigene Emojis, Sticker, Begleiter und animierte Hintergründe anlegen.
+              ${total} Items${state.shopQ ? ` · „${esc(state.shopQ)}“` : ""}.
             </p>
           </div>
-          <button class="btn teal" id="shopWizard">+ Neues Item</button>
+          <button class="btn teal" id="shopWizard">＋ Neues Item</button>
         </div>
 
         <div class="shop-cats" id="shopCats">
@@ -423,10 +441,10 @@
           }).join("")}
         </div>
 
-        <div class="toolbar" style="margin-top:0.85rem">
+        <div class="toolbar shop-search-bar">
           <input id="shopQ" placeholder="Suchen (Name, ID, Suchworte)…" value="${esc(state.shopQ)}" />
           <button class="btn secondary" id="shopFilter">Suchen</button>
-          ${state.shopQ ? `<button class="btn ghost" id="shopClearQ">Suche löschen</button>` : ""}
+          ${state.shopQ ? `<button class="btn ghost" id="shopClearQ">Zurücksetzen</button>` : ""}
         </div>
       </div>
 
@@ -435,6 +453,9 @@
       </div>`;
 
     $("shopWizard").onclick = () => openWizard();
+    content.querySelectorAll("[data-new-kind]").forEach((btn) => {
+      btn.onclick = () => openWizard(btn.getAttribute("data-new-kind"));
+    });
     $("shopFilter").onclick = () => {
       state.shopQ = $("shopQ").value.trim();
       renderShop();
@@ -580,219 +601,24 @@
   }
 
   const CHROMA_KEY = "#00FF00";
+  const Studio = () => window.LuvShopStudio;
 
-  function openPetImageEditor(onDone) {
-    const prev = document.getElementById("petPasteLayer");
-    if (prev) prev.remove();
-    const layer = document.createElement("div");
-    layer.id = "petPasteLayer";
-    layer.className = "pet-paste-layer";
-    layer.innerHTML = `
-      <div class="pet-paste-card">
-        <h3 style="font-family:var(--display);margin:0 0 0.35rem">Begleiter-Bild</h3>
-        <p class="help" style="margin:0 0 0.6rem">
-          Bild mit <strong>Strg+V</strong> einfügen (oder Datei wählen). Grüner Hintergrund wird transparent.
-        </p>
-        <div class="chroma-swatch"><i></i> Chroma-Key: <strong>${CHROMA_KEY}</strong></div>
-        <div class="pet-dropzone" id="petDrop" style="margin-top:0.75rem" tabindex="0">
-          Hier klicken, dann <strong>Strg+V</strong> — oder Datei ablegen / wählen
-          <div style="margin-top:0.6rem">
-            <input type="file" id="petFile" accept="image/*" />
-          </div>
-        </div>
-        <div class="pet-paste-stage" id="petStage" hidden>
-          <canvas id="petCanvas" width="512" height="512"></canvas>
-          <div class="crop" id="petCrop"></div>
-        </div>
-        <p class="help" id="petCropHint" hidden>Ziehen am Bild, um den Ausschnitt zu wählen (Quadrat).</p>
-        <div class="pet-preview-row" id="petPrevRow" hidden>
-          <div class="pet-preview-circle"><img id="petPrevImg" alt="Vorschau" /></div>
-          <div class="muted">So erscheint der Begleiter im Avatar</div>
-        </div>
-        <div class="actions" style="margin-top:1rem">
-          <button type="button" class="btn teal" id="petAccept" disabled>Übernehmen</button>
-          <button type="button" class="btn ghost" id="petCancel">Abbrechen</button>
-        </div>
-      </div>`;
-    document.body.appendChild(layer);
-
-    const canvas = layer.querySelector("#petCanvas");
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    const stage = layer.querySelector("#petStage");
-    const cropEl = layer.querySelector("#petCrop");
-    const drop = layer.querySelector("#petDrop");
-    const prevRow = layer.querySelector("#petPrevRow");
-    const prevImg = layer.querySelector("#petPrevImg");
-    const acceptBtn = layer.querySelector("#petAccept");
-    const hint = layer.querySelector("#petCropHint");
-    let sourceImg = null;
-    let crop = { x: 0.1, y: 0.1, s: 0.8 }; // relative 0–1
-    let dragging = null;
-
-    function close() {
-      layer.remove();
-      window.removeEventListener("paste", onPaste);
+  function openPetImageEditor(onDone, title) {
+    const S = Studio();
+    if (!S) {
+      alert("Shop-Studio nicht geladen — Seite neu laden.");
+      return;
     }
-    layer.querySelector("#petCancel").onclick = close;
-
-    function chromaKey(img) {
-      const w = 512;
-      const h = 512;
-      canvas.width = w;
-      canvas.height = h;
-      ctx.clearRect(0, 0, w, h);
-      const scale = Math.min(w / img.width, h / img.height);
-      const dw = img.width * scale;
-      const dh = img.height * scale;
-      const dx = (w - dw) / 2;
-      const dy = (h - dh) / 2;
-      ctx.drawImage(img, dx, dy, dw, dh);
-      const data = ctx.getImageData(0, 0, w, h);
-      const px = data.data;
-      const keyR = 0;
-      const keyG = 255;
-      const keyB = 0;
-      const thresh = 95;
-      for (let i = 0; i < px.length; i += 4) {
-        const r = px[i];
-        const g = px[i + 1];
-        const b = px[i + 2];
-        const dist = Math.sqrt((r - keyR) ** 2 + (g - keyG) ** 2 + (b - keyB) ** 2);
-        if (dist < thresh || (g > 180 && g > r * 1.35 && g > b * 1.35)) {
-          const soft = Math.max(0, 1 - dist / (thresh + 40));
-          px[i + 3] = Math.floor(px[i + 3] * (1 - soft));
-        }
-      }
-      ctx.putImageData(data, 0, 0);
-    }
-
-    function layoutCrop() {
-      const rect = stage.getBoundingClientRect();
-      cropEl.style.left = `${crop.x * 100}%`;
-      cropEl.style.top = `${crop.y * 100}%`;
-      cropEl.style.width = `${crop.s * 100}%`;
-      cropEl.style.height = `${crop.s * 100}%`;
-      void rect;
-    }
-
-    function exportPng() {
-      if (!sourceImg) return null;
-      const size = 256;
-      const out = document.createElement("canvas");
-      out.width = size;
-      out.height = size;
-      const octx = out.getContext("2d");
-      const sx = crop.x * canvas.width;
-      const sy = crop.y * canvas.height;
-      const ss = crop.s * canvas.width;
-      octx.drawImage(canvas, sx, sy, ss, ss, 0, 0, size, size);
-      return out.toDataURL("image/png");
-    }
-
-    function refreshPreview() {
-      const url = exportPng();
-      if (!url) return;
-      prevImg.src = url;
-      prevRow.hidden = false;
-      acceptBtn.disabled = false;
-    }
-
-    function loadBitmap(fileOrBlob) {
-      const url = URL.createObjectURL(fileOrBlob);
-      const img = new Image();
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        sourceImg = img;
-        chromaKey(img);
-        stage.hidden = false;
-        hint.hidden = false;
-        drop.classList.add("on");
-        crop = { x: 0.12, y: 0.12, s: 0.76 };
-        layoutCrop();
-        refreshPreview();
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        alert("Bild konnte nicht geladen werden.");
-      };
-      img.src = url;
-    }
-
-    function onPaste(e) {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      for (const it of items) {
-        if (it.type.startsWith("image/")) {
-          e.preventDefault();
-          const f = it.getAsFile();
-          if (f) loadBitmap(f);
-          return;
-        }
-      }
-    }
-    window.addEventListener("paste", onPaste);
-    drop.addEventListener("click", () => drop.focus());
-    layer.querySelector("#petFile").onchange = (e) => {
-      const f = e.target.files?.[0];
-      if (f) loadBitmap(f);
-    };
-    drop.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      drop.classList.add("on");
+    S.openChromaImageEditor((dataUrl) => onDone(dataUrl), {
+      title: title || "Bild freistellen",
+      keyHex: CHROMA_KEY,
     });
-    drop.addEventListener("drop", (e) => {
-      e.preventDefault();
-      const f = e.dataTransfer?.files?.[0];
-      if (f) loadBitmap(f);
-    });
-
-    stage.addEventListener("pointerdown", (e) => {
-      if (!sourceImg) return;
-      const rect = stage.getBoundingClientRect();
-      const x = (e.clientX - rect.left) / rect.width;
-      const y = (e.clientY - rect.top) / rect.height;
-      dragging = { ox: x - crop.x, oy: y - crop.y };
-      stage.setPointerCapture(e.pointerId);
-    });
-    stage.addEventListener("pointermove", (e) => {
-      if (!dragging) return;
-      const rect = stage.getBoundingClientRect();
-      const x = (e.clientX - rect.left) / rect.width;
-      const y = (e.clientY - rect.top) / rect.height;
-      crop.x = Math.min(1 - crop.s, Math.max(0, x - dragging.ox));
-      crop.y = Math.min(1 - crop.s, Math.max(0, y - dragging.oy));
-      layoutCrop();
-      refreshPreview();
-    });
-    stage.addEventListener("pointerup", () => {
-      dragging = null;
-    });
-    stage.addEventListener("wheel", (e) => {
-      if (!sourceImg) return;
-      e.preventDefault();
-      const delta = e.deltaY > 0 ? 0.04 : -0.04;
-      const next = Math.min(1, Math.max(0.25, crop.s + delta));
-      const cx = crop.x + crop.s / 2;
-      const cy = crop.y + crop.s / 2;
-      crop.s = next;
-      crop.x = Math.min(1 - crop.s, Math.max(0, cx - crop.s / 2));
-      crop.y = Math.min(1 - crop.s, Math.max(0, cy - crop.s / 2));
-      layoutCrop();
-      refreshPreview();
-    }, { passive: false });
-
-    acceptBtn.onclick = () => {
-      const dataUrl = exportPng();
-      if (!dataUrl) return;
-      onDone(dataUrl);
-      close();
-    };
   }
 
-  function openWizard() {
+  function openWizard(preKind) {
     let step = 0;
     const draft = {
-      kind: "emojis",
+      kind: preKind || "emojis",
       itemId: "💖",
       label: "Herz",
       searchText: "herz heart liebe",
@@ -803,14 +629,15 @@
       maxTotalSales: null,
       maxPerUser: null,
       enabled: true,
-      petSource: "emoji",
+      source: "emoji", // emoji | custom
       imageDataUrl: null,
+      visualConfig: null,
     };
-    const steps = ["Kategorie", "Item", "Preis", "Angebot & Timer", "Limits", "Fertig"];
+    const steps = ["Kategorie", "Gestalten", "Preis", "Angebot & Timer", "Limits", "Fertig"];
 
     function paint() {
       openModal(`
-        <h3 style="font-family:var(--display);margin:0 0 0.5rem">Neues Item — Wizard</h3>
+        <h3 style="font-family:var(--display);margin:0 0 0.5rem">Neues Item</h3>
         <div class="wizard-steps">${steps
           .map((s, i) => `<span class="${i === step ? "on" : ""}">${i + 1}. ${s}</span>`)
           .join("")}</div>
@@ -826,7 +653,12 @@
             <button type="button" class="btn ghost" id="cancelModal">Abbrechen</button>
           </div>
         </form>`);
-      if (modalCard) modalCard.classList.toggle("wide", draft.kind === "pets" && step === 1);
+      if (modalCard) {
+        modalCard.classList.toggle(
+          "wide",
+          step === 1 && (draft.source === "custom" || draft.kind === "themes")
+        );
+      }
       $("cancelModal").onclick = closeModal;
       const back = $("wizBack");
       if (back)
@@ -842,7 +674,7 @@
           step++;
           paint();
         };
-      wirePetStep();
+      wireDesignStep();
       const form = $("wizForm");
       form.onsubmit = async (e) => {
         e.preventDefault();
@@ -860,47 +692,115 @@
           maxPerUser: draft.maxPerUser,
           enabled: draft.enabled,
         };
-        if (draft.kind === "pets" && draft.petSource === "image") {
+        if (draft.kind === "themes" && draft.visualConfig) {
+          body.visualConfig = draft.visualConfig;
+          body.emoji = (draft.visualConfig.emojis && draft.visualConfig.emojis[0]) || "🖼️";
+        }
+        if (draft.source === "custom" && draft.imageDataUrl) {
           body.petSource = "image";
           body.imageDataUrl = draft.imageDataUrl;
-          body.itemId = draft.itemId || "img_new";
+          // Stabile Bild-ID — nie img_new (sonst überschreiben sich alle Bilder)
+          const S = Studio();
+          if (!S?.isStableImageItemId?.(draft.itemId)) {
+            draft.itemId = S?.newImageItemId?.() || `img_${Date.now().toString(36)}`;
+          }
+          body.itemId = draft.itemId;
         }
-        await api("/admin/shop/items", { method: "POST", body: JSON.stringify(body) });
+        const created = await api("/admin/shop/items", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        if (created?.item?.itemId) draft.itemId = created.item.itemId;
         closeModal();
         renderShop();
       };
     }
 
-    function wirePetStep() {
-      const emojiBtn = $("petSrcEmoji");
-      const imgBtn = $("petSrcImage");
-      if (emojiBtn)
-        emojiBtn.onclick = () => {
-          draft.petSource = "emoji";
-          paint();
+    function ensureCustomImageId() {
+      const S = Studio();
+      if (!S?.isStableImageItemId?.(draft.itemId)) {
+        draft.itemId = S?.newImageItemId?.() || `img_${Date.now().toString(36)}`;
+      }
+    }
+
+    function wireDesignStep() {
+      const setSrc = (src) => {
+        draft.source = src;
+        if (src === "custom") {
+          ensureCustomImageId();
+        } else if (src === "emoji") {
+          // Bild-ID nicht als Emoji-ID weiterverwenden
+          if (/^img_/i.test(String(draft.itemId || ""))) {
+            draft.itemId = "💖";
+            draft.imageDataUrl = null;
+          }
+        }
+        paint();
+      };
+      const srcEmoji = $("srcEmoji");
+      const srcCustom = $("srcCustom");
+      if (srcEmoji) srcEmoji.onclick = () => setSrc("emoji");
+      if (srcCustom) srcCustom.onclick = () => setSrc("custom");
+
+      const pickEmoji = $("pickEmoji");
+      if (pickEmoji)
+        pickEmoji.onclick = () => {
+          Studio()?.openEmojiPicker((emoji) => {
+            draft.itemId = emoji;
+            draft.source = "emoji";
+            draft.imageDataUrl = null;
+            if (!draft.label || draft.label === "Herz" || draft.label === "Bild-Begleiter") {
+              draft.label = emoji;
+            }
+            paint();
+          });
         };
-      if (imgBtn)
-        imgBtn.onclick = () => {
-          draft.petSource = "image";
-          paint();
+
+      const openGlyph = $("openGlyph");
+      if (openGlyph)
+        openGlyph.onclick = () => {
+          Studio()?.openGlyphComposer(
+            (dataUrl) => {
+              draft.imageDataUrl = dataUrl;
+              draft.source = "custom";
+              ensureCustomImageId();
+              if (!draft.label || draft.label === "Herz") draft.label = "Eigenes Emoji";
+              paint();
+            },
+            { title: draft.kind === "pets" ? "Begleiter gestalten" : "Emoji / Sticker gestalten" }
+          );
         };
+
       const openImg = $("openPetImage");
       if (openImg)
         openImg.onclick = () => {
           openPetImageEditor((dataUrl) => {
             draft.imageDataUrl = dataUrl;
-            draft.petSource = "image";
-            if (!draft.label || draft.label === "Herz" || draft.label === draft.itemId) {
-              draft.label = "Bild-Begleiter";
-            }
+            draft.source = "custom";
+            ensureCustomImageId();
+            if (!draft.label || draft.label === "Herz") draft.label = "Bild-Item";
             paint();
-          });
+          }, draft.kind === "pets" ? "Begleiter freistellen" : "Bild freistellen");
         };
+
       const clearImg = $("clearPetImage");
       if (clearImg)
         clearImg.onclick = () => {
           draft.imageDataUrl = null;
           paint();
+        };
+
+      const openTheme = $("openThemeStudio");
+      if (openTheme)
+        openTheme.onclick = () => {
+          Studio()?.openThemeStudio(draft.visualConfig, (cfg) => {
+            draft.visualConfig = cfg;
+            if (!draft.label || draft.label === "Herz") draft.label = "Eigener Hintergrund";
+            if (!draft.itemId || draft.itemId === "💖") {
+              draft.itemId = `theme_${Math.random().toString(36).slice(2, 8)}`;
+            }
+            paint();
+          });
         };
     }
 
@@ -910,25 +810,31 @@
       const fd = new FormData(form);
       if (step === 0) {
         draft.kind = String(fd.get("kind") || "emojis");
-        if (draft.kind === "pets" && draft.petSource === "image" && !draft.imageDataUrl) {
-          /* ok */
-        }
+        if (draft.kind === "themes") draft.source = "custom";
       }
       if (step === 1) {
         draft.label = String(fd.get("label") || draft.label || "").trim();
         draft.searchText = String(fd.get("searchText") || "").trim();
-        if (draft.kind === "pets" && draft.petSource === "image") {
-          if (!draft.imageDataUrl) {
-            alert("Bitte zuerst ein Bild einfügen und übernehmen.");
+        if (draft.kind === "themes") {
+          if (!draft.visualConfig) {
+            alert("Bitte zuerst den Hintergrund-Designer öffnen.");
             return false;
           }
-          if (!draft.label) draft.label = "Bild-Begleiter";
-          draft.itemId = draft.itemId && /^img_/.test(draft.itemId) ? draft.itemId : "img_new";
+          draft.itemId = String(fd.get("itemId") || draft.itemId || "").trim() ||
+            `theme_${Math.random().toString(36).slice(2, 8)}`;
+          if (!draft.label) draft.label = "Hintergrund";
+        } else if (draft.source === "custom") {
+          if (!draft.imageDataUrl) {
+            alert("Bitte Emoji gestalten oder Bild freistellen.");
+            return false;
+          }
+          if (!draft.label) draft.label = "Eigenes Emoji";
+          ensureCustomImageId();
         } else {
-          draft.itemId = String(fd.get("itemId") || "").trim();
+          draft.itemId = String(fd.get("itemId") || draft.itemId || "").trim();
           draft.label = String(fd.get("label") || draft.itemId).trim();
           if (!draft.itemId) {
-            alert("Bitte Item-ID / Emoji eingeben.");
+            alert("Bitte ein Emoji wählen.");
             return false;
           }
         }
@@ -957,67 +863,97 @@
       return true;
     }
 
+    function glyphPreviewHtml() {
+      if (!draft.imageDataUrl) return "";
+      return `<div class="pet-preview-row"><div class="pet-preview-circle"><img src="${draft.imageDataUrl}" alt="" /></div><span class="muted">Vorschau</span></div>`;
+    }
+
     function stepBody() {
       if (step === 0)
-        return `<label class="field">Kategorie wählen
+        return `<label class="field">Kategorie
           <select name="kind">
-            <option value="emojis" ${draft.kind === "emojis" ? "selected" : ""}>Emoji (Reaktion)</option>
-            <option value="stickers" ${draft.kind === "stickers" ? "selected" : ""}>Sticker</option>
-            <option value="themes" ${draft.kind === "themes" ? "selected" : ""}>Hintergrund</option>
-            <option value="pets" ${draft.kind === "pets" ? "selected" : ""}>Begleiter</option>
+            <option value="emojis" ${draft.kind === "emojis" ? "selected" : ""}>😊 Emoji (Reaktion)</option>
+            <option value="stickers" ${draft.kind === "stickers" ? "selected" : ""}>🏷️ Sticker</option>
+            <option value="themes" ${draft.kind === "themes" ? "selected" : ""}>🖼️ Hintergrund</option>
+            <option value="pets" ${draft.kind === "pets" ? "selected" : ""}>🐾 Begleiter</option>
           </select>
-          <span class="tip">Neue Items landen automatisch in der Lootbox (Seltenheit nach Preis).</span>
+          <span class="tip">Neue Items landen in der Lootbox (Seltenheit nach Preis).</span>
         </label>`;
       if (step === 1) {
-        if (draft.kind === "pets") {
+        if (draft.kind === "themes") {
+          const vc = draft.visualConfig;
           return `
+            <div class="panel">
+              <p class="help" style="margin:0 0 0.65rem">Farbverläufe, Emoji-Regen und Animationen — live im Designer.</p>
+              <button type="button" class="btn teal" id="openThemeStudio">${
+                vc ? "Hintergrund bearbeiten" : "Hintergrund-Designer öffnen"
+              }</button>
+              ${
+                vc
+                  ? `<div class="theme-mini-preview" style="margin-top:0.75rem;background:linear-gradient(160deg,${esc(
+                      vc.skyTop
+                    )},${esc(vc.skyBottom)} 50%,${esc(vc.groundTop)})">
+                      <span>${esc((vc.emojis || []).slice(0, 4).join(" "))}</span>
+                      <span class="muted">${esc(vc.motion)} · ${esc(vc.coverage)}</span>
+                    </div>`
+                  : ""
+              }
+            </div>
+            <div class="grid-2" style="margin-top:0.75rem">
+              <label class="field">Item-ID<input name="itemId" value="${esc(draft.itemId)}" placeholder="theme_snow" /></label>
+              <label class="field">Name<input name="label" value="${esc(draft.label)}" /></label>
+            </div>
+            <label class="field" style="margin-top:0.6rem">Suchworte
+              <input name="searchText" value="${esc(draft.searchText)}" />
+            </label>`;
+        }
+        return `
           <div class="seg">
-            <button type="button" id="petSrcEmoji" class="${draft.petSource === "emoji" ? "on" : ""}">Emoji / ID</button>
-            <button type="button" id="petSrcImage" class="${draft.petSource === "image" ? "on" : ""}">Bild</button>
+            <button type="button" id="srcEmoji" class="${draft.source === "emoji" ? "on" : ""}">Normales Emoji</button>
+            <button type="button" id="srcCustom" class="${draft.source === "custom" ? "on" : ""}">Selbst gestalten</button>
           </div>
           ${
-            draft.petSource === "image"
+            draft.source === "custom"
               ? `<div class="panel">
-                  <div class="chroma-swatch"><i></i> Chroma-Key: <strong>${CHROMA_KEY}</strong></div>
-                  <p class="help" style="margin:0.55rem 0">Motiv auf reinem Grün <code>${CHROMA_KEY}</code> — wird transparent. Ausschnitt per Drag/Scroll wählen.</p>
+                  <p class="help" style="margin:0 0 0.65rem">
+                    Mehrere Emojis kombinieren, Bilder hochladen und mit der Pipette freistellen.
+                    Jedes Bild bekommt eine feste ID — sie ändert sich danach nicht mehr.
+                  </p>
                   <div class="actions">
-                    <button type="button" class="btn" id="openPetImage">${draft.imageDataUrl ? "Bild ändern" : "Neues Bild"}</button>
-                    ${draft.imageDataUrl ? `<button type="button" class="btn ghost" id="clearPetImage">Bild entfernen</button>` : ""}
+                    <button type="button" class="btn teal" id="openGlyph">✨ Composer öffnen</button>
+                    <button type="button" class="btn secondary" id="openPetImage">Nur Bild + Pipette</button>
+                    ${draft.imageDataUrl ? `<button type="button" class="btn ghost" id="clearPetImage">Verwerfen</button>` : ""}
                   </div>
-                  ${
-                    draft.imageDataUrl
-                      ? `<div class="pet-preview-row"><div class="pet-preview-circle"><img src="${draft.imageDataUrl}" alt="Begleiter" /></div><span class="muted">Vorschau übernommen</span></div>`
-                      : ""
-                  }
+                  ${glyphPreviewHtml()}
+                  <p class="muted mono" style="margin:0.65rem 0 0">ID: ${esc(
+                    Studio()?.isStableImageItemId?.(draft.itemId)
+                      ? draft.itemId
+                      : "(wird beim Gestalten vergeben)"
+                  )}</p>
                 </div>
                 <label class="field" style="margin-top:0.75rem">Name
-                  <input name="label" value="${esc(draft.label === "Herz" ? "Bild-Begleiter" : draft.label)}" />
+                  <input name="label" value="${esc(draft.label === "Herz" ? "Eigenes Emoji" : draft.label)}" />
                 </label>
                 <label class="field" style="margin-top:0.6rem">Suchworte
-                  <input name="searchText" value="${esc(draft.searchText)}" placeholder="begleiter pet custom" />
+                  <input name="searchText" value="${esc(draft.searchText)}" placeholder="custom emoji" />
                 </label>`
-              : `<div class="grid-2">
-                  <label class="field">Emoji / ID<input name="itemId" value="${esc(draft.itemId)}" /></label>
-                  <label class="field">Name<input name="label" value="${esc(draft.label)}" /></label>
+              : `<div class="emoji-pick-row">
+                  <button type="button" class="btn teal round-plus" id="pickEmoji" title="Emoji wählen">＋</button>
+                  <div class="emoji-pick-current">${esc(draft.itemId)}</div>
+                  <input type="hidden" name="itemId" value="${esc(draft.itemId)}" />
                 </div>
+                <label class="field" style="margin-top:0.75rem">Name
+                  <input name="label" value="${esc(draft.label)}" />
+                </label>
                 <label class="field" style="margin-top:0.6rem">Suchworte
                   <input name="searchText" value="${esc(draft.searchText)}" />
                 </label>`
           }`;
-        }
-        return `<div class="grid-2">
-          <label class="field">Emoji / ID<input name="itemId" value="${esc(draft.itemId)}" /></label>
-          <label class="field">Name<input name="label" value="${esc(draft.label)}" /></label>
-        </div>
-        <label class="field" style="margin-top:0.6rem">Suchworte
-          <input name="searchText" value="${esc(draft.searchText)}" />
-          <span class="tip">z. B. „herz heart“ — Nutzer finden das Item über die Lupe</span>
-        </label>`;
       }
       if (step === 2)
         return `<label class="field">Listenpreis in Coins
           <input name="priceCoins" type="number" min="1" value="${draft.priceCoins}" />
-          <span class="tip">Lootbox-Seltenheit folgt dem Preis (8–12 häufig, 100+ sehr selten).</span>
+          <span class="tip">Lootbox-Seltenheit folgt dem Preis.</span>
         </label>`;
       if (step === 3)
         return `<div class="grid-2">
@@ -1027,30 +963,29 @@
             draft.availableUntil ? new Date(draft.availableUntil).toISOString().slice(0, 16) : ""
           }" /></label>
         </div>
-        <p class="help">Leer lassen = dauerhaft. Mit Datum = zeitlich begrenzt; Countdown erscheint in der App.</p>`;
+        <p class="help">Leer = dauerhaft. Mit Datum = Countdown in der App.</p>`;
       if (step === 4)
         return `<div class="grid-2">
           <label class="field">Max. Verkäufe gesamt<input name="maxTotalSales" type="number" value="${draft.maxTotalSales ?? ""}" placeholder="∞" /></label>
           <label class="field">Max. pro Nutzer<input name="maxPerUser" type="number" value="${draft.maxPerUser ?? ""}" placeholder="∞" /></label>
-        </div>
-        <p class="help">Beispiel: max. 100 Verkäufe gesamt und 1× pro Nutzer = exklusives Limit-Item.</p>`;
+        </div>`;
       return `<div class="panel">
         <p><strong>${
-          draft.kind === "pets" && draft.petSource === "image"
-            ? "🐾 Bild-Begleiter"
+          draft.source === "custom" && draft.imageDataUrl
+            ? "✨ Eigenes Design"
             : esc(draft.itemId)
         }</strong> · ${esc(draft.kind)}</p>
+        ${glyphPreviewHtml()}
         ${
-          draft.imageDataUrl
-            ? `<div class="pet-preview-row"><div class="pet-preview-circle"><img src="${draft.imageDataUrl}" alt="" /></div></div>`
+          draft.visualConfig
+            ? `<div class="theme-mini-preview" style="background:linear-gradient(160deg,${esc(
+                draft.visualConfig.skyTop
+              )},${esc(draft.visualConfig.skyBottom)})"></div>`
             : ""
         }
-        <p>${esc(draft.label)} — ${draft.priceCoins} Coins
-          ${draft.salePrice != null ? `(Angebot ${draft.salePrice})` : ""}</p>
+        <p>${esc(draft.label)} — ${draft.priceCoins} Coins</p>
         <p class="muted">Suche: ${esc(draft.searchText || "—")}</p>
-        <p class="muted">→ landet automatisch in der Lootbox</p>
-        <p class="muted">Timer: ${draft.availableUntil ? new Date(draft.availableUntil).toLocaleString() : "kein"}</p>
-        <p class="muted">Limits: gesamt ${draft.maxTotalSales ?? "∞"}, p.P. ${draft.maxPerUser ?? "∞"}</p>
+        <p class="muted">→ landet in der Lootbox</p>
       </div>`;
     }
 

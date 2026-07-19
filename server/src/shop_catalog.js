@@ -285,6 +285,10 @@ function ensureShopCatalog(db) {
   return db.shopCatalog;
 }
 
+/**
+ * Statische Shop-Items ergänzen. Niemals bestehende Einträge löschen/überschreiben —
+ * Admin-Wizard und Besitz bleiben stabil. Nur fehlende Keys werden angelegt.
+ */
 function seedFromStatic(db, staticMaps) {
   const cat = ensureShopCatalog(db);
   const { emojiPrices = {}, themePrices = {}, petPrices = {}, stickerPrices = {} } = staticMaps;
@@ -297,6 +301,7 @@ function seedFromStatic(db, staticMaps) {
   ];
   for (const [kind, itemId, price] of all) {
     const key = itemKey(kind, itemId);
+    // Bestehenden Katalogeintrag nie anfassen (Preise/Timer/Disable bleiben)
     if (cat.items[key]) continue;
     const p = Math.max(0, Math.floor(Number(price) || 0));
     if (kind === "themes" && itemId === "meadow") continue;
@@ -385,6 +390,29 @@ function normalizeItem(raw) {
     raw.maxPerUser === null || raw.maxPerUser === undefined || raw.maxPerUser === ""
       ? null
       : Math.max(0, Math.floor(Number(raw.maxPerUser) || 0));
+  let visualConfig = null;
+  if (raw.visualConfig && typeof raw.visualConfig === "object") {
+    const vc = raw.visualConfig;
+    const emojis = Array.isArray(vc.emojis)
+      ? vc.emojis.map((e) => String(e || "").trim()).filter(Boolean).slice(0, 24)
+      : [];
+    visualConfig = {
+      skyTop: String(vc.skyTop || "#7EB8D8").slice(0, 16),
+      skyBottom: String(vc.skyBottom || "#B8D4E8").slice(0, 16),
+      groundTop: String(vc.groundTop || "#2F5D2E").slice(0, 16),
+      groundBottom: String(vc.groundBottom || "#1E3D1E").slice(0, 16),
+      emojis: emojis.length ? emojis : ["✨"],
+      motion: ["fall", "roll", "sway", "drift", "rise"].includes(vc.motion)
+        ? vc.motion
+        : "fall",
+      coverage: ["full", "band", "sky", "ground"].includes(vc.coverage)
+        ? vc.coverage
+        : "full",
+      speed: Math.max(0.2, Math.min(3, Number(vc.speed) || 1)),
+      density: Math.max(0.1, Math.min(2, Number(vc.density) || 0.7)),
+      size: Math.max(0.4, Math.min(2.5, Number(vc.size) || 1)),
+    };
+  }
   return {
     kind,
     itemId,
@@ -401,6 +429,7 @@ function normalizeItem(raw) {
     searchText: mergeSearchText(raw.searchText, defaultSearchText(kind, itemId)),
     seeded: Boolean(raw.seeded),
     hasImage: Boolean(raw.hasImage),
+    visualConfig,
     createdAt: Number(raw.createdAt) || Date.now(),
     updatedAt: Date.now(),
   };
@@ -509,14 +538,17 @@ function publicItem(item, now = Date.now(), { admin = false } = {}) {
         : null;
   const rem = remainingMs(item, now);
   const hasImage = Boolean(item.hasImage);
+  const themeEmoji =
+    item.kind === "themes" && item.visualConfig?.emojis?.[0]
+      ? item.visualConfig.emojis[0]
+      : item.kind === "themes"
+        ? "🖼️"
+        : item.itemId;
   const base = {
     kind: item.kind,
     itemId: item.itemId,
     label: item.label,
-    emoji:
-      item.kind === "themes"
-        ? "🖼️"
-        : item.itemId,
+    emoji: themeEmoji,
     priceCoins: price,
     compareAtPrice: compareAt,
     onSale: Boolean(compareAt && compareAt > price),
@@ -528,9 +560,10 @@ function publicItem(item, now = Date.now(), { admin = false } = {}) {
     soldTotal: item.soldTotal || 0,
     hasImage,
     imageUrl:
-      hasImage && item.kind === "pets"
+      hasImage && (item.kind === "pets" || item.kind === "emojis" || item.kind === "stickers")
         ? `/luv/v1/shop/pet-image/${encodeURIComponent(item.itemId)}`
         : null,
+    visualConfig: item.kind === "themes" && item.visualConfig ? item.visualConfig : null,
   };
   if (admin) {
     return {

@@ -1246,8 +1246,15 @@ object LuvApiClient {
         val equippedPet: String
     )
 
+    /** Shop-/Inventar-ID: Emoji kurz, Bild-Items (img_*) bis 32 Zeichen — nie abschneiden. */
+    private fun clipShopItemId(raw: String, maxEmoji: Int = 16): String {
+        val e = raw.trim()
+        if (e.isEmpty()) return ""
+        return if (e.startsWith("img_", ignoreCase = true)) e.take(32) else e.take(maxEmoji)
+    }
+
     suspend fun buyEmoji(emoji: String): Pair<AccountInfo, Int> = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("emoji", emoji.trim().take(8)).toString()
+        val body = JSONObject().put("emoji", clipShopItemId(emoji)).toString()
         val json = authedPost("/v1/shop/buy-emoji", body)
         val user = AccountInfo.fromApi(json.getJSONObject("user"))
         AccountSession.setAccount(user)
@@ -1263,7 +1270,7 @@ object LuvApiClient {
     }
 
     suspend fun buySticker(emoji: String): Pair<AccountInfo, Int> = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("emoji", emoji.trim().take(8)).toString()
+        val body = JSONObject().put("emoji", clipShopItemId(emoji)).toString()
         val json = authedPost("/v1/shop/buy-sticker", body)
         val user = AccountInfo.fromApi(json.getJSONObject("user"))
         AccountSession.setAccount(user)
@@ -1309,17 +1316,43 @@ object LuvApiClient {
                     "stickers" -> stickers.add(
                         com.luv.couple.shop.ShopEmoji(itemId, price, compare, rem, search)
                     )
-                    "themes" -> themes.add(
-                        com.luv.couple.shop.ShopTheme(
-                            id = itemId,
-                            label = label,
-                            emoji = o.optString("emoji", "🖼️").ifBlank { "🖼️" },
-                            priceCoins = price,
-                            compareAtPrice = compare,
-                            remainingMs = rem,
-                            searchText = search
+                    "themes" -> {
+                        val vcObj = o.optJSONObject("visualConfig")
+                        val visual = if (vcObj != null) {
+                            val emArr = vcObj.optJSONArray("emojis")
+                            val emojis = buildList {
+                                if (emArr != null) {
+                                    for (ei in 0 until emArr.length()) {
+                                        emArr.optString(ei).trim().takeIf { it.isNotBlank() }?.let { add(it) }
+                                    }
+                                }
+                            }.ifEmpty { listOf("✨") }
+                            com.luv.couple.shop.ThemeVisualConfig(
+                                skyTop = vcObj.optString("skyTop", "#7EB8D8"),
+                                skyBottom = vcObj.optString("skyBottom", "#B8D4E8"),
+                                groundTop = vcObj.optString("groundTop", "#2F5D2E"),
+                                groundBottom = vcObj.optString("groundBottom", "#1E3D1E"),
+                                emojis = emojis,
+                                motion = vcObj.optString("motion", "fall"),
+                                coverage = vcObj.optString("coverage", "full"),
+                                speed = vcObj.optDouble("speed", 1.0).toFloat(),
+                                density = vcObj.optDouble("density", 0.7).toFloat(),
+                                size = vcObj.optDouble("size", 1.0).toFloat()
+                            )
+                        } else null
+                        themes.add(
+                            com.luv.couple.shop.ShopTheme(
+                                id = itemId,
+                                label = label,
+                                emoji = o.optString("emoji", "🖼️").ifBlank { "🖼️" },
+                                priceCoins = price,
+                                compareAtPrice = compare,
+                                remainingMs = rem,
+                                searchText = search,
+                                visualConfig = visual
+                            )
                         )
-                    )
+                    }
                     "pets" -> pets.add(
                         com.luv.couple.shop.ShopPet(
                             emoji = itemId,
@@ -1563,6 +1596,7 @@ object LuvApiClient {
         val state: com.luv.couple.profile.ProfileState,
         val coins: Int,
         val petEmoji: String = "🐣",
+        val dayStreak: Int = 0,
         val friendStatus: String = "none",
         val canPetKraul: Boolean = true,
         val canTipGlass: Boolean = true,
@@ -1598,6 +1632,7 @@ object LuvApiClient {
                     state = state,
                     coins = json.optInt("coins", 0),
                     petEmoji = pet,
+                    dayStreak = json.optInt("dayStreak", 0).coerceAtLeast(0),
                     friendStatus = json.optString("friendStatus", "none"),
                     canPetKraul = json.optBoolean("canPetKraul", true),
                     canTipGlass = json.optBoolean("canTipGlass", true),
