@@ -52,7 +52,9 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 
 import androidx.compose.foundation.lazy.grid.items
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.widthIn
 
 import androidx.compose.foundation.shape.CircleShape
 
@@ -168,6 +170,26 @@ import com.luv.couple.shop.ShopEmoji
 import com.luv.couple.shop.ShopPet
 
 import com.luv.couple.shop.ShopTheme
+
+import androidx.compose.foundation.interaction.MutableInteractionSource
+
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+
+import androidx.compose.animation.AnimatedContent
+
+import androidx.compose.animation.fadeIn
+
+import androidx.compose.animation.fadeOut
+
+import androidx.compose.animation.slideInHorizontally
+
+import androidx.compose.animation.slideOutHorizontally
+
+import androidx.compose.animation.togetherWith
+
+import androidx.compose.ui.text.style.TextOverflow
+
+import com.luv.couple.shop.ShopRotation
 
 import androidx.compose.ui.text.style.TextDecoration
 
@@ -2000,57 +2022,369 @@ private fun ItemShopContent(
 
 
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    val cycle = remember(catalogTick) { ShopRotation.cycleInfo() }
 
-        Text(
+    val previewBadge = ShopRotation.daysUntilLabel(cycle.daysUntilNext)
 
-            "${account?.coins ?: 0} Coins",
 
-            color = TextMuted,
 
-            fontFamily = BodyFont,
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
 
-            fontSize = 13.sp
+        val scale = when {
 
-        )
+            maxWidth < 360.dp -> 0.92f
 
-        Spacer(modifier = Modifier.height(10.dp))
+            maxWidth > 600.dp -> 1.08f
 
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            else -> 1f
 
-            ShopCatalog.SHOP_TAB_LABELS.chunked(2).forEachIndexed { rowIndex, rowLabels ->
+        }
 
-                Row(
+        fun s(v: androidx.compose.ui.unit.Dp) = v * scale
 
-                    modifier = Modifier.fillMaxWidth(),
 
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
 
-                ) {
+        Column(modifier = Modifier.fillMaxSize()) {
 
-                    rowLabels.forEachIndexed { colIndex, label ->
+            // Header atmosphere
 
-                        val index = rowIndex * 2 + colIndex
+            Box(
 
-                        val active = tab == index
+                modifier = Modifier
 
-                        Box(
+                    .fillMaxWidth()
 
-                            modifier = Modifier
+                    .clip(RoundedCornerShape(s(18.dp)))
 
-                                .weight(1f)
+                    .background(
 
-                                .clip(RoundedCornerShape(14.dp))
+                        Brush.verticalGradient(
 
-                                .background(if (active) AccentRose.copy(0.28f) else BgSoft)
+                            listOf(
 
-                                .clickable { tab = index }
+                                AccentRose.copy(0.18f),
 
-                                .padding(horizontal = 10.dp, vertical = 10.dp),
+                                BgSoft.copy(0.55f),
 
-                            contentAlignment = Alignment.Center
+                                Color.Transparent
 
-                        ) {
+                            )
+
+                        )
+
+                    )
+
+                    .padding(horizontal = s(14.dp), vertical = s(12.dp))
+
+            ) {
+
+                Text(
+
+                    "${account?.coins ?: 0} Coins",
+
+                    color = TextPrimary,
+
+                    fontFamily = DisplayFont,
+
+                    fontSize = (15f * scale).sp
+
+                )
+
+            }
+
+
+
+            Spacer(modifier = Modifier.height(s(10.dp)))
+
+
+
+            // Featured preview (not on Lootbox tab)
+
+            if (tab != 4) {
+
+                val stickersAll = remember(catalogTick) { LiveShopCatalog.stickers() }
+
+                val themesAll = remember(catalogTick) { LiveShopCatalog.themes() }
+
+                val petsAll = remember(catalogTick) { LiveShopCatalog.pets() }
+
+                val emojisAll = remember(catalogTick) { LiveShopCatalog.emojis() }
+
+
+
+                when (tab) {
+
+                    0 -> {
+
+                        val (_, preview) = remember(catalogTick, stickersAll, cycle.epoch) {
+
+                            ShopRotation.rotateCatalog(
+
+                                stickersAll,
+
+                                cycle.epoch,
+
+                                idOf = { it.emoji },
+
+                                priceOf = { it.priceCoins },
+
+                                remainingOf = { it.remainingMs },
+
+                                bucketSize = 12
+
+                            )
+
+                        }
+
+                        ShopFeaturedRow(
+
+                            scale = scale,
+
+                            badge = previewBadge,
+
+                            leftEmoji = preview.getOrNull(0)?.emoji,
+
+                            leftName = preview.getOrNull(0)?.let {
+
+                                it.label.ifBlank { ItemLabels.stickerLabel(it.emoji) }
+
+                            },
+
+                            leftPrice = preview.getOrNull(0)?.priceCoins,
+
+                            leftThemeId = null,
+
+                            rightEmoji = preview.getOrNull(1)?.emoji,
+
+                            rightName = preview.getOrNull(1)?.let {
+
+                                it.label.ifBlank { ItemLabels.stickerLabel(it.emoji) }
+
+                            },
+
+                            rightPrice = preview.getOrNull(1)?.priceCoins,
+
+                            rightThemeId = null
+
+                        )
+
+                    }
+
+                    1 -> {
+
+                        val (_, preview) = remember(catalogTick, themesAll, cycle.epoch) {
+
+                            ShopRotation.rotateCatalog(
+
+                                themesAll,
+
+                                cycle.epoch,
+
+                                idOf = { it.id },
+
+                                priceOf = { it.priceCoins },
+
+                                remainingOf = { it.remainingMs },
+
+                                bucketSize = 9
+
+                            )
+
+                        }
+
+                        ShopFeaturedRow(
+
+                            scale = scale,
+
+                            badge = previewBadge,
+
+                            leftEmoji = preview.getOrNull(0)?.emoji,
+
+                            leftName = preview.getOrNull(0)?.label,
+
+                            leftPrice = preview.getOrNull(0)?.priceCoins,
+
+                            leftThemeId = preview.getOrNull(0)?.id,
+
+                            rightEmoji = preview.getOrNull(1)?.emoji,
+
+                            rightName = preview.getOrNull(1)?.label,
+
+                            rightPrice = preview.getOrNull(1)?.priceCoins,
+
+                            rightThemeId = preview.getOrNull(1)?.id
+
+                        )
+
+                    }
+
+                    2 -> {
+
+                        val (_, preview) = remember(catalogTick, petsAll, cycle.epoch) {
+
+                            ShopRotation.rotateCatalog(
+
+                                petsAll,
+
+                                cycle.epoch,
+
+                                idOf = { it.emoji },
+
+                                priceOf = { it.priceCoins },
+
+                                remainingOf = { it.remainingMs },
+
+                                bucketSize = 12
+
+                            )
+
+                        }
+
+                        ShopFeaturedRow(
+
+                            scale = scale,
+
+                            badge = previewBadge,
+
+                            leftEmoji = preview.getOrNull(0)?.emoji,
+
+                            leftName = preview.getOrNull(0)?.label,
+
+                            leftPrice = preview.getOrNull(0)?.priceCoins,
+
+                            leftThemeId = null,
+
+                            rightEmoji = preview.getOrNull(1)?.emoji,
+
+                            rightName = preview.getOrNull(1)?.label,
+
+                            rightPrice = preview.getOrNull(1)?.priceCoins,
+
+                            rightThemeId = null
+
+                        )
+
+                    }
+
+                    else -> {
+
+                        val (_, preview) = remember(catalogTick, emojisAll, cycle.epoch) {
+
+                            ShopRotation.rotateCatalog(
+
+                                emojisAll,
+
+                                cycle.epoch,
+
+                                idOf = { it.emoji },
+
+                                priceOf = { it.priceCoins },
+
+                                remainingOf = { it.remainingMs },
+
+                                bucketSize = 15
+
+                            )
+
+                        }
+
+                        ShopFeaturedRow(
+
+                            scale = scale,
+
+                            badge = previewBadge,
+
+                            leftEmoji = preview.getOrNull(0)?.emoji,
+
+                            leftName = preview.getOrNull(0)?.let {
+
+                                it.label.ifBlank { ItemLabels.emojiLabel(it.emoji) }
+
+                            },
+
+                            leftPrice = preview.getOrNull(0)?.priceCoins,
+
+                            leftThemeId = null,
+
+                            rightEmoji = preview.getOrNull(1)?.emoji,
+
+                            rightName = preview.getOrNull(1)?.let {
+
+                                it.label.ifBlank { ItemLabels.emojiLabel(it.emoji) }
+
+                            },
+
+                            rightPrice = preview.getOrNull(1)?.priceCoins,
+
+                            rightThemeId = null
+
+                        )
+
+                    }
+
+                }
+
+                Spacer(modifier = Modifier.height(s(8.dp)))
+
+            }
+
+
+
+            // Segment-Tabs: volle Labels (scrollbar auf schmalen Geräten)
+
+            Row(
+
+                modifier = Modifier
+
+                    .fillMaxWidth()
+
+                    .clip(RoundedCornerShape(s(14.dp)))
+
+                    .background(BgSoft.copy(0.85f))
+
+                    .horizontalScroll(rememberScrollState())
+
+                    .padding(s(4.dp)),
+
+                horizontalArrangement = Arrangement.spacedBy(s(4.dp)),
+
+                verticalAlignment = Alignment.CenterVertically
+
+            ) {
+
+                ShopCatalog.SHOP_TAB_LABELS.forEachIndexed { index, label ->
+
+                    val active = tab == index
+
+                    val indicator by animateFloatAsState(
+
+                        targetValue = if (active) 1f else 0f,
+
+                        animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow),
+
+                        label = "shopTab-$index"
+
+                    )
+
+                    Box(
+
+                        modifier = Modifier
+
+                            .widthIn(min = s(76.dp))
+
+                            .clip(RoundedCornerShape(s(11.dp)))
+
+                            .background(AccentRose.copy(0.22f * indicator))
+
+                            .clickable { tab = index }
+
+                            .padding(vertical = s(9.dp), horizontal = s(10.dp)),
+
+                        contentAlignment = Alignment.Center
+
+                    ) {
+
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
 
                             Text(
 
@@ -2060,13 +2394,33 @@ private fun ItemShopContent(
 
                                 fontFamily = if (active) DisplayFont else BodyFont,
 
-                                fontSize = 13.sp,
+                                fontSize = (12f * scale).coerceIn(11f, 14f).sp,
 
-                                softWrap = true,
+                                softWrap = false,
 
-                                maxLines = 2,
+                                maxLines = 1,
+
+                                overflow = TextOverflow.Visible,
 
                                 textAlign = TextAlign.Center
+
+                            )
+
+                            Box(
+
+                                modifier = Modifier
+
+                                    .padding(top = s(3.dp))
+
+                                    .height(s(2.dp))
+
+                                    .fillMaxWidth(0.45f)
+
+                                    .graphicsLayer { alpha = indicator }
+
+                                    .clip(RoundedCornerShape(999.dp))
+
+                                    .background(AccentRose)
 
                             )
 
@@ -2078,275 +2432,365 @@ private fun ItemShopContent(
 
             }
 
-        }
 
-        if (!searchManagedExternally && tab != 4) {
 
-            Spacer(modifier = Modifier.height(10.dp))
+            if (!searchManagedExternally && tab != 4) {
 
-            ShopSearchToggleRow(
+                Spacer(modifier = Modifier.height(s(10.dp)))
 
-                expanded = searchOpen,
+                ShopSearchToggleRow(
 
-                query = localSearchQuery,
+                    expanded = searchOpen,
 
-                onExpandedChange = { searchOpen = it },
+                    query = localSearchQuery,
 
-                onQueryChange = { localSearchQuery = it }
+                    onExpandedChange = { searchOpen = it },
 
-            )
+                    onQueryChange = { localSearchQuery = it }
 
-            Spacer(modifier = Modifier.height(10.dp))
+                )
 
-        } else {
+                Spacer(modifier = Modifier.height(s(10.dp)))
 
-            Spacer(modifier = Modifier.height(4.dp))
+            } else {
 
-        }
+                Spacer(modifier = Modifier.height(s(8.dp)))
 
-        val q = searchQuery
+            }
 
-        val stickers = remember(catalogTick, q) {
 
-            LiveShopCatalog.stickers().filter {
 
-                LiveShopCatalog.matchesQuery(
-                    q,
-                    it.emoji,
-                    label = it.label.ifBlank { ItemLabels.stickerLabel(it.emoji) },
-                    searchText = it.searchText
+            val q = searchQuery
+
+            val stickers = remember(catalogTick, q, cycle.epoch) {
+
+                val filtered = LiveShopCatalog.stickers().filter {
+
+                    LiveShopCatalog.matchesQuery(
+
+                        q,
+
+                        it.emoji,
+
+                        label = it.label.ifBlank { ItemLabels.stickerLabel(it.emoji) },
+
+                        searchText = it.searchText
+
+                    )
+
+                }
+
+                ShopRotation.rotateCatalog(
+
+                    filtered,
+
+                    cycle.epoch,
+
+                    idOf = { it.emoji },
+
+                    priceOf = { it.priceCoins },
+
+                    remainingOf = { it.remainingMs },
+
+                    withRemaining = { item, rem -> item.copy(remainingMs = rem) },
+                    skipRotation = q.isNotBlank()
+                ).first
+
+            }
+
+            val themes = remember(catalogTick, q, cycle.epoch) {
+
+                val filtered = LiveShopCatalog.themes().filter {
+
+                    LiveShopCatalog.matchesQuery(q, it.emoji, it.label, it.searchText)
+
+                }
+
+                ShopRotation.rotateCatalog(
+
+                    filtered,
+
+                    cycle.epoch,
+
+                    idOf = { it.id },
+
+                    priceOf = { it.priceCoins },
+
+                    remainingOf = { it.remainingMs },
+
+                    withRemaining = { item, rem -> item.copy(remainingMs = rem) },
+                    skipRotation = q.isNotBlank()
+                ).first
+
+            }
+
+            val pets = remember(catalogTick, q, cycle.epoch) {
+
+                val filtered = LiveShopCatalog.pets().filter {
+
+                    LiveShopCatalog.matchesQuery(q, it.emoji, it.label, it.searchText)
+
+                }
+
+                ShopRotation.rotateCatalog(
+
+                    filtered,
+
+                    cycle.epoch,
+
+                    idOf = { it.emoji },
+
+                    priceOf = { it.priceCoins },
+
+                    remainingOf = { it.remainingMs },
+
+                    withRemaining = { item, rem -> item.copy(remainingMs = rem) },
+                    skipRotation = q.isNotBlank()
+                ).first
+
+            }
+
+            val emojis = remember(catalogTick, q, cycle.epoch) {
+
+                val filtered = LiveShopCatalog.emojis().filter {
+
+                    LiveShopCatalog.matchesQuery(
+
+                        q,
+
+                        it.emoji,
+
+                        label = it.label.ifBlank { ItemLabels.emojiLabel(it.emoji) },
+
+                        searchText = it.searchText
+
+                    )
+
+                }
+
+                ShopRotation.rotateCatalog(
+
+                    filtered,
+
+                    cycle.epoch,
+
+                    idOf = { it.emoji },
+
+                    priceOf = { it.priceCoins },
+
+                    remainingOf = { it.remainingMs },
+
+                    withRemaining = { item, rem -> item.copy(remainingMs = rem) },
+                    skipRotation = q.isNotBlank()
+                ).first
+
+            }
+
+
+
+            when (tab) {
+
+                0 -> LazyVerticalGrid(
+
+                    columns = GridCells.Fixed(3),
+
+                    modifier = Modifier.fillMaxSize(),
+
+                    contentPadding = PaddingValues(bottom = 12.dp),
+
+                    horizontalArrangement = Arrangement.spacedBy(s(10.dp)),
+
+                    verticalArrangement = Arrangement.spacedBy(s(10.dp))
+
+                ) {
+
+                    items(stickers, key = { "s-${it.emoji}" }) { item ->
+
+                        val count = ownedStickers[item.emoji] ?: 0
+
+                        ShopGridCell(
+
+                            emoji = item.emoji,
+
+                            name = item.label.ifBlank { ItemLabels.stickerLabel(item.emoji) },
+
+                            price = item.priceCoins,
+
+                            compareAtPrice = item.compareAtPrice,
+
+                            remainingMs = item.remainingMs,
+
+                            ownedLabel = if (count > 0) "×$count" else null,
+
+                            themeId = null,
+
+                            enabled = busyKey == null,
+
+                            onClick = { openBuy(ShopPendingBuy.Sticker(item)) }
+
+                        )
+
+                    }
+
+                }
+
+                1 -> LazyVerticalGrid(
+
+                    columns = GridCells.Fixed(3),
+
+                    modifier = Modifier.fillMaxSize(),
+
+                    contentPadding = PaddingValues(bottom = 12.dp),
+
+                    horizontalArrangement = Arrangement.spacedBy(s(10.dp)),
+
+                    verticalArrangement = Arrangement.spacedBy(s(10.dp))
+
+                ) {
+
+                    items(themes, key = { "t-${it.id}" }) { item ->
+
+                        val have = item.id in ownedThemes
+
+                        ShopGridCell(
+
+                            emoji = item.emoji,
+
+                            name = item.label,
+
+                            price = item.priceCoins,
+
+                            compareAtPrice = item.compareAtPrice,
+
+                            remainingMs = item.remainingMs,
+
+                            ownedLabel = if (have) "✓" else null,
+
+                            themeId = item.id,
+
+                            enabled = busyKey == null,
+
+                            onClick = { openBuy(ShopPendingBuy.Theme(item)) }
+
+                        )
+
+                    }
+
+                }
+
+                2 -> LazyVerticalGrid(
+
+                    columns = GridCells.Fixed(3),
+
+                    modifier = Modifier.fillMaxSize(),
+
+                    contentPadding = PaddingValues(bottom = 12.dp),
+
+                    horizontalArrangement = Arrangement.spacedBy(s(10.dp)),
+
+                    verticalArrangement = Arrangement.spacedBy(s(10.dp))
+
+                ) {
+
+                    items(pets, key = { it.emoji }) { item ->
+
+                        val have = item.emoji in ownedPets
+
+                        ShopGridCell(
+
+                            emoji = item.emoji,
+
+                            name = item.label,
+
+                            price = item.priceCoins,
+
+                            compareAtPrice = item.compareAtPrice,
+
+                            remainingMs = item.remainingMs,
+
+                            ownedLabel = if (have) "✓" else null,
+
+                            themeId = null,
+
+                            enabled = busyKey == null,
+
+                            onClick = { openBuy(ShopPendingBuy.Pet(item)) }
+
+                        )
+
+                    }
+
+                }
+
+                3 -> LazyVerticalGrid(
+
+                    columns = GridCells.Fixed(3),
+
+                    modifier = Modifier.fillMaxSize(),
+
+                    contentPadding = PaddingValues(bottom = 12.dp),
+
+                    horizontalArrangement = Arrangement.spacedBy(s(10.dp)),
+
+                    verticalArrangement = Arrangement.spacedBy(s(10.dp))
+
+                ) {
+
+                    items(emojis, key = { it.emoji }) { item ->
+
+                        val count = ownedEmojis[item.emoji] ?: 0
+
+                        ShopGridCell(
+
+                            emoji = item.emoji,
+
+                            name = item.label.ifBlank { ItemLabels.emojiLabel(item.emoji) },
+
+                            price = item.priceCoins,
+
+                            compareAtPrice = item.compareAtPrice,
+
+                            remainingMs = item.remainingMs,
+
+                            ownedLabel = if (count > 0) "×$count" else null,
+
+                            themeId = null,
+
+                            enabled = busyKey == null,
+
+                            onClick = { openBuy(ShopPendingBuy.Emoji(item)) }
+
+                        )
+
+                    }
+
+                }
+
+                else -> LootboxTab(
+
+                    coins = account?.coins ?: 0,
+
+                    busy = busyKey != null,
+
+                    onBusy = { busyKey = it },
+
+                    onRefresh = { reloadShopAndInventory() },
+
+                    economyUnlocked = economyUnlocked,
+
+                    onRequireGoogle = onRequireGoogle
+
                 )
 
             }
-
-        }
-
-        val themes = remember(catalogTick, q) {
-
-            LiveShopCatalog.themes().filter {
-
-                LiveShopCatalog.matchesQuery(q, it.emoji, it.label, it.searchText)
-
-            }
-
-        }
-
-        val pets = remember(catalogTick, q) {
-
-            LiveShopCatalog.pets().filter {
-
-                LiveShopCatalog.matchesQuery(q, it.emoji, it.label, it.searchText)
-
-            }
-
-        }
-
-        val emojis = remember(catalogTick, q) {
-
-            LiveShopCatalog.emojis().filter {
-
-                LiveShopCatalog.matchesQuery(
-                    q,
-                    it.emoji,
-                    label = it.label.ifBlank { ItemLabels.emojiLabel(it.emoji) },
-                    searchText = it.searchText
-                )
-
-            }
-
-        }
-
-        when (tab) {
-
-            0 -> LazyVerticalGrid(
-
-                columns = GridCells.Fixed(3),
-
-                modifier = Modifier.fillMaxSize(),
-
-                contentPadding = PaddingValues(bottom = 12.dp),
-
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-
-            ) {
-
-                items(stickers, key = { "s-${it.emoji}" }) { item ->
-
-                    val count = ownedStickers[item.emoji] ?: 0
-
-                    ShopGridCell(
-
-                        emoji = item.emoji,
-
-                        price = item.priceCoins,
-
-                        compareAtPrice = item.compareAtPrice,
-
-                        remainingMs = item.remainingMs,
-
-                        ownedLabel = if (count > 0) "×$count" else null,
-
-                        themeId = null,
-
-                        enabled = busyKey == null,
-
-                        onClick = { openBuy(ShopPendingBuy.Sticker(item)) }
-
-                    )
-
-                }
-
-            }
-
-            1 -> LazyVerticalGrid(
-
-                columns = GridCells.Fixed(3),
-
-                modifier = Modifier.fillMaxSize(),
-
-                contentPadding = PaddingValues(bottom = 12.dp),
-
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-
-            ) {
-
-                items(themes, key = { "t-${it.id}" }) { item ->
-
-                    val have = item.id in ownedThemes
-
-                    ShopGridCell(
-
-                        emoji = item.emoji,
-
-                        price = item.priceCoins,
-
-                        compareAtPrice = item.compareAtPrice,
-
-                        remainingMs = item.remainingMs,
-
-                        ownedLabel = if (have) "✓" else null,
-
-                        themeId = item.id,
-
-                        enabled = busyKey == null,
-
-                        onClick = { openBuy(ShopPendingBuy.Theme(item)) }
-
-                    )
-
-                }
-
-            }
-
-            2 -> LazyVerticalGrid(
-
-                columns = GridCells.Fixed(3),
-
-                modifier = Modifier.fillMaxSize(),
-
-                contentPadding = PaddingValues(bottom = 12.dp),
-
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-
-            ) {
-
-                items(pets, key = { it.emoji }) { item ->
-
-                    val have = item.emoji in ownedPets
-
-                    ShopGridCell(
-
-                        emoji = item.emoji,
-
-                        price = item.priceCoins,
-
-                        compareAtPrice = item.compareAtPrice,
-
-                        remainingMs = item.remainingMs,
-
-                        ownedLabel = if (have) "✓" else null,
-
-                        themeId = null,
-
-                        enabled = busyKey == null,
-
-                        onClick = { openBuy(ShopPendingBuy.Pet(item)) }
-
-                    )
-
-                }
-
-            }
-
-            3 -> LazyVerticalGrid(
-
-                columns = GridCells.Fixed(3),
-
-                modifier = Modifier.fillMaxSize(),
-
-                contentPadding = PaddingValues(bottom = 12.dp),
-
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-
-            ) {
-
-                items(emojis, key = { it.emoji }) { item ->
-
-                    val count = ownedEmojis[item.emoji] ?: 0
-
-                    ShopGridCell(
-
-                        emoji = item.emoji,
-
-                        price = item.priceCoins,
-
-                        compareAtPrice = item.compareAtPrice,
-
-                        remainingMs = item.remainingMs,
-
-                        ownedLabel = if (count > 0) "×$count" else null,
-
-                        themeId = null,
-
-                        enabled = busyKey == null,
-
-                        onClick = { openBuy(ShopPendingBuy.Emoji(item)) }
-
-                    )
-
-                }
-
-            }
-
-            else -> LootboxTab(
-
-                coins = account?.coins ?: 0,
-
-                busy = busyKey != null,
-
-                onBusy = { busyKey = it },
-
-                onRefresh = { reloadShopAndInventory() },
-
-                economyUnlocked = economyUnlocked,
-
-                onRequireGoogle = onRequireGoogle
-
-            )
 
         }
 
     }
 
 }
+
+
 
 
 
@@ -3344,6 +3788,282 @@ private fun ThemePreviewCard(themeId: String, emoji: String, label: String) {
 
 @Composable
 
+private fun ShopFeaturedRow(
+
+    scale: Float,
+
+    badge: String,
+
+    leftEmoji: String?,
+
+    leftName: String?,
+
+    leftPrice: Int?,
+
+    leftThemeId: String?,
+
+    rightEmoji: String?,
+
+    rightName: String?,
+
+    rightPrice: Int?,
+
+    rightThemeId: String?,
+
+) {
+
+    fun s(v: androidx.compose.ui.unit.Dp) = v * scale
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+
+        Text(
+
+            "Demnächst im Shop",
+
+            color = TextMuted,
+
+            fontFamily = BodyFont,
+
+            fontSize = (11f * scale).sp,
+
+            maxLines = 1
+
+        )
+
+        Spacer(modifier = Modifier.height(s(6.dp)))
+
+        AnimatedContent(
+
+            targetState = "${leftEmoji ?: ""}|${rightEmoji ?: ""}|$badge",
+
+            transitionSpec = {
+
+                (fadeIn() + slideInHorizontally { it / 8 }) togetherWith
+
+                    (fadeOut() + slideOutHorizontally { -it / 8 })
+
+            },
+
+            label = "shopFeatured"
+
+        ) {
+
+            Row(
+
+                modifier = Modifier.fillMaxWidth(),
+
+                horizontalArrangement = Arrangement.spacedBy(s(8.dp))
+
+            ) {
+
+                ShopFeaturedCard(
+
+                    modifier = Modifier.weight(1f),
+
+                    scale = scale,
+
+                    emoji = leftEmoji,
+
+                    name = leftName,
+
+                    price = leftPrice,
+
+                    themeId = leftThemeId,
+
+                    badge = badge
+
+                )
+
+                ShopFeaturedCard(
+
+                    modifier = Modifier.weight(1f),
+
+                    scale = scale,
+
+                    emoji = rightEmoji,
+
+                    name = rightName,
+
+                    price = rightPrice,
+
+                    themeId = rightThemeId,
+
+                    badge = badge
+
+                )
+
+            }
+
+        }
+
+    }
+
+}
+
+
+
+@Composable
+
+private fun ShopFeaturedCard(
+
+    modifier: Modifier,
+
+    scale: Float,
+
+    emoji: String?,
+
+    name: String?,
+
+    price: Int?,
+
+    themeId: String?,
+
+    badge: String,
+
+) {
+
+    fun s(v: androidx.compose.ui.unit.Dp) = v * scale
+
+    Row(
+
+        modifier = modifier
+
+            .height(s(64.dp))
+
+            .clip(RoundedCornerShape(s(12.dp)))
+
+            .then(
+
+                if (themeId == null) {
+
+                    Modifier.background(BgSoft.copy(0.9f))
+
+                } else Modifier
+
+            )
+
+            .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(s(12.dp)))
+
+            .padding(horizontal = s(8.dp), vertical = s(6.dp)),
+
+        verticalAlignment = Alignment.CenterVertically,
+
+        horizontalArrangement = Arrangement.spacedBy(s(8.dp))
+
+    ) {
+
+        Box(
+
+            modifier = Modifier
+
+                .size(s(40.dp))
+
+                .clip(RoundedCornerShape(s(10.dp))),
+
+            contentAlignment = Alignment.Center
+
+        ) {
+
+            if (themeId != null) {
+
+                com.luv.couple.profile.ProfileThemeBackdrop(
+
+                    themeId = themeId,
+
+                    modifier = Modifier.fillMaxSize()
+
+                )
+
+                Box(
+
+                    modifier = Modifier
+
+                        .fillMaxSize()
+
+                        .background(Color.Black.copy(0.25f))
+
+                )
+
+            }
+
+            if (emoji != null) {
+
+                ItemGlyph(id = emoji, fontSize = (22f * scale).sp)
+
+            }
+
+        }
+
+        Column(modifier = Modifier.weight(1f)) {
+
+            Text(
+
+                badge,
+
+                color = if (themeId != null) Color(0xFFFFD54F) else AccentRose,
+
+                fontFamily = BodyFont,
+
+                fontSize = (9f * scale).sp,
+
+                maxLines = 1,
+
+                softWrap = false,
+
+                overflow = TextOverflow.Ellipsis
+
+            )
+
+            Text(
+
+                name.orEmpty().ifBlank { "—" },
+
+                color = if (themeId != null) Color.White else TextPrimary,
+
+                fontFamily = DisplayFont,
+
+                fontSize = (12f * scale).sp,
+
+                maxLines = 1,
+
+                softWrap = false,
+
+                overflow = TextOverflow.Ellipsis
+
+            )
+
+            Text(
+
+                when {
+
+                    price == null -> ""
+
+                    price <= 0 -> "frei · Vorschau"
+
+                    else -> "$price · Vorschau"
+
+                },
+
+                color = TextMuted,
+
+                fontFamily = BodyFont,
+
+                fontSize = (10f * scale).sp,
+
+                maxLines = 1,
+
+                softWrap = false
+
+            )
+
+        }
+
+    }
+
+}
+
+@Composable
+
 private fun ShopGridCell(
 
     emoji: String,
@@ -3360,17 +4080,41 @@ private fun ShopGridCell(
 
     compareAtPrice: Int? = null,
 
-    remainingMs: Long? = null
+    remainingMs: Long? = null,
+
+    name: String? = null
 
 ) {
 
     val timer = formatShopRemaining(remainingMs)
 
+    val interaction = remember { MutableInteractionSource() }
+
+    val pressed by interaction.collectIsPressedAsState()
+
+    val pressScale by animateFloatAsState(
+
+        targetValue = if (pressed) 0.96f else 1f,
+
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMedium),
+
+        label = "gridPress"
+
+    )
+
     Box(
 
         modifier = Modifier
 
-            .aspectRatio(1f)
+            .aspectRatio(0.92f)
+
+            .graphicsLayer {
+
+                scaleX = pressScale
+
+                scaleY = pressScale
+
+            }
 
             .clip(RoundedCornerShape(16.dp))
 
@@ -3382,7 +4126,17 @@ private fun ShopGridCell(
 
             .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(16.dp))
 
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(
+
+                enabled = enabled,
+
+                interactionSource = interaction,
+
+                indication = null,
+
+                onClick = onClick
+
+            )
 
     ) {
 
@@ -3398,111 +4152,159 @@ private fun ShopGridCell(
 
         }
 
-        Box(
-
-            modifier = Modifier.align(Alignment.Center),
-
-            contentAlignment = Alignment.Center
-
-        ) {
-
-            ItemGlyph(id = emoji, fontSize = 32.sp)
-
-        }
-
-        if (timer != null) {
-
-            Text(
-
-                timer,
-
-                color = if (themeId != null) Color(0xFFFFD54F) else AccentRose,
-
-                fontFamily = BodyFont,
-
-                fontSize = 9.sp,
-
-                modifier = Modifier
-
-                    .align(Alignment.TopStart)
-
-                    .padding(6.dp)
-
-            )
-
-        }
-
         Column(
 
             modifier = Modifier
 
-                .align(Alignment.BottomStart)
+                .fillMaxSize()
 
-                .padding(8.dp)
+                .padding(horizontal = 6.dp, vertical = 8.dp),
+
+            horizontalAlignment = Alignment.CenterHorizontally,
+
+            verticalArrangement = Arrangement.SpaceBetween
 
         ) {
 
-            if (compareAtPrice != null && compareAtPrice > price) {
-
-                Text(
-
-                    "$compareAtPrice",
-
-                    color = TextMuted,
-
-                    fontFamily = BodyFont,
-
-                    fontSize = 10.sp,
-
-                    style = androidx.compose.ui.text.TextStyle(
-
-                        textDecoration = TextDecoration.LineThrough
-
-                    )
-
-                )
-
-            }
-
-            Text(
-
-                if (price <= 0) "frei" else "$price",
-
-                color = if (themeId != null) Color.White else AccentRose,
-
-                fontFamily = DisplayFont,
-
-                fontSize = 12.sp
-
-            )
-
-        }
-
-        if (ownedLabel != null) {
-
-            Text(
-
-                ownedLabel,
-
-                color = if (themeId != null) Color.White.copy(0.9f) else TextMuted,
-
-                fontFamily = BodyFont,
-
-                fontSize = 11.sp,
+            Box(
 
                 modifier = Modifier
 
-                    .align(Alignment.BottomEnd)
+                    .fillMaxWidth()
 
-                    .padding(8.dp)
+                    .height(14.dp),
+
+                contentAlignment = Alignment.CenterStart
+
+            ) {
+
+                if (timer != null) {
+
+                    Text(
+
+                        timer,
+
+                        color = if (themeId != null) Color(0xFFFFD54F) else AccentRose,
+
+                        fontFamily = BodyFont,
+
+                        fontSize = 8.sp,
+
+                        maxLines = 1,
+
+                        softWrap = false,
+
+                        overflow = TextOverflow.Ellipsis
+
+                    )
+
+                }
+
+            }
+
+            ItemGlyph(id = emoji, fontSize = 30.sp)
+
+            Text(
+
+                name.orEmpty(),
+
+                color = if (themeId != null) Color.White.copy(0.92f) else TextPrimary,
+
+                fontFamily = BodyFont,
+
+                fontSize = 10.sp,
+
+                maxLines = 1,
+
+                softWrap = false,
+
+                overflow = TextOverflow.Ellipsis,
+
+                textAlign = TextAlign.Center,
+
+                modifier = Modifier.fillMaxWidth()
 
             )
+
+            Row(
+
+                modifier = Modifier.fillMaxWidth(),
+
+                horizontalArrangement = Arrangement.SpaceBetween,
+
+                verticalAlignment = Alignment.Bottom
+
+            ) {
+
+                Column {
+
+                    if (compareAtPrice != null && compareAtPrice > price) {
+
+                        Text(
+
+                            "$compareAtPrice",
+
+                            color = TextMuted,
+
+                            fontFamily = BodyFont,
+
+                            fontSize = 9.sp,
+
+                            style = androidx.compose.ui.text.TextStyle(
+
+                                textDecoration = TextDecoration.LineThrough
+
+                            ),
+
+                            maxLines = 1
+
+                        )
+
+                    }
+
+                    Text(
+
+                        if (price <= 0) "frei" else "$price",
+
+                        color = if (themeId != null) Color.White else AccentRose,
+
+                        fontFamily = DisplayFont,
+
+                        fontSize = 12.sp,
+
+                        maxLines = 1
+
+                    )
+
+                }
+
+                if (ownedLabel != null) {
+
+                    Text(
+
+                        ownedLabel,
+
+                        color = if (themeId != null) Color.White.copy(0.9f) else TextMuted,
+
+                        fontFamily = BodyFont,
+
+                        fontSize = 11.sp,
+
+                        maxLines = 1
+
+                    )
+
+                }
+
+            }
 
         }
 
     }
 
 }
+
+
 
 
 

@@ -130,6 +130,8 @@ data class Lobby(
     val isRandom: Boolean = false,
     /** Hochzeitsleinwand — kein Verlassen, keine Einladungen. */
     val isWedding: Boolean = false,
+    /** Nachträgliches Hochzeitsbild (Ehe ohne gespeichertes Bild). */
+    val isWeddingRetake: Boolean = false,
     val hostNickname: String = "",
     val hostColorSide: String = "blue",
     /** Höchste jemals gesehene Peer-Zahl — für Paar-Modus. */

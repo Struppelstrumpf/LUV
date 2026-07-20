@@ -506,6 +506,8 @@ module.exports = {
   newListingId,
   recordPrice,
   recordSale,
+  allSales,
+  salesInWindow,
   priceInsight,
   priceWindowDays,
   setPriceWindowDays,

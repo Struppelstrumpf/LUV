@@ -26,6 +26,7 @@ data class RoomSession(
     val isFree: Boolean = false,
     val isRandom: Boolean = false,
     val isWedding: Boolean = false,
+    val isWeddingRetake: Boolean = false,
     val name: String = "Lobby",
     val hostNickname: String = "Host",
     val hostColorSide: String = "blue",
@@ -118,6 +119,7 @@ data class RemoteLobby(
     val isFree: Boolean,
     val isRandom: Boolean = false,
     val isWedding: Boolean = false,
+    val isWeddingRetake: Boolean = false,
     val lastCanvasAt: Long = 0L,
     val lastCanvasActorId: String? = null,
     val hostColorSide: String,
@@ -516,6 +518,7 @@ object LuvApiClient {
                 isFree = o.optBoolean("isFree", false),
                 isRandom = o.optBoolean("isRandom", false),
                 isWedding = o.optBoolean("isWedding", false),
+                isWeddingRetake = o.optBoolean("weddingRetake", false),
                 lastCanvasAt = o.optLong("lastCanvasAt", 0L),
                 lastCanvasActorId = o.optString("lastCanvasActorId").takeIf { it.isNotBlank() },
                 hostColorSide = o.optString("hostColorSide", "blue"),
@@ -1451,17 +1454,14 @@ object LuvApiClient {
                     )
                 }
             }
-            if (emojis.isNotEmpty()) {
+            if (emojis.isNotEmpty() || stickers.isNotEmpty() || themes.isNotEmpty() || pets.isNotEmpty() ||
+                json.has("items")
+            ) {
                 com.luv.couple.shop.LiveShopCatalog.remoteEmojis = emojis.sortedBy { it.priceCoins }
-            }
-            if (stickers.isNotEmpty()) {
                 com.luv.couple.shop.LiveShopCatalog.remoteStickers = stickers.sortedBy { it.priceCoins }
-            }
-            if (themes.isNotEmpty()) {
                 com.luv.couple.shop.LiveShopCatalog.remoteThemes = themes.sortedBy { it.priceCoins }
-            }
-            if (pets.isNotEmpty()) {
                 com.luv.couple.shop.LiveShopCatalog.remotePets = pets.sortedBy { it.priceCoins }
+                com.luv.couple.shop.LiveShopCatalog.remoteCatalogLoaded = true
             }
             val labelsObj = json.optJSONObject("displayLabels")
             if (labelsObj != null) {
@@ -1744,7 +1744,23 @@ object LuvApiClient {
         val engageSkipCost: Int = 0,
         val weddingSkipCost: Int = 0,
         val engageRemainingLabel: String? = null,
-        val weddingRemainingLabel: String? = null
+        val weddingRemainingLabel: String? = null,
+        val weddingMyStrokes: Int = 0,
+        val weddingPartnerStrokes: Int = 0,
+        val weddingStrokesRequired: Int = 10,
+        val weddingStrokesReady: Boolean = true,
+        val weddingImageRetake: Boolean = false,
+        val weddingConfirmMine: Boolean = false,
+        val weddingConfirmPartner: Boolean = false
+    )
+
+    data class WeddingImageConfirmResult(
+        val done: Boolean,
+        val weddingConfirmMine: Boolean,
+        val weddingConfirmPartner: Boolean,
+        val weddingImageRetake: Boolean,
+        val message: String?,
+        val marriage: MarriageInfo?
     )
 
     data class PartnerPublic(
@@ -1859,6 +1875,7 @@ object LuvApiClient {
     data class PetKraulResult(
         val petEmoji: String,
         val toCoins: Int,
+        val fromCoins: Int = 0,
         val amount: Int,
         val friendshipLevel: Int = 0,
         val friendshipLevelBumped: Boolean = false
@@ -1906,7 +1923,14 @@ object LuvApiClient {
             engageSkipCost = o.optInt("engageSkipCost", 0),
             weddingSkipCost = o.optInt("weddingSkipCost", 0),
             engageRemainingLabel = o.optString("engageRemainingLabel").takeIf { it.isNotBlank() },
-            weddingRemainingLabel = o.optString("weddingRemainingLabel").takeIf { it.isNotBlank() }
+            weddingRemainingLabel = o.optString("weddingRemainingLabel").takeIf { it.isNotBlank() },
+            weddingMyStrokes = o.optInt("weddingMyStrokes", 0),
+            weddingPartnerStrokes = o.optInt("weddingPartnerStrokes", 0),
+            weddingStrokesRequired = o.optInt("weddingStrokesRequired", 10).coerceAtLeast(1),
+            weddingStrokesReady = o.optBoolean("weddingStrokesReady", status != "wedding"),
+            weddingImageRetake = o.optBoolean("weddingImageRetake", false),
+            weddingConfirmMine = o.optBoolean("weddingConfirmMine", false),
+            weddingConfirmPartner = o.optBoolean("weddingConfirmPartner", false)
         )
     }
 
@@ -2097,6 +2121,32 @@ object LuvApiClient {
             coins = user?.optInt("coins") ?: (AccountSession.account.value?.coins ?: 0)
         )
     }
+
+    suspend fun fetchWeddingImageConfirm(): WeddingImageConfirmResult = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/me/marriage/wedding-image-confirm")
+        WeddingImageConfirmResult(
+            done = json.optBoolean("done", false),
+            weddingConfirmMine = json.optBoolean("weddingConfirmMine", false),
+            weddingConfirmPartner = json.optBoolean("weddingConfirmPartner", false),
+            weddingImageRetake = json.optBoolean("weddingImageRetake", false),
+            message = json.optString("message").takeIf { it.isNotBlank() },
+            marriage = parseMarriageInfo(json.optJSONObject("marriage"))
+        )
+    }
+
+    suspend fun confirmWeddingImage(confirm: Boolean = true): WeddingImageConfirmResult =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("confirm", confirm).toString()
+            val json = authedPost("/v1/me/marriage/confirm-wedding-image", body)
+            WeddingImageConfirmResult(
+                done = json.optBoolean("done", false),
+                weddingConfirmMine = json.optBoolean("weddingConfirmMine", false),
+                weddingConfirmPartner = json.optBoolean("weddingConfirmPartner", false),
+                weddingImageRetake = json.optBoolean("weddingImageRetake", false),
+                message = json.optString("message").takeIf { it.isNotBlank() },
+                marriage = parseMarriageInfo(json.optJSONObject("marriage"))
+            )
+        }
 
     suspend fun staffAdvanceMarriage(
         userId: String,
@@ -2587,6 +2637,38 @@ object LuvApiClient {
             coins to state
         }
 
+    suspend fun fetchEvents(): EventsState = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/me/events")
+        val state = EventsState.fromJson(json)
+        EventSession.update(state)
+        state
+    }
+
+    data class EventCollectResult(
+        val coinsGranted: Int,
+        val itemLabel: String?,
+        val state: EventsState,
+    )
+
+    suspend fun collectEvent(eventId: String): EventCollectResult = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/me/events/${eventId.trim()}/collect", "{}")
+        json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
+        val state = json.optJSONObject("state")?.let { EventsState.fromJson(it) }
+            ?: fetchEvents()
+        EventSession.update(state)
+        val item = json.optJSONObject("itemGranted")
+        val itemLabel = item?.let {
+            val emoji = it.optString("emoji")
+            val label = it.optString("label")
+            listOf(emoji, label).filter { s -> s.isNotBlank() }.joinToString(" ")
+        }?.takeIf { it.isNotBlank() }
+        EventCollectResult(
+            coinsGranted = json.optInt("coinsGranted", 0),
+            itemLabel = itemLabel,
+            state = state,
+        )
+    }
+
     suspend fun pingAchievement(metric: String, amount: Int = 1): AchievementPingResult =
         withContext(Dispatchers.IO) {
             val body = JSONObject()
@@ -3026,9 +3108,12 @@ object LuvApiClient {
                 )
             }
             val body = json ?: throw LuvApiException("Ungültige Server-Antwort")
+            val fromCoins = body.optInt("fromCoins", 0)
+            body.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
             PetKraulResult(
                 petEmoji = body.optString("petEmoji", "🐣").ifBlank { "🐣" },
                 toCoins = body.optInt("toCoins", 0),
+                fromCoins = fromCoins,
                 amount = body.optInt("amount", 1),
                 friendshipLevel = body.optInt("friendshipLevel", 0),
                 friendshipLevelBumped = body.optBoolean("friendshipLevelBumped", false)
@@ -3387,6 +3472,7 @@ object LuvApiClient {
                 isFree = parsed.optBoolean("isFree", false),
                 isRandom = parsed.optBoolean("isRandom", false),
                 isWedding = parsed.optBoolean("isWedding", false),
+                isWeddingRetake = parsed.optBoolean("weddingRetake", false),
                 name = parsed.optString("name", "Lobby"),
                 hostNickname = parsed.optString("hostNickname", "Host"),
                 hostColorSide = parsed.optString("hostColorSide", "blue").ifBlank { "blue" },

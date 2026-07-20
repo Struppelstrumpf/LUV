@@ -4,7 +4,6 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -56,7 +55,6 @@ import com.luv.couple.shop.ShopCatalog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.ui.ItemImageCache
 import com.luv.couple.ui.isImagePetId
-import com.luv.couple.ui.petImageUrl
 import com.luv.couple.ui.screens.BrushStudioSheet
 import com.luv.couple.ui.screens.EmojiBarEditorDialog
 import com.luv.couple.ui.screens.ForcedUpdateDialog
@@ -97,9 +95,14 @@ class LockDrawActivity : ComponentActivity() {
     private lateinit var reactionFlyout: View
     private lateinit var reactionEmojiList: LinearLayout
     private lateinit var btnEmojiEdit: TextView
+    private lateinit var btnWeddingConfirm: TextView
     private lateinit var stickerOverlay: FrameLayout
     private var reactionExpanded = false
     private var eraserOn = false
+    private var weddingRetakeActive = false
+    private var weddingConfirmMine = false
+    private var weddingConfirmPartner = false
+    private var weddingConfirmBusy = false
     private var emojiEditorHost: FrameLayout? = null
     private var brushStudioHost: FrameLayout? = null
     private var profileHost: FrameLayout? = null
@@ -192,6 +195,7 @@ class LockDrawActivity : ComponentActivity() {
         reactionFlyout = findViewById(R.id.reactionFlyout)
         reactionEmojiList = findViewById(R.id.reactionEmojiList)
         btnEmojiEdit = findViewById(R.id.btnEmojiEdit)
+        btnWeddingConfirm = findViewById(R.id.btnWeddingConfirm)
         stickerOverlay = findViewById(R.id.stickerOverlay)
         stickerOverlay.isClickable = false
         stickerOverlay.isFocusable = false
@@ -209,6 +213,9 @@ class LockDrawActivity : ComponentActivity() {
         btnGuess = findViewById(R.id.btnGuess)
 
         lobbyId = intent.getStringExtra(EXTRA_LOBBY_ID)
+        lifecycleScope.launch {
+            runCatching { LuvApiClient.pingAchievement("lobby_opens") }
+        }
             ?: CanvasStore.activeLobbyId.value
         lobbyId?.let { CanvasStore.setActiveLobby(it) }
 
@@ -230,6 +237,7 @@ class LockDrawActivity : ComponentActivity() {
                 CanvasCapture.saveMoment(this@LockDrawActivity, lobbyId)
                     .onSuccess {
                         flashStatus(getString(R.string.moment_saved))
+                        runCatching { LuvApiClient.pingAchievement("moments_saved") }
                     }
                     .onFailure {
                         flashStatus(it.message ?: "Fehler")
@@ -262,6 +270,12 @@ class LockDrawActivity : ComponentActivity() {
             (reactionPanel.layoutParams as FrameLayout.LayoutParams).apply {
                 topMargin = bars.top + (8 * dp).toInt()
                 reactionPanel.layoutParams = this
+            }
+            if (::btnWeddingConfirm.isInitialized) {
+                (btnWeddingConfirm.layoutParams as FrameLayout.LayoutParams).apply {
+                    topMargin = bars.top + (8 * dp).toInt()
+                    btnWeddingConfirm.layoutParams = this
+                }
             }
             (gameHud.layoutParams as FrameLayout.LayoutParams).apply {
                 topMargin = bars.top + (48 * dp).toInt()
@@ -303,6 +317,9 @@ class LockDrawActivity : ComponentActivity() {
             lobbyTitle.text = lobby?.name.orEmpty()
             lobbyTitle.maxLines = 1
             lobbyTitle.ellipsize = android.text.TextUtils.TruncateAt.END
+            weddingRetakeActive = lobby?.isWeddingRetake == true ||
+                (lobby?.isWedding == true && lobby.name.contains("Hochzeitsbild", ignoreCase = true))
+            setupWeddingConfirmUi()
             applyMyColor(snap.colorIndex, persist = false, sync = false)
             // Eigene Historie an aktuelle Farbe anpassen (sonst gemischte Farben bis zum Picker)
             CanvasStore.recolorOwnStrokes(snap.colorIndex, lobbyId, broadcast = false)
@@ -476,12 +493,44 @@ class LockDrawActivity : ComponentActivity() {
                         if (event.ok) flashStatus("Richtig!")
                     }
                     is PairEvent.LobbyGone -> if (event.lobbyId == id) {
-                        flashStatus("Verbindung wird wiederhergestellt…")
-                        PairConnectionService.reconnectNow(this@LockDrawActivity, id)
+                        if (weddingRetakeActive) {
+                            Toast.makeText(
+                                this@LockDrawActivity,
+                                "Hochzeitsbild gespeichert",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            lifecycleScope.launch {
+                                withContext(Dispatchers.IO) {
+                                    runCatching { LuvApp.instance.prefs.removeLobby(id) }
+                                }
+                                finish()
+                            }
+                        } else {
+                            flashStatus("Verbindung wird wiederhergestellt…")
+                            PairConnectionService.reconnectNow(this@LockDrawActivity, id)
+                        }
                     }
                     is PairEvent.CanvasTaken -> if (event.lobbyId == id) {
                         // Nur Leinwand verlassen — Lobby-WS bleibt verbunden
                         finish()
+                    }
+                    is PairEvent.WeddingConfirm -> if (event.lobbyId == id) {
+                        val myId = AccountSession.account.value?.id
+                        if (myId != null && event.confirms.isNotEmpty()) {
+                            weddingConfirmMine = event.confirms[myId] == true
+                            weddingConfirmPartner = event.confirms.any { (uid, ok) ->
+                                uid != myId && ok
+                            }
+                            paintWeddingConfirmButton()
+                            if (weddingConfirmMine && weddingConfirmPartner) {
+                                flashStatus("Beide bestätigt — speichere Bild…")
+                            } else if (event.fromUserId != null && event.fromUserId != myId) {
+                                flashStatus(
+                                    if (weddingConfirmPartner) "Partner hat bestätigt ✓"
+                                    else "Partner wartet auf dich"
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -612,6 +661,102 @@ class LockDrawActivity : ComponentActivity() {
                 } else {
                     Toast.makeText(this@LockDrawActivity, msg, Toast.LENGTH_LONG).show()
                 }
+            }
+        }
+    }
+
+    private fun setupWeddingConfirmUi() {
+        if (!::btnWeddingConfirm.isInitialized) return
+        if (!weddingRetakeActive) {
+            btnWeddingConfirm.visibility = View.GONE
+            return
+        }
+        btnWeddingConfirm.visibility = View.VISIBLE
+        btnWeddingConfirm.setOnClickListener { onWeddingConfirmTap() }
+        paintWeddingConfirmButton()
+        lifecycleScope.launch {
+            val state = withContext(Dispatchers.IO) {
+                runCatching { LuvApiClient.fetchWeddingImageConfirm() }.getOrNull()
+            } ?: return@launch
+            if (!state.weddingImageRetake && !weddingRetakeActive) {
+                btnWeddingConfirm.visibility = View.GONE
+                return@launch
+            }
+            weddingRetakeActive = true
+            weddingConfirmMine = state.weddingConfirmMine
+            weddingConfirmPartner = state.weddingConfirmPartner
+            btnWeddingConfirm.visibility = View.VISIBLE
+            paintWeddingConfirmButton()
+            if (state.done) {
+                Toast.makeText(this@LockDrawActivity, "Hochzeitsbild gespeichert", Toast.LENGTH_SHORT)
+                    .show()
+                finish()
+            }
+        }
+    }
+
+    private fun paintWeddingConfirmButton() {
+        if (!::btnWeddingConfirm.isInitialized) return
+        val on = weddingConfirmMine
+        btnWeddingConfirm.setBackgroundResource(
+            if (on) R.drawable.wedding_confirm_circle_on else R.drawable.wedding_confirm_circle
+        )
+        btnWeddingConfirm.setTextColor(
+            if (on) 0xFFFFFFFF.toInt() else 0xFF43A047.toInt()
+        )
+        btnWeddingConfirm.alpha = if (weddingConfirmBusy) 0.55f else 1f
+        btnWeddingConfirm.contentDescription = when {
+            weddingConfirmMine && weddingConfirmPartner -> "Beide bestätigt"
+            weddingConfirmMine -> "Du hast bestätigt — warte auf Partner"
+            else -> "Hochzeitsbild bestätigen"
+        }
+    }
+
+    private fun onWeddingConfirmTap() {
+        if (!weddingRetakeActive || weddingConfirmBusy) return
+        val id = lobbyId ?: return
+        weddingConfirmBusy = true
+        paintWeddingConfirmButton()
+        lifecycleScope.launch {
+            try {
+                val lobby = withContext(Dispatchers.IO) {
+                    LuvApp.instance.prefs.snapshot().lobbies.firstOrNull { it.id == id }
+                }
+                if (lobby != null) {
+                    CanvasMemoryKeeper.uploadSnapshot(lobby)
+                }
+                val result = withContext(Dispatchers.IO) {
+                    LuvApiClient.confirmWeddingImage(confirm = true)
+                }
+                weddingConfirmMine = result.weddingConfirmMine
+                weddingConfirmPartner = result.weddingConfirmPartner
+                paintWeddingConfirmButton()
+                when {
+                    result.done -> {
+                        Toast.makeText(
+                            this@LockDrawActivity,
+                            result.message ?: "Hochzeitsbild gespeichert",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        withContext(Dispatchers.IO) {
+                            runCatching { LuvApp.instance.prefs.removeLobby(id) }
+                        }
+                        finish()
+                    }
+                    result.weddingConfirmMine && !result.weddingConfirmPartner -> {
+                        flashStatus("Warte auf Partner-Bestätigung…")
+                    }
+                    else -> flashStatus(result.message ?: "Bestätigt")
+                }
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this@LockDrawActivity,
+                    e.message ?: "Bestätigen fehlgeschlagen",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } finally {
+                weddingConfirmBusy = false
+                paintWeddingConfirmButton()
             }
         }
     }
@@ -839,6 +984,9 @@ class LockDrawActivity : ComponentActivity() {
     private fun sendReaction(emoji: String) {
         showReaction(emoji)
         PairConnectionService.sendReaction(this, emoji, lobbyId)
+        lifecycleScope.launch {
+            runCatching { LuvApiClient.pingAchievement("reactions_sent") }
+        }
     }
 
     private fun fullscreenComposeHost(): FrameLayout {
@@ -2208,22 +2356,8 @@ class LockDrawActivity : ComponentActivity() {
                     adjustViewBounds = true
                 }
                 addView(img)
-                val url = petImageUrl(pet)
-                if (!url.isNullOrBlank()) {
-                    lifecycleScope.launch {
-                        val bmp = withContext(Dispatchers.IO) {
-                            runCatching {
-                                val req = okhttp3.Request.Builder().url(url).get().build()
-                                LuvApiClient.httpClient().newCall(req).execute().use { resp ->
-                                    if (!resp.isSuccessful) return@runCatching null
-                                    val bytes = resp.body?.bytes() ?: return@runCatching null
-                                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                                }
-                            }.getOrNull()
-                        }
-                        if (bmp != null) img.setImageBitmap(bmp)
-                    }
-                }
+                // Cache nutzen — sonst blinkt img_*-Begleiter bei jedem Legend-Refresh (Strich)
+                bindItemImage(img, pet)
             }
         } else {
             TextView(this).apply {

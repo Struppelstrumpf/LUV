@@ -61,7 +61,26 @@ function getMarketSellable(db, kind, itemId, sources, ctx) {
   return defaultMarketSellable(kind, itemId, sources);
 }
 
-function setMarketSellable(db, kind, itemId, sellable, ctx) {
+function defaultLootboxEligible(kind, itemId, sources, ctx) {
+  if (isLockedStarter(kind, itemId, ctx || {})) return false;
+  const src = sources || [];
+  // Ehe-Items nicht in Lootbox; Rest standardmäßig ja (auch wenn gerade nicht im Shop)
+  if (src.includes("marriage")) return false;
+  return true;
+}
+
+function getLootboxEligible(db, kind, itemId, sources, ctx) {
+  if (isLockedStarter(kind, itemId, ctx || {})) return false;
+  const flags = ensureTradeFlags(db);
+  const key = itemKey(kind, itemId);
+  const entry = flags[key];
+  if (entry && typeof entry.lootboxEligible === "boolean") {
+    return entry.lootboxEligible;
+  }
+  return defaultLootboxEligible(kind, itemId, sources, ctx);
+}
+
+function patchTradeFlags(db, kind, itemId, patch, ctx) {
   const k = String(kind || "").trim();
   const id = String(itemId || "").trim();
   if (!KINDS.includes(k) || !id) {
@@ -71,16 +90,41 @@ function setMarketSellable(db, kind, itemId, sellable, ctx) {
     return {
       ok: false,
       error: "locked",
-      message: "Starter-/Ehe-Items sind dauerhaft nicht handelbar.",
+      message: "Starter-/Ehe-Items sind dauerhaft gesperrt.",
     };
   }
   const flags = ensureTradeFlags(db);
   const key = itemKey(k, id);
-  flags[key] = {
-    marketSellable: Boolean(sellable),
-    updatedAt: Date.now(),
+  const prev = flags[key] && typeof flags[key] === "object" ? flags[key] : {};
+  const next = { ...prev, updatedAt: Date.now() };
+  if (patch && typeof patch.marketSellable === "boolean") {
+    next.marketSellable = patch.marketSellable;
+  }
+  if (patch && typeof patch.lootboxEligible === "boolean") {
+    next.lootboxEligible = patch.lootboxEligible;
+  }
+  flags[key] = next;
+  return {
+    ok: true,
+    kind: k,
+    itemId: id,
+    marketSellable:
+      typeof next.marketSellable === "boolean"
+        ? next.marketSellable
+        : getMarketSellable(db, k, id, [], ctx),
+    lootboxEligible:
+      typeof next.lootboxEligible === "boolean"
+        ? next.lootboxEligible
+        : getLootboxEligible(db, k, id, [], ctx),
   };
-  return { ok: true, kind: k, itemId: id, marketSellable: Boolean(sellable) };
+}
+
+function setMarketSellable(db, kind, itemId, sellable, ctx) {
+  return patchTradeFlags(db, kind, itemId, { marketSellable: Boolean(sellable) }, ctx);
+}
+
+function setLootboxEligible(db, kind, itemId, eligible, ctx) {
+  return patchTradeFlags(db, kind, itemId, { lootboxEligible: Boolean(eligible) }, ctx);
 }
 
 function addSource(map, kind, itemId, source, extra = {}) {
@@ -264,6 +308,7 @@ function listItemUniverse(db, ctx) {
     const sources = [...row.sources].sort();
     const locked = isLockedStarter(row.kind, row.itemId, lockCtx);
     const marketSellable = getMarketSellable(db, row.kind, row.itemId, sources, lockCtx);
+    const lootboxEligible = getLootboxEligible(db, row.kind, row.itemId, sources, lockCtx);
     const label = itemLabels.resolveDisplayLabel(
       db,
       row.kind,
@@ -288,6 +333,7 @@ function listItemUniverse(db, ctx) {
       achievementIds: row.achievementIds,
       achievements,
       marketSellable,
+      lootboxEligible,
       marketLocked: locked,
     };
   });
@@ -340,7 +386,11 @@ module.exports = {
   ensureTradeFlags,
   isLockedStarter,
   defaultMarketSellable,
+  defaultLootboxEligible,
   getMarketSellable,
+  getLootboxEligible,
   setMarketSellable,
+  setLootboxEligible,
+  patchTradeFlags,
   listItemUniverse,
 };

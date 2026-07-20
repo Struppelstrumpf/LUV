@@ -72,7 +72,15 @@ object CanvasMemoryKeeper {
     }
 
     fun absoluteImageUrl(pathOrUrl: String): String {
-        if (pathOrUrl.startsWith("http")) return pathOrUrl
-        return LuvApiClient.baseUrl().trimEnd('/') + pathOrUrl
+        val base = if (pathOrUrl.startsWith("http")) {
+            pathOrUrl
+        } else {
+            LuvApiClient.baseUrl().trimEnd('/') + pathOrUrl
+        }
+        val tok = LuvApiClient.sessionToken?.trim().orEmpty()
+        if (tok.isEmpty()) return base
+        if (base.contains("session=")) return base
+        val sep = if (base.contains('?')) "&" else "?"
+        return base + sep + "session=" + java.net.URLEncoder.encode(tok, Charsets.UTF_8.name())
     }
 }

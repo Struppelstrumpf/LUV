@@ -1346,6 +1346,12 @@ private fun CreateListingDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (picking) {
+                    Text(
+                        "Nur Coins in LUV — Echtgeldhandel mit Items ist verboten und kann zum Ban führen.",
+                        color = MarketBrown.copy(alpha = 0.75f),
+                        fontFamily = BodyFont,
+                        fontSize = 12.sp
+                    )
                     if (showInventarTabs) {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             CreateInventoryTabs.chunked(2).forEach { row ->

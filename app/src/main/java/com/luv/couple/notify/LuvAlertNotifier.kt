@@ -32,15 +32,16 @@ import java.util.concurrent.ConcurrentHashMap
  * (Die stille Foreground-Service-Notification ist davon getrennt.)
  */
 object LuvAlertNotifier {
-    const val CHANNEL_ID = "luv_alerts"
+    const val CHANNEL_ID = "luv_alerts_v2"
     /** v2: leiser als der alte HIGH-Kanal (Importance wird nach Erstellung nicht mehr geändert). */
     const val LIVE_CHANNEL_ID = "luv_live_near_v2"
-    private const val DRAW_MIN_INTERVAL_MS = 150_000L
-    private const val DRAW_RICH_INTERVAL_MS = 100_000L
+    const val MOOD_CHANNEL_ID = "luv_mood_v2"
+    private const val DRAW_MIN_INTERVAL_MS = 90_000L
+    private const val DRAW_RICH_INTERVAL_MS = 60_000L
     private const val DRAW_WAKE_INTERVAL_MS = 180_000L
-    /** Vorschau erst 5 s nach dem letzten Strich — und nur nach mind. 5 s Malen. */
-    private const val PREVIEW_SETTLE_MS = 5_000L
-    private const val PREVIEW_MIN_PAINT_MS = 5_000L
+    /** Vorschau kurz nach dem letzten Strich — mind. ~1,2 s Mal-Burst. */
+    private const val PREVIEW_SETTLE_MS = 2_000L
+    private const val PREVIEW_MIN_PAINT_MS = 1_200L
     private const val NOTIFY_DRAW_BASE = 770
     private const val NOTIFY_JOIN_BASE = 880
     private const val NOTIFY_CLEAR_BASE = 900
@@ -53,7 +54,6 @@ object LuvAlertNotifier {
     private const val NOTIFY_FRIEND = 998
     private const val NOTIFY_ACHIEVEMENT = 999
     private const val NOTIFY_INVENTORY = 1001
-    const val MOOD_CHANNEL_ID = "luv_mood"
 
     private data class PaintBurst(
         var startedAt: Long,
@@ -134,8 +134,7 @@ object LuvAlertNotifier {
             .setContentText(sub)
             .setStyle(
                 NotificationCompat.BigTextStyle()
-                    .bigText(line)
-                    .setBigContentTitle("LUV")
+                    .bigText("$line\n$sub")
             )
             .setContentIntent(open)
             .setAutoCancel(true)
@@ -180,8 +179,7 @@ object LuvAlertNotifier {
 
             val who = nickname.ifBlank { "Jemand" }
             if (rich) {
-                // Vorschau + Push erst 5 s nach dem letzten Strich (Debounce),
-                // und nur wenn mind. 5 s gemalt wurde.
+                // Vorschau + Push nach kurzem Debounce, sobald mind. kurz gemalt wurde.
                 scheduleRichPreviewNotify(
                     app = app,
                     lobbyId = lobbyId,
@@ -286,7 +284,7 @@ object LuvAlertNotifier {
             if (!claimed) return@launch
             show(
                 context = context.applicationContext,
-                title = context.getString(R.string.app_name),
+                title = "Lobby",
                 text = context.getString(R.string.peer_join_text_fmt, lobbyName, who),
                 notificationId = NOTIFY_JOIN_BASE + (lobbyId.hashCode() and 0xffff),
                 lobbyId = lobbyId
@@ -308,7 +306,7 @@ object LuvAlertNotifier {
             val lobby = lobbyName.ifBlank { "Lobby" }
             show(
                 context = context.applicationContext,
-                title = context.getString(R.string.app_name),
+                title = "Leinwand",
                 text = context.getString(R.string.clear_ask_notify_fmt, who, lobby),
                 notificationId = NOTIFY_CLEAR_BASE + (lobbyId.hashCode() and 0xffff),
                 lobbyId = lobbyId
@@ -330,7 +328,7 @@ object LuvAlertNotifier {
             val lobby = lobbyName.ifBlank { "Lobby" }
             show(
                 context = context.applicationContext,
-                title = context.getString(R.string.app_name),
+                title = "Teilen",
                 text = context.getString(R.string.public_ask_notify_fmt, who, lobby),
                 notificationId = NOTIFY_PUBLIC_BASE + (lobbyId.hashCode() and 0xffff),
                 lobbyId = lobbyId
@@ -362,7 +360,7 @@ object LuvAlertNotifier {
             )
             val notification = NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(context.getString(R.string.app_name))
+                .setContentTitle("Erinnerung")
                 .setContentText("Eure Leinwand in „$lobbyName“ wartet als Erinnerung")
                 .setStyle(
                     NotificationCompat.BigTextStyle()
@@ -396,7 +394,7 @@ object LuvAlertNotifier {
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(context.getString(R.string.app_name))
+            .setContentTitle("Hinweise")
             .setContentText(
                 if (count == 1) "1 neuer Hinweis" else "$count neue Hinweise"
             )
@@ -518,7 +516,7 @@ object LuvAlertNotifier {
             notifyOpenMain(
                 context = context.applicationContext,
                 notificationId = NOTIFY_DAILY,
-                title = context.getString(R.string.app_name),
+                title = "Tagesbonus",
                 text = context.getString(R.string.daily_coins_text_fmt, amount),
                 extras = {
                     putExtra(MainActivity.EXTRA_OPEN_HOME, true)
@@ -603,7 +601,7 @@ object LuvAlertNotifier {
             openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val title = if (rich) "$nickname malt gerade" else context.getString(R.string.app_name)
+        val title = if (rich) "$nickname malt gerade" else context.getString(R.string.partner_draw_title)
         val text = if (rich) {
             "in „$lobbyName“ — tippen und dabei sein"
         } else {

@@ -326,6 +326,7 @@ class PrefsRepository(private val context: Context) {
                     isFree = r.isFree,
                     isRandom = r.isRandom || prev?.isRandom == true,
                     isWedding = r.isWedding || prev?.isWedding == true,
+                    isWeddingRetake = r.isWeddingRetake || prev?.isWeddingRetake == true,
                     hostNickname = r.hostNickname.ifBlank { prev?.hostNickname.orEmpty() },
                     hostColorSide = r.hostColorSide,
                     peakPeers = prev?.peakPeers ?: 1,
@@ -1153,6 +1154,7 @@ class PrefsRepository(private val context: Context) {
                                 isFree = o.optBoolean("isFree", false),
                                 isRandom = o.optBoolean("isRandom", false),
                                 isWedding = o.optBoolean("isWedding", false),
+                                isWeddingRetake = o.optBoolean("isWeddingRetake", false),
                                 hostNickname = o.optString("hostNickname", ""),
                                 hostColorSide = o.optString("hostColorSide", "blue").ifBlank { "blue" },
                                 peakPeers = o.optInt("peakPeers", 1).coerceAtLeast(1),
@@ -1181,6 +1183,7 @@ class PrefsRepository(private val context: Context) {
                         .put("isFree", lobby.isFree)
                         .put("isRandom", lobby.isRandom)
                         .put("isWedding", lobby.isWedding)
+                        .put("isWeddingRetake", lobby.isWeddingRetake)
                         .put("hostNickname", lobby.hostNickname)
                         .put("hostColorSide", lobby.hostColorSide)
                         .put("peakPeers", lobby.peakPeers.coerceAtLeast(1))

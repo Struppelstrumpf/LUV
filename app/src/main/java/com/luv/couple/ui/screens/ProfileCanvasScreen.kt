@@ -1103,6 +1103,17 @@ fun ProfileCanvasScreen(
                             modifier = Modifier.fillMaxWidth(),
                             textAlign = TextAlign.Center
                         )
+                        Text(
+                            "Level +1/Tag, wenn ihr beide auf einer gemeinsamen Lobby malt. " +
+                                "Kraulen: beide bekommen Coins (mehr ab Lv. 25/50/100).",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 11.sp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            textAlign = TextAlign.Center
+                        )
                     }
                     // Kein Heiraten, wenn schon Verlobt/Ehe mit jemandem (auch bei API-Drift)
                     val alreadyBonded = !spouseExtraName.isNullOrBlank() ||
@@ -1412,12 +1423,20 @@ fun ProfileCanvasScreen(
                         displayCoins = result.toCoins
                         peerPetEmoji = result.petEmoji
                         canPetKraul = false
+                        friendshipLevel = result.friendshipLevel
                         result.amount
                     },
                     onFinished = { ok, message ->
                         showPetKraul = false
                         petKraulBusy = false
-                        if (!ok && !message.isNullOrBlank()) {
+                        if (ok) {
+                            Toast.makeText(
+                                context,
+                                if (!message.isNullOrBlank()) message
+                                else "Beide haben Coins bekommen",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        } else if (!message.isNullOrBlank()) {
                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                         }
                     }
@@ -1802,7 +1821,8 @@ private fun PetKraulOverlay(
             // +1 Coin erst wenn Begleiter weg ist und Gutschrift ok
             if (phase == PetKraulPhase.Coin || coinAlpha > 0.01f) {
                 Text(
-                    "+$creditedAmount Coin",
+                    if (creditedAmount == 1) "+1 Coin für euch beide"
+                    else "+$creditedAmount Coins für euch beide",
                     color = AccentRose,
                     fontFamily = DisplayFont,
                     fontSize = 32.sp,

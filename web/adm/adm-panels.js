@@ -574,15 +574,15 @@
                     .map(
                       (l) => `<div class="list-item">
                   <div><strong>${esc(l.name || l.code)}</strong>
-                    <div class="muted mono">${esc(l.code)} · ${l.live ? "live" : l.active ? "aktiv" : "inaktiv"} · ${l.online ?? 0}/${l.capacity ?? "?"} online</div>
+                    <div class="muted mono">${esc(l.code)} · ${l.joined ? "beigetreten" : "gehostet"} · ${l.live ? "live" : l.active ? "aktiv" : "inaktiv"} · ${l.online ?? 0}/${l.capacity ?? "?"} online</div>
                   </div>
                   <div class="actions">
-                    <button type="button" class="btn secondary" data-canvas="${esc(l.code)}">Leinwand</button>
+                    <button type="button" class="btn secondary" data-canvas="${esc(l.code)}">Leinwand ansehen</button>
                   </div>
                 </div>`
                     )
                     .join("")}</div>`
-                : `<p class="muted">Keine gehosteten Lobbys.</p>`
+                : `<p class="muted">Keine Lobbys (weder gehostet noch beigetreten).</p>`
             }
           </div>
 
@@ -746,6 +746,7 @@
       <h3 style="font-family:var(--display);margin:0 0 0.4rem">Leinwand ${esc(code)}</h3>
       <p class="help">${data.strokeCount || 0} Striche · ${data.live ? "live" : "gespeichert"}</p>
       <canvas id="admCanvas" width="360" height="640" style="width:100%;max-width:360px;background:#1a2030;border-radius:12px;border:1px solid var(--line)"></canvas>
+      <p id="admCanvasHint" class="help" style="margin-top:0.45rem"></p>
       <div class="actions" style="margin-top:0.75rem">
         <button type="button" class="btn ghost" id="cancelModal">Schließen</button>
       </div>`,
@@ -755,23 +756,73 @@
     const canvas = $("admCanvas");
     const ctx = canvas.getContext("2d");
     const palette = ["#E94E77", "#4EC4FF", "#2EE6A8", "#FFD54F", "#9B7BFF", "#FF8A65", "#F4F1EA", "#80CBC4"];
+    const shortSide = Math.min(canvas.width, canvas.height);
     ctx.fillStyle = "#121826";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    for (const s of strokes) {
-      const pts = s.points || [];
-      if (pts.length < 2) continue;
-      ctx.strokeStyle = palette[(s.colorIndex || 0) % palette.length];
-      ctx.lineWidth = Math.max(1, (s.width || 0.01) * canvas.width);
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.beginPath();
-      pts.forEach((p, i) => {
-        const x = (p.x || 0) * canvas.width;
-        const y = (p.y || 0) * canvas.height;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
+
+    const drawStrokes = () => {
+      for (const s of strokes) {
+        const pts = s.points || [];
+        if (!pts.length) continue;
+        const color = palette[(s.colorIndex || 0) % palette.length];
+        // width ist Referenz-Pixel (~18 bei Seite 1000), nicht 0–1
+        const lw = Math.max(1.5, ((Number(s.width) || 18) / 1000) * shortSide);
+        if (s.emoji) {
+          const p = pts[0];
+          const x = (p.x || 0) * canvas.width;
+          const y = (p.y || 0) * canvas.height;
+          const size = Math.max(18, shortSide * 0.08);
+          ctx.font = `${size}px "Segoe UI Emoji","Apple Color Emoji",sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(String(s.emoji), x, y);
+          continue;
+        }
+        if (pts.length < 2) continue;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lw;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        pts.forEach((p, i) => {
+          const x = (p.x || 0) * canvas.width;
+          const y = (p.y || 0) * canvas.height;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+    };
+    drawStrokes();
+
+    const hint = $("admCanvasHint");
+    if (!strokes.length && hint) {
+      hint.textContent = "Keine Striche geladen — versuche Memory-Snapshot…";
+      try {
+        const token = localStorage.getItem("luv_adm_token") || "";
+        const resp = await fetch(`/luv/v1/rooms/${encodeURIComponent(code)}/memory/image`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => {
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            URL.revokeObjectURL(url);
+            hint.textContent = "Memory-Snapshot (kein Live-Strich-Log).";
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            hint.textContent = "Keine Leinwand-Daten für diese Lobby.";
+          };
+          img.src = url;
+        } else {
+          hint.textContent = "Keine Leinwand-Daten für diese Lobby.";
+        }
+      } catch (_) {
+        hint.textContent = "Keine Leinwand-Daten für diese Lobby.";
+      }
     }
   }
 
@@ -1235,11 +1286,294 @@
     };
   }
 
+  const MONTHS_DE = [
+    "Januar", "Februar", "März", "April", "Mai", "Juni",
+    "Juli", "August", "September", "Oktober", "November", "Dezember",
+  ];
+
+  const DECOR_PRESETS = [
+    { id: "none", label: "Keine" },
+    { id: "snow", label: "Schnee" },
+    { id: "hearts", label: "Herzen" },
+    { id: "leaves", label: "Blätter" },
+    { id: "sparkle", label: "Funken" },
+  ];
+
+  async function renderEvents() {
+    const content = contentEl();
+    const year = new Date().getUTCFullYear();
+    const data = await api(`/admin/events?year=${year}`);
+    const events = data.events || [];
+    const overview = data.year || { year, months: [] };
+    let selectedId = events.find((e) => e.active)?.id || events[0]?.id || "";
+
+    function decorPreviewHtml(d) {
+      const particles = d?.particles || "none";
+      const accent = d?.accentHex || "#E94E77";
+      const banner = d?.bannerText || "";
+      return `<div class="ev-decor-preview" style="--ev-accent:${esc(accent)}" data-particles="${esc(particles)}">
+        <div class="ev-decor-particles" aria-hidden="true"></div>
+        ${banner ? `<div class="ev-decor-banner">${esc(banner)}</div>` : `<div class="ev-decor-banner is-empty">Kein Banner</div>`}
+        <div class="ev-decor-label">${esc(DECOR_PRESETS.find((p) => p.id === particles)?.label || particles)}</div>
+      </div>`;
+    }
+
+    function editorHtml(ev) {
+      if (!ev) return `<p class="help">Event wählen.</p>`;
+      const d = ev.decor || {};
+      return `<form id="evEditForm" class="ev-edit-form" data-id="${esc(ev.id)}">
+        <div class="ev-edit-head">
+          <span class="ev-edit-emoji">${esc(ev.emoji || "🎉")}</span>
+          <div>
+            <h4 style="margin:0">${esc(ev.title)}</h4>
+            <div class="muted mono" style="font-size:0.8rem">${esc(ev.id)}</div>
+          </div>
+          <label class="field" style="flex-direction:row;align-items:center;gap:0.4rem;margin:0">
+            <input type="checkbox" name="enabled" ${ev.enabled !== false ? "checked" : ""} /> Aktiv
+          </label>
+        </div>
+        <label class="field">Titel
+          <input name="title" maxlength="60" value="${esc(ev.title || "")}" />
+        </label>
+        <label class="field">Emoji
+          <input name="emoji" maxlength="8" value="${esc(ev.emoji || "")}" />
+        </label>
+        <label class="field">Beschreibung
+          <textarea name="description" rows="2" maxlength="240">${esc(ev.description || "")}</textarea>
+        </label>
+        <label class="field">Hinweis
+          <input name="hint" maxlength="200" value="${esc(ev.hint || "")}" />
+        </label>
+        <div class="grid-2">
+          <label class="field">Coins / Collect
+            <input name="rewardCoinsPerCollect" type="number" min="0" max="50" value="${esc(ev.rewardCoinsPerCollect ?? 2)}" />
+          </label>
+          <label class="field">Sammel-Ziel
+            <input name="collectTarget" type="number" min="1" max="31" value="${esc(ev.collectTarget ?? 3)}" />
+          </label>
+        </div>
+        <div class="grid-2">
+          <label class="field">Meilenstein-Bonus
+            <input name="milestoneBonusCoins" type="number" min="0" max="50" value="${esc(ev.milestoneBonusCoins ?? 0)}" />
+          </label>
+          <label class="field">Dauer (Tage)
+            <input name="durationDays" type="number" min="1" max="31" value="${esc(ev.durationDays ?? 1)}" />
+          </label>
+        </div>
+        <h4 style="margin:0.85rem 0 0.35rem">App-Schmuck</h4>
+        <div class="grid-2">
+          <label class="field">Partikel
+            <select name="particles">
+              ${DECOR_PRESETS.map(
+                (p) =>
+                  `<option value="${p.id}" ${d.particles === p.id ? "selected" : ""}>${esc(p.label)}</option>`
+              ).join("")}
+            </select>
+          </label>
+          <label class="field">Akzentfarbe
+            <input name="accentHex" type="color" value="${esc((d.accentHex || "#E94E77").slice(0, 7))}" />
+          </label>
+        </div>
+        <label class="field">Banner-Text
+          <input name="bannerText" maxlength="48" value="${esc(d.bannerText || "")}" />
+        </label>
+        <label class="field">Intensität (0–1)
+          <input name="intensity" type="number" min="0" max="1" step="0.05" value="${esc(d.intensity ?? 0.55)}" />
+        </label>
+        <label class="field">Ornamente
+          <select name="ornaments">
+            ${["none", "wreath", "hearts", "spark"]
+              .map(
+                (o) =>
+                  `<option value="${o}" ${(d.ornaments || "none") === o ? "selected" : ""}>${esc(o)}</option>`
+              )
+              .join("")}
+          </select>
+        </label>
+        <div id="evDecorLive">${decorPreviewHtml(d)}</div>
+        <div class="actions" style="margin-top:0.75rem">
+          <button type="submit" class="btn">Speichern</button>
+        </div>
+        ${
+          ev.next
+            ? `<p class="help" style="margin-top:0.6rem">Nächstes Fenster: ${esc(ev.next.start || "—")}${
+                ev.next.end && ev.next.end !== ev.next.start ? ` – ${esc(ev.next.end)}` : ""
+              }${ev.active ? " · gerade aktiv" : ""}</p>`
+            : ""
+        }
+      </form>`;
+    }
+
+    function paint() {
+      const sel = events.find((e) => e.id === selectedId) || events[0];
+      selectedId = sel?.id || "";
+      const yearHtml = (overview.months || [])
+        .map((mo) => {
+          const pills = (mo.events || [])
+            .map(
+              (ev) =>
+                `<button type="button" class="ev-pill ${ev.id === selectedId ? "on" : ""}" data-ev-id="${esc(ev.id)}" title="${esc(ev.title)}">
+                  <span>${esc(ev.emoji || "·")}</span>
+                  <span>${esc(ev.label || ev.title)}</span>
+                </button>`
+            )
+            .join("");
+          return `<div class="ev-month">
+            <div class="ev-month-h">${esc(MONTHS_DE[(mo.month || 1) - 1])}</div>
+            <div class="ev-month-pills">${pills || `<span class="muted" style="font-size:0.8rem">—</span>`}</div>
+          </div>`;
+        })
+        .join("");
+
+      const listHtml = events
+        .map(
+          (e) => `<button type="button" class="ev-list-item ${e.id === selectedId ? "on" : ""} ${e.active ? "is-active" : ""} ${e.enabled === false ? "is-off" : ""}" data-ev-id="${esc(e.id)}">
+            <span class="ev-list-emoji">${esc(e.emoji || "🎉")}</span>
+            <span class="ev-list-meta">
+              <strong>${esc(e.title)}</strong>
+              <span class="muted">${e.active ? "jetzt aktiv" : e.next?.start || "—"}</span>
+            </span>
+          </button>`
+        )
+        .join("");
+
+      content.innerHTML = `
+        <div class="panel shop-hero">
+          <div class="shop-top">
+            <div>
+              <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">📅 Eventkalender</h3>
+              <p class="help" style="margin:0.4rem 0 0;max-width:52rem">
+                Wiederkehrende Jahres-Events mit täglichem Sammeln, Coin-Belohnungen und App-Schmuck.
+                Nutzer sehen aktive Events unter Sozial → Events.
+                <strong>Neues Event:</strong> Button unten links — dann rechts bearbeiten.
+              </p>
+            </div>
+            <button type="button" class="btn" id="evCreateBtn">+ Neues Event</button>
+          </div>
+        </div>
+        <div class="ev-layout">
+          <div class="panel">
+            <h4 style="margin:0 0 0.55rem">Jahr ${esc(overview.year || year)}</h4>
+            <div class="ev-year">${yearHtml}</div>
+            <h4 style="margin:1rem 0 0.45rem">Alle Events</h4>
+            <div class="ev-list">${listHtml}</div>
+          </div>
+          <div class="panel" id="evEditorPanel">${editorHtml(sel)}</div>
+        </div>`;
+
+      const createBtn = $("evCreateBtn");
+      if (createBtn) {
+        createBtn.onclick = async () => {
+          const title = prompt("Titel für das neue Event?", "Mein Event");
+          if (title == null) return;
+          const emoji = prompt("Emoji?", "🎉") || "🎉";
+          const month = Number(prompt("Start-Monat (1–12)?", String(new Date().getMonth() + 1)) || 1);
+          const day = Number(prompt("Start-Tag (1–31)?", "1") || 1);
+          try {
+            const res = await api("/admin/events", {
+              method: "POST",
+              body: JSON.stringify({
+                title: String(title).trim() || "Neues Event",
+                emoji: String(emoji).trim() || "🎉",
+                month,
+                day,
+                durationDays: 3,
+                rewardCoinsPerCollect: 2,
+                collectTarget: 3,
+                milestoneBonusCoins: 5,
+              }),
+            });
+            const next = res.events || [];
+            events.length = 0;
+            events.push(...next);
+            if (res.year) {
+              overview.months = res.year.months || overview.months;
+              overview.year = res.year.year || overview.year;
+            }
+            selectedId = res.event?.id || selectedId;
+            alert("Event angelegt — rechts bearbeiten und speichern.");
+            paint();
+          } catch (err) {
+            alert(err?.message || "Anlegen fehlgeschlagen");
+          }
+        };
+      }
+
+      content.querySelectorAll("[data-ev-id]").forEach((btn) => {
+        btn.onclick = () => {
+          selectedId = btn.getAttribute("data-ev-id") || "";
+          paint();
+        };
+      });
+
+      const form = $("evEditForm");
+      if (form) {
+        const syncPreview = () => {
+          const fd = new FormData(form);
+          const live = $("evDecorLive");
+          if (live) {
+            live.innerHTML = decorPreviewHtml({
+              particles: fd.get("particles"),
+              accentHex: fd.get("accentHex"),
+              bannerText: fd.get("bannerText"),
+              intensity: fd.get("intensity"),
+              ornaments: fd.get("ornaments"),
+            });
+          }
+        };
+        form.querySelectorAll("input, select, textarea").forEach((el) => {
+          el.addEventListener("input", syncPreview);
+          el.addEventListener("change", syncPreview);
+        });
+        form.onsubmit = async (e) => {
+          e.preventDefault();
+          const fd = new FormData(form);
+          const id = form.getAttribute("data-id");
+          const patch = {
+            id,
+            title: String(fd.get("title") || ""),
+            emoji: String(fd.get("emoji") || ""),
+            description: String(fd.get("description") || ""),
+            hint: String(fd.get("hint") || ""),
+            enabled: Boolean(fd.get("enabled")),
+            rewardCoinsPerCollect: Number(fd.get("rewardCoinsPerCollect")),
+            collectTarget: Number(fd.get("collectTarget")),
+            milestoneBonusCoins: Number(fd.get("milestoneBonusCoins")),
+            durationDays: Number(fd.get("durationDays")),
+            decor: {
+              particles: String(fd.get("particles") || "none"),
+              accentHex: String(fd.get("accentHex") || "#E94E77"),
+              bannerText: String(fd.get("bannerText") || ""),
+              intensity: Number(fd.get("intensity")),
+              ornaments: String(fd.get("ornaments") || "none"),
+            },
+          };
+          try {
+            const res = await api("/admin/events", {
+              method: "PUT",
+              body: JSON.stringify({ events: [patch] }),
+            });
+            const next = res.events || [];
+            events.length = 0;
+            events.push(...next);
+            alert("Gespeichert");
+            paint();
+          } catch (err) {
+            alert(err?.message || "Speichern fehlgeschlagen");
+          }
+        };
+      }
+    }
+
+    paint();
+  }
+
   window.LuvAdmPanels = {
     renderAchievements,
     renderUsers,
     renderPhrases,
     renderDailyTasks,
+    renderEvents,
     openAchievementWizard,
     openUserDetail,
   };

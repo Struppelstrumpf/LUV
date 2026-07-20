@@ -669,6 +669,7 @@ fun LuvAppNav() {
                     isFree = room.isFree,
                     isRandom = room.isRandom,
                     isWedding = room.isWedding,
+                    isWeddingRetake = room.isWeddingRetake,
                     hostNickname = room.hostNickname,
                     hostColorSide = room.hostColorSide
                 )
@@ -975,6 +976,7 @@ fun LuvAppNav() {
     LaunchedEffect(startDestination, account?.id) {
         if (startDestination != Routes.MAIN) return@LaunchedEffect
         if (account?.id.isNullOrBlank()) return@LaunchedEffect
+        runCatching { LuvApiClient.fetchEvents() }
         AchievementsBadge.refresh()
     }
 
@@ -1027,6 +1029,7 @@ fun LuvAppNav() {
                 )
                 scope.launch {
                     prefs.setActiveLobby(lobby.id)
+                    runCatching { LuvApiClient.pingAchievement("lobby_opens") }
                     refreshAccount()
                 }
             },
@@ -1044,7 +1047,7 @@ fun LuvAppNav() {
         runCatching { AppUpdater.checkOnNavigate(context) }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    EventDecorHost(modifier = Modifier.fillMaxSize()) {
     // Splash liegt über allem und bleibt während Prefs/Nav gemountet (kein Remount-Schwarz)
     if (destination != null) {
     NavHost(navController = navController, startDestination = destination) {
@@ -1159,6 +1162,7 @@ fun LuvAppNav() {
                                         prefs.setActiveLobby(lobby.id)
                                         prefs.markLobbyCanvasSeen(lobby.code)
                                         prefs.snoozeLobbyGlow(lobby.code)
+                                        runCatching { LuvApiClient.pingAchievement("lobby_opens") }
                                         refreshAccount()
                                     }
                                 }
@@ -1267,6 +1271,9 @@ fun LuvAppNav() {
                         1 -> SocialScreen(
                             initialTab = sozialSubTab,
                             onOpenFriendProfile = { userId, nick ->
+                                scope.launch {
+                                    runCatching { LuvApiClient.pingAchievement("profile_views") }
+                                }
                                 navController.currentBackStackEntry
                                     ?.savedStateHandle
                                     ?.set("peer_nick", nick)

@@ -475,7 +475,7 @@
    */
   function openGlyphComposer(onDone, opts = {}) {
     const title = opts.title || "Eigenes Emoji erstellen";
-    const layers = []; // {type:'emoji'|'image', emoji?, dataUrl?, x, y, scale}
+    const layers = []; // {type, emoji?, dataUrl?, x, y, scale, rotation, flipX, flipY}
     let selected = -1;
 
     const prev = document.getElementById("glyphComposerLayer");
@@ -487,7 +487,7 @@
       <div class="pet-paste-card wide-card">
         <h3 style="font-family:var(--display);margin:0 0 0.35rem">${title}</h3>
         <p class="help" style="margin:0 0 0.75rem">
-          Emojis kombinieren und/oder Bilder (mit Freistellung) hinzufügen. Ergebnis wird als transparentes PNG gespeichert.
+          Emojis kombinieren, drehen, spiegeln und/oder Bilder freistellen. Ergebnis wird als transparentes PNG gespeichert.
         </p>
         <div class="glyph-layout">
           <div class="glyph-stage-wrap">
@@ -505,6 +505,17 @@
               <label class="field">Größe <input type="range" id="glyphScale" min="0.25" max="1.6" step="0.05" value="1" /></label>
               <label class="field">X <input type="range" id="glyphX" min="0" max="1" step="0.01" value="0.5" /></label>
               <label class="field">Y <input type="range" id="glyphY" min="0" max="1" step="0.01" value="0.5" /></label>
+              <label class="field">Drehen
+                <div class="glyph-rot-row">
+                  <input type="range" id="glyphRot" min="0" max="360" step="1" value="0" />
+                  <span id="glyphRotVal" class="muted mono">0°</span>
+                </div>
+              </label>
+              <div class="actions glyph-flip-row">
+                <button type="button" class="btn secondary" id="glyphFlipH" title="Horizontal spiegeln">⟷ Spiegeln</button>
+                <button type="button" class="btn secondary" id="glyphFlipV" title="Vertikal spiegeln">↕ Spiegeln</button>
+                <button type="button" class="btn ghost" id="glyphRot90" title="90° drehen">↻ 90°</button>
+              </div>
             </div>
           </div>
         </div>
@@ -550,22 +561,30 @@
     async function paint() {
       ctx.clearRect(0, 0, 256, 256);
       for (const L of layers) {
-        const size = 256 * L.scale;
-        const x = L.x * 256;
-        const y = L.y * 256;
+        const size = 256 * (Number(L.scale) || 1);
+        const x = (Number(L.x) || 0.5) * 256;
+        const y = (Number(L.y) || 0.5) * 256;
+        const rot = ((Number(L.rotation) || 0) * Math.PI) / 180;
+        const sx = L.flipX ? -1 : 1;
+        const sy = L.flipY ? -1 : 1;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(rot);
+        ctx.scale(sx, sy);
         if (L.type === "emoji") {
           ctx.font = `${size * 0.85}px "Segoe UI Emoji","Apple Color Emoji",sans-serif`;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
-          ctx.fillText(L.emoji, x, y);
+          ctx.fillText(L.emoji, 0, 0);
         } else if (L.type === "image" && L.dataUrl) {
           try {
             const img = await loadImg(L.dataUrl);
-            ctx.drawImage(img, x - size / 2, y - size / 2, size, size);
+            ctx.drawImage(img, -size / 2, -size / 2, size, size);
           } catch {
             /* skip */
           }
         }
+        ctx.restore();
       }
       const url = canvas.toDataURL("image/png");
       prevImg.src = url;
@@ -599,21 +618,60 @@
       layer.querySelector("#glyphScale").value = String(L.scale);
       layer.querySelector("#glyphX").value = String(L.x);
       layer.querySelector("#glyphY").value = String(L.y);
+      layer.querySelector("#glyphRot").value = String(L.rotation || 0);
+      layer.querySelector("#glyphRotVal").textContent = `${Math.round(L.rotation || 0)}°`;
+      layer.querySelector("#glyphFlipH").classList.toggle("on", !!L.flipX);
+      layer.querySelector("#glyphFlipV").classList.toggle("on", !!L.flipY);
     }
 
-    ["glyphScale", "glyphX", "glyphY"].forEach((id) => {
+    function readSlidersIntoLayer() {
+      if (selected < 0 || !layers[selected]) return;
+      const L = layers[selected];
+      L.scale = Number(layer.querySelector("#glyphScale").value);
+      L.x = Number(layer.querySelector("#glyphX").value);
+      L.y = Number(layer.querySelector("#glyphY").value);
+      L.rotation = Number(layer.querySelector("#glyphRot").value) || 0;
+      layer.querySelector("#glyphRotVal").textContent = `${Math.round(L.rotation)}°`;
+    }
+
+    ["glyphScale", "glyphX", "glyphY", "glyphRot"].forEach((id) => {
       layer.querySelector("#" + id).oninput = () => {
-        if (selected < 0 || !layers[selected]) return;
-        layers[selected].scale = Number(layer.querySelector("#glyphScale").value);
-        layers[selected].x = Number(layer.querySelector("#glyphX").value);
-        layers[selected].y = Number(layer.querySelector("#glyphY").value);
+        readSlidersIntoLayer();
         paint();
       };
     });
 
+    layer.querySelector("#glyphFlipH").onclick = () => {
+      if (selected < 0 || !layers[selected]) return;
+      layers[selected].flipX = !layers[selected].flipX;
+      syncControls();
+      paint();
+    };
+    layer.querySelector("#glyphFlipV").onclick = () => {
+      if (selected < 0 || !layers[selected]) return;
+      layers[selected].flipY = !layers[selected].flipY;
+      syncControls();
+      paint();
+    };
+    layer.querySelector("#glyphRot90").onclick = () => {
+      if (selected < 0 || !layers[selected]) return;
+      layers[selected].rotation = ((Number(layers[selected].rotation) || 0) + 90) % 360;
+      syncControls();
+      paint();
+    };
+
     layer.querySelector("#glyphAddEmoji").onclick = () => {
       openEmojiPicker((emoji) => {
-        layers.push({ type: "emoji", emoji, x: 0.5, y: 0.5, scale: layers.length ? 0.7 : 1 });
+        layers.push({
+          type: "emoji",
+          emoji,
+          x: 0.5,
+          y: 0.5,
+          scale: layers.length ? 0.7 : 1,
+          rotation: 0,
+          flipX: false,
+          flipY: false,
+        });
         selected = layers.length - 1;
         renderList();
         syncControls();
@@ -622,7 +680,16 @@
     };
     layer.querySelector("#glyphAddImage").onclick = () => {
       openChromaImageEditor((dataUrl) => {
-        layers.push({ type: "image", dataUrl, x: 0.5, y: 0.5, scale: layers.length ? 0.75 : 1 });
+        layers.push({
+          type: "image",
+          dataUrl,
+          x: 0.5,
+          y: 0.5,
+          scale: layers.length ? 0.75 : 1,
+          rotation: 0,
+          flipX: false,
+          flipY: false,
+        });
         selected = layers.length - 1;
         renderList();
         syncControls();

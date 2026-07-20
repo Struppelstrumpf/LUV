@@ -17,7 +17,27 @@ const MARRIAGE_CHAPEL_STICKER = "💒";
 const SKIP_WAIT_FULL_COST = 28;
 /** Heirat ohne Level 100 — volle Kosten bei Level 0 */
 const PROPOSE_UNLOCK_FULL_COST = 40;
+/** Pro Partner: mind. so viele Striche auf der Hochzeitsleinwand vor Ehe */
+const WEDDING_MIN_STROKES = 10;
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+function countStrokesByAuthor(strokes, userId) {
+  const uid = String(userId || "").trim();
+  if (!uid || !Array.isArray(strokes)) return 0;
+  let n = 0;
+  for (const s of strokes) {
+    if (String(s?.authorId || "").trim() === uid) n += 1;
+  }
+  return n;
+}
+
+function areWeddingStrokesReady(strokes, aId, bId, min = WEDDING_MIN_STROKES) {
+  const need = Math.max(1, Math.floor(Number(min) || WEDDING_MIN_STROKES));
+  return (
+    countStrokesByAuthor(strokes, aId) >= need &&
+    countStrokesByAuthor(strokes, bId) >= need
+  );
+}
 
 /** Coins proportional zur Restzeit (mind. 4, max. SKIP_WAIT_FULL_COST). */
 function skipWaitCost(remainingMs, fullMs = ENGAGE_WAIT_MS) {
@@ -103,8 +123,14 @@ function setLevelBoth(a, b, level) {
   b.friends.levels[a.id] = lv;
 }
 
-/** +1 Level wenn heute noch nicht durch Kraulen erhöht (beide Seiten). */
-function bumpLevelFromKraul(me, other, dayKey) {
+/**
+ * +1 Freundschaftslevel / Tag, wenn beide an dem Tag auf derselben Lobby
+ * mindestens einen Strich gesetzt haben (nicht mehr über Kraulen).
+ */
+function bumpLevelFromSharedCanvas(me, other, dayKey) {
+  if (!me?.friends || !other?.friends || !me.id || !other.id) {
+    return { bumped: false, level: 0 };
+  }
   ensureFriendLevels(me.friends);
   ensureFriendLevels(other.friends);
   if (me.friends.levelDays[other.id] === dayKey) {
@@ -115,6 +141,20 @@ function bumpLevelFromKraul(me, other, dayKey) {
   me.friends.levelDays[other.id] = dayKey;
   other.friends.levelDays[me.id] = dayKey;
   return { bumped: true, level: next };
+}
+
+/** @deprecated — Level kommt von gemeinsamer Leinwand; Alias für Kompatibilität. */
+function bumpLevelFromKraul(me, other, dayKey) {
+  return bumpLevelFromSharedCanvas(me, other, dayKey);
+}
+
+/** Coins pro Kraul-Seite je nach Freundschaftslevel. */
+function kraulCoinAmount(level) {
+  const lv = Math.max(0, Math.floor(Number(level) || 0));
+  if (lv >= 100) return 5;
+  if (lv >= 50) return 3; // 50 und 75
+  if (lv >= 25) return 2;
+  return 1;
 }
 
 function resetLevelBoth(a, b) {
@@ -424,7 +464,7 @@ function isBusyStatus(status) {
   );
 }
 
-function publicMarriage(m, viewerId, users) {
+function publicMarriage(m, viewerId, users, opts = {}) {
   if (!m) return null;
   const partnerId = partnerIdOf(m, viewerId);
   const partner = partnerId ? users?.[partnerId] : null;
@@ -437,6 +477,16 @@ function publicMarriage(m, viewerId, users) {
   if (m.status === "wedding") {
     weddingRemainingMs = Math.max(0, (Number(m.weddingEndsAt) || 0) - now);
   }
+  const strokes = Array.isArray(opts?.strokes) ? opts.strokes : [];
+  const weddingMyStrokes =
+    m.status === "wedding" ? countStrokesByAuthor(strokes, viewerId) : 0;
+  const weddingPartnerStrokes =
+    m.status === "wedding" ? countStrokesByAuthor(strokes, partnerId) : 0;
+  const weddingStrokesRequired = WEDDING_MIN_STROKES;
+  const weddingStrokesReady =
+    m.status !== "wedding" ||
+    (weddingMyStrokes >= weddingStrokesRequired &&
+      weddingPartnerStrokes >= weddingStrokesRequired);
   return {
     id: m.id || pairKey(m.a, m.b),
     status: m.status,
@@ -464,6 +514,23 @@ function publicMarriage(m, viewerId, users) {
       m.status === "engaged" ? formatRemaining(engageRemainingMs) : null,
     weddingRemainingLabel:
       m.status === "wedding" ? formatRemaining(weddingRemainingMs) : null,
+    weddingMyStrokes,
+    weddingPartnerStrokes,
+    weddingStrokesRequired,
+    weddingStrokesReady,
+    weddingImageRetake: Boolean(m.weddingImageRetake),
+    weddingConfirmMine: Boolean(
+      m.weddingConfirm && typeof m.weddingConfirm === "object"
+        ? m.weddingConfirm[viewerId]
+        : false
+    ),
+    weddingConfirmPartner: Boolean(
+      partnerId &&
+        m.weddingConfirm &&
+        typeof m.weddingConfirm === "object"
+        ? m.weddingConfirm[partnerId]
+        : false
+    ),
   };
 }
 
@@ -512,6 +579,7 @@ module.exports = {
   MARRIAGE_CHAPEL_STICKER,
   SKIP_WAIT_FULL_COST,
   PROPOSE_UNLOCK_FULL_COST,
+  WEDDING_MIN_STROKES,
   DAY_MS,
   skipWaitCost,
   proposeUnlockCost,
@@ -520,11 +588,15 @@ module.exports = {
   clearDivorceCooldown,
   formatRemaining,
   pairKey,
+  countStrokesByAuthor,
+  areWeddingStrokesReady,
   ensureMarriages,
   ensureFriendLevels,
   getLevel,
   setLevelBoth,
   bumpLevelFromKraul,
+  bumpLevelFromSharedCanvas,
+  kraulCoinAmount,
   resetLevelBoth,
   findMarriageForUser,
   findMarriageBetween,

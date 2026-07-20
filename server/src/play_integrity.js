@@ -169,8 +169,9 @@ async function verifyIntegrityToken(integrityToken, expectedNonce) {
     const deviceOk =
       device.includes("MEETS_DEVICE_INTEGRITY") ||
       device.includes("MEETS_STRONG_INTEGRITY");
-    // PLAY_RECOGNIZED ideal; UNEVALUATED/UNRECOGNIZED nur für Internal-Test-Tracks
-    const appOk =
+    // PLAY_RECOGNIZED erforderlich wenn Enforcement an; sonst soft warn
+    const appOk = appLic === "PLAY_RECOGNIZED";
+    const appSoftOk =
       appLic === "PLAY_RECOGNIZED" ||
       appLic === "UNRECOGNIZED_VERSION" ||
       appLic === "UNEVALUATED";
@@ -184,15 +185,20 @@ async function verifyIntegrityToken(integrityToken, expectedNonce) {
         verdicts: device,
       };
     }
-    if (!appLic || appLic === "UNEVALUATED" || appLic === "UNRECOGNIZED_VERSION") {
+    if (isEnforced()) {
+      if (!appOk) {
+        return {
+          ok: false,
+          error: "app_untrusted",
+          message: "Bitte LUV aus dem Google Play Store installieren (keine Mod-APK).",
+          verdicts: device,
+          appLic,
+        };
+      }
+    } else if (!appLic || !appSoftOk) {
       console.warn("[play_integrity] soft app verdict", appLic || "(empty)");
-    } else if (!appOk) {
-      return {
-        ok: false,
-        error: "app_untrusted",
-        message: "Bitte LUV aus dem Google Play Store installieren.",
-        verdicts: device,
-      };
+    } else if (appLic !== "PLAY_RECOGNIZED") {
+      console.warn("[play_integrity] soft app verdict", appLic);
     }
     return { ok: true, verdicts: device, appLic };
   } catch (e) {

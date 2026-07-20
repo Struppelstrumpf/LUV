@@ -114,13 +114,13 @@ fun ShopSearchToggleRow(
 
 fun formatShopRemaining(ms: Long?): String? {
     if (ms == null || ms <= 0L) return null
-    val totalMin = ms / 60_000L
-    val days = totalMin / (60 * 24)
-    val hours = (totalMin / 60) % 24
-    val mins = totalMin % 60
+    val days = ms / 86_400_000L
+    val hours = ms / 3_600_000L
     return when {
-        days >= 1 -> "noch ${days}d ${hours}h"
-        hours >= 1 -> "noch ${hours}h ${mins}m"
-        else -> "noch ${mins.coerceAtLeast(1)}m"
+        days >= 2L -> "noch $days Tage"
+        days >= 1L -> "noch 1 Tag"
+        hours >= 2L -> "noch $hours Stunden"
+        hours >= 1L -> "noch 1 Stunde"
+        else -> "noch weniger als 1 Stunde"
     }
 }

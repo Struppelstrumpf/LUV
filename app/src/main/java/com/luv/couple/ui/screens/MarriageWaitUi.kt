@@ -76,20 +76,26 @@ fun MarriageSkipWaitDialog(
     } else {
         marriage.weddingRemainingLabel ?: "…"
     }
-    val title = if (isEngage) "7 Tage Verlobung" else "7 Tage Hochzeitsleinwand"
+    val need = marriage.weddingStrokesRequired.coerceAtLeast(1)
+    val strokesReady = !isWedding || marriage.weddingStrokesReady
+    val title = if (isEngage) "7 Tage Verlobung" else "Hochzeitsleinwand"
     val subtitle = if (isEngage) {
         "Noch $label — dann öffnet sich eure gemeinsame Hochzeitsleinwand."
+    } else if (!strokesReady) {
+        "Zuerst malt jeder mindestens $need Striche. Danach könnt ihr die restliche Zeit " +
+            "abwarten oder mit Coins sofort heiraten."
+    } else if (cost <= 0) {
+        "Striche geschafft und Wartezeit vorbei — ihr könnt jetzt heiraten."
     } else {
-        "Noch $label auf der Hochzeitsleinwand — erst danach seid ihr verheiratet."
+        "Noch $label Wartezeit — oder mit Coins sofort heiraten."
     }
     val nextHint = if (isEngage) {
-        "Ablauf: 7 Tage warten → 7 Tage gemeinsam malen → Ehe. " +
-            "Überspringen kostet Coins (Antrag bei Level 100 war kostenlos)."
+        "Ablauf: 7 Tage warten → gemeinsam malen (je $need Striche) → Ehe. " +
+            "Überspringen kostet Coins."
     } else {
-        "Danach: Ehepartner mit Extra, Gästebuch und Ehering. " +
-            "Überspringen beendet die Malzeit früher — kostet Coins."
+        "Ehe geht erst, wenn beide je $need Striche gemalt haben — egal ob ihr wartet oder Coins zahlt."
     }
-    val canPay = coins >= cost
+    val canPay = strokesReady && coins >= cost
 
     Dialog(
         onDismissRequest = { if (!busy) onDismiss() },
@@ -155,6 +161,36 @@ fun MarriageSkipWaitDialog(
                     fontSize = ts(14.sp),
                     textAlign = TextAlign.Center
                 )
+                if (isWedding) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(s(16.dp)))
+                            .background(BgSoft)
+                            .padding(s(14.dp))
+                    ) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(s(6.dp)),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                "Striche (je $need nötig)",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = ts(12.sp)
+                            )
+                            Text(
+                                "Du ${marriage.weddingMyStrokes.coerceAtMost(need)}/$need  ·  " +
+                                    "Partner ${marriage.weddingPartnerStrokes.coerceAtMost(need)}/$need",
+                                color = if (strokesReady) Color(0xFFFFD54F) else AccentRose,
+                                fontFamily = DisplayFont,
+                                fontSize = ts(18.sp),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -168,13 +204,13 @@ fun MarriageSkipWaitDialog(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            "Restzeit",
+                            if (isEngage) "Restzeit" else "Wartezeit bis zur Ehe",
                             color = TextMuted,
                             fontFamily = BodyFont,
                             fontSize = ts(12.sp)
                         )
                         Text(
-                            label,
+                            if (isWedding && cost <= 0 && strokesReady) "bereit" else label,
                             color = Color(0xFFFFD54F),
                             fontFamily = DisplayFont,
                             fontSize = ts(28.sp)
@@ -244,8 +280,9 @@ fun MarriageSkipWaitDialog(
                     Text(
                         when {
                             busy -> "…"
-                            cost <= 0 -> "Jetzt fortsetzen"
-                            canPay -> "Überspringen · $cost Coins"
+                            !strokesReady -> "Erst je $need Striche malen"
+                            cost <= 0 -> "Jetzt heiraten"
+                            canPay -> "Sofort heiraten · $cost Coins"
                             else -> "Nicht genug Coins ($cost)"
                         },
                         color = if (canPay) Color(0xFF2A1A14) else TextMuted,

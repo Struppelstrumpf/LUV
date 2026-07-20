@@ -385,8 +385,10 @@ Bei digitalen Inhalten, deren Ausführung mit ausdrücklicher Zustimmung vor Abl
 5. Konto, Google-Anmeldung und Verlust
 Du kannst dein LUV-Konto optional mit einem Google-Konto verknüpfen. Dabei werden zur Anmeldung die von Google bereitgestellten Basisdaten (insbesondere Google-Nutzer-ID, ggf. Name/E-Mail) an unsere Server übermittelt und zur Kontowiederherstellung genutzt. Ohne Google-Verknüpfung sind Coins und Fortschritt an die lokale App-Installation gebunden; bei Deinstallation, Datenlöschen oder Gerätewechsel ohne Wiederherstellung kann Guthaben verloren gehen. Mit erfolgreicher Google-Anmeldung auf einem neuen Gerät kann das bestehende Konto wiederhergestellt werden, soweit technisch verfügbar.
 
-6. Missbrauch
-Manipulation, Mehrfach-Konten zur Umgehung von Limits oder Missbrauch des Shops können zur Sperrung führen. Bereits gezahlte Beträge werden in solchen Fällen nicht erstattet, soweit gesetzlich zulässig.
+6. Missbrauch, Cheating und Echtgeldhandel
+Manipulation der App oder API (u. a. Mod-APKs, gefälschte Requests, Umgehung von Limits), Mehrfach-Konten zur Umgehung von Limits oder Missbrauch des Shops können zur Sperrung führen. Bereits gezahlte Beträge werden in solchen Fällen nicht erstattet, soweit gesetzlich zulässig.
+
+Der Handel mit In-App-Items, Coins, Konten oder sonstigen digitalen Inhalten gegen Echtgeld (oder geldwerte Vorteile außerhalb von LUV) ist untersagt — einschließlich Kauf, Verkauf, Tausch oder Vermittlung über Drittplattformen. Verstöße können mit Verwarnung, Entzug von Items/Coins und dauerhafter Kontosperrung (Ban) geahndet werden, ohne Anspruch auf Erstattung.
 
 7. Haftung
 Für leicht fahrlässige Pflichtverletzungen haften wir nur bei Verletzung wesentlicher Vertragspflichten und begrenzt auf den typischen vorhersehbaren Schaden. Unberührt bleiben Haftung bei Vorsatz, grober Fahrlässigkeit, Verletzung von Leben, Körper oder Gesundheit sowie zwingende gesetzliche Ansprüche.

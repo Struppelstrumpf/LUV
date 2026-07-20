@@ -6,6 +6,10 @@
 const { keywordsForEmoji } = require("./emoji_search_keywords");
 const { displayNameForEmoji } = require("./emoji_display_names");
 const itemLabels = require("./item_labels");
+// Lazy require — vermeidet Zyklus mit shop_calendar
+function shopCalendar() {
+  return require("./shop_calendar");
+}
 
 const EXTRA_EMOJI_PRICES = {
   // Premium / teuer
@@ -452,6 +456,9 @@ function normalizeItem(raw) {
     seeded: Boolean(raw.seeded),
     hasImage: Boolean(raw.hasImage),
     visualConfig,
+    rotationPlanId: raw.rotationPlanId
+      ? String(raw.rotationPlanId).trim().slice(0, 64)
+      : null,
     createdAt: Number(raw.createdAt) || Date.now(),
     updatedAt: Date.now(),
   };
@@ -474,11 +481,21 @@ function isWithinWindow(item, now = Date.now()) {
 function deactivateExpired(db, now = Date.now()) {
   const cat = ensureShopCatalog(db);
   let n = 0;
+  const cal = shopCalendar();
   for (const item of Object.values(cat.items)) {
     if (!item || !item.enabled) continue;
     if (item.availableUntil && now > item.availableUntil) {
+      const before = cal.snapWindow(item);
       item.enabled = false;
       item.updatedAt = now;
+      cal.appendAvailabilityLog(db, {
+        kind: item.kind,
+        itemId: item.itemId,
+        before,
+        after: cal.snapWindow(item),
+        reason: "expire_auto",
+        byUserId: null,
+      });
       n++;
     }
   }
@@ -511,6 +528,18 @@ function canBuy(db, user, kind, itemId, now = Date.now()) {
   if (!item) return { ok: false, error: "unknown_item", message: "Artikel unbekannt." };
   if (!item.enabled) {
     return { ok: false, error: "disabled", message: "Dieser Artikel ist gerade nicht im Shop." };
+  }
+  try {
+    const seasonEvents = require("./events");
+    if (seasonEvents.isEventOnlyItem(kind, itemId)) {
+      return {
+        ok: false,
+        error: "event_only",
+        message: "Nur über Events oder Erfolge erhältlich — danach handelbar.",
+      };
+    }
+  } catch {
+    /* ignore */
   }
   if (!isWithinWindow(item, now)) {
     return { ok: false, error: "not_available", message: "Artikel derzeit nicht verfügbar." };
@@ -602,6 +631,8 @@ function publicItem(item, now = Date.now(), { admin = false, db = null } = {}) {
       listPrice: item.priceCoins,
       salePrice: item.salePrice,
       seeded: Boolean(item.seeded),
+      rotationPlanId: item.rotationPlanId || null,
+      rotationLocked: item.rotationLocked === true,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
     };
@@ -619,7 +650,9 @@ function listPublicCatalog(db, { admin = false, kind = null, q = "" } = {}) {
   let items = Object.values(cat.items).filter(Boolean);
   if (kind) items = items.filter((i) => i.kind === kind);
   if (!admin) {
+    const seasonEvents = require("./events");
     items = items.filter((i) => i.enabled !== false && isWithinWindow(i, now));
+    items = items.filter((i) => !seasonEvents.isEventOnlyItem(i.kind, i.itemId));
     items = items.filter((i) => {
       if (i.maxTotalSales != null && i.soldTotal >= i.maxTotalSales) return false;
       return effectivePrice(i) > 0 || i.kind === "themes";
@@ -632,7 +665,7 @@ function listPublicCatalog(db, { admin = false, kind = null, q = "" } = {}) {
   return items.map((i) => publicItem(i, now, { admin, db }));
 }
 
-function upsertItem(db, patch) {
+function upsertItem(db, patch, { byUserId = null } = {}) {
   const cat = ensureShopCatalog(db);
   const kind = String(patch.kind || "").trim();
   const itemId = String(patch.itemId || "").trim().slice(0, 32);
@@ -643,6 +676,8 @@ function upsertItem(db, patch) {
   const prev = cat.items[key] || {};
   // Neu anlegen nach Löschen → Tombstone aufheben
   if (cat.deletedKeys[key]) delete cat.deletedKeys[key];
+  const cal = shopCalendar();
+  const before = cat.items[key] ? cal.snapWindow(prev) : { availableFrom: null, availableUntil: null, enabled: false };
   const next = normalizeItem({
     ...prev,
     ...patch,
@@ -653,15 +688,33 @@ function upsertItem(db, patch) {
     createdAt: prev.createdAt || Date.now(),
   });
   cat.items[key] = next;
+  cal.appendAvailabilityLog(db, {
+    kind,
+    itemId,
+    before,
+    after: cal.snapWindow(next),
+    reason: prev.itemId ? "admin_edit" : "admin_create",
+    byUserId,
+  });
   return { ok: true, item: publicItem(next, Date.now(), { admin: true, db }) };
 }
 
-function setEnabled(db, kind, itemId, enabled) {
+function setEnabled(db, kind, itemId, enabled, { byUserId = null } = {}) {
   const item = getItem(db, kind, itemId);
   if (!item) return { ok: false, error: "not_found" };
+  const cal = shopCalendar();
+  const before = cal.snapWindow(item);
   item.enabled = Boolean(enabled);
   item.updatedAt = Date.now();
-  return { ok: true, item: publicItem(item, Date.now(), { admin: true }) };
+  cal.appendAvailabilityLog(db, {
+    kind,
+    itemId,
+    before,
+    after: cal.snapWindow(item),
+    reason: enabled ? "admin_enable" : "admin_disable",
+    byUserId,
+  });
+  return { ok: true, item: publicItem(item, Date.now(), { admin: true, db }) };
 }
 
 function deleteItem(db, kind, itemId) {
@@ -704,6 +757,7 @@ module.exports = {
   deleteItem,
   priceOf,
   effectivePrice,
+  isWithinWindow,
   deactivateExpired,
   itemKey,
   publicItem,

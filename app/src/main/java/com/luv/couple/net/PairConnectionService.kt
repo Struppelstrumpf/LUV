@@ -535,6 +535,27 @@ class PairConnectionService : Service() {
                         )
                     }
                 }
+                "wedding_confirm" -> {
+                    val confirms = json.optJSONObject("confirms")
+                    val map = mutableMapOf<String, Boolean>()
+                    if (confirms != null) {
+                        val keys = confirms.keys()
+                        while (keys.hasNext()) {
+                            val k = keys.next()
+                            map[k] = confirms.optBoolean(k, false)
+                        }
+                    }
+                    scope.launch {
+                        _events.emit(
+                            PairEvent.WeddingConfirm(
+                                lobbyId = lobby.id,
+                                confirms = map,
+                                fromUserId = json.optString("userId").takeIf { it.isNotBlank() }
+                            )
+                        )
+                    }
+                    return
+                }
                 "welcome", "peers" -> {
                     val peers = json.optInt("peers", json.optInt("count", 0))
                     val capacity = json.optInt("capacity", 0).takeIf { it > 0 }
@@ -1820,4 +1841,9 @@ sealed class PairEvent {
         val correct: Boolean
     ) : PairEvent()
     data class GameGuessResult(val lobbyId: String, val ok: Boolean, val message: String) : PairEvent()
+    data class WeddingConfirm(
+        val lobbyId: String,
+        val confirms: Map<String, Boolean>,
+        val fromUserId: String?
+    ) : PairEvent()
 }

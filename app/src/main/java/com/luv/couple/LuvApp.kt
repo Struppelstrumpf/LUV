@@ -34,6 +34,7 @@ class LuvApp : Application() {
         createNotificationChannel()
         LuvAlertNotifier.ensureChannel(this) // inkl. Live-Nähe-Kanal
         AppUpdater.ensureChannel(this)
+        runCatching { com.luv.couple.ui.security.TamperGuard.check(this) }
         MidnightClear.checkAndClearIfNewDay(this)
         MoodNudgeScheduler.ensureScheduled(this)
         // Splash-Bild früh in den Cache — kein Schwarzbild beim nächsten Start

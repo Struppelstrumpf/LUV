@@ -27,6 +27,7 @@ const itemLabels = require("./item_labels");
 const notifyPhrases = require("./notify_phrases");
 const dailyTasks = require("./daily_tasks");
 const shopCalendar = require("./shop_calendar");
+const seasonEvents = require("./events");
 ach.bindGetDb(getDb);
 const {
   STICKER_SHOP_PRICES,
@@ -804,18 +805,29 @@ function purgeShopItemEverywhere(kind, itemId) {
   return { users: usersTouched, rooms: roomsTouched, listings: listingsClosed, pendingRefunds };
 }
 
-/** Alle aktivierten Shop-Katalog-Items für Lootbox (Preis = effektiver Shop-Preis). */
+/**
+ * Katalog-Items für Lootbox — unabhängig vom Shop-Zeitfenster.
+ * Nur ausblenden, wenn Admin lootboxEligible=false gesetzt hat (oder Starter/Ehe).
+ */
 function catalogLootboxExtras() {
   seedShopCatalogIfNeeded();
-  const items = shopCatalog.listPublicCatalog(getDb(), { admin: false });
-  return items
-    .filter((i) => i && i.enabled !== false && (Number(i.priceCoins) || 0) >= 1)
+  const db = getDb();
+  const cat = shopCatalog.ensureShopCatalog(db);
+  const lockCtx = { defaultPet: DEFAULT_PET, starterEmojis: STARTER_EMOJIS };
+  return Object.values(cat.items || {})
+    .filter(Boolean)
+    .filter((i) => {
+      if (seasonEvents.isEventOnlyItem(i.kind, i.itemId)) return false;
+      const price = shopCatalog.effectivePrice(i);
+      if (price < 1 && i.kind !== "themes") return false;
+      return itemTrade.getLootboxEligible(db, i.kind, i.itemId, ["shop"], lockCtx);
+    })
     .map((i) => ({
       kind: i.kind,
       itemId: i.itemId,
-      emoji: i.emoji || i.itemId,
+      emoji: i.kind === "themes" ? "🖼️" : i.itemId,
       label: i.label || i.itemId,
-      priceCoins: i.priceCoins,
+      priceCoins: shopCatalog.effectivePrice(i),
     }));
 }
 
@@ -831,6 +843,7 @@ function marketSellableFor(kind, itemId) {
   const id = String(itemId || "").trim();
   const sources = [];
   if (shopCatalog.isShopKnown(getDb(), kind, id)) sources.push("shop");
+  if (seasonEvents.isEventOnlyItem(kind, id)) sources.push("event");
   if (ach.isAchievementRewardItem(kind, id) || (kind === "stickers" && isAchievementSticker(id))) {
     sources.push("achievement");
   }
@@ -1432,9 +1445,7 @@ function friendPublicCard(user, viewer) {
     friendshipLevel: level,
     isSpouse,
     isFiance,
-    marriage: viewer
-      ? marriage.publicMarriage(m, viewer.id, getDb().users)
-      : null,
+    marriage: viewer ? publicMarriageView(m, viewer.id) : null,
   };
 }
 
@@ -1442,6 +1453,35 @@ const WEDDING_DIR = path.join(DATA_DIR, "weddings");
 
 function ensureWeddingDir() {
   fs.mkdirSync(WEDDING_DIR, { recursive: true });
+}
+
+/** publicMarriage inkl. Strich-Fortschritt der Hochzeitsleinwand */
+function publicMarriageView(m, viewerId) {
+  if (!m) return null;
+  const db = getDb();
+  let strokes = [];
+  if (m.status === "wedding" && m.weddingLobbyCode) {
+    try {
+      strokes = loadRoomStrokes(m.weddingLobbyCode);
+    } catch {
+      strokes = [];
+    }
+  }
+  return marriage.publicMarriage(m, viewerId, db.users, { strokes });
+}
+
+function weddingStrokesReadyFor(m) {
+  if (!m || m.status !== "wedding") return true;
+  if (!m.weddingLobbyCode) return false;
+  try {
+    return marriage.areWeddingStrokesReady(
+      loadRoomStrokes(m.weddingLobbyCode),
+      m.a,
+      m.b
+    );
+  } catch {
+    return false;
+  }
 }
 
 function sortFriendsSpouseFirst(cards) {
@@ -1487,6 +1527,7 @@ function createWeddingLobby(userA, userB, marriageRec) {
     isFree: true,
     isRandom: false,
     isWedding: true,
+    weddingRetake: false,
     capacity: 2,
     hostColorSide,
     colorByUserId: { [userA.id]: hostIdx, [userB.id]: guestIdx },
@@ -1506,6 +1547,7 @@ function createWeddingLobby(userA, userB, marriageRec) {
     isFree: true,
     isRandom: false,
     isWedding: true,
+    weddingRetake: false,
     name: "Hochzeit",
     capacity: 2,
     token,
@@ -1526,6 +1568,185 @@ function createWeddingLobby(userA, userB, marriageRec) {
   marriageRec.status = "wedding";
   persistRooms();
   return code;
+}
+
+/**
+ * Fix: Ehe ohne Hochzeitsbild → nachträgliche Hochzeitsleinwand.
+ * Status bleibt "married"; Speichern erst nach Bestätigung beider Partner.
+ */
+function createWeddingImageRetakeLobby(userA, userB, marriageRec) {
+  let code = randomCode();
+  while (rooms.has(code) || getDb().rooms?.[code]) code = randomCode();
+  const token = randomToken().slice(0, 32);
+  const hostColorSide = normalizeHostColorSide(userA.colorSide || "blue");
+  const hostIdx = hostColorIndex(hostColorSide);
+  const guestIdx = oppositeHostColor(hostIdx);
+  const now = Date.now();
+  const room = {
+    token,
+    createdAt: now,
+    lastActiveAt: now,
+    sockets: new Map(),
+    clearProposal: null,
+    game: null,
+    gameTimer: null,
+    hostUserId: userA.id,
+    name: "Hochzeitsbild",
+    hostNickname: userA.nickname || "Host",
+    isFree: true,
+    isRandom: false,
+    isWedding: true,
+    weddingRetake: true,
+    capacity: 2,
+    hostColorSide,
+    colorByUserId: { [userA.id]: hostIdx, [userB.id]: guestIdx },
+    peakPeers: 2,
+    lastCanvasAt: 0,
+    memberUserIds: [userA.id, userB.id],
+    joinAnnouncedUserIds: [userA.id, userB.id],
+    publicShare: { day: "", count: 0, nextAt: 0 },
+    publicProposal: null,
+    strokes: [],
+    stickers: [],
+    marriageId: marriageRec.id || marriage.pairKey(userA.id, userB.id),
+  };
+  rooms.set(code, room);
+  const meta = {
+    createdAt: now,
+    isFree: true,
+    isRandom: false,
+    isWedding: true,
+    weddingRetake: true,
+    name: "Hochzeitsbild",
+    capacity: 2,
+    token,
+    hostColorSide,
+    colorByUserId: room.colorByUserId,
+    lastCanvasAt: 0,
+    memberUserIds: [userA.id, userB.id],
+    marriageId: room.marriageId,
+  };
+  ensureHostedRooms(userA);
+  ensureHostedRooms(userB);
+  userA.hostedRooms[code] = { ...meta };
+  userB.hostedRooms[code] = { ...meta, coHost: true };
+  forgetJoinedLobby(userA, code);
+  forgetJoinedLobby(userB, code);
+  marriageRec.weddingLobbyCode = code;
+  marriageRec.weddingImageRetake = true;
+  marriageRec.weddingConfirm = { [userA.id]: false, [userB.id]: false };
+  marriageRec.weddingStartedAt = now;
+  marriageRec.weddingEndsAt = 0;
+  persistRooms();
+  scheduleSave();
+  return code;
+}
+
+function ensureWeddingImageRetake(m) {
+  if (!m || m.status !== "married") return null;
+  if (m.weddingImageFile) return null;
+  const db = getDb();
+  const a = db.users?.[m.a];
+  const b = db.users?.[m.b];
+  if (!a || !b) return null;
+  const code = String(m.weddingLobbyCode || "").trim().toUpperCase();
+  if (code) {
+    let room = rooms.get(code);
+    if (!room) {
+      const saved = db.rooms?.[code];
+      if (saved) {
+        room = hydrateRoom(code, saved);
+        if (room) rooms.set(code, room);
+      }
+    }
+    if (room && room.isWedding) {
+      room.weddingRetake = true;
+      m.weddingImageRetake = true;
+      if (!m.weddingConfirm || typeof m.weddingConfirm !== "object") {
+        m.weddingConfirm = { [m.a]: false, [m.b]: false };
+      }
+      ensureHostedRooms(a);
+      ensureHostedRooms(b);
+      const meta = {
+        createdAt: room.createdAt || Date.now(),
+        isFree: true,
+        isRandom: false,
+        isWedding: true,
+        weddingRetake: true,
+        name: room.name || "Hochzeitsbild",
+        capacity: 2,
+        token: room.token,
+        hostColorSide: normalizeHostColorSide(room.hostColorSide),
+        colorByUserId: room.colorByUserId || {},
+        lastCanvasAt: Number(room.lastCanvasAt) || 0,
+      };
+      a.hostedRooms[code] = { ...meta };
+      b.hostedRooms[code] = { ...meta, coHost: true };
+      return code;
+    }
+    m.weddingLobbyCode = null;
+  }
+  return createWeddingImageRetakeLobby(a, b, m);
+}
+
+function ensureAllWeddingImageRetakes() {
+  const db = getDb();
+  let n = 0;
+  for (const m of Object.values(marriage.ensureMarriages(db))) {
+    if (!m || m.status !== "married" || m.weddingImageFile) continue;
+    if (ensureWeddingImageRetake(m)) n += 1;
+  }
+  if (n > 0) scheduleSave();
+  return n;
+}
+
+function weddingConfirmState(m, viewerId) {
+  const conf = m?.weddingConfirm && typeof m.weddingConfirm === "object" ? m.weddingConfirm : {};
+  const partnerId = marriage.partnerIdOf(m, viewerId);
+  return {
+    weddingImageRetake: Boolean(m?.weddingImageRetake),
+    weddingConfirmMine: Boolean(conf[viewerId]),
+    weddingConfirmPartner: partnerId ? Boolean(conf[partnerId]) : false,
+    weddingConfirmReady: Boolean(conf[m?.a]) && Boolean(conf[m?.b]),
+  };
+}
+
+function completeWeddingImageRetake(m) {
+  if (!m || m.status !== "married" || !m.weddingImageRetake) {
+    return { ok: false, error: "no_retake" };
+  }
+  const conf = m.weddingConfirm && typeof m.weddingConfirm === "object" ? m.weddingConfirm : {};
+  if (!conf[m.a] || !conf[m.b]) {
+    return { ok: false, error: "need_both" };
+  }
+  const code = String(m.weddingLobbyCode || "").trim().toUpperCase();
+  if (!code) return { ok: false, error: "no_lobby" };
+  const snap = path.join(SNAPSHOT_DIR, `${code}.png`);
+  if (!fs.existsSync(snap)) {
+    return {
+      ok: false,
+      error: "need_snapshot",
+      message: "Bitte erst etwas auf die Leinwand malen.",
+    };
+  }
+  ensureWeddingDir();
+  const destName = `${m.id || marriage.pairKey(m.a, m.b)}.png`;
+  const dest = path.join(WEDDING_DIR, destName);
+  try {
+    fs.copyFileSync(snap, dest);
+    m.weddingImageFile = destName;
+  } catch (e) {
+    console.error("wedding retake image copy failed", e);
+    return { ok: false, error: "copy_failed", message: "Bild speichern fehlgeschlagen." };
+  }
+  dissolveWeddingLobby(code);
+  m.weddingLobbyCode = null;
+  m.weddingImageRetake = false;
+  m.weddingConfirm = null;
+  m.weddingStartedAt = 0;
+  m.weddingEndsAt = 0;
+  scheduleSave();
+  return { ok: true };
 }
 
 function dissolveWeddingLobby(code) {
@@ -1556,8 +1777,10 @@ function dissolveWeddingLobby(code) {
   persistRooms();
 }
 
-function finalizeWeddingMarriage(m) {
+function finalizeWeddingMarriage(m, { force = false } = {}) {
   if (!m || m.status !== "wedding") return false;
+  // Beide Partner müssen je WEDDING_MIN_STROKES Striche gemalt haben
+  if (!force && !weddingStrokesReadyFor(m)) return false;
   const db = getDb();
   const a = db.users?.[m.a];
   const b = db.users?.[m.b];
@@ -1609,7 +1832,7 @@ function startEngagement(m) {
 }
 
 /** Sofort Verlobung → Hochzeitslobby oder Hochzeit → Ehe. */
-function advanceMarriageNextStep(m) {
+function advanceMarriageNextStep(m, { force = false } = {}) {
   if (!m) return { ok: false, error: "no_marriage" };
   const db = getDb();
   if (m.status === "engaged") {
@@ -1623,8 +1846,15 @@ function advanceMarriageNextStep(m) {
     return { ok: true, marriage: m };
   }
   if (m.status === "wedding") {
+    if (!force && !weddingStrokesReadyFor(m)) {
+      return {
+        ok: false,
+        error: "wedding_strokes",
+        message: `Beide Partner brauchen je ${marriage.WEDDING_MIN_STROKES} Striche auf der Hochzeitsleinwand.`,
+      };
+    }
     m.weddingEndsAt = Date.now();
-    finalizeWeddingMarriage(m);
+    finalizeWeddingMarriage(m, { force: true });
     return { ok: true, marriage: m };
   }
   return { ok: false, error: "wrong_phase", message: "Kein aktiver Warte-Schritt." };
@@ -1665,7 +1895,8 @@ function tickMarriages() {
         dirty = true;
       }
     } else if (m.status === "wedding" && now >= (Number(m.weddingEndsAt) || 0)) {
-      if (finalizeWeddingMarriage(m)) dirty = true;
+      // Timer abgelaufen reicht nicht — erst wenn beide je 10 Striche haben
+      if (weddingStrokesReadyFor(m) && finalizeWeddingMarriage(m)) dirty = true;
     }
   }
   if (dirty) scheduleSave();
@@ -1676,7 +1907,7 @@ function endMarriageRecord(m, reason) {
   const db = getDb();
   const a = db.users?.[m.a];
   const b = db.users?.[m.b];
-  if (m.status === "wedding" && m.weddingLobbyCode) {
+  if (m.weddingLobbyCode) {
     dissolveWeddingLobby(m.weddingLobbyCode);
   }
   // Bild entfernen, sonst würde Boot-Recovery die Ehe nach Scheidung neu anlegen
@@ -1743,6 +1974,36 @@ function markPetKraul(me, targetId) {
   }
 }
 
+/**
+ * Merkt Striche pro Lobby/Tag und erhöht Freundschaftslevel um 1,
+ * sobald zwei Freunde an dem Tag beide auf derselben Lobby gemalt haben.
+ */
+function noteFriendshipCanvasStroke(room, user) {
+  if (!room || !user?.id) return;
+  const day = todayKey();
+  if (room.drawDay !== day) {
+    room.drawDay = day;
+    room.drawersToday = [];
+  }
+  if (!Array.isArray(room.drawersToday)) room.drawersToday = [];
+  if (!room.drawersToday.includes(user.id)) {
+    room.drawersToday.push(user.id);
+  }
+  const db = getDb();
+  for (const otherId of room.drawersToday) {
+    if (!otherId || otherId === user.id) continue;
+    if (friendRelation(user, otherId) !== "friends") continue;
+    const other = db.users?.[otherId];
+    if (!other) continue;
+    const bump = marriage.bumpLevelFromSharedCanvas(user, other, day);
+    if (bump.bumped) {
+      trackFriendshipLevelAch(user, bump.level);
+      trackFriendshipLevelAch(other, bump.level);
+      scheduleSave();
+    }
+  }
+}
+
 /** @type {Map<string, any>} */
 const rooms = new Map();
 
@@ -1757,6 +2018,7 @@ function serializeRoom(code, room) {
     isFree: Boolean(room.isFree),
     isRandom: Boolean(room.isRandom),
     isWedding: Boolean(room.isWedding),
+    weddingRetake: Boolean(room.weddingRetake),
     capacity: roomCapacity(room),
     hostColorSide: normalizeHostColorSide(room.hostColorSide),
     colorByUserId:
@@ -1833,6 +2095,7 @@ function restoreRoomsFromDisk() {
       isFree: Boolean(data.isFree),
       isRandom: Boolean(data.isRandom),
       isWedding: Boolean(data.isWedding),
+      weddingRetake: Boolean(data.weddingRetake),
       capacity: Math.min(
         MAX_PEERS,
         Math.max(
@@ -2635,6 +2898,9 @@ function publicJoinedLobbies(user) {
     isFree: Boolean(meta?.isFree),
     isRandom: Boolean(meta?.isRandom),
     isWedding: Boolean(meta?.isWedding),
+    weddingRetake: Boolean(
+      meta?.weddingRetake || rooms.get(code)?.weddingRetake
+    ),
     lastCanvasAt: Number(rooms.get(code)?.lastCanvasAt || meta?.lastCanvasAt || 0),
     lastCanvasActorId:
       rooms.get(code)?.lastCanvasActorId || meta?.lastCanvasActorId || null,
@@ -2730,19 +2996,17 @@ function resolveRoom(code, token, user) {
   }
 
   if (room) {
-    // Join/Preview ohne Token: bestehenden Live-Raum nutzen (nie ersetzen).
-    if (!token || room.token === token) return room;
+    // Token muss passen — leerer Token erlaubt keinen Fremd-Join mehr
+    if (token && room.token === token) return room;
 
     // Bekanntes Mitglied mit veraltetem Token — trotzdem rein (nie Split-Lobby).
-    // Früher: return null → 4401 → jeder hing allein in „seiner“ Sicht.
     if (user && Array.isArray(room.memberUserIds) && room.memberUserIds.includes(user.id)) {
       return room;
     }
 
     // Host: immer rein. Token nur übernehmen, wenn niemand sonst verbunden ist
-    // (sonst verlieren Joiner den Match und sehen sich allein).
     if (user && room.hostUserId === user.id) {
-      if ((room.sockets?.size || 0) === 0) {
+      if ((room.sockets?.size || 0) === 0 && token) {
         room.token = token;
         touchRoom(room);
         persistRooms();
@@ -2766,9 +3030,14 @@ function resolveRoom(code, token, user) {
           name: meta.name || "Lobby",
           hostNickname: user.nickname || "Host",
           isFree: Boolean(meta.isFree),
+          isRandom: Boolean(meta.isRandom),
+          isWedding: Boolean(meta.isWedding),
+          weddingRetake: Boolean(meta.weddingRetake),
           capacity: meta.capacity,
           hostColorSide: meta.hostColorSide,
           colorByUserId: meta.colorByUserId || { [user.id]: hostColorIndex(meta.hostColorSide) },
+          memberUserIds: Array.isArray(meta.memberUserIds) ? meta.memberUserIds : [user.id],
+          marriageId: meta.marriageId || null,
         },
         token || meta.token
       );
@@ -2987,6 +3256,7 @@ function publicRoom(room, code) {
     isFree: Boolean(room.isFree),
     isRandom: Boolean(room.isRandom),
     isWedding: Boolean(room.isWedding),
+    weddingRetake: Boolean(room.weddingRetake),
     hostColorSide: normalizeHostColorSide(room.hostColorSide),
     peakPeers: peak,
     coupleMode: peak <= 2,
@@ -3156,8 +3426,18 @@ const PAID_CREDIT_REASONS = new Set([
   "public_share_reward",
   "glass_tip_recv",
   "pet_kraul_recv",
+  "pet_kraul_give",
   "market_sell",
   "friendship_level",
+  "event_collect",
+  "event_quest",
+]);
+
+/** Soft-Earn (nicht als IAP-Äquivalent / Tip-fähig stapeln). */
+const SOFT_CREDIT_REASONS = new Set([
+  "achievement",
+  "daily_tasks",
+  "lootbox_duplicate",
 ]);
 
 const PUBLIC_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -3527,7 +3807,8 @@ function buildLootboxPoolForUser(user) {
     themePrices: THEME_SHOP_PRICES,
     petPrices: PET_SHOP_PRICES,
     stickerPrices: STICKER_SHOP_PRICES,
-    isKnown: isKnownInventoryItem,
+    isKnown: (kind, id) =>
+      isKnownInventoryItem(kind, id) && !seasonEvents.isEventOnlyItem(kind, id),
     defaultPet: DEFAULT_PET,
     starterEmojis: STARTER_EMOJIS,
     extraItems: catalogLootboxExtras(),
@@ -3563,9 +3844,11 @@ function applyLedger(userId, delta, reason, refId) {
       user.lastDailyGrantDate = todayKey();
     } else if (PAID_CREDIT_REASONS.has(reason)) {
       user.paidCoins += amount;
+    } else if (SOFT_CREDIT_REASONS.has(reason)) {
+      user.dailyBalance += amount;
     } else {
-      // Unbekannte Gutschriften stacken als bezahlt
-      user.paidCoins += amount;
+      // Unbekannte Gutschriften: soft (nicht als paid stacken)
+      user.dailyBalance += amount;
     }
   } else if (amount < 0) {
     let need = -amount;
@@ -3624,12 +3907,14 @@ function syncAchInventoryMetrics(user) {
   }
 }
 
-function createSession(userId, ttlMs = SESSION_TTL_MS) {
+function createSession(userId, ttlMs = SESSION_TTL_MS, opts = {}) {
   const db = getDb();
   const token = randomToken();
   const ttl = Math.max(60_000, Number(ttlMs) || SESSION_TTL_MS);
+  const kind = opts.kind === "staff" ? "staff" : "app";
   db.sessions[token] = {
     userId,
+    kind,
     createdAt: Date.now(),
     expiresAt: Date.now() + ttl,
   };
@@ -4029,6 +4314,9 @@ function publicHostedLobbies(user) {
     isFree: Boolean(meta?.isFree),
     isRandom: Boolean(meta?.isRandom),
     isWedding: Boolean(meta?.isWedding),
+    weddingRetake: Boolean(
+      meta?.weddingRetake || rooms.get(code)?.weddingRetake || getDb().rooms?.[code]?.weddingRetake
+    ),
     lastCanvasAt: Number(
       rooms.get(code)?.lastCanvasAt ||
         meta?.lastCanvasAt ||
@@ -4081,7 +4369,7 @@ function authUser(req) {
   if (!session || session.expiresAt < Date.now()) return null;
   const user = db.users[session.userId];
   if (!user) return null;
-  return { user, token };
+  return { user, token, sessionKind: session.kind === "staff" ? "staff" : "app" };
 }
 
 function requireAuth(req, res) {
@@ -4382,9 +4670,8 @@ function hasStaffPerm(user, perm) {
 }
 
 function requireAdmin(req, res) {
-  const ctx = requireAuth(req, res);
+  const ctx = requireStaff(req, res, null);
   if (!ctx) return null;
-  ensureStaffFields(ctx.user);
   if (ctx.user.role !== "admin") {
     res.status(403).json({ error: "forbidden", message: "Nur für Admins." });
     return null;
@@ -4406,6 +4693,22 @@ function requireStaff(req, res, perm) {
       message: "Keine Berechtigung für diese Aktion.",
     });
     return null;
+  }
+  const method = String(req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+    // Web-Staff-Sessions etwas großzügiger; App-Sessions enger (gestohlene Tokens)
+    const max = ctx.sessionKind === "staff" ? 90 : 40;
+    const key =
+      ctx.sessionKind === "staff"
+        ? `staff_mut:${ctx.user.id}`
+        : `staff_app_mut:${ctx.user.id}`;
+    if (!rateLimit(key, max, 60_000)) {
+      res.status(429).json({
+        error: "rate_limited",
+        message: "Zu viele Admin-Aktionen — kurz warten.",
+      });
+      return null;
+    }
   }
   return ctx;
 }
@@ -4447,7 +4750,7 @@ function staffUserCard(user) {
     petEmoji: userPetEmoji(user),
     permissions: user.role === "mod" ? staffPermissions(user) : undefined,
     modSince: user.modSince || null,
-    marriage: marriage.publicMarriage(m, user.id, db.users),
+    marriage: publicMarriageView(m, user.id),
     marriageCooldownRemainingMs: marriage.cooldownRemainingMs(user),
     marriageCooldownLabel: (() => {
       const rem = marriage.cooldownRemainingMs(user);
@@ -5510,6 +5813,17 @@ setInterval(() => {
   }
 }, 60_000).unref();
 setInterval(() => {
+  try {
+    const db = getDb();
+    seedShopCatalogIfNeeded();
+    shopCalendar.applyAllRotationPlans(db);
+    shopCatalog.deactivateExpired(db);
+    scheduleSave();
+  } catch (e) {
+    console.error("[shop] rotation tick failed", e);
+  }
+}, 2 * 60_000).unref();
+setInterval(() => {
   sweepExpiredMarketListings();
 }, 5 * 60_000).unref();
 setInterval(() => {
@@ -5883,7 +6197,8 @@ app.post("/v1/auth/google", async (req, res) => {
   ensureDailyGrant(user);
   const token = createSession(
     user.id,
-    staffOnly ? STAFF_SESSION_TTL_MS : SESSION_TTL_MS
+    staffOnly ? STAFF_SESSION_TTL_MS : SESSION_TTL_MS,
+    { kind: staffOnly ? "staff" : "app" }
   );
   if (staffOnly) {
     staffAudit(user, "staff_login", { via: "web_adm" });
@@ -5939,6 +6254,12 @@ app.post("/v1/me/delete", (req, res) => {
 app.get("/v1/me/lobbies", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
+  try {
+    const m = marriage.findMarriageForUser(getDb(), ctx.user.id);
+    if (m) ensureWeddingImageRetake(m);
+  } catch {
+    /* ignore */
+  }
   return res.json({
     lobbies: publicHostedLobbies(ctx.user),
     joined: publicJoinedLobbies(ctx.user),
@@ -6303,10 +6624,9 @@ app.get("/v1/users/:userId/profile", (req, res) => {
       ? marriage.formatRemaining(theirCooldownMs)
       : null,
     canDivorce: Boolean(bond && bond.status === "married"),
-    marriage: marriage.publicMarriage(
+    marriage: publicMarriageView(
       isSelf ? theirMarriage : bond || theirMarriage,
-      ctx.user.id,
-      db.users
+      ctx.user.id
     ),
     spousePublic: theirMarriage && theirMarriage.status === "married"
       ? (() => {
@@ -6364,6 +6684,11 @@ app.get("/v1/me/friends", (req, res) => {
   const myMarriage =
     marriage.repairMarriageLinks(db, ctx.user, WEDDING_DIR) ||
     marriage.findMarriageForUser(db, ctx.user.id);
+  try {
+    if (myMarriage) ensureWeddingImageRetake(myMarriage);
+  } catch {
+    /* ignore */
+  }
   const pendingProposals = [];
   const allM = marriage.ensureMarriages(db);
   for (const m of Object.values(allM)) {
@@ -6375,7 +6700,7 @@ app.get("/v1/me/friends", (req, res) => {
     if (from) {
       pendingProposals.push({
         ...friendPublicCard(from, ctx.user),
-        marriage: marriage.publicMarriage(m, ctx.user.id, db.users),
+        marriage: publicMarriageView(m, ctx.user.id),
       });
     }
   }
@@ -6398,7 +6723,7 @@ app.get("/v1/me/friends", (req, res) => {
       .map((id) => friendPublicCard(db.users[id], ctx.user))
       .filter(Boolean),
     marriageProposals: pendingProposals,
-    myMarriage: marriage.publicMarriage(myMarriage, ctx.user.id, db.users),
+    myMarriage: publicMarriageView(myMarriage, ctx.user.id),
     marriageCooldownRemainingMs: myCd,
     marriageCooldownSkipCost: marriage.skipWaitCost(myCd, marriage.DIVORCE_COOLDOWN_MS),
     marriageCooldownLabel: myCd > 0 ? marriage.formatRemaining(myCd) : null,
@@ -6705,7 +7030,11 @@ app.put("/v1/me/friends/order", (req, res) => {
   });
 });
 
-/** Begleiter kraulen — nur Freunde, Empfänger +1 Coin, 1× pro Person / Tag. */
+/**
+ * Begleiter kraulen — nur Freunde, 1× pro Freund / Tag.
+ * Beide erhalten Coins je nach Freundschaftslevel (1 / 2 ab Lv25 / 3 ab Lv50 / 5 ab Lv100).
+ * Freundschaftslevel steigt nicht mehr durch Kraulen (nur gemeinsame Leinwand).
+ */
 app.post("/v1/users/:userId/pet-kraul", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
@@ -6731,8 +7060,8 @@ app.post("/v1/users/:userId/pet-kraul", (req, res) => {
       message: "Diesen Begleiter hast du heute schon gekrault.",
     });
   }
-  // Empfänger: max. 25 Kraul-Coins / Tag (Farming-Deckel)
   const day = todayKey();
+  // Empfänger: max. 25 erfolgreiche Kraule / Tag (Farming-Deckel)
   if (target.petKraulRecvDay !== day) {
     target.petKraulRecvDay = day;
     target.petKraulRecvCount = 0;
@@ -6743,15 +7072,13 @@ app.post("/v1/users/:userId/pet-kraul", (req, res) => {
       message: "Heute schon genug Kraule bekommen.",
     });
   }
-  applyLedger(toId, 1, "pet_kraul_recv", ctx.user.id);
+  const level = marriage.getLevel(ctx.user, toId);
+  const amount = marriage.kraulCoinAmount(level);
+  applyLedger(toId, amount, "pet_kraul_recv", ctx.user.id);
+  applyLedger(ctx.user.id, amount, "pet_kraul_give", toId);
   target.petKraulRecvCount = (target.petKraulRecvCount || 0) + 1;
   markPetKraul(ctx.user, toId);
   trackAch(ctx.user, "krauls", 1);
-  const levelBump = marriage.bumpLevelFromKraul(ctx.user, target, day);
-  if (levelBump.bumped) {
-    trackFriendshipLevelAch(ctx.user, levelBump.level);
-    trackFriendshipLevelAch(target, levelBump.level);
-  }
   const kraulSet = new Set(
     Array.isArray(ctx.user.friends?.petKraulTargets)
       ? ctx.user.friends.petKraulTargets
@@ -6766,10 +7093,12 @@ app.post("/v1/users/:userId/pet-kraul", (req, res) => {
     ok: true,
     petEmoji,
     toCoins: target.coins || 0,
-    amount: 1,
+    fromCoins: ctx.user.coins || 0,
+    amount,
     canPetKraul: false,
-    friendshipLevel: levelBump.level,
-    friendshipLevelBumped: Boolean(levelBump.bumped),
+    friendshipLevel: level,
+    friendshipLevelBumped: false,
+    user: publicUser(ctx.user),
   });
 });
 
@@ -6854,7 +7183,7 @@ app.post("/v1/users/:userId/marry/propose", (req, res) => {
     charged,
     unlockCost: unlockCost > 0 && payUnlock ? unlockCost : 0,
     cooldownCost,
-    marriage: marriage.publicMarriage(all[key], ctx.user.id, db.users),
+    marriage: publicMarriageView(all[key], ctx.user.id),
     user: publicUser(ctx.user),
   });
 });
@@ -6876,7 +7205,7 @@ app.post("/v1/me/marriage/accept", (req, res) => {
   scheduleSave();
   return res.json({
     ok: true,
-    marriage: marriage.publicMarriage(m, ctx.user.id, db.users),
+    marriage: publicMarriageView(m, ctx.user.id),
   });
 });
 
@@ -6962,7 +7291,7 @@ app.post("/v1/me/marriage/skip-wait", (req, res) => {
   if (!m) {
     return res.status(400).json({ error: "no_marriage", message: "Keine Verlobung/Hochzeit." });
   }
-  const pub = marriage.publicMarriage(m, ctx.user.id, db.users);
+  const pub = publicMarriageView(m, ctx.user.id);
   let cost = 0;
   let phase = "";
   if (m.status === "engaged") {
@@ -6971,6 +7300,13 @@ app.post("/v1/me/marriage/skip-wait", (req, res) => {
   } else if (m.status === "wedding") {
     cost = Number(pub?.weddingSkipCost) || 0;
     phase = "wedding";
+    if (!pub?.weddingStrokesReady) {
+      return res.status(400).json({
+        error: "wedding_strokes",
+        message: `Beide Partner brauchen je ${marriage.WEDDING_MIN_STROKES} Striche auf der Hochzeitsleinwand — mit oder ohne Coins.`,
+        marriage: pub,
+      });
+    }
   } else {
     return res.status(400).json({
       error: "wrong_phase",
@@ -6979,14 +7315,21 @@ app.post("/v1/me/marriage/skip-wait", (req, res) => {
   }
   if (cost <= 0) {
     const advanced = advanceMarriageNextStep(m);
+    if (!advanced.ok) {
+      return res.status(400).json({
+        error: advanced.error || "failed",
+        message: advanced.message || "Fortsetzen fehlgeschlagen.",
+        marriage: publicMarriageView(m, ctx.user.id),
+      });
+    }
     scheduleSave();
     return res.json({
       ok: true,
       free: true,
       phase,
-      marriage: marriage.publicMarriage(m, ctx.user.id, db.users),
+      marriage: publicMarriageView(m, ctx.user.id),
       user: publicUser(ctx.user),
-      advanced: advanced.ok,
+      advanced: true,
     });
   }
   ensureCoinBuckets(ctx.user);
@@ -6996,14 +7339,125 @@ app.post("/v1/me/marriage/skip-wait", (req, res) => {
   }
   trackAch(ctx.user, "coins_spent", cost);
   const advanced = advanceMarriageNextStep(m);
+  if (!advanced.ok) {
+    // Coins zurückbuchen wenn Heirat doch blockiert
+    applyLedger(ctx.user.id, cost, "marriage_skip_wait_refund", phase);
+    return res.status(400).json({
+      error: advanced.error || "failed",
+      message: advanced.message || "Überspringen fehlgeschlagen.",
+      marriage: publicMarriageView(m, ctx.user.id),
+      user: publicUser(ctx.user),
+    });
+  }
   scheduleSave();
   return res.json({
     ok: true,
     phase,
     cost,
-    marriage: marriage.publicMarriage(m, ctx.user.id, db.users),
+    marriage: publicMarriageView(m, ctx.user.id),
     user: publicUser(ctx.user),
-    advanced: advanced.ok,
+    advanced: true,
+  });
+});
+
+/**
+ * Nachträgliches Hochzeitsbild: Partner bestätigt die aktuelle Leinwand.
+ * Beide bestätigt + Snapshot → Bild speichern, Lobby schließen.
+ */
+app.post("/v1/me/marriage/confirm-wedding-image", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const m = marriage.findMarriageForUser(db, ctx.user.id);
+  if (!m || m.status !== "married") {
+    return res.status(400).json({
+      error: "not_married",
+      message: "Nur für Verheiratete ohne Hochzeitsbild.",
+    });
+  }
+  if (m.weddingImageFile) {
+    return res.status(400).json({
+      error: "has_image",
+      message: "Hochzeitsbild ist bereits gespeichert.",
+    });
+  }
+  ensureWeddingImageRetake(m);
+  if (!m.weddingImageRetake || !m.weddingLobbyCode) {
+    return res.status(400).json({
+      error: "no_retake",
+      message: "Keine Hochzeitsleinwand zum Bestätigen.",
+    });
+  }
+  if (!m.weddingConfirm || typeof m.weddingConfirm !== "object") {
+    m.weddingConfirm = { [m.a]: false, [m.b]: false };
+  }
+  const confirm = req.body?.confirm !== false && req.body?.confirm !== "false";
+  m.weddingConfirm[ctx.user.id] = Boolean(confirm);
+  const state = weddingConfirmState(m, ctx.user.id);
+  const code = String(m.weddingLobbyCode || "").toUpperCase();
+  const room = rooms.get(code);
+  if (room) {
+    broadcastRoom(room, {
+      type: "wedding_confirm",
+      confirms: {
+        [m.a]: Boolean(m.weddingConfirm[m.a]),
+        [m.b]: Boolean(m.weddingConfirm[m.b]),
+      },
+      userId: ctx.user.id,
+      done: false,
+    });
+  }
+  if (state.weddingConfirmReady) {
+    const done = completeWeddingImageRetake(m);
+    if (!done.ok) {
+      scheduleSave();
+      return res.status(400).json({
+        error: done.error || "failed",
+        message: done.message || "Bild konnte noch nicht gespeichert werden.",
+        ...state,
+        marriage: publicMarriageView(m, ctx.user.id),
+      });
+    }
+    return res.json({
+      ok: true,
+      done: true,
+      ...weddingConfirmState(m, ctx.user.id),
+      marriage: publicMarriageView(m, ctx.user.id),
+      message: "Hochzeitsbild gespeichert.",
+    });
+  }
+  scheduleSave();
+  return res.json({
+    ok: true,
+    done: false,
+    ...state,
+    marriage: publicMarriageView(m, ctx.user.id),
+    message: confirm
+      ? "Gespeichert — warte auf die Bestätigung deines Partners."
+      : "Bestätigung zurückgenommen.",
+  });
+});
+
+app.get("/v1/me/marriage/wedding-image-confirm", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const m = marriage.findMarriageForUser(getDb(), ctx.user.id);
+  if (!m || m.status !== "married" || m.weddingImageFile) {
+    return res.json({
+      ok: true,
+      weddingImageRetake: false,
+      weddingConfirmMine: false,
+      weddingConfirmPartner: false,
+      weddingConfirmReady: false,
+      marriage: m ? publicMarriageView(m, ctx.user.id) : null,
+    });
+  }
+  ensureWeddingImageRetake(m);
+  return res.json({
+    ok: true,
+    ...weddingConfirmState(m, ctx.user.id),
+    weddingLobbyCode: m.weddingLobbyCode || null,
+    marriage: publicMarriageView(m, ctx.user.id),
   });
 });
 
@@ -7033,7 +7487,7 @@ app.get("/v1/users/:userId/wedding", (req, res) => {
   };
   return res.json({
     ok: true,
-    marriage: marriage.publicMarriage(m, ctx.user.id, db.users),
+    marriage: publicMarriageView(m, ctx.user.id),
     couple: {
       a: spouseCard(m.a),
       b: spouseCard(m.b),
@@ -7662,13 +8116,21 @@ app.post("/v1/admin/users/:userId/marriage/advance", (req, res) => {
   let result;
   if (action === "shorten") {
     const rem = Number(req.body?.remainingMs);
-    result = shortenMarriageWait(m, Number.isFinite(rem) ? rem : 0);
+    if (!Number.isFinite(rem) || rem <= 0) {
+      result = advanceMarriageNextStep(m, { force: true });
+    } else {
+      result = shortenMarriageWait(m, rem);
+    }
   } else if (action === "set_days") {
     const days = Math.max(0, Math.min(7, Number(req.body?.days) || 0));
-    result = shortenMarriageWait(m, days * marriage.DAY_MS);
+    if (days <= 0) {
+      result = advanceMarriageNextStep(m, { force: true });
+    } else {
+      result = shortenMarriageWait(m, days * marriage.DAY_MS);
+    }
   } else {
-    // next / skip
-    result = advanceMarriageNextStep(m);
+    // next / skip — Staff darf Strich-Pflicht umgehen
+    result = advanceMarriageNextStep(m, { force: true });
   }
   if (!result.ok) {
     return res.status(400).json({
@@ -7680,7 +8142,7 @@ app.post("/v1/admin/users/:userId/marriage/advance", (req, res) => {
   return res.json({
     ok: true,
     user: staffUserCard(target),
-    marriage: marriage.publicMarriage(m, uid, db.users),
+    marriage: publicMarriageView(m, uid),
   });
 });
 
@@ -7774,6 +8236,14 @@ app.get("/v1/admin/users/:userId", (req, res) => {
   const lobbies = Object.entries(user.hostedRooms || {}).map(([code, meta]) =>
     staffLobbyCard(code, meta, user)
   );
+  for (const [code, meta] of Object.entries(user.joinedRooms || {})) {
+    if (lobbies.some((l) => l.code === code)) continue;
+    lobbies.push({
+      ...staffLobbyCard(code, meta, user),
+      joined: true,
+      name: (meta && meta.name) || code,
+    });
+  }
   lobbies.sort((x, y) => {
     if (x.live !== y.live) return x.live ? -1 : 1;
     return String(x.name).localeCompare(String(y.name), "de");
@@ -8249,6 +8719,86 @@ app.post("/v1/admin/notify-phrases/bulk", (req, res) => {
 });
 
 /** Tagesaufgaben-Planer (Admin) */
+/** —— Events (Jahreskalender) —— */
+app.get("/v1/admin/events", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const db = getDb();
+  const year = Number(req.query.year) || new Date().getUTCFullYear();
+  return res.json({
+    ok: true,
+    events: seasonEvents.listAdminEvents(db),
+    year: seasonEvents.yearOverview(db, year),
+  });
+});
+
+app.put("/v1/admin/events", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const db = getDb();
+  const result = seasonEvents.putAdminEvents(db, req.body || {});
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  scheduleSave();
+  staffAudit(ctx.user, "events_config", { count: (result.events || []).length });
+  return res.json({ ok: true, events: result.events });
+});
+
+app.post("/v1/admin/events", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const db = getDb();
+  const result = seasonEvents.createAdminEvent(db, req.body || {});
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "events_create", { id: result.event?.id });
+  return res.json({
+    ok: true,
+    event: result.event,
+    events: result.events,
+    year: seasonEvents.yearOverview(db, new Date().getUTCFullYear()),
+  });
+});
+
+app.get("/v1/me/events", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  return res.json(seasonEvents.meEventsPayload(db, ctx.user, todayKey()));
+});
+
+app.post("/v1/me/events/:id/collect", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  if (!rateLimit(`eventcollect:${ctx.user.id}`, 20, 60_000)) {
+    return res.status(429).json({ error: "rate_limited" });
+  }
+  const db = getDb();
+  const result = seasonEvents.collectEvent(
+    db,
+    ctx.user,
+    req.params.id,
+    todayKey(),
+    (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref),
+    (u, k, itemId) => safeGiveItem(u, k, itemId)
+  );
+  if (!result.ok) {
+    return res.status(400).json({
+      error: result.error,
+      message: result.message,
+    });
+  }
+  scheduleSave();
+  return res.json({
+    ok: true,
+    ...result,
+    user: publicUser(ctx.user),
+  });
+});
+
 app.get("/v1/admin/daily-tasks", (req, res) => {
   const ctx = requireStaff(req, res, "market.settings");
   if (!ctx) return;
@@ -8476,6 +9026,7 @@ app.get("/v1/shop/catalog", (req, res) => {
   if (!ctx) return;
   seedShopCatalogIfNeeded();
   const db = getDb();
+  shopCalendar.applyAllRotationPlans(db);
   shopCatalog.deactivateExpired(db);
   const kind = String(req.query?.kind || "").trim() || null;
   const q = String(req.query?.q || "").trim().slice(0, 40);
@@ -8609,6 +9160,13 @@ app.post("/v1/shop/buy-theme", (req, res) => {
   const price = check.ok
     ? check.price
     : Number(THEME_SHOP_PRICES[themeId]) || 0;
+  // Gratis nur Starter-Theme meadow — kein Admin-Preis-0-Exploit
+  if (price < 1 && themeId !== "meadow") {
+    return res.status(400).json({
+      error: "invalid_price",
+      message: "Hintergrund ist nicht käuflich.",
+    });
+  }
   if (price < 0) {
     return res.status(400).json({
       error: check.error || "unknown_item",
@@ -9293,6 +9851,26 @@ function applyItemMarketSellable(req, res) {
 app.put("/v1/admin/items/:kind/:itemId/market-sellable", applyItemMarketSellable);
 app.post("/v1/admin/items/:kind/:itemId/market-sellable", applyItemMarketSellable);
 
+function applyItemLootboxEligible(req, res) {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const kind = String(req.params.kind || "").trim();
+  const itemId = clipMarketItemId(req.params.itemId);
+  const want = Boolean(req.body?.lootboxEligible ?? req.body?.eligible ?? true);
+  const result = itemTrade.setLootboxEligible(getDb(), kind, itemId, want, {
+    defaultPet: DEFAULT_PET,
+    starterEmojis: STARTER_EMOJIS,
+  });
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "item_lootbox", { kind, itemId, lootboxEligible: want });
+  return res.json({ ok: true, ...result });
+}
+app.put("/v1/admin/items/:kind/:itemId/lootbox-eligible", applyItemLootboxEligible);
+app.post("/v1/admin/items/:kind/:itemId/lootbox-eligible", applyItemLootboxEligible);
+
 /** Itemshop-Katalog (Staff) */
 app.get("/v1/admin/shop/items", (req, res) => {
   const ctx = requireStaff(req, res, "market.settings");
@@ -9315,6 +9893,7 @@ app.get("/v1/admin/shop/calendar", (req, res) => {
   const ctx = requireStaff(req, res, "market.settings");
   if (!ctx) return;
   seedShopCatalogIfNeeded();
+  shopCalendar.ensureDefaultExpensiveRotation(getDb());
   const data = shopCalendar.listCalendar(getDb(), {
     kind: String(req.query?.kind || "").trim() || null,
     q: String(req.query?.q || "").trim().slice(0, 40),
@@ -9323,6 +9902,130 @@ app.get("/v1/admin/shop/calendar", (req, res) => {
   });
   scheduleSave();
   return res.json({ ok: true, ...data });
+});
+
+app.get("/v1/admin/shop/calendar/month", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  shopCalendar.ensureDefaultExpensiveRotation(getDb());
+  const now = new Date();
+  const year = Number(req.query?.year) || now.getFullYear();
+  const month = Number(req.query?.month) || now.getMonth() + 1;
+  const data = shopCalendar.monthGrid(getDb(), year, month);
+  scheduleSave();
+  return res.json({ ok: true, ...data });
+});
+
+app.get("/v1/admin/shop/rotation-plans", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  shopCalendar.ensureDefaultExpensiveRotation(getDb());
+  const plans = shopCalendar.listRotationPlans(getDb());
+  return res.json({ ok: true, plans });
+});
+
+app.post("/v1/admin/shop/rotation-plans", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  const result = shopCalendar.upsertRotationPlan(getDb(), req.body || {}, {
+    byUserId: ctx.user?.id || null,
+  });
+  flushSave();
+  staffAudit(ctx.user, "shop_rotation_upsert", { id: result.plan?.id });
+  return res.json({ ok: true, plan: result.plan });
+});
+
+app.put("/v1/admin/shop/rotation-plans/:id", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  const id = String(req.params.id || "").trim();
+  const result = shopCalendar.upsertRotationPlan(
+    getDb(),
+    { ...(req.body || {}), id },
+    { byUserId: ctx.user?.id || null }
+  );
+  flushSave();
+  staffAudit(ctx.user, "shop_rotation_upsert", { id });
+  return res.json({ ok: true, plan: result.plan });
+});
+
+app.delete("/v1/admin/shop/rotation-plans/:id", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const id = String(req.params.id || "").trim();
+  const result = shopCalendar.deleteRotationPlan(getDb(), id);
+  if (!result.ok) {
+    return res.status(404).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "shop_rotation_delete", { id });
+  return res.json({ ok: true });
+});
+
+app.post("/v1/admin/shop/rotation-plans/:id/apply", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const id = String(req.params.id || "").trim();
+  const plans = shopCalendar.ensureRotationPlans(getDb());
+  const plan = plans[id];
+  if (!plan) {
+    return res.status(404).json({ error: "not_found", message: "Plan nicht gefunden." });
+  }
+  const result = shopCalendar.applyRotationPlan(getDb(), plan, {
+    byUserId: ctx.user?.id || null,
+  });
+  flushSave();
+  return res.json({ ok: true, ...result });
+});
+
+app.post("/v1/admin/shop/calendar/:kind/:itemId/leave-rotation", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  const kind = String(req.params.kind || "").trim();
+  const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
+  const result = shopCalendar.removeItemFromRotation(getDb(), kind, itemId, {
+    byUserId: ctx.user?.id || null,
+  });
+  if (!result.ok) {
+    return res.status(404).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "shop_rotation_leave", { kind, itemId });
+  return res.json(result);
+});
+
+app.post("/v1/admin/shop/calendar/:kind/:itemId/rejoin-rotation", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  const kind = String(req.params.kind || "").trim();
+  const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
+  const result = shopCalendar.rejoinRotationPool(getDb(), kind, itemId, {
+    byUserId: ctx.user?.id || null,
+  });
+  if (!result.ok) {
+    return res.status(404).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "shop_rotation_rejoin", { kind, itemId });
+  return res.json(result);
+});
+
+app.post("/v1/admin/shop/calendar/batch", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  const result = shopCalendar.batchAvailability(getDb(), req.body || {}, {
+    byUserId: ctx.user?.id || null,
+  });
+  flushSave();
+  staffAudit(ctx.user, "shop_calendar_batch", { count: result.count });
+  return res.json(result);
 });
 
 app.put("/v1/admin/shop/calendar/:kind/:itemId", (req, res) => {
@@ -10966,6 +11669,7 @@ app.post("/v1/rooms/:code/join", (req, res) => {
     isFree: Boolean(room.isFree),
     isRandom: Boolean(room.isRandom),
     isWedding: Boolean(room.isWedding),
+    weddingRetake: Boolean(room.weddingRetake),
     hostColorSide: normalizeHostColorSide(room.hostColorSide),
     suggestedColorIndex,
     members: roster.map((m) => m.nickname),
@@ -11809,12 +12513,51 @@ app.get("/v1/rooms/:code/memory", (req, res) => {
 });
 
 app.get("/v1/rooms/:code/memory/image", (req, res) => {
+  // Auth: Bearer oder ?session= (Bild-Downloads ohne Header-Support)
+  let ctx = authUser(req);
+  if (!ctx) {
+    const qTok = String(req.query?.session || "").trim();
+    if (qTok) {
+      const db = getDb();
+      const session = db.sessions[qTok];
+      if (session && session.expiresAt >= Date.now()) {
+        const user = db.users[session.userId];
+        if (user && !user.banned) ctx = { user, token: qTok };
+      }
+    }
+  }
+  if (!ctx) {
+    return res.status(401).json({ error: "unauthorized" });
+  }
   const code = String(req.params.code || "")
     .toUpperCase()
     .replace(/^LUV-/, "");
   const entry = canvasMemories()[code];
   const pub = memoryPublic(code, entry);
   if (!pub || !entry?.file) return res.status(404).end();
+
+  // Nur Host / bekannte Mitglieder / Staff
+  ensureStaffFields(ctx.user);
+  const isStaffUser = isStaff(ctx.user);
+  let allowed = isStaffUser;
+  if (!allowed) {
+    const hosted = ctx.user.hostedRooms || {};
+    if (hosted[code]) allowed = true;
+  }
+  if (!allowed) {
+    const live = rooms.get(code) || getDb().rooms?.[code];
+    if (live?.hostUserId === ctx.user.id) allowed = true;
+    if (
+      Array.isArray(live?.memberUserIds) &&
+      live.memberUserIds.includes(ctx.user.id)
+    ) {
+      allowed = true;
+    }
+  }
+  if (!allowed) {
+    return res.status(403).json({ error: "forbidden", message: "Kein Zugriff auf dieses Memory." });
+  }
+
   const filePath = path.join(SNAPSHOT_DIR, path.basename(entry.file));
   if (!fs.existsSync(filePath)) return res.status(404).end();
   res.setHeader("Content-Type", "image/png");
@@ -11895,6 +12638,14 @@ wss.on("connection", (socket, req) => {
   const role = String(url.searchParams.get("role") || "peer");
   const sessionToken = String(url.searchParams.get("session") || "");
   const user = userFromSessionToken(sessionToken);
+  if (!user) {
+    try {
+      socket.close(4401, "auth_required");
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
   if (user?.banned) {
     try {
       socket.close(4403, "banned");
@@ -12669,6 +13420,8 @@ wss.on("connection", (socket, req) => {
         if (peers >= 2) trackAch(user, "draw_with_peers", 1);
         if (peers >= 4) trackAch(user, "draw_group4", 1);
         ach.setMetricAtLeast(user, "lobby_peak", room.peakPeers || peers, todayKey(), null);
+        // Freundschaftslevel: +1/Tag wenn beide auf dieser Lobby heute gemalt haben
+        noteFriendshipCanvasStroke(room, user);
       }
       // Relayed payload aus normalisiertem Stroke (stabile History)
       const relayPayload = {
@@ -12911,15 +13664,21 @@ server.listen(PORT, "0.0.0.0", () => {
       scheduleSave();
       console.log(`[marriage] recovered ${n} orphaned wedding(s) on boot`);
     }
+    const retakes = ensureAllWeddingImageRetakes();
+    if (retakes > 0) {
+      console.log(`[marriage] wedding image retake lobbies: ${retakes}`);
+    }
   } catch (e) {
     console.error("[marriage] boot recover failed", e);
   }
   try {
     seedShopCatalogIfNeeded();
     const expired = shopCatalog.deactivateExpired(getDb());
+    const rot = shopCalendar.ensureDefaultExpensiveRotation(getDb());
+    shopCalendar.applyAllRotationPlans(getDb());
     scheduleSave();
     console.log(
-      `[shop] catalog items=${Object.keys(shopCatalog.ensureShopCatalog(getDb()).items).length} expiredOff=${expired}`
+      `[shop] catalog items=${Object.keys(shopCatalog.ensureShopCatalog(getDb()).items).length} expiredOff=${expired} rotation=${rot.created ? "seeded" : "ok"}`
     );
   } catch (e) {
     console.error("[shop] seed failed", e);

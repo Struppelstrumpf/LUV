@@ -12,6 +12,17 @@
     shopQ: "",
     shopSource: "",
     shopUniverse: [],
+    shopView: "katalog", // katalog | kalender
+    calKind: "",
+    calQ: "",
+    calStatus: "",
+    calMark: "",
+    calOpenKey: "",
+    calYear: new Date().getFullYear(),
+    calMonth: new Date().getMonth() + 1,
+    calDay: "",
+    calTab: "month", // month | plans | items
+    calPick: {}, // itemKey -> true for batch
     achQ: "",
     achCat: "",
     achFocusId: null,
@@ -40,7 +51,8 @@
 
   const TABS = [
     { id: "overview", label: "Übersicht", hint: "Live-Zahlen und Räume auf einen Blick." },
-    { id: "shop", label: "Itemshop", hint: "Alle Items: Shop, Erfolge, Codes — Preise, Handelbarkeit und Limits.", perm: "market.settings" },
+    { id: "shop", label: "Itemshop", hint: "Katalog & Kalender: Preise, Zeitfenster, Käufe und Marktplatz-Stats.", perm: "market.settings" },
+    { id: "events", label: "Events", hint: "Jahreskalender: wiederkehrende Events, Belohnungen und App-Schmuck.", perm: "market.settings" },
     { id: "achievements", label: "Erfolge", hint: "Erfolge ansehen, deaktivieren und mit Wizard erstellen/bearbeiten.", perm: "market.settings" },
     { id: "dailies", label: "Tagesaufgaben", hint: "Planer: welche Aufgaben, wie viele, Coin-Belohnung und Anleitungen.", perm: "market.settings" },
     { id: "phrases", label: "Sprüche", hint: "Push- und Share-Sprüche bearbeiten, Tap-Ziel wählen. Mehrfachauswahl möglich.", perm: "live.notify" },
@@ -321,7 +333,11 @@
     content.innerHTML = `<p class="muted">Lade…</p>`;
     try {
       if (id === "overview") await renderOverview();
-      else if (id === "shop") await renderShop();
+      else if (id === "shop") {
+        if (state.shopView === "kalender") await renderShopCalendar();
+        else await renderShop();
+      }
+      else if (id === "events") await window.LuvAdmPanels.renderEvents();
       else if (id === "achievements") {
         const focus = state.achFocusId;
         state.achFocusId = null;
@@ -438,6 +454,17 @@
           }" title="${
             it.marketSellable ? "Marktplatz: handelbar — klicken zum Sperren" : "Marktplatz: gesperrt — klicken zum Freigeben"
           }">${it.marketSellable ? "🏪" : "🚫"}</button>`;
+      const lootBtn = it.marketLocked
+        ? ""
+        : `<button type="button" class="btn-loot ${
+            it.lootboxEligible !== false ? "is-on" : "is-off"
+          }" data-loot="${esc(it.kind)}|${esc(it.itemId)}|${
+            it.lootboxEligible !== false ? "0" : "1"
+          }" title="${
+            it.lootboxEligible !== false
+              ? "Lootbox: erhältlich — klicken zum Ausschließen"
+              : "Lootbox: aus — klicken zum Freigeben"
+          }">${it.lootboxEligible !== false ? "🎁" : "⛔"}</button>`;
       const shopOff = shop && shop.enabled === false;
       const achLinks = (it.achievements || [])
         .map(
@@ -449,7 +476,7 @@
         it.marketSellable ? "is-tradeable" : "is-untradeable"
       }">
         <div class="shop-card-visual">${thumb}
-          <div class="shop-card-market">${marketBtn}</div>
+          <div class="shop-card-market">${marketBtn}${lootBtn}</div>
         </div>
         <div class="shop-card-body">
           <strong class="shop-card-title">${esc(it.label || it.itemId)}</strong>
@@ -522,6 +549,11 @@
           <button class="btn teal" id="shopWizard">＋ Neues Shop-Item</button>
         </div>
 
+        <div class="shop-cats" id="shopViews">
+          <button type="button" class="shop-cat on" data-shop-view="katalog">Katalog</button>
+          <button type="button" class="shop-cat" data-shop-view="kalender">Kalender</button>
+        </div>
+
         <div class="shop-cats" id="shopCats">
           <button type="button" class="shop-cat ${!activeKind ? "on" : ""}" data-kind="">Alle</button>
           ${SHOP_CATS.map((c) => {
@@ -560,6 +592,12 @@
       </div>`;
 
     $("shopWizard").onclick = () => openWizard();
+    content.querySelectorAll("#shopViews [data-shop-view]").forEach((btn) => {
+      btn.onclick = () => {
+        state.shopView = btn.getAttribute("data-shop-view") || "katalog";
+        loadTab("shop");
+      };
+    });
     content.querySelectorAll("[data-new-kind]").forEach((btn) => {
       btn.onclick = () => openWizard(btn.getAttribute("data-new-kind"));
     });
@@ -608,6 +646,25 @@
           renderShop();
         } catch (err) {
           alert(err?.message || "Handelbarkeit speichern fehlgeschlagen.");
+          btn.disabled = false;
+        }
+      };
+    });
+    content.querySelectorAll("[data-loot]").forEach((btn) => {
+      btn.onclick = async () => {
+        const [kind, itemId, mode] = btn.getAttribute("data-loot").split("|");
+        btn.disabled = true;
+        try {
+          await api(
+            `/admin/items/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/lootbox-eligible`,
+            {
+              method: "PUT",
+              body: JSON.stringify({ lootboxEligible: mode === "1" }),
+            }
+          );
+          renderShop();
+        } catch (err) {
+          alert(err?.message || "Lootbox-Einstellung speichern fehlgeschlagen.");
           btn.disabled = false;
         }
       };
@@ -681,10 +738,955 @@
     });
   }
 
+  function toLocalInput(ms) {
+    if (!ms) return "";
+    const d = new Date(ms);
+    if (!Number.isFinite(d.getTime())) return "";
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  function fmtWhen(ms) {
+    if (!ms) return "—";
+    try {
+      return new Date(ms).toLocaleString("de-DE", {
+        dateStyle: "short",
+        timeStyle: "short",
+      });
+    } catch {
+      return "—";
+    }
+  }
+
+  function fmtDuration(ms) {
+    if (!ms || ms < 0) return "—";
+    const h = Math.floor(ms / 3600000);
+    if (h < 48) return `${h} Std.`;
+    const d = Math.floor(h / 24);
+    return `${d} Tage`;
+  }
+
+  async function renderShopCalendar() {
+    const MONTHS = [
+      "Januar", "Februar", "März", "April", "Mai", "Juni",
+      "Juli", "August", "September", "Oktober", "November", "Dezember",
+    ];
+    const STATUS = {
+      always: "Immer an",
+      window: "Zeitfenster",
+      scheduled: "Geplant",
+      off: "Aus",
+      expired: "Abgelaufen",
+      missing: "Fehlt",
+    };
+
+    const monthData = await api(
+      `/admin/shop/calendar/month?year=${state.calYear}&month=${state.calMonth}`
+    );
+    let plans = monthData.plans || [];
+    // Volle Plan-Felder (itemKeys/concurrent) für Edit — Month-Payload kann gekürzt sein
+    if (state.calTab === "plans") {
+      try {
+        const full = await api("/admin/shop/rotation-plans");
+        if (Array.isArray(full.plans) && full.plans.length) plans = full.plans;
+      } catch (_) {
+        /* Month-Pläne als Fallback */
+      }
+    }
+    const days = monthData.days || [];
+    const selectedDay = state.calDay
+      ? days.find((d) => d.date === state.calDay)
+      : null;
+
+    let itemsData = { items: [], marks: {} };
+    if (state.calTab === "items") {
+      const qs = new URLSearchParams();
+      if (state.calKind) qs.set("kind", state.calKind);
+      if (state.calQ) qs.set("q", state.calQ);
+      if (state.calStatus) qs.set("status", state.calStatus);
+      if (state.calMark) qs.set("mark", state.calMark);
+      itemsData = await api("/admin/shop/calendar?" + qs.toString());
+    }
+    const items = itemsData.items || [];
+    const marks = itemsData.marks || {};
+    const pickCount = Object.keys(state.calPick || {}).filter((k) => state.calPick[k]).length;
+
+    function monthNavHtml() {
+      return `<div class="cal-month-nav">
+        <button type="button" class="btn secondary" id="calPrev">‹</button>
+        <h3 class="cal-month-title">${MONTHS[state.calMonth - 1]} ${state.calYear}</h3>
+        <button type="button" class="btn secondary" id="calNext">›</button>
+        <button type="button" class="btn secondary" id="calToday">Heute</button>
+      </div>`;
+    }
+
+    function densClass(count) {
+      const n = Number(count) || 0;
+      if (n <= 0) return "dens-0";
+      if (n <= 4) return "dens-1";
+      if (n <= 12) return "dens-2";
+      if (n <= 30) return "dens-3";
+      return "dens-4";
+    }
+
+    function kindDotsHtml(byKind, total) {
+      const parts = [
+        ["stickers", "S", "Sticker"],
+        ["themes", "H", "Hintergründe"],
+        ["pets", "B", "Begleiter"],
+        ["emojis", "E", "Emojis"],
+        ["other", "?", "Sonstige"],
+      ];
+      return parts
+        .filter(([k]) => (byKind?.[k] || 0) > 0)
+        .map(
+          ([k, letter, label]) =>
+            `<span class="cal-kdot cal-k-${k}" title="${esc(label)}: ${byKind[k]}">${letter}<i>${byKind[k]}</i></span>`
+        )
+        .join("");
+    }
+
+    function monthGridHtml() {
+      const pads = Array.from({ length: monthData.startPad || 0 }, () => `<div class="cal-cell is-pad"></div>`);
+      const cells = days.map((d) => {
+        const isToday = d.date === monthData.today;
+        const isSel = d.date === state.calDay;
+        const n = d.count || 0;
+        const byKind = d.byKind || {};
+        const tipParts = [];
+        if (byKind.stickers) tipParts.push(`${byKind.stickers} Sticker`);
+        if (byKind.themes) tipParts.push(`${byKind.themes} Hintergründe`);
+        if (byKind.pets) tipParts.push(`${byKind.pets} Begleiter`);
+        if (byKind.emojis) tipParts.push(`${byKind.emojis} Emojis`);
+        if (byKind.other) tipParts.push(`${byKind.other} Sonstige`);
+        const tip = n
+          ? `${n} Items aktiv${tipParts.length ? " · " + tipParts.join(", ") : ""} — Klick für Liste`
+          : "Keine zeitlich begrenzten Items";
+
+        let body;
+        if (n <= 0) {
+          body = `<span class="cal-cell-empty">—</span>`;
+        } else if (n <= 4) {
+          // Wenige: Glyphs + Restzahl
+          const chips = (d.items || [])
+            .slice(0, 3)
+            .map((it) => `<span class="cal-chip" title="${esc(it.label || it.itemId)}">${esc(it.emoji || "·")}</span>`)
+            .join("");
+          const more = n > 3 ? `<span class="cal-more">+${n - 3}</span>` : "";
+          body = `<span class="cal-cell-chips">${chips}${more}</span>`;
+        } else {
+          // Viele: Kategorie-Dots + große Zahl — skaliert auch bei 50+ Items
+          body = `<span class="cal-cell-dense">
+            <span class="cal-cell-big">${n}</span>
+            <span class="cal-kdots">${kindDotsHtml(byKind, n)}</span>
+          </span>`;
+        }
+
+        return `<button type="button" class="cal-cell ${densClass(n)} ${isToday ? "is-today" : ""} ${isSel ? "is-sel" : ""} ${n ? "has-items" : ""}" data-cal-day="${esc(d.date)}" title="${esc(tip)}">
+          <span class="cal-cell-top">
+            <span class="cal-cell-num">${d.day}</span>
+            ${n ? `<span class="cal-cell-pill">${n}</span>` : ""}
+          </span>
+          ${body}
+          <span class="cal-dens-bar" aria-hidden="true"></span>
+        </button>`;
+      });
+      return `<div class="cal-weekdays">${["Mo","Di","Mi","Do","Fr","Sa","So"].map((w) => `<div>${w}</div>`).join("")}</div>
+        <div class="cal-grid">${pads.join("")}${cells.join("")}</div>
+        <p class="help cal-legend" style="margin:0.55rem 0 0">
+          Wenige Items: Vorschau-Glyphs · Viele Items: Zahl + Kategorien (S/H/B/E). Details immer per Klick rechts.
+        </p>`;
+    }
+
+    function dayPanelHtml() {
+      if (!selectedDay) {
+        return `<div class="cal-side panel">
+          <h4 style="margin:0 0 0.4rem">Tag wählen</h4>
+          <p class="help">Tippe einen Tag im Kalender an, um die Items an diesem Tag zu sehen oder ein Fenster für mehrere Items zu setzen.</p>
+          <div class="cal-plan-preview">
+            <h4 style="margin:0.8rem 0 0.35rem">Aktive Rotation</h4>
+            ${
+              plans.length
+                ? plans
+                    .map((p) => {
+                      const act = (p.activeNow || [])
+                        .map((a) => `${a.emoji || ""} ${a.label || a.itemId}`)
+                        .join(", ") || "—";
+                      return `<div class="cal-plan-mini ${p.enabled ? "" : "is-off"}">
+                        <strong>${esc(p.label)}</strong>
+                        <div class="muted" style="font-size:0.8rem">${esc(p.cycleLength)} ${esc(p.cycleUnit)} Zyklus · ${esc(p.activeLength)} ${esc(p.activeUnit)} im Shop · ${p.itemCount || 0} Items</div>
+                        <div style="margin-top:0.25rem">${esc(act)}</div>
+                      </div>`;
+                    })
+                    .join("")
+                : `<p class="help">Noch keine Rotationspläne.</p>`
+            }
+          </div>
+        </div>`;
+      }
+      const KIND_LABEL = {
+        stickers: "Sticker",
+        themes: "Hintergründe",
+        pets: "Begleiter",
+        emojis: "Emojis",
+      };
+      const byKind = {};
+      for (const it of selectedDay.items || []) {
+        const k = String(it.kind || "other");
+        if (!byKind[k]) byKind[k] = [];
+        byKind[k].push(it);
+      }
+      const kindOrder = ["stickers", "themes", "pets", "emojis"];
+      const kindKeys = [
+        ...kindOrder.filter((k) => byKind[k]?.length),
+        ...Object.keys(byKind).filter((k) => !kindOrder.includes(k)),
+      ];
+      const groupsHtml = kindKeys.length
+        ? kindKeys
+            .map((k) => {
+              const rows = byKind[k]
+                .map(
+                  (it) => `<li class="cal-day-row" data-cal-q="${esc(
+                    `${it.label || ""} ${it.itemId || ""} ${it.emoji || ""} ${it.kind || ""}`.toLowerCase()
+                  )}">
+                    <span class="cal-emoji-inline">${esc(it.emoji || "·")}</span>
+                    <span class="cal-day-meta">
+                      <strong>${esc(it.label || it.itemId)}</strong>
+                      <span class="muted">${it.priceCoins ?? "—"}💰${
+                        it.rotationPlanId ? " · ↻" : ""
+                      }</span>
+                    </span>
+                  </li>`
+                )
+                .join("");
+              return `<div class="cal-day-group" data-kind="${esc(k)}">
+                <div class="cal-day-group-h">${esc(KIND_LABEL[k] || k)} <span class="muted">${byKind[k].length}</span></div>
+                <ul class="cal-day-items">${rows}</ul>
+              </div>`;
+            })
+            .join("")
+        : `<p class="muted">Keine zeitlich begrenzten Items</p>`;
+      return `<div class="cal-side panel">
+        <h4 style="margin:0 0 0.35rem">${esc(selectedDay.date)}</h4>
+        <p class="help" style="margin:0 0 0.45rem">${selectedDay.count || 0} Items mit Zeitfenster an diesem Tag</p>
+        <label class="field cal-day-filter">
+          <input type="search" id="calDayFilter" placeholder="Im Tag filtern…" autocomplete="off" />
+        </label>
+        <div class="cal-day-groups" id="calDayGroups">${groupsHtml}</div>
+        <hr class="cal-hr" />
+        <h4 style="margin:0 0 0.35rem">Fenster für Auswahl setzen</h4>
+        <p class="help">Unten unter „Items“ anhaken, dann hier speichern — oder einzelne IDs eintragen.</p>
+        <form id="calBatchForm" class="cal-batch-form">
+          <label class="field">Item-Keys (kind:id, kommagetrennt)
+            <textarea name="keys" rows="2" placeholder="emojis:💎, pets:🦄">${esc(
+              Object.keys(state.calPick || {})
+                .filter((k) => state.calPick[k])
+                .join(", ")
+            )}</textarea>
+          </label>
+          <div class="grid-2">
+            <label class="field">Ab
+              <input type="datetime-local" name="availableFrom" value="${esc(selectedDay.date)}T00:00" />
+            </label>
+            <label class="field">Bis
+              <input type="datetime-local" name="availableUntil" value="${esc(selectedDay.date)}T23:59" />
+            </label>
+          </div>
+          <label class="field" style="flex-direction:row;align-items:center;gap:0.5rem;margin-top:0.4rem">
+            <input type="checkbox" name="enabled" checked /> Im Shop aktiv
+          </label>
+          <div class="actions" style="margin-top:0.6rem">
+            <button type="submit" class="btn">Auf ${pickCount || "…"} Items anwenden</button>
+          </div>
+        </form>
+      </div>`;
+    }
+
+    function plansHtml() {
+      const fmtWin = (ms) => {
+        if (!ms) return "—";
+        try {
+          return new Date(ms).toLocaleDateString("de-DE", { day: "2-digit", month: "short" });
+        } catch {
+          return "—";
+        }
+      };
+      return `<div class="cal-plans">
+        <div class="panel cal-rot-explain">
+          <h4 style="margin:0 0 0.5rem">So funktioniert die Rotation</h4>
+          <ol class="cal-rot-steps">
+            <li><strong>Im Shop:</strong> jedes Item für <em>3 Tage</em> oder <em>7 Tage</em> (fest pro Item).</li>
+            <li><strong>Pause:</strong> danach ca. <em>3 Monate</em> raus — nie Jahre in die Zukunft.</li>
+            <li><strong>Wiederholung:</strong> danach wieder 3/7 Tage rein, und so weiter.</li>
+            <li><strong>Versetzt:</strong> jedes Item startet zu einem anderen Zeitpunkt → immer etwas im Shop.</li>
+          </ol>
+          <p class="help" style="margin:0.6rem 0 0">
+            Hinweis: Bei 3–7 Tagen im Shop und ~3 Monaten Pause sind typischerweise nur etwa
+            <strong>5–15 %</strong> der Rotations-Items gleichzeitig sichtbar (nicht 50 % —
+            dafür müsste die Pause kürzer oder die Shop-Dauer länger sein).
+            Im Monatskalender siehst du die echten Tage. Unter Items kannst du einzelne aus der
+            Rotation nehmen (dann dauerhaft im Shop) oder wieder aufnehmen.
+          </p>
+        </div>
+        <div class="panel">
+          <h4 style="margin:0 0 0.35rem">Aktive Pläne</h4>
+          <div class="cal-plan-list">
+            ${
+              plans.length
+                ? plans
+                    .map((p) => {
+                      const act = (p.activeNow || [])
+                        .slice(0, 24)
+                        .map((a) => esc(a.emoji || a.itemId))
+                        .join(" ");
+                      const members = p.members || [];
+                      const memberRows = members
+                        .slice(0, 40)
+                        .map((m) => {
+                          const key = `${m.kind}:${m.itemId}`;
+                          return `<tr>
+                            <td class="cal-mem-emoji">${esc(m.emoji || "·")}</td>
+                            <td><strong>${esc(m.label || m.itemId)}</strong>
+                              <div class="muted mono" style="font-size:0.72rem">${esc(key)}</div></td>
+                            <td>${m.active ? '<span class="badge cal-st-window">jetzt im Shop</span>' : '<span class="badge cal-st-scheduled">Pause</span>'}</td>
+                            <td class="muted" style="white-space:nowrap">${fmtWin(m.availableFrom)} → ${fmtWin(m.availableUntil)}</td>
+                            <td><button type="button" class="btn secondary btn-xs" data-leave-rot="${esc(m.kind)}|${esc(m.itemId)}">Raus</button></td>
+                          </tr>`;
+                        })
+                        .join("");
+                      return `<article class="cal-plan-card ${p.enabled ? "" : "is-off"}">
+                        <div class="cal-plan-head">
+                          <strong>${esc(p.label)}</strong>
+                          <span class="badge ${p.enabled ? "cal-st-window" : "cal-st-off"}">${p.enabled ? "an" : "aus"}</span>
+                        </div>
+                        <p class="cal-plan-explain">${esc(p.explain || "")}</p>
+                        <div class="cal-plan-stats">
+                          <div><span class="muted">Items</span><strong>${p.itemCount || 0}</strong></div>
+                          <div><span class="muted">Jetzt im Shop</span><strong>${p.activeCount ?? (p.activeNow || []).length}</strong></div>
+                          <div><span class="muted">Anteil</span><strong>${p.activeSharePct ?? "—"} %</strong></div>
+                          <div><span class="muted">Auswahl</span><strong>${
+                            p.mode === "price" ? `Preis ≥ ${p.priceMin ?? 0}` : "Manuell"
+                          }</strong></div>
+                        </div>
+                        <div class="cal-plan-now" title="Gerade im Shop">${act || "<span class='muted'>gerade keines</span>"}</div>
+                        ${
+                          memberRows
+                            ? `<details class="cal-mem-details" ${p.id === "expensive_3m_week" ? "open" : ""}>
+                          <summary>Alle Items in diesem Plan (${members.length})</summary>
+                          <div class="cal-mem-scroll">
+                            <table class="cal-mem-table">
+                              <thead><tr><th></th><th>Item</th><th>Status</th><th>Fenster</th><th></th></tr></thead>
+                              <tbody>${memberRows}</tbody>
+                            </table>
+                          </div>
+                          ${
+                            members.length > 40
+                              ? `<p class="help">Erste 40 von ${members.length} — Rest unter Tab „Items“.</p>`
+                              : ""
+                          }
+                        </details>`
+                            : ""
+                        }
+                        <div class="actions" style="margin-top:0.55rem">
+                          <button type="button" class="btn secondary" data-plan-edit="${esc(p.id)}">Bearbeiten</button>
+                          <button type="button" class="btn secondary" data-plan-apply="${esc(p.id)}">Neu berechnen</button>
+                          ${
+                            p.id === "expensive_3m_week"
+                              ? ""
+                              : `<button type="button" class="btn danger" data-plan-del="${esc(p.id)}">Löschen</button>`
+                          }
+                        </div>
+                      </article>`;
+                    })
+                    .join("")
+                : `<p class="help">Keine Pläne.</p>`
+            }
+          </div>
+        </div>
+        <div class="panel" id="calPlanEditor">
+          <h4 style="margin:0 0 0.35rem">Plan erstellen / bearbeiten</h4>
+          <p class="help">Standard-Modell: jedes Item rotiert unabhängig (3 oder 7 Tage rein, dann ~3 Monate Pause).</p>
+          <form id="calPlanForm">
+            <input type="hidden" name="id" value="" />
+            <label class="field">Name
+              <input name="label" required maxlength="60" placeholder="z. B. Premium-Rotation" />
+            </label>
+            <input type="hidden" name="model" value="independent" />
+            <div class="grid-2">
+              <label class="field">Pause / Zyklus-Länge
+                <input name="cycleLength" type="number" min="1" max="36" value="3" />
+                <span class="tip">Wie lange bis dasselbe Item wieder kommt</span>
+              </label>
+              <label class="field">Einheit
+                <select name="cycleUnit">
+                  <option value="day">Tage</option>
+                  <option value="week">Wochen</option>
+                  <option value="month" selected>Monate</option>
+                </select>
+              </label>
+            </div>
+            <div class="grid-2">
+              <label class="field">Kurze Shop-Dauer (Tage)
+                <input name="shortDays" type="number" min="1" max="14" value="3" />
+              </label>
+              <label class="field">Lange Shop-Dauer (Tage)
+                <input name="longDays" type="number" min="1" max="30" value="7" />
+              </label>
+            </div>
+            <div class="grid-2" hidden>
+              <label class="field">Im Shop (Länge, Legacy)
+                <input name="activeLength" type="number" min="1" max="90" value="1" />
+              </label>
+              <label class="field">Im Shop (Einheit, Legacy)
+                <select name="activeUnit">
+                  <option value="day">Tage</option>
+                  <option value="week" selected>Wochen</option>
+                  <option value="month">Monate</option>
+                </select>
+              </label>
+            </div>
+            <div class="grid-2">
+              <label class="field">Auswahl
+                <select name="mode">
+                  <option value="price" selected>Nach Preis</option>
+                  <option value="manual">Manuelle Liste</option>
+                </select>
+              </label>
+              <label class="field">Gleichzeitig (nur Warteschlange)
+                <input name="concurrent" type="number" min="1" max="50" value="1" />
+              </label>
+            </div>
+            <div class="grid-2">
+              <label class="field">Preis min.
+                <input name="priceMin" type="number" min="0" value="100" />
+              </label>
+              <label class="field">Preis max. (leer = ∞)
+                <input name="priceMax" type="number" min="0" placeholder="optional" />
+              </label>
+            </div>
+            <label class="field">Manuelle Keys (kind:id, Komma)
+              <textarea name="itemKeys" rows="2" placeholder="emojis:💎, themes:aurora"></textarea>
+            </label>
+            <label class="field" style="flex-direction:row;align-items:center;gap:0.5rem">
+              <input type="checkbox" name="enabled" checked /> Plan aktiv
+            </label>
+            <div class="actions" style="margin-top:0.65rem">
+              <button type="submit" class="btn">Plan speichern</button>
+              <button type="button" class="btn secondary" id="calPlanReset">Neu</button>
+            </div>
+          </form>
+        </div>
+      </div>`;
+    }
+
+    function itemsHtml() {
+      return `
+        <div class="shop-cats" id="calKinds">
+          <button type="button" class="shop-cat ${!state.calKind ? "on" : ""}" data-cal-kind="">Alle</button>
+          ${["emojis", "stickers", "themes", "pets"]
+            .map(
+              (k) =>
+                `<button type="button" class="shop-cat ${
+                  state.calKind === k ? "on" : ""
+                }" data-cal-kind="${k}">${k}</button>`
+            )
+            .join("")}
+        </div>
+        <div class="shop-cats" id="calStatus">
+          ${[
+            ["", "Status: alle"],
+            ["window", "Zeitfenster"],
+            ["scheduled", "Geplant"],
+            ["always", "Immer an"],
+            ["off", "Aus"],
+            ["expired", "Abgelaufen"],
+          ]
+            .map(
+              ([id, label]) =>
+                `<button type="button" class="shop-cat ${
+                  (state.calStatus || "") === id ? "on" : ""
+                }" data-cal-status="${id}">${label}</button>`
+            )
+            .join("")}
+        </div>
+        <div class="shop-cats" id="calMarks">
+          <button type="button" class="shop-cat ${!state.calMark ? "on" : ""}" data-cal-mark="">Marken</button>
+          <button type="button" class="shop-cat ${state.calMark === "rotation" ? "on" : ""}" data-cal-mark="rotation">↻ Rotation (${marks.rotation || 0})</button>
+          <button type="button" class="shop-cat ${state.calMark === "hot" ? "on" : ""}" data-cal-mark="hot">🔥 Hot</button>
+          <button type="button" class="shop-cat ${state.calMark === "premium" ? "on" : ""}" data-cal-mark="premium">💎 Premium</button>
+        </div>
+        <div class="toolbar shop-search-bar">
+          <input id="calQ" placeholder="Suchen…" value="${esc(state.calQ || "")}" />
+          <button class="btn secondary" id="calFilter">Suchen</button>
+          <span class="muted" style="align-self:center">${items.length} · ${pickCount} gewählt</span>
+        </div>
+        <div class="cal-list">
+          ${
+            items.length
+              ? items
+                  .map((it) => {
+                    const key = `${it.kind}:${it.itemId}`;
+                    const open = state.calOpenKey === key;
+                    const picked = !!state.calPick[key];
+                    const m = it.market || {};
+                    return `<article class="cal-row ${open ? "is-open" : ""}">
+                      <header class="cal-row-head">
+                        <label class="cal-pick"><input type="checkbox" data-cal-pick="${esc(key)}" ${picked ? "checked" : ""} /></label>
+                        <div class="cal-emoji" data-cal-toggle="${esc(key)}">${esc(it.emoji || it.itemId)}</div>
+                        <div class="cal-main" data-cal-toggle="${esc(key)}">
+                          <strong>${esc(it.label || it.itemId)}</strong>
+                          <div class="muted mono" style="font-size:0.75rem">${esc(it.kind)} · ${esc(it.itemId)}</div>
+                          <div class="cal-badges">
+                            <span class="badge cal-st-${esc(it.status)}">${esc(STATUS[it.status] || it.status)}</span>
+                            ${it.rotationPlanId ? '<span class="badge cal-hot">↻</span>' : ""}
+                            ${m.hot ? '<span class="badge cal-hot">🔥</span>' : ""}
+                          </div>
+                        </div>
+                        <div class="cal-stats" data-cal-toggle="${esc(key)}">
+                          <div><span class="muted">Preis</span> <strong>${it.listPrice ?? it.priceCoins ?? "—"}</strong></div>
+                          <div><span class="muted">Shop</span> <strong>${it.shopBuys || 0}</strong></div>
+                        </div>
+                      </header>
+                      ${
+                        open
+                          ? `<div class="cal-detail">
+                        <form class="cal-form" data-cal-form="${esc(it.kind)}|${esc(it.itemId)}">
+                          <div class="grid-2">
+                            <label class="field">Verfügbar ab
+                              <input type="datetime-local" name="availableFrom" value="${esc(toLocalInput(it.availableFrom))}" />
+                            </label>
+                            <label class="field">Verfügbar bis
+                              <input type="datetime-local" name="availableUntil" value="${esc(toLocalInput(it.availableUntil))}" />
+                            </label>
+                          </div>
+                          <label class="field" style="flex-direction:row;align-items:center;gap:0.5rem;margin-top:0.5rem">
+                            <input type="checkbox" name="enabled" ${it.enabled !== false ? "checked" : ""} /> Im Shop aktiv
+                          </label>
+                          <p class="help">Leere Felder = kein Limit. Speichern setzt ein manuelles Fenster und nimmt das Item aus der Rotation.</p>
+                          <div class="actions" style="margin-top:0.75rem">
+                            <button type="submit" class="btn">Fenster speichern</button>
+                            ${
+                              it.rotationPlanId
+                                ? `<button type="button" class="btn secondary" data-leave-rot="${esc(it.kind)}|${esc(it.itemId)}">Aus Rotation → dauerhaft im Shop</button>`
+                                : it.rotationLocked
+                                  ? `<button type="button" class="btn secondary" data-rejoin-rot="${esc(it.kind)}|${esc(it.itemId)}">Wieder in Rotation aufnehmen</button>`
+                                  : ""
+                            }
+                          </div>
+                        </form>
+                      </div>`
+                          : ""
+                      }
+                    </article>`;
+                  })
+                  .join("")
+              : `<div class="panel"><p class="help">Keine Items.</p></div>`
+          }
+        </div>`;
+    }
+
+    content.innerHTML = `
+      <div class="panel shop-hero">
+        <div class="shop-top">
+          <div>
+            <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">Itemshop-Kalender</h3>
+            <p class="help" style="margin:0.4rem 0 0;max-width:52rem">
+              <strong>Rotation:</strong> teure Items (≥100) kommen alle ~3 Monate für 3 oder 7 Tage in den Shop,
+              dann wieder Pause — versetzt, damit immer etwas da ist. Monat zeigt echte Rotationstage.
+              Tab „Rotation“ erklärt alles und lässt Items rausnehmen.
+            </p>
+          </div>
+        </div>
+        <div class="shop-cats" id="shopViews">
+          <button type="button" class="shop-cat" data-shop-view="katalog">Katalog</button>
+          <button type="button" class="shop-cat on" data-shop-view="kalender">Kalender</button>
+        </div>
+        <div class="shop-cats" id="calTabs">
+          <button type="button" class="shop-cat ${state.calTab === "month" ? "on" : ""}" data-cal-tab="month">Monat</button>
+          <button type="button" class="shop-cat ${state.calTab === "plans" ? "on" : ""}" data-cal-tab="plans">Rotation</button>
+          <button type="button" class="shop-cat ${state.calTab === "items" ? "on" : ""}" data-cal-tab="items">Items</button>
+        </div>
+      </div>
+      ${
+        state.calTab === "month"
+          ? `<div class="cal-layout">
+              <div class="cal-main-panel panel">
+                ${monthNavHtml()}
+                ${monthGridHtml()}
+              </div>
+              ${dayPanelHtml()}
+            </div>`
+          : state.calTab === "plans"
+            ? plansHtml()
+            : itemsHtml()
+      }`;
+
+    content.querySelectorAll("#shopViews [data-shop-view]").forEach((btn) => {
+      btn.onclick = () => {
+        state.shopView = btn.getAttribute("data-shop-view") || "katalog";
+        loadTab("shop");
+      };
+    });
+    content.querySelectorAll("#calTabs [data-cal-tab]").forEach((btn) => {
+      btn.onclick = () => {
+        state.calTab = btn.getAttribute("data-cal-tab") || "month";
+        renderShopCalendar();
+      };
+    });
+
+    const prev = $("calPrev");
+    const next = $("calNext");
+    const todayBtn = $("calToday");
+    if (prev) {
+      prev.onclick = () => {
+        state.calMonth -= 1;
+        if (state.calMonth < 1) {
+          state.calMonth = 12;
+          state.calYear -= 1;
+        }
+        state.calDay = "";
+        renderShopCalendar();
+      };
+    }
+    if (next) {
+      next.onclick = () => {
+        state.calMonth += 1;
+        if (state.calMonth > 12) {
+          state.calMonth = 1;
+          state.calYear += 1;
+        }
+        state.calDay = "";
+        renderShopCalendar();
+      };
+    }
+    if (todayBtn) {
+      todayBtn.onclick = () => {
+        const n = new Date();
+        state.calYear = n.getFullYear();
+        state.calMonth = n.getMonth() + 1;
+        state.calDay = monthData.today || "";
+        renderShopCalendar();
+      };
+    }
+    content.querySelectorAll("[data-cal-day]").forEach((btn) => {
+      btn.onclick = () => {
+        state.calDay = btn.getAttribute("data-cal-day") || "";
+        renderShopCalendar();
+      };
+    });
+
+    const dayFilter = $("calDayFilter");
+    if (dayFilter) {
+      dayFilter.oninput = () => {
+        const q = String(dayFilter.value || "").trim().toLowerCase();
+        content.querySelectorAll("#calDayGroups .cal-day-row").forEach((row) => {
+          const hay = row.getAttribute("data-cal-q") || "";
+          row.hidden = Boolean(q) && !hay.includes(q);
+        });
+        content.querySelectorAll("#calDayGroups .cal-day-group").forEach((g) => {
+          const any = [...g.querySelectorAll(".cal-day-row")].some((r) => !r.hidden);
+          g.hidden = Boolean(q) && !any;
+        });
+      };
+    }
+
+    const batchForm = $("calBatchForm");
+    if (batchForm) {
+      batchForm.onsubmit = async (e) => {
+        e.preventDefault();
+        const fd = new FormData(batchForm);
+        const keys = String(fd.get("keys") || "")
+          .split(/[,;\n]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (!keys.length) {
+          alert("Mindestens ein Item-Key (kind:id) angeben oder unter Items anhaken.");
+          return;
+        }
+        try {
+          const fromRaw = String(fd.get("availableFrom") || "").trim();
+          const untilRaw = String(fd.get("availableUntil") || "").trim();
+          const fromMs = fromRaw ? new Date(fromRaw).getTime() : null;
+          const untilMs = untilRaw ? new Date(untilRaw).getTime() : null;
+          if (fromMs != null && Number.isNaN(fromMs)) {
+            alert("Ungültiges Von-Datum");
+            return;
+          }
+          if (untilMs != null && Number.isNaN(untilMs)) {
+            alert("Ungültiges Bis-Datum");
+            return;
+          }
+          if (fromMs != null && untilMs != null && untilMs < fromMs) {
+            alert("Bis-Datum liegt vor Von-Datum");
+            return;
+          }
+          const result = await api("/admin/shop/calendar/batch", {
+            method: "POST",
+            body: JSON.stringify({
+              itemKeys: keys,
+              availableFrom: fromMs,
+              availableUntil: untilMs,
+              enabled: batchForm.querySelector('[name="enabled"]').checked,
+            }),
+          });
+          if (!result.count) {
+            alert("Keine Items aktualisiert — Keys prüfen (kind:id).");
+            return;
+          }
+          state.calPick = {};
+          renderShopCalendar();
+        } catch (err) {
+          alert(err?.message || "Batch fehlgeschlagen");
+        }
+      };
+    }
+
+    const planForm = $("calPlanForm");
+    if (planForm) {
+      planForm.onsubmit = async (e) => {
+        e.preventDefault();
+        const fd = new FormData(planForm);
+        const keys = String(fd.get("itemKeys") || "")
+          .split(/[,;\n]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const body = {
+          id: String(fd.get("id") || "").trim() || undefined,
+          label: String(fd.get("label") || "").trim(),
+          model: String(fd.get("model") || "independent"),
+          cycleLength: Number(fd.get("cycleLength") || 3),
+          cycleUnit: String(fd.get("cycleUnit") || "month"),
+          activeLength: Number(fd.get("activeLength") || 1),
+          activeUnit: String(fd.get("activeUnit") || "week"),
+          shortDays: Number(fd.get("shortDays") || 3),
+          longDays: Number(fd.get("longDays") || 7),
+          concurrent: Number(fd.get("concurrent") || 1),
+          mode: String(fd.get("mode") || "price"),
+          priceMin: fd.get("priceMin") === "" ? null : Number(fd.get("priceMin")),
+          priceMax: fd.get("priceMax") === "" ? null : Number(fd.get("priceMax")),
+          itemKeys: keys,
+          enabled: planForm.querySelector('[name="enabled"]').checked,
+        };
+        try {
+          await api("/admin/shop/rotation-plans", {
+            method: "POST",
+            body: JSON.stringify(body),
+          });
+          renderShopCalendar();
+        } catch (err) {
+          alert(err?.message || "Plan speichern fehlgeschlagen");
+        }
+      };
+      const reset = $("calPlanReset");
+      if (reset) {
+        reset.onclick = () => {
+          planForm.reset();
+          planForm.querySelector('[name="id"]').value = "";
+        };
+      }
+      content.querySelectorAll("[data-plan-edit]").forEach((btn) => {
+        btn.onclick = () => {
+          const id = btn.getAttribute("data-plan-edit");
+          const p = plans.find((x) => x.id === id);
+          if (!p) return;
+          planForm.querySelector('[name="id"]').value = p.id || "";
+          planForm.querySelector('[name="label"]').value = p.label || "";
+          planForm.querySelector('[name="model"]').value = p.model || "independent";
+          planForm.querySelector('[name="cycleLength"]').value = p.cycleLength || 3;
+          planForm.querySelector('[name="cycleUnit"]').value = p.cycleUnit || "month";
+          planForm.querySelector('[name="activeLength"]').value = p.activeLength || 1;
+          planForm.querySelector('[name="activeUnit"]').value = p.activeUnit || "week";
+          if (planForm.querySelector('[name="shortDays"]')) {
+            planForm.querySelector('[name="shortDays"]').value = p.shortDays || 3;
+          }
+          if (planForm.querySelector('[name="longDays"]')) {
+            planForm.querySelector('[name="longDays"]').value = p.longDays || 7;
+          }
+          planForm.querySelector('[name="concurrent"]').value = p.concurrent || 1;
+          planForm.querySelector('[name="mode"]').value = p.mode || "price";
+          planForm.querySelector('[name="priceMin"]').value = p.priceMin ?? 100;
+          planForm.querySelector('[name="priceMax"]').value = p.priceMax ?? "";
+          planForm.querySelector('[name="itemKeys"]').value = (p.itemKeys || []).join(", ");
+          planForm.querySelector('[name="enabled"]').checked = p.enabled !== false;
+          planForm.scrollIntoView({ behavior: "smooth", block: "start" });
+        };
+      });
+      content.querySelectorAll("[data-plan-apply]").forEach((btn) => {
+        btn.onclick = async () => {
+          const id = btn.getAttribute("data-plan-apply");
+          try {
+            await api(`/admin/shop/rotation-plans/${encodeURIComponent(id)}/apply`, {
+              method: "POST",
+              body: "{}",
+            });
+            renderShopCalendar();
+          } catch (err) {
+            alert(err?.message || "Anwenden fehlgeschlagen");
+          }
+        };
+      });
+      content.querySelectorAll("[data-plan-del]").forEach((btn) => {
+        btn.onclick = async () => {
+          const id = btn.getAttribute("data-plan-del");
+          if (!confirm("Rotationsplan löschen?")) return;
+          try {
+            await api(`/admin/shop/rotation-plans/${encodeURIComponent(id)}`, {
+              method: "DELETE",
+            });
+            renderShopCalendar();
+          } catch (err) {
+            alert(err?.message || "Löschen fehlgeschlagen");
+          }
+        };
+      });
+      content.querySelectorAll("[data-leave-rot]").forEach((btn) => {
+        btn.onclick = async () => {
+          const raw = btn.getAttribute("data-leave-rot") || "";
+          const [kind, ...rest] = raw.split("|");
+          const itemId = rest.join("|");
+          if (!kind || !itemId) return;
+          if (!confirm("Item aus der Rotation nehmen? Es bleibt dann dauerhaft im Shop.")) return;
+          try {
+            await api(
+              `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/leave-rotation`,
+              { method: "POST", body: "{}" }
+            );
+            renderShopCalendar();
+          } catch (err) {
+            alert(err?.message || "Entfernen fehlgeschlagen");
+          }
+        };
+      });
+      content.querySelectorAll("[data-rejoin-rot]").forEach((btn) => {
+        btn.onclick = async () => {
+          const raw = btn.getAttribute("data-rejoin-rot") || "";
+          const [kind, ...rest] = raw.split("|");
+          const itemId = rest.join("|");
+          if (!kind || !itemId) return;
+          try {
+            await api(
+              `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/rejoin-rotation`,
+              { method: "POST", body: "{}" }
+            );
+            renderShopCalendar();
+          } catch (err) {
+            alert(err?.message || "Aufnehmen fehlgeschlagen");
+          }
+        };
+      });
+    }
+
+    // Leave/rejoin auch außerhalb Plan-Form (Items-Tab)
+    if (!planForm) {
+      content.querySelectorAll("[data-leave-rot]").forEach((btn) => {
+        btn.onclick = async () => {
+          const raw = btn.getAttribute("data-leave-rot") || "";
+          const [kind, ...rest] = raw.split("|");
+          const itemId = rest.join("|");
+          if (!kind || !itemId) return;
+          if (!confirm("Item aus der Rotation nehmen? Es bleibt dann dauerhaft im Shop.")) return;
+          try {
+            await api(
+              `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/leave-rotation`,
+              { method: "POST", body: "{}" }
+            );
+            renderShopCalendar();
+          } catch (err) {
+            alert(err?.message || "Entfernen fehlgeschlagen");
+          }
+        };
+      });
+      content.querySelectorAll("[data-rejoin-rot]").forEach((btn) => {
+        btn.onclick = async () => {
+          const raw = btn.getAttribute("data-rejoin-rot") || "";
+          const [kind, ...rest] = raw.split("|");
+          const itemId = rest.join("|");
+          if (!kind || !itemId) return;
+          try {
+            await api(
+              `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/rejoin-rotation`,
+              { method: "POST", body: "{}" }
+            );
+            renderShopCalendar();
+          } catch (err) {
+            alert(err?.message || "Aufnehmen fehlgeschlagen");
+          }
+        };
+      });
+    }
+
+    content.querySelectorAll("#calKinds [data-cal-kind]").forEach((btn) => {
+      btn.onclick = () => {
+        state.calKind = btn.getAttribute("data-cal-kind") || "";
+        renderShopCalendar();
+      };
+    });
+    content.querySelectorAll("#calStatus [data-cal-status]").forEach((btn) => {
+      btn.onclick = () => {
+        state.calStatus = btn.getAttribute("data-cal-status") || "";
+        renderShopCalendar();
+      };
+    });
+    content.querySelectorAll("#calMarks [data-cal-mark]").forEach((btn) => {
+      btn.onclick = () => {
+        state.calMark = btn.getAttribute("data-cal-mark") || "";
+        renderShopCalendar();
+      };
+    });
+    if ($("calFilter")) {
+      $("calFilter").onclick = () => {
+        state.calQ = $("calQ").value.trim();
+        renderShopCalendar();
+      };
+    }
+    if ($("calQ")) {
+      $("calQ").onkeydown = (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          state.calQ = $("calQ").value.trim();
+          renderShopCalendar();
+        }
+      };
+    }
+    content.querySelectorAll("[data-cal-pick]").forEach((el) => {
+      el.onchange = () => {
+        const key = el.getAttribute("data-cal-pick");
+        state.calPick[key] = el.checked;
+      };
+    });
+    content.querySelectorAll("[data-cal-toggle]").forEach((el) => {
+      el.onclick = () => {
+        const key = el.getAttribute("data-cal-toggle");
+        state.calOpenKey = state.calOpenKey === key ? "" : key;
+        renderShopCalendar();
+      };
+    });
+    content.querySelectorAll("[data-cal-form]").forEach((form) => {
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        const [kind, itemId] = form.getAttribute("data-cal-form").split("|");
+        const fd = new FormData(form);
+        const body = {
+          availableFrom: String(fd.get("availableFrom") || "").trim() || null,
+          availableUntil: String(fd.get("availableUntil") || "").trim() || null,
+          enabled: form.querySelector('[name="enabled"]').checked,
+        };
+        try {
+          await api(
+            `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`,
+            { method: "PUT", body: JSON.stringify(body) }
+          );
+          renderShopCalendar();
+        } catch (err) {
+          alert(err?.message || "Speichern fehlgeschlagen");
+        }
+      };
+    });
+  }
+
   function itemFormFields(it = {}, stepHint = "") {
-    const untilLocal = it.availableUntil
-      ? new Date(it.availableUntil).toISOString().slice(0, 16)
-      : "";
+    const fromLocal = toLocalInput(it.availableFrom);
+    const untilLocal = toLocalInput(it.availableUntil);
     return `
       ${stepHint}
       <div class="grid-2">
@@ -720,6 +1722,10 @@
         <label class="field">Alter Vergleichspreis (optional)
           <input name="compareAtPrice" type="number" min="0" value="${esc(it.compareAtPrice ?? "")}" />
         </label>
+        <label class="field">Verfügbar ab (optional)
+          <input name="availableFrom" type="datetime-local" value="${fromLocal}" />
+          <span class="tip">Vorher unsichtbar im Shop</span>
+        </label>
         <label class="field">Verfügbar bis (optional)
           <input name="availableUntil" type="datetime-local" value="${untilLocal}" />
           <span class="tip">Danach: deaktiviert (bleibt in der DB)</span>
@@ -743,6 +1749,7 @@
       if (v === "") return null;
       return Number(v);
     };
+    const from = String(fd.get("availableFrom") || "").trim();
     const until = String(fd.get("availableUntil") || "").trim();
     return {
       kind: String(fd.get("kind") || "").trim(),
@@ -752,6 +1759,7 @@
       priceCoins: Number(fd.get("priceCoins") || 0),
       salePrice: numOrNull("salePrice"),
       compareAtPrice: numOrNull("compareAtPrice"),
+      availableFrom: from ? new Date(from).getTime() : null,
       availableUntil: until ? new Date(until).getTime() : null,
       maxTotalSales: numOrNull("maxTotalSales"),
       maxPerUser: numOrNull("maxPerUser"),

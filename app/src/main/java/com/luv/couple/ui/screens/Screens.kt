@@ -906,6 +906,7 @@ private fun LobbyCard(
                 Column(modifier = Modifier.weight(1f)) {
                     AutoShrinkLobbyName(
                         name = when {
+                            lobby.isWedding && lobby.isWeddingRetake -> "💒 Hochzeitsbild"
                             lobby.isWedding -> "💒 Hochzeit"
                             lobby.isRandom -> "🎲 Random"
                             else -> lobby.name
@@ -928,7 +929,9 @@ private fun LobbyCard(
                     )
                     Text(
                         text = when {
-                            lobby.isWedding -> "Hochzeitsleinwand · 7 Tage malen, dann Ehe"
+                            lobby.isWedding && lobby.isWeddingRetake ->
+                                "Hochzeitsbild nachholen · beide mit ✓ bestätigen"
+                            lobby.isWedding -> "Hochzeit · je 10 Striche, dann Timer oder Coins"
                             lobby.isRandom -> "Zufalls-Lobby · max. 5"
                             lobby.role == Role.HOST -> "Von dir erstellt"
                             else -> "Beigetreten"
@@ -1419,7 +1422,7 @@ fun InviteLobbyDialog(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Reihenfolge wie unter Sozial — tippe, um den Link zu teilen.",
+                        "Reihenfolge wie unter Sozial — tippe, um die Einladung zu teilen.",
                         color = TextMuted,
                         fontFamily = BodyFont,
                         fontSize = 13.sp,
@@ -1502,6 +1505,9 @@ fun InviteLobbyDialog(
         return
     }
 
+    val inviteCode = lobby.code.uppercase().ifBlank {
+        lobby.invite.removePrefix("LUV-").removePrefix("LUV").uppercase()
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = BgSoft,
@@ -1515,37 +1521,61 @@ fun InviteLobbyDialog(
         },
         text = {
             Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    "QR scannen, Link teilen oder Freunde einladen — dann malt ihr zusammen.",
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    textAlign = TextAlign.Center
-                )
                 Text(
                     lobby.name,
                     color = TextPrimary,
                     fontFamily = DisplayFont,
-                    fontSize = 18.sp
+                    fontSize = 17.sp,
+                    textAlign = TextAlign.Center
                 )
-                com.luv.couple.ui.LobbyQrImage(content = lobby.joinUrl, size = 168.dp)
                 Text(
-                    lobby.joinUrl,
-                    color = AccentRose,
+                    "Gib den Code weiter oder lass den QR scannen. " +
+                        "Beim Teilen bleibt der Link dabei — die App nimmt die Einladung direkt an.",
+                    color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 13.sp,
                     lineHeight = 18.sp,
                     textAlign = TextAlign.Center
                 )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color.White.copy(0.07f))
+                        .border(1.dp, AccentRose.copy(0.35f), RoundedCornerShape(18.dp))
+                        .padding(vertical = 16.dp, horizontal = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            "Einladungscode",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            inviteCode,
+                            color = AccentRose,
+                            fontFamily = DisplayFont,
+                            fontSize = 32.sp,
+                            letterSpacing = 3.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+                com.luv.couple.ui.LobbyQrImage(content = lobby.joinUrl, size = 148.dp)
                 Text(
-                    "Code: ${lobby.invite.ifBlank { "LUV-${lobby.code}" }}",
+                    "QR-Code scannen — oder Code unter „Beitreten“ eingeben.",
                     color = TextMuted,
                     fontFamily = BodyFont,
-                    fontSize = 13.sp
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center
                 )
                 TextButton(
                     onClick = { showFriends = true },
@@ -1572,8 +1602,8 @@ fun InviteLobbyDialog(
                 }
                 TextButton(
                     onClick = {
-                        clipboard.setText(AnnotatedString(lobby.joinUrl))
-                        Toast.makeText(context, "Link kopiert", Toast.LENGTH_SHORT).show()
+                        clipboard.setText(AnnotatedString(inviteCode))
+                        Toast.makeText(context, "Code kopiert", Toast.LENGTH_SHORT).show()
                     }
                 ) {
                     Text("Kopieren", color = TextPrimary, fontFamily = BodyFont, fontSize = 15.sp)
@@ -1722,12 +1752,22 @@ fun JoinScreen(
     onPreview: (String) -> Unit,
     onBack: () -> Unit
 ) {
-    var code by remember { mutableStateOf(initialCode) }
+    var code by remember {
+        mutableStateOf(
+            com.luv.couple.net.LuvApiClient.normalizeCode(initialCode) ?: initialCode.filter {
+                it.isLetterOrDigit() || it == '-'
+            }.take(16)
+        )
+    }
     val scanLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = com.journeyapps.barcodescanner.ScanContract()
     ) { result ->
         val raw = result.contents?.trim().orEmpty()
-        if (raw.isNotBlank()) onPreview(raw)
+        if (raw.isNotBlank()) {
+            val normalized = com.luv.couple.net.LuvApiClient.normalizeCode(raw)
+            if (normalized != null) code = normalized
+            onPreview(raw)
+        }
     }
     ScreenBackdrop {
         Column(
@@ -1748,14 +1788,20 @@ fun JoinScreen(
             )
             Text("Beitreten", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
             Text(
-                "Link, Code — oder einfach den QR-Code scannen",
+                "Einladungscode eingeben — oder einfach den QR-Code scannen. " +
+                    "Einen ganzen Link brauchst du nicht.",
                 color = TextMuted,
-                fontFamily = BodyFont
+                fontFamily = BodyFont,
+                fontSize = 14.sp,
+                lineHeight = 20.sp
             )
             SoftField(
                 value = code,
-                onValueChange = { code = it },
-                hint = "https://reineke.pro/luv/j/…",
+                onValueChange = { raw ->
+                    val normalized = com.luv.couple.net.LuvApiClient.normalizeCode(raw)
+                    code = normalized ?: raw.filter { it.isLetterOrDigit() || it == '-' }.take(16)
+                },
+                hint = "Einladungscode",
                 onConfirm = { onPreview(code) }
             )
             if (!error.isNullOrBlank()) {
@@ -1764,7 +1810,7 @@ fun JoinScreen(
             Spacer(modifier = Modifier.height(8.dp))
             PrimaryButton("Weiter", AccentRose, { onPreview(code) })
             PrimaryButton(
-                "QR Code scannen",
+                "QR-Code scannen",
                 BgSoft,
                 {
                     scanLauncher.launch(
