@@ -1015,17 +1015,14 @@
         <div class="panel cal-rot-explain">
           <h4 style="margin:0 0 0.5rem">So funktioniert die Rotation</h4>
           <ol class="cal-rot-steps">
-            <li><strong>Im Shop:</strong> jedes Item für <em>3 Tage</em> oder <em>7 Tage</em> (fest pro Item).</li>
-            <li><strong>Pause:</strong> danach ca. <em>3 Monate</em> raus — nie Jahre in die Zukunft.</li>
-            <li><strong>Wiederholung:</strong> danach wieder 3/7 Tage rein, und so weiter.</li>
-            <li><strong>Versetzt:</strong> jedes Item startet zu einem anderen Zeitpunkt → immer etwas im Shop.</li>
+            <li><strong>Alle Items</strong> (außer Starter wie Wiese / Basis-Emojis) rotieren.</li>
+            <li><strong>Zufällig im Shop:</strong> 3–14 Tage, dann Pause 7 Tage bis max. 3 Monate.</li>
+            <li><strong>~50 % gleichzeitig</strong> im Shop — Starts sind versetzt.</li>
+            <li>Jedes Item kommt regelmäßig wieder; nichts bleibt ewig ohne Pause (außer Starter).</li>
           </ol>
           <p class="help" style="margin:0.6rem 0 0">
-            Hinweis: Bei 3–7 Tagen im Shop und ~3 Monaten Pause sind typischerweise nur etwa
-            <strong>5–15 %</strong> der Rotations-Items gleichzeitig sichtbar (nicht 50 % —
-            dafür müsste die Pause kürzer oder die Shop-Dauer länger sein).
-            Im Monatskalender siehst du die echten Tage. Unter Items kannst du einzelne aus der
-            Rotation nehmen (dann dauerhaft im Shop) oder wieder aufnehmen.
+            Im Monatskalender siehst du die Rotationstage. Unter Items kannst du einzelne dauerhaft
+            aus der Rotation nehmen („Raus“) oder wieder aufnehmen.
           </p>
         </div>
         <div class="panel">
@@ -1105,17 +1102,40 @@
         </div>
         <div class="panel" id="calPlanEditor">
           <h4 style="margin:0 0 0.35rem">Plan erstellen / bearbeiten</h4>
-          <p class="help">Standard-Modell: jedes Item rotiert unabhängig (3 oder 7 Tage rein, dann ~3 Monate Pause).</p>
+          <p class="help">Zufallsmodell: 3–14 Tage im Shop, 7–90 Tage Pause, Zielanteil ca. 50 %.</p>
           <form id="calPlanForm">
             <input type="hidden" name="id" value="" />
             <label class="field">Name
-              <input name="label" required maxlength="60" placeholder="z. B. Premium-Rotation" />
+              <input name="label" required maxlength="60" placeholder="z. B. Shop-Rotation" />
             </label>
             <input type="hidden" name="model" value="independent" />
             <div class="grid-2">
+              <label class="field">Min. Tage im Shop
+                <input name="onDaysMin" type="number" min="1" max="30" value="3" />
+              </label>
+              <label class="field">Max. Tage im Shop
+                <input name="onDaysMax" type="number" min="1" max="60" value="14" />
+              </label>
+            </div>
+            <div class="grid-2">
+              <label class="field">Min. Tage Pause
+                <input name="offDaysMin" type="number" min="1" max="180" value="7" />
+              </label>
+              <label class="field">Max. Tage Pause
+                <input name="offDaysMax" type="number" min="1" max="180" value="90" />
+              </label>
+            </div>
+            <div class="grid-2">
+              <label class="field">Ziel-Anteil im Shop (%)
+                <input name="targetSharePct" type="number" min="10" max="90" value="50" />
+              </label>
+              <label class="field">Chance lange Pause (%)
+                <input name="longPauseChancePct" type="number" min="0" max="60" value="12" />
+              </label>
+            </div>
+            <div class="grid-2" hidden>
               <label class="field">Pause / Zyklus-Länge
                 <input name="cycleLength" type="number" min="1" max="36" value="3" />
-                <span class="tip">Wie lange bis dasselbe Item wieder kommt</span>
               </label>
               <label class="field">Einheit
                 <select name="cycleUnit">
@@ -1125,12 +1145,12 @@
                 </select>
               </label>
             </div>
-            <div class="grid-2">
+            <div class="grid-2" hidden>
               <label class="field">Kurze Shop-Dauer (Tage)
                 <input name="shortDays" type="number" min="1" max="14" value="3" />
               </label>
               <label class="field">Lange Shop-Dauer (Tage)
-                <input name="longDays" type="number" min="1" max="30" value="7" />
+                <input name="longDays" type="number" min="1" max="30" value="14" />
               </label>
             </div>
             <div class="grid-2" hidden>
@@ -1158,7 +1178,7 @@
             </div>
             <div class="grid-2">
               <label class="field">Preis min.
-                <input name="priceMin" type="number" min="0" value="100" />
+                <input name="priceMin" type="number" min="0" value="0" />
               </label>
               <label class="field">Preis max. (leer = ∞)
                 <input name="priceMax" type="number" min="0" placeholder="optional" />
@@ -1291,9 +1311,9 @@
           <div>
             <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">Itemshop-Kalender</h3>
             <p class="help" style="margin:0.4rem 0 0;max-width:52rem">
-              <strong>Rotation:</strong> teure Items (≥100) kommen alle ~3 Monate für 3 oder 7 Tage in den Shop,
-              dann wieder Pause — versetzt, damit immer etwas da ist. Monat zeigt echte Rotationstage.
-              Tab „Rotation“ erklärt alles und lässt Items rausnehmen.
+              <strong>Rotation:</strong> alle Shop-Items (außer Starter) rotieren zufällig —
+              3–14 Tage rein, 7 Tage bis 3 Monate raus, ca. 50 % gleichzeitig im Shop.
+              Tab „Rotation“ erklärt Details; Items können rausgenommen werden.
             </p>
           </div>
         </div>
@@ -1458,11 +1478,17 @@
           cycleUnit: String(fd.get("cycleUnit") || "month"),
           activeLength: Number(fd.get("activeLength") || 1),
           activeUnit: String(fd.get("activeUnit") || "week"),
-          shortDays: Number(fd.get("shortDays") || 3),
-          longDays: Number(fd.get("longDays") || 7),
+          onDaysMin: Number(fd.get("onDaysMin") || 3),
+          onDaysMax: Number(fd.get("onDaysMax") || 14),
+          offDaysMin: Number(fd.get("offDaysMin") || 7),
+          offDaysMax: Number(fd.get("offDaysMax") || 90),
+          targetSharePct: Number(fd.get("targetSharePct") || 50),
+          longPauseChancePct: Number(fd.get("longPauseChancePct") || 12),
+          shortDays: Number(fd.get("onDaysMin") || fd.get("shortDays") || 3),
+          longDays: Number(fd.get("onDaysMax") || fd.get("longDays") || 14),
           concurrent: Number(fd.get("concurrent") || 1),
           mode: String(fd.get("mode") || "price"),
-          priceMin: fd.get("priceMin") === "" ? null : Number(fd.get("priceMin")),
+          priceMin: fd.get("priceMin") === "" ? 0 : Number(fd.get("priceMin")),
           priceMax: fd.get("priceMax") === "" ? null : Number(fd.get("priceMax")),
           itemKeys: keys,
           enabled: planForm.querySelector('[name="enabled"]').checked,
@@ -1496,15 +1522,33 @@
           planForm.querySelector('[name="cycleUnit"]').value = p.cycleUnit || "month";
           planForm.querySelector('[name="activeLength"]').value = p.activeLength || 1;
           planForm.querySelector('[name="activeUnit"]').value = p.activeUnit || "week";
+          if (planForm.querySelector('[name="onDaysMin"]')) {
+            planForm.querySelector('[name="onDaysMin"]').value = p.onDaysMin || p.shortDays || 3;
+          }
+          if (planForm.querySelector('[name="onDaysMax"]')) {
+            planForm.querySelector('[name="onDaysMax"]').value = p.onDaysMax || p.longDays || 14;
+          }
+          if (planForm.querySelector('[name="offDaysMin"]')) {
+            planForm.querySelector('[name="offDaysMin"]').value = p.offDaysMin || 7;
+          }
+          if (planForm.querySelector('[name="offDaysMax"]')) {
+            planForm.querySelector('[name="offDaysMax"]').value = p.offDaysMax || 90;
+          }
+          if (planForm.querySelector('[name="targetSharePct"]')) {
+            planForm.querySelector('[name="targetSharePct"]').value = p.targetSharePct || 50;
+          }
+          if (planForm.querySelector('[name="longPauseChancePct"]')) {
+            planForm.querySelector('[name="longPauseChancePct"]').value = p.longPauseChancePct ?? 12;
+          }
           if (planForm.querySelector('[name="shortDays"]')) {
             planForm.querySelector('[name="shortDays"]').value = p.shortDays || 3;
           }
           if (planForm.querySelector('[name="longDays"]')) {
-            planForm.querySelector('[name="longDays"]').value = p.longDays || 7;
+            planForm.querySelector('[name="longDays"]').value = p.longDays || 14;
           }
           planForm.querySelector('[name="concurrent"]').value = p.concurrent || 1;
           planForm.querySelector('[name="mode"]').value = p.mode || "price";
-          planForm.querySelector('[name="priceMin"]').value = p.priceMin ?? 100;
+          planForm.querySelector('[name="priceMin"]').value = p.priceMin ?? 0;
           planForm.querySelector('[name="priceMax"]').value = p.priceMax ?? "";
           planForm.querySelector('[name="itemKeys"]').value = (p.itemKeys || []).join(", ");
           planForm.querySelector('[name="enabled"]').checked = p.enabled !== false;

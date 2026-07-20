@@ -180,6 +180,19 @@ function stableHash(str) {
   return h >>> 0;
 }
 
+/** Starter bleiben immer im Shop (Basis-Inventar). */
+const ALWAYS_IN_SHOP_KEYS = new Set([
+  "themes:meadow",
+  "pets:🐣",
+  "emojis:👍",
+  "emojis:❌",
+  "emojis:❤️",
+  "emojis:😂",
+  "emojis:😱",
+  "emojis:😡",
+  "emojis:😭",
+]);
+
 function normalizePlan(raw = {}) {
   const id =
     String(raw.id || "").trim() ||
@@ -192,6 +205,10 @@ function normalizePlan(raw = {}) {
     : [];
   // independent = jedes Item eigenständig (Standard). queue = altes Slot-Modell.
   const model = raw.model === "queue" ? "queue" : "independent";
+  let onDaysMin = Math.max(1, Math.min(30, Math.floor(Number(raw.onDaysMin ?? raw.shortDays) || 3)));
+  let onDaysMax = Math.max(onDaysMin, Math.min(60, Math.floor(Number(raw.onDaysMax ?? raw.longDays) || 14)));
+  let offDaysMin = Math.max(1, Math.min(180, Math.floor(Number(raw.offDaysMin) || 7)));
+  let offDaysMax = Math.max(offDaysMin, Math.min(180, Math.floor(Number(raw.offDaysMax) || 90)));
   return {
     id,
     label: String(raw.label || "Rotation").trim().slice(0, 60) || "Rotation",
@@ -201,8 +218,15 @@ function normalizePlan(raw = {}) {
     cycleLength: Math.max(1, Math.min(36, Math.floor(Number(raw.cycleLength) || 3))),
     activeUnit,
     activeLength: Math.max(1, Math.min(90, Math.floor(Number(raw.activeLength) || 1))),
-    shortDays: Math.max(1, Math.min(14, Math.floor(Number(raw.shortDays) || 3))),
-    longDays: Math.max(1, Math.min(30, Math.floor(Number(raw.longDays) || 7))),
+    shortDays: onDaysMin,
+    longDays: onDaysMax,
+    onDaysMin,
+    onDaysMax,
+    offDaysMin,
+    offDaysMax,
+    targetSharePct: Math.max(10, Math.min(90, Math.floor(Number(raw.targetSharePct) || 50))),
+    longPauseChancePct: Math.max(0, Math.min(60, Math.floor(Number(raw.longPauseChancePct) || 22))),
+    rotationVersion: Math.max(0, Math.floor(Number(raw.rotationVersion) || 0)),
     concurrent: Math.max(1, Math.min(50, Math.floor(Number(raw.concurrent) || 1))),
     mode,
     priceMin:
@@ -225,6 +249,8 @@ function isRotationEligible(item) {
   if (!item) return false;
   if (item.rotationLocked === true) return false;
   if (seasonEvents.isEventOnlyItem(item.kind, item.itemId)) return false;
+  const key = shopCatalog.itemKey(item.kind, item.itemId);
+  if (ALWAYS_IN_SHOP_KEYS.has(key)) return false;
   return true;
 }
 
@@ -235,7 +261,7 @@ function resolvePlanItems(db, plan) {
     const want = new Set(plan.itemKeys || []);
     items = items.filter((i) => want.has(shopCatalog.itemKey(i.kind, i.itemId)));
   } else {
-    const min = plan.priceMin != null ? plan.priceMin : 100;
+    const min = plan.priceMin != null ? plan.priceMin : 0;
     const max = plan.priceMax != null ? plan.priceMax : null;
     items = items.filter((i) => {
       if (i.rotationPlanId != null && i.rotationPlanId !== plan.id) return false;
@@ -285,43 +311,96 @@ function planPeriodMs(plan) {
   return unitToMs(plan.cycleUnit, plan.cycleLength);
 }
 
-/** Shop-Dauer für ein Item: ~40 % kurz (3 Tage), sonst lang (7 Tage). */
-function itemOnMs(plan, itemId) {
-  const shortD = Math.max(1, Number(plan.shortDays) || 3);
-  const longD = Math.max(shortD, Number(plan.longDays) || 7);
-  const h = stableHash(`${plan.id}:${itemId}`);
-  return (h % 5 < 2 ? shortD : longD) * DAY_MS;
+/**
+ * Pro Item: Zufalls-Dauer im Shop + Pause.
+ * on: 3–14 Tage, off: 7–90 Tage.
+ * Meist so gewählt, dass Anteil ≈ targetSharePct (~50 %);
+ * gelegentlich längere Pause für Abwechslung.
+ */
+function itemCycleDays(plan, itemId) {
+  const onMin = Math.max(1, Number(plan.onDaysMin) || 3);
+  const onMax = Math.max(onMin, Number(plan.onDaysMax) || 14);
+  const offMin = Math.max(1, Number(plan.offDaysMin) || 7);
+  const offMax = Math.max(offMin, Number(plan.offDaysMax) || 90);
+  const target = Math.max(10, Math.min(90, Number(plan.targetSharePct) || 50)) / 100;
+  const longChance = Math.max(0, Math.min(60, Number(plan.longPauseChancePct) || 22));
+
+  const hOn = stableHash(`${plan.id}:on:${itemId}`);
+  const hOff = stableHash(`${plan.id}:off:${itemId}`);
+  // Leicht Richtung längere Shop-Dauer (hilft ~50 % bei min. 7 Tagen Pause)
+  const t = (hOn % 10000) / 10000;
+  const skewed = Math.pow(t, 0.62);
+  const onDays = onMin + Math.min(onMax - onMin, Math.floor(skewed * (onMax - onMin + 1)));
+
+  let offDays;
+  if (hOff % 100 < longChance) {
+    // Längere Pause (mind. 3 Wochen oder offMin, bis max)
+    const longLo = Math.max(offMin, 21);
+    offDays = longLo + (hOff % (offMax - longLo + 1));
+  } else {
+    // Ziel-Anteil: off ≈ on * (1-t)/t
+    const ideal = Math.round((onDays * (1 - target)) / Math.max(0.05, target));
+    const jitter = (hOff % 9) - 4; // -4…+4
+    offDays = Math.max(offMin, Math.min(offMax, ideal + jitter));
+  }
+  return { onDays, offDays, periodDays: onDays + offDays };
+}
+
+function itemCycle(plan, itemId) {
+  const d = itemCycleDays(plan, itemId);
+  return {
+    ...d,
+    onMs: d.onDays * DAY_MS,
+    offMs: d.offDays * DAY_MS,
+    periodMs: d.periodDays * DAY_MS,
+  };
 }
 
 /** Phasen-Offset 0…period — Items starten versetzt. */
 function itemPhaseOffset(plan, itemId) {
-  const period = planPeriodMs(plan);
+  const { periodMs } = itemCycle(plan, itemId);
   const h = stableHash(`phase:${plan.id}:${itemId}`);
-  return (h % 100000) / 100000 * period;
+  return ((h % 100000) / 100000) * periodMs;
 }
 
 /**
- * Unabhängiges Fenster eines Items.
- * intoPeriod < onMs → gerade im Shop; sonst Pause bis zum nächsten Auftritt.
- * Max. Wartezeit ≈ Zykluslänge (z. B. 3 Monate) — nie Jahre.
+ * Unabhängiges Fenster eines Items (eigene Periode on+off).
  */
 function itemWindowAt(plan, itemId, now = Date.now()) {
-  const period = Math.max(DAY_MS, planPeriodMs(plan));
-  const onMs = Math.min(itemOnMs(plan, itemId), period);
+  const c = itemCycle(plan, itemId);
+  const period = Math.max(DAY_MS, c.periodMs);
+  const onMs = Math.min(c.onMs, period);
   const offset = itemPhaseOffset(plan, itemId);
   const anchor = Number(plan.anchorAt) || 0;
   const into = ((now - anchor - offset) % period + period) % period;
   if (into < onMs) {
     const from = now - into;
-    return { active: true, from, until: from + onMs, onMs, periodMs: period };
+    return {
+      active: true,
+      from,
+      until: from + onMs,
+      onMs,
+      periodMs: period,
+      onDays: c.onDays,
+      offDays: c.offDays,
+    };
   }
   const from = now + (period - into);
-  return { active: false, from, until: from + onMs, onMs, periodMs: period };
+  return {
+    active: false,
+    from,
+    until: from + onMs,
+    onMs,
+    periodMs: period,
+    onDays: c.onDays,
+    offDays: c.offDays,
+  };
 }
 
 function itemActiveOnDayForPlan(plan, itemId, dayStart, dayEnd) {
-  const period = Math.max(DAY_MS, planPeriodMs(plan));
-  const onMs = Math.min(itemOnMs(plan, itemId), period);
+  const c = itemCycle(plan, itemId);
+  const period = Math.max(DAY_MS, c.periodMs);
+  const onMs = Math.min(c.onMs, period);
   const offset = itemPhaseOffset(plan, itemId);
   const anchor = Number(plan.anchorAt) || 0;
   const into0 = ((dayStart - anchor - offset) % period + period) % period;
@@ -330,6 +409,11 @@ function itemActiveOnDayForPlan(plan, itemId, dayStart, dayEnd) {
   if (winStart < dayEnd && winEnd > dayStart) return true;
   const nextStart = winStart + period;
   return nextStart < dayEnd && nextStart + onMs > dayStart;
+}
+
+/** @deprecated Kompat: kurze Shop-Dauer aus Zyklus. */
+function itemOnMs(plan, itemId) {
+  return itemCycle(plan, itemId).onMs;
 }
 
 function planTiming(plan, now = Date.now()) {
@@ -522,7 +606,8 @@ function previewPlanActive(db, plan, now = Date.now()) {
         availableFrom: w.from,
         availableUntil: w.until,
         active: w.active,
-        onDays: Math.round(w.onMs / DAY_MS),
+        onDays: w.onDays || Math.round(w.onMs / DAY_MS),
+        offDays: w.offDays || Math.max(0, Math.round((w.periodMs - w.onMs) / DAY_MS)),
         periodDays: Math.round(w.periodMs / DAY_MS),
       };
       members.push(row);
@@ -591,7 +676,7 @@ function listRotationPlansSafe(db) {
       explain:
         (p.model || "independent") === "queue"
           ? `Warteschlange: ${p.concurrent || 1} gleichzeitig, Slot ${p.activeLength} ${p.activeUnit}.`
-          : `Jedes Item unabhängig: ${p.shortDays || 3} oder ${p.longDays || 7} Tage im Shop, dann Pause bis zum nächsten Zyklus (~${p.cycleLength} ${p.cycleUnit}). Starts sind versetzt, damit immer etwas im Shop ist.`,
+          : `Alle Shop-Items (außer Starter) rotieren unabhängig: ${p.onDaysMin || 3}–${p.onDaysMax || 14} Tage im Shop, dann ${p.offDaysMin || 7}–${p.offDaysMax || 90} Tage Pause — Zufall pro Item. Ziel: ca. ${p.targetSharePct || 50} % gleichzeitig im Shop.`,
     };
   });
 }
@@ -646,7 +731,7 @@ function deleteRotationPlan(db, planId) {
   return { ok: true };
 }
 
-/** Standard: teure Items (≥100) — unabhängig alle ~3 Monate für 3 oder 7 Tage. */
+/** Standard: alle Shop-Items (außer Starter) — Zufallsrotation ~50 % gleichzeitig. */
 function ensureDefaultExpensiveRotation(db) {
   const plans = ensureRotationPlans(db);
   const existing =
@@ -654,20 +739,28 @@ function ensureDefaultExpensiveRotation(db) {
     Object.values(plans).find((p) => p && p.seeded === true) ||
     null;
 
+  const ROTATION_VERSION = 4;
   const desired = {
     id: "expensive_3m_week",
-    label: "Teure Items · alle ~3 Monate",
+    label: "Alle Items · Zufallsrotation",
     enabled: true,
     model: "independent",
+    rotationVersion: ROTATION_VERSION,
     cycleUnit: "month",
     cycleLength: 3,
     activeUnit: "week",
     activeLength: 1,
+    onDaysMin: 3,
+    onDaysMax: 14,
+    offDaysMin: 7,
+    offDaysMax: 90,
     shortDays: 3,
-    longDays: 7,
+    longDays: 14,
+    targetSharePct: 50,
+    longPauseChancePct: 12,
     concurrent: 1,
     mode: "price",
-    priceMin: 100,
+    priceMin: 0,
     priceMax: null,
     itemKeys: [],
     anchorAt: existing?.anchorAt || Date.UTC(2026, 0, 5, 0, 0, 0),
@@ -675,12 +768,14 @@ function ensureDefaultExpensiveRotation(db) {
 
   if (existing) {
     const needsMigrate =
+      Number(existing.rotationVersion) !== ROTATION_VERSION ||
       existing.model !== "independent" ||
-      !existing.shortDays ||
-      !existing.longDays ||
-      existing.id !== "expensive_3m_week";
+      existing.priceMin !== 0 ||
+      existing.onDaysMax !== 14 ||
+      existing.offDaysMax !== 90;
     const plan = normalizePlan({ ...existing, ...desired, id: "expensive_3m_week" });
     plan.seeded = true;
+    plan.rotationVersion = ROTATION_VERSION;
     if (existing.id !== plan.id && plans[existing.id]) delete plans[existing.id];
     plans[plan.id] = plan;
     if (needsMigrate) applyRotationPlan(db, plan);
@@ -689,6 +784,7 @@ function ensureDefaultExpensiveRotation(db) {
 
   const plan = normalizePlan(desired);
   plan.seeded = true;
+  plan.rotationVersion = ROTATION_VERSION;
   plans[plan.id] = plan;
   applyRotationPlan(db, plan);
   return { ok: true, created: true, plan };
