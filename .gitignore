@@ -24,3 +24,6 @@ out/
 /keystore/*.keystore
 /scripts/
 /secrets/
+
+.tmp/
+
