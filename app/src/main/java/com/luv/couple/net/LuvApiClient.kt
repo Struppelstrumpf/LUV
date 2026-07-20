@@ -3393,6 +3393,27 @@ object LuvApiClient {
         }
     }
 
+    /** Event-Lobby beenden: Contest-Eintrag + Auflösen. */
+    suspend fun closeEventLobby(code: String, token: String) = withContext(Dispatchers.IO) {
+        val clean = normalizeCode(code) ?: throw LuvApiException("Ungültiger Code.")
+        val body = JSONObject()
+            .put("token", token)
+            .toString()
+            .toRequestBody(jsonMedia)
+        val request = authedRequestBuilder("/v1/rooms/$clean/event-close").post(body).build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful && response.code != 404) {
+                val raw = response.body?.string().orEmpty()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                throw LuvApiException(
+                    message = json?.optString("message")?.takeIf { it.isNotBlank() }
+                        ?: "Event-Lobby schließen fehlgeschlagen.",
+                    error = json?.optString("error")
+                )
+            }
+        }
+    }
+
     @Deprecated("Use leaveRoom — abandon kicked everyone")
     suspend fun abandonRoom(code: String) = leaveRoom(code)
 

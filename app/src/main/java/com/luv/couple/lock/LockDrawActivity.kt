@@ -693,8 +693,14 @@ class LockDrawActivity : ComponentActivity() {
                         if (id != null) {
                             val lobby = LuvApp.instance.prefs.snapshot()
                                 .lobbies.firstOrNull { it.id == id }
-                            lobby?.let { runCatching { LuvApiClient.leaveRoom(it.code) } }
-                            runCatching { LuvApp.instance.prefs.removeLobby(id) }
+                            if (lobby != null) {
+                                // Snapshot zuerst, dann Server schließt Contest (kein leaveRoom vorher)
+                                runCatching { CanvasMemoryKeeper.uploadSnapshot(lobby) }
+                                runCatching {
+                                    LuvApiClient.closeEventLobby(lobby.code, lobby.token)
+                                }
+                                runCatching { LuvApp.instance.prefs.removeLobby(id) }
+                            }
                         }
                     }
                     finish()

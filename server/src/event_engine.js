@@ -484,6 +484,28 @@ function deleteCustomEvent(db, eventId) {
   return { ok: true, deleted: true };
 }
 
+/** Einheitliches Event-Fenster-Ende (ISO), wie bei Event-Lobby-Create. */
+function eventWindowEndIso(ev, now = new Date()) {
+  const enriched = enrichEvent(ev);
+  if (enriched.schedule?.mode === "absolute" && enriched.schedule.absoluteUntil) {
+    return String(enriched.schedule.absoluteUntil);
+  }
+  // Caller kann nextOccurrence-end als YYYY-MM-DD liefern
+  return null;
+}
+
+function eventWindowEndIsoFromOccEnd(occEnd) {
+  if (!occEnd) return null;
+  const s = String(occEnd);
+  if (s.includes("T")) return s;
+  const parts = s.split("-").map((x) => Number(x));
+  if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) {
+    // Ende des Event-Tages (ca. 23:59 Berlin ≈ 21:59 UTC)
+    return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 21, 59, 59, 999)).toISOString();
+  }
+  return null;
+}
+
 /** Vote-Fenster: Event-Ende … +24h, sofern Admin nichts setzt. */
 function resolveVoteBounds(contest, windowEndIso, now = Date.now()) {
   let from = parseIsoMs(contest?.voteFrom);
@@ -496,9 +518,13 @@ function resolveVoteBounds(contest, windowEndIso, now = Date.now()) {
 
 function voteWindowOpen(contest, eventActive, now = Date.now(), windowEndIso = null) {
   if (!contest?.enabled) return false;
-  const { from, until } = resolveVoteBounds(contest, windowEndIso, now);
+  // Während Event läuft: noch keine Abstimmung
+  if (eventActive) return false;
+  const endIso = windowEndIso && String(windowEndIso).includes("T")
+    ? windowEndIso
+    : eventWindowEndIsoFromOccEnd(windowEndIso);
+  const { from, until } = resolveVoteBounds(contest, endIso, now);
   if (from == null && until == null) {
-    // Legacy: ohne Zeiten nur nach Event (nicht während aktiv)
     return !eventActive;
   }
   if (from != null && now < from) return false;
@@ -866,6 +892,8 @@ module.exports = {
   defaultContestPlaces,
   voteWindowOpen,
   resolveVoteBounds,
+  eventWindowEndIso,
+  eventWindowEndIsoFromOccEnd,
   entryScore,
   publicEventModules,
   publicRewardItem,

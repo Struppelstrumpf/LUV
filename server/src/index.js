@@ -1810,15 +1810,19 @@ function closeEventLobbyRoom(code, room) {
     console.error("closeEventLobby snapshot", e);
   }
   if (host && ev) {
+    ensureRoomStrokes(room, code);
     const strokes = Array.isArray(room.strokes) ? room.strokes.length : 0;
     const prog = engine.ensureUserProgress(host, room.eventId);
     const strokeCount = Math.max(strokes, prog.qualifiedStrokes || 0);
-    engine.submitContestEntry(db, host, ev, {
+    const submitted = engine.submitContestEntry(db, host, ev, {
       lobbyCode: code,
       imagePath,
       strokes: strokeCount,
       prompt: room.eventPrompt || prog.eventPrompt || null,
     });
+    if (!submitted.ok && submitted.error !== "max_entries" && submitted.error !== "too_few_strokes") {
+      console.error("closeEventLobby submit", submitted.error, submitted.message);
+    }
   }
   for (const sock of [...(room.sockets?.values?.() || [])]) {
     try {
@@ -1868,12 +1872,15 @@ function tickEventLobbiesAndContests() {
     if (!pub?.contest?.enabled) continue;
     const occ = seasonEvents.nextOccurrence(ev, nowDate);
     const active = seasonEvents.isActiveAtPatched(ev, nowDate);
-    const windowEnd = occ?.end || null;
+    if (active) continue;
+    const windowEnd =
+      engine.eventWindowEndIso(ev, nowDate) ||
+      engine.eventWindowEndIsoFromOccEnd(occ?.end) ||
+      null;
     const { until } = engine.resolveVoteBounds(pub.contest, windowEnd, now);
     if (until == null || now <= until) continue;
     const r = engine.finalizeContestPrizes(db, ev, db.users);
     if (r?.ok && !r.already) dirty = true;
-    void active;
   }
   if (dirty) scheduleSave();
 }
@@ -9098,12 +9105,16 @@ app.get("/v1/me/events/:id/contest", (req, res) => {
   const now = new Date();
   const occ = seasonEvents.nextOccurrence(ev, now);
   const active = seasonEvents.isActiveAtPatched(ev, now);
+  const windowEnd =
+    engine.eventWindowEndIso(ev, now) ||
+    engine.eventWindowEndIsoFromOccEnd(occ?.end) ||
+    null;
   const contest = engine.contestPublicForUser(
     db,
     ctx.user,
     ev,
     occ?.start || null,
-    occ?.end || null,
+    windowEnd,
     active,
     now.getTime()
   );
@@ -9129,6 +9140,10 @@ app.post("/v1/me/events/:id/contest/vote", (req, res) => {
   const now = new Date();
   const occ = seasonEvents.nextOccurrence(ev, now);
   const active = seasonEvents.isActiveAtPatched(ev, now);
+  const windowEnd =
+    engine.eventWindowEndIso(ev, now) ||
+    engine.eventWindowEndIsoFromOccEnd(occ?.end) ||
+    null;
   const entryId = String(req.body?.entryId || "").trim();
   const value = req.body?.value;
   const result = engine.castVote(
@@ -9139,7 +9154,7 @@ app.post("/v1/me/events/:id/contest/vote", (req, res) => {
     value,
     (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref),
     active,
-    occ?.end || null
+    windowEnd
   );
   if (!result.ok) {
     return res.status(400).json({ error: result.error, message: result.message });
@@ -9153,7 +9168,7 @@ app.post("/v1/me/events/:id/contest/vote", (req, res) => {
       ctx.user,
       ev,
       occ?.start || null,
-      occ?.end || null,
+      windowEnd,
       active,
       now.getTime()
     ),
@@ -9222,8 +9237,20 @@ app.post("/v1/me/events/:id/contest/report", (req, res) => {
 });
 
 app.get("/v1/me/events/:id/contest/entries/:entryId/image", (req, res) => {
-  const ctx = requireAuth(req, res);
-  if (!ctx) return;
+  // Auth: Bearer oder ?session= (Bild-Downloads ohne Header-Support)
+  let ctx = authUser(req);
+  if (!ctx) {
+    const qTok = String(req.query?.session || "").trim();
+    if (qTok) {
+      const db = getDb();
+      const session = db.sessions[qTok];
+      if (session && session.expiresAt >= Date.now()) {
+        const user = db.users[session.userId];
+        if (user && !user.banned) ctx = { user, token: qTok };
+      }
+    }
+  }
+  if (!ctx) return res.status(401).json({ error: "unauthorized" });
   const db = getDb();
   const engine = require("./event_engine");
   const bucket = engine.contestBucket(db, req.params.id);
@@ -9233,6 +9260,7 @@ app.get("/v1/me/events/:id/contest/entries/:entryId/image", (req, res) => {
     ? entry.imagePath
     : path.join(DATA_DIR, entry.imagePath);
   if (!fs.existsSync(abs)) return res.status(404).json({ error: "missing" });
+  res.setHeader("Content-Type", "image/png");
   res.setHeader("Cache-Control", "private, max-age=300");
   return res.sendFile(abs);
 });
@@ -11890,17 +11918,53 @@ app.post("/v1/rooms/:code/leave", (req, res) => {
     memberList: roster,
   });
   broadcastPeerCount(room);
-  ensureHostOrDissolve(room, code, { immediateEmpty: true });
-  // Belt & suspenders: Leaver erscheint nie wieder in /v1/me/lobbies
-  releaseHostedRoom(code, ctx.user.id);
-  forgetJoinedLobby(ctx.user, code);
-  if (rooms.has(code)) {
-    touchRoom(room);
-    persistRooms();
+  if (room.eventId) {
+    // Event-Lobby verlassen = Contest-Eintrag + Auflösen (eine Lobby pro Event)
+    closeEventLobbyRoom(code, room);
+  } else {
+    ensureHostOrDissolve(room, code, { immediateEmpty: true });
+    releaseHostedRoom(code, ctx.user.id);
+    forgetJoinedLobby(ctx.user, code);
+    if (rooms.has(code)) {
+      touchRoom(room);
+      persistRooms();
+    }
   }
   scheduleSave();
 
   return res.json({ ok: true });
+});
+
+/** Event-Lobby: Snapshot übernehmen und Contest schließen (Timer-Ende). */
+app.post("/v1/rooms/:code/event-close", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  const token = String(req.body?.token || "").trim();
+  let room = rooms.get(code);
+  if (!room) {
+    const saved = getDb().rooms?.[code];
+    if (saved && typeof saved === "object") {
+      room = hydrateRoom(code, saved);
+      rooms.set(code, room);
+    }
+  }
+  if (!room || !room.eventId) {
+    return res.status(404).json({ error: "not_found", message: "Keine Event-Lobby." });
+  }
+  const isHost =
+    room.hostUserId === ctx.user.id || room.createdByUserId === ctx.user.id;
+  if (!isHost && token && room.token !== token) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  if (!isHost && !(Array.isArray(room.memberUserIds) && room.memberUserIds.includes(ctx.user.id))) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  closeEventLobbyRoom(code, room);
+  scheduleSave();
+  return res.json({ ok: true, eventId: room.eventId });
 });
 
 /** Person in einer Lobby melden (optional Screenshot aus Galerie). */

@@ -25,7 +25,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
+import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.TextMuted
 import androidx.lifecycle.Lifecycle
@@ -46,6 +49,7 @@ import com.luv.couple.data.Lobby
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Role
 import com.luv.couple.data.RoomPreview
+import com.luv.couple.lock.CanvasMemoryKeeper
 import com.luv.couple.lock.CanvasStore
 import com.luv.couple.lock.LockDrawActivity
 import com.luv.couple.lock.LockScreenWidgetProvider
@@ -359,6 +363,14 @@ fun LuvAppNav() {
     fun createEventLobby(event: com.luv.couple.net.SeasonEvent) {
         if (busy) return
         if (!requireGoogleOrToast()) return
+        if (!event.canCreateLobby) {
+            Toast.makeText(
+                context,
+                "Für dieses Event hast du schon eine Event-Lobby erstellt.",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
         scope.launch {
             busy = true
             joinError = null
@@ -1211,7 +1223,26 @@ fun LuvAppNav() {
         }
 
         composable(Routes.MAIN) {
-            Column(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xFF121821), BgDeep, Color(0xFF1A1220))
+                        )
+                    )
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(AccentRose.copy(alpha = 0.18f), Color.Transparent),
+                                radius = 900f
+                            )
+                        )
+                )
+                Column(modifier = Modifier.fillMaxSize()) {
                 Box(modifier = Modifier.weight(1f)) {
                     when (tab) {
                         0 -> LobbiesScreen(
@@ -1331,7 +1362,18 @@ fun LuvAppNav() {
                                 scope.launch {
                                     // Sofort lokal sperren — Cloud-Sync darf die Kachel nicht zurückholen
                                     prefs.dismissLobbyCode(lobby.code)
-                                    runCatching { LuvApiClient.leaveRoom(lobby.code) }
+                                    if (lobby.isEventLobby) {
+                                        runCatching {
+                                            CanvasMemoryKeeper.uploadSnapshot(lobby)
+                                        }
+                                        runCatching {
+                                            LuvApiClient.closeEventLobby(lobby.code, lobby.token)
+                                        }.onFailure {
+                                            runCatching { LuvApiClient.leaveRoom(lobby.code) }
+                                        }
+                                    } else {
+                                        runCatching { LuvApiClient.leaveRoom(lobby.code) }
+                                    }
                                     PairConnectionService.stop(context, lobby.id)
                                     CanvasStore.clearLobby(lobby.id)
                                     prefs.removeLobby(lobby.id)
@@ -1342,6 +1384,9 @@ fun LuvAppNav() {
                                     }
                                     runCatching { syncCloudAccount(force = true) }
                                     refreshAccount()
+                                    if (lobby.isEventLobby) {
+                                        runCatching { LuvApiClient.fetchEvents() }
+                                    }
                                 }
                             },
                             onReconnect = { lobby ->
@@ -1514,6 +1559,7 @@ fun LuvAppNav() {
                         }
                     }
                 )
+            }
             }
         }
 

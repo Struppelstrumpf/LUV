@@ -216,7 +216,7 @@ private fun EventHeroCard(
     }.getOrDefault(AccentRose)
     val contest = event.contest
     var showVote by remember { mutableStateOf(false) }
-    var voteContest by remember { mutableStateOf(contest) }
+    var voteContest by remember(event.id, contest) { mutableStateOf(contest) }
     var selectedWinner by remember { mutableStateOf<EventContestWinner?>(null) }
     var claimBusy by remember { mutableStateOf(false) }
 
@@ -444,6 +444,14 @@ private fun EventHeroCard(
             }
         }
         if (contest?.claimablePrize != null && !contest.prizeClaimed) {
+            val prize = contest.claimablePrize
+            Text(
+                "Dein Platz: ${prize.place} · ${prize.coins} Coins" +
+                    if (prize.grantMedal || prize.place == 1) " · 🥇" else "",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 12.sp
+            )
             TextButton(
                 onClick = {
                     if (claimBusy) return@TextButton

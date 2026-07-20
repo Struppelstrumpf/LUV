@@ -741,7 +741,19 @@ fun MenuBackdrop(
             .background(Brush.verticalGradient(listOf(Color(0xFF121821), BgDeep, Color(0xFF1A1220))))
             .statusBarsPadding()
             .then(if (includeNavigationBars) Modifier.navigationBarsPadding() else Modifier)
-    ) { content() }
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(AccentRose.copy(alpha = 0.18f), Color.Transparent),
+                        radius = 900f
+                    )
+                )
+        )
+        content()
+    }
 }
 
 @Composable

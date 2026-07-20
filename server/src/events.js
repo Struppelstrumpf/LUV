@@ -984,12 +984,16 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
     };
     const activeNow = isActiveAtPatched(e, now);
     if (user && pub.contest?.enabled) {
+      const windowEnd =
+        engine.eventWindowEndIso(e, now) ||
+        engine.eventWindowEndIsoFromOccEnd(row.windowEnd) ||
+        row.windowEnd;
       row.contest = engine.contestPublicForUser(
         db,
         user,
         e,
         row.windowStart,
-        row.windowEnd,
+        windowEnd,
         activeNow,
         now.getTime()
       );
