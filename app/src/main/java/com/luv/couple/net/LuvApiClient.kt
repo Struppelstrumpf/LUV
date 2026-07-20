@@ -33,7 +33,10 @@ data class RoomSession(
     val suggestedColorIndex: Int? = null,
     val peers: Int = 0,
     val memberList: List<RosterMember> = emptyList(),
-    val role: String? = null
+    val role: String? = null,
+    val eventId: String? = null,
+    val eventPrompt: String? = null,
+    val eventEndsAt: String? = null,
 )
 
 data class LootboxResult(
@@ -127,6 +130,9 @@ data class RemoteLobby(
     val hostNickname: String,
     /** true = dieses Konto hat die Lobby ursprünglich erstellt (nicht nur Live-Host). */
     val createdByMe: Boolean = false,
+    val eventId: String? = null,
+    val eventPrompt: String? = null,
+    val eventEndsAt: String? = null,
 )
 
 data class PendingMarketSale(
@@ -527,6 +533,9 @@ object LuvApiClient {
                 invite = o.optString("invite"),
                 hostNickname = o.optString("hostNickname", "Host"),
                 createdByMe = o.optBoolean("createdByMe", false),
+                eventId = o.optString("eventId").takeIf { it.isNotBlank() },
+                eventPrompt = o.optString("eventPrompt").takeIf { it.isNotBlank() },
+                eventEndsAt = o.optString("eventEndsAt").takeIf { it.isNotBlank() },
             )
         }
         return out
@@ -2672,6 +2681,80 @@ object LuvApiClient {
         )
     }
 
+    data class EventContestResult(
+        val contest: EventContestInfo,
+        val state: EventsState?,
+    )
+
+    data class EventContestVoteResult(
+        val contest: EventContestInfo,
+        val voterCoins: Int,
+        val state: EventsState?,
+    )
+
+    data class EventContestClaimResult(
+        val coinsGranted: Int,
+        val place: Int,
+        val state: EventsState,
+    )
+
+    suspend fun fetchEventContest(eventId: String): EventContestResult = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/me/events/${eventId.trim().encodeURL()}/contest")
+        val contest = EventContestInfo.fromJson(json.optJSONObject("contest"))
+            ?: throw LuvApiException("Kein Wettbewerb")
+        val state = json.optJSONObject("state")?.let { EventsState.fromJson(it) }
+        state?.let { EventSession.update(it) }
+        EventContestResult(contest = contest, state = state)
+    }
+
+    suspend fun voteContest(eventId: String, entryId: String, value: Int): EventContestVoteResult =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject()
+                .put("entryId", entryId.trim())
+                .put("value", if (value < 0) -1 else 1)
+                .toString()
+            val json = authedPost(
+                "/v1/me/events/${eventId.trim().encodeURL()}/contest/vote",
+                body
+            )
+            json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
+            val contest = EventContestInfo.fromJson(json.optJSONObject("contest"))
+                ?: throw LuvApiException("Abstimmung fehlgeschlagen")
+            val state = json.optJSONObject("state")?.let { EventsState.fromJson(it) }
+            state?.let { EventSession.update(it) }
+            EventContestVoteResult(
+                contest = contest,
+                voterCoins = json.optInt("voterCoins", 0),
+                state = state,
+            )
+        }
+
+    suspend fun claimContestPrize(eventId: String): EventContestClaimResult =
+        withContext(Dispatchers.IO) {
+            val json = authedPost(
+                "/v1/me/events/${eventId.trim().encodeURL()}/contest/claim-prize",
+                "{}"
+            )
+            json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
+            val state = json.optJSONObject("state")?.let { EventsState.fromJson(it) }
+                ?: fetchEvents()
+            EventSession.update(state)
+            EventContestClaimResult(
+                coinsGranted = json.optInt("coinsGranted", 0),
+                place = json.optInt("place", 0),
+                state = state,
+            )
+        }
+
+    suspend fun reportContestEntry(eventId: String, entryId: String) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("entryId", entryId.trim()).toString()
+        authedPost(
+            "/v1/me/events/${eventId.trim().encodeURL()}/contest/report",
+            body
+        )
+        Unit
+    }
+
     suspend fun pingAchievement(metric: String, amount: Int = 1): AchievementPingResult =
         withContext(Dispatchers.IO) {
             val body = JSONObject()
@@ -3452,6 +3535,8 @@ object LuvApiClient {
                         "insufficient_coins" -> "Nicht genug Coins."
                         "capacity_full" -> "Maximal ${PeerPalette.MAX_PEERS} Personen."
                         "not_host" -> "Nur der Host kann Plätze freischalten."
+                        "event_lobby_exists" -> msg
+                            ?: "Du hast schon eine Event-Lobby für dieses Event."
                         "unauthorized" -> "Bitte neu anmelden."
                         else -> "API-Fehler (${response.code})"
                     },
@@ -3488,7 +3573,10 @@ object LuvApiClient {
                 suggestedColorIndex = suggested,
                 peers = parsed.optInt("peers", parsed.optInt("count", 0)),
                 memberList = parseMemberList(parsed),
-                role = parsed.optString("role").takeIf { it.isNotBlank() }
+                role = parsed.optString("role").takeIf { it.isNotBlank() },
+                eventId = parsed.optString("eventId").takeIf { it.isNotBlank() },
+                eventPrompt = parsed.optString("eventPrompt").takeIf { it.isNotBlank() },
+                eventEndsAt = parsed.optString("eventEndsAt").takeIf { it.isNotBlank() },
             )
         }
     }

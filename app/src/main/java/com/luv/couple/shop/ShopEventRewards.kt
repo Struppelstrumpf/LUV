@@ -27,6 +27,8 @@ object ShopEventRewards {
         "stickers:❄️",
         "stickers:💘",
         "stickers:💒",
+        "emojis:🥇",
+        "stickers:🥇",
     )
 
     val EXCLUDED_IDS: Set<String> = EXCLUDED_KEYS.map { it.substringAfter(':') }.toSet()

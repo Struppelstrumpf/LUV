@@ -369,12 +369,8 @@ fun LuvAppNav() {
                     return@launch
                 }
                 val hostColorSide = if (colorIndex % 2 == 0) "blue" else "purple"
-                val lobbyName = "${event.emoji} ${event.title}"
-                    .trim()
-                    .take(PeerPalette.MAX_LOBBY_NAME_LENGTH)
-                    .ifBlank { "Event-Lobby" }
                 val room = LuvApiClient.createRoom(
-                    name = lobbyName,
+                    name = "Event",
                     hostColorSide = hostColorSide,
                     eventId = event.id
                 )
@@ -385,7 +381,7 @@ fun LuvAppNav() {
                 CanvasStore.updateProfile(snap.nickname.orEmpty(), myColor)
                 val lobby = Lobby(
                     id = UUID.randomUUID().toString(),
-                    name = room.name.ifBlank { lobbyName },
+                    name = room.name.ifBlank { "Event" },
                     role = Role.HOST,
                     code = room.code,
                     token = room.token,
@@ -394,17 +390,27 @@ fun LuvAppNav() {
                     isFree = room.isFree,
                     hostNickname = room.hostNickname.ifBlank { nickname.orEmpty() },
                     hostColorSide = hostColorSide,
-                                            createdByMe = true
-                                        )
+                    createdByMe = true,
+                    eventId = room.eventId ?: event.id,
+                    eventPrompt = room.eventPrompt ?: event.eventPrompt ?: event.contest?.promptHint,
+                    eventEndsAt = room.eventEndsAt,
+                )
                 prefs.upsertLobby(lobby)
                 PairSessionState.setCapacity(lobby.id, room.capacity)
                 CanvasStore.setActiveLobby(lobby.id)
                 PairConnectionService.startAll(context)
-                shareLobby = lobby
-                navController.navigate(Routes.HOST_SHARE) {
-                    popUpTo(Routes.MAIN) { inclusive = false }
-                }
                 refreshAccount()
+                runCatching { LuvApiClient.fetchEvents() }
+                CanvasStore.updateKnownLobbies(prefs.snapshot().lobbies.map { it.id })
+                context.startActivity(
+                    Intent(context, LockDrawActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
+                    }
+                )
+                prefs.setActiveLobby(lobby.id)
+                prefs.markLobbyCanvasSeen(lobby.code)
+                prefs.snoozeLobbyGlow(lobby.code)
             } catch (e: Exception) {
                 if (e is LuvApiException && e.isNoCoins) {
                     showNoCoins = true
@@ -743,8 +749,11 @@ fun LuvAppNav() {
                     isWeddingRetake = room.isWeddingRetake,
                     hostNickname = room.hostNickname,
                     hostColorSide = room.hostColorSide,
-                                            createdByMe = false
-                                        )
+                    createdByMe = false,
+                    eventId = room.eventId,
+                    eventPrompt = room.eventPrompt,
+                    eventEndsAt = room.eventEndsAt,
+                )
                 prefs.upsertLobby(lobby)
                 PairSessionState.setCapacity(lobby.id, room.capacity)
                 CanvasStore.setActiveLobby(lobby.id)

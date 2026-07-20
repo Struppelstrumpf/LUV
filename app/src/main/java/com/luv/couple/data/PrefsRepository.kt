@@ -334,6 +334,9 @@ class PrefsRepository(private val context: Context) {
                     lastCanvasActorId = r.lastCanvasActorId
                         ?: prev?.lastCanvasActorId,
                     createdByMe = r.createdByMe || (prev?.createdByMe == true),
+                    eventId = r.eventId ?: prev?.eventId,
+                    eventPrompt = r.eventPrompt ?: prev?.eventPrompt,
+                    eventEndsAt = r.eventEndsAt ?: prev?.eventEndsAt,
                 )
             }
             for (r in hosted) upsert(r, Role.HOST)
@@ -1166,6 +1169,9 @@ class PrefsRepository(private val context: Context) {
                                     "createdByMe",
                                     runCatching { Role.valueOf(o.getString("role")) }.getOrDefault(Role.HOST) == Role.HOST
                                 ),
+                                eventId = o.optString("eventId").takeIf { it.isNotBlank() },
+                                eventPrompt = o.optString("eventPrompt").takeIf { it.isNotBlank() },
+                                eventEndsAt = o.optString("eventEndsAt").takeIf { it.isNotBlank() },
                             )
                         )
                     }
@@ -1195,6 +1201,9 @@ class PrefsRepository(private val context: Context) {
                         .put("lastCanvasAt", lobby.lastCanvasAt)
                         .put("lastCanvasActorId", lobby.lastCanvasActorId ?: "")
                         .put("createdByMe", lobby.createdByMe)
+                        .put("eventId", lobby.eventId ?: "")
+                        .put("eventPrompt", lobby.eventPrompt ?: "")
+                        .put("eventEndsAt", lobby.eventEndsAt ?: "")
                 )
             }
             return arr.toString()

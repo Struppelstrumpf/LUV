@@ -39,6 +39,8 @@ const EVENT_ONLY_KEYS = new Set([
   "stickers:❄️",
   "stickers:💘",
   "stickers:💒",
+  "emojis:🥇",
+  "stickers:🥇",
 ]);
 
 /** @deprecated use EVENT_ONLY_KEYS — nur noch für Kompatibilität exportiert */
@@ -980,11 +982,31 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
       itemGranted: prog.itemGranted,
       canCollect: false,
     };
-    if (isActiveAtPatched(e, now)) {
+    const activeNow = isActiveAtPatched(e, now);
+    if (user && pub.contest?.enabled) {
+      row.contest = engine.contestPublicForUser(
+        db,
+        user,
+        e,
+        row.windowStart,
+        row.windowEnd,
+        activeNow,
+        now.getTime()
+      );
+    }
+    if (user) {
+      const ep = engine.ensureUserProgress(user, e.id);
+      row.eventPrompt = ep.eventPrompt || null;
+      row.lobbyCreated = Boolean(ep.lobbyCreated);
+      row.canCreateLobby = Boolean(
+        activeNow && pub.lobby?.enabled && !ep.lobbyCreated
+      );
+    }
+    if (activeNow) {
       row.canCollect = prog.lastCollectDay !== dayKey;
       active.push(row);
     } else if (occ && !occ.active) {
-      upcoming.push({ ...row, canCollect: false });
+      upcoming.push({ ...row, canCollect: false, canCreateLobby: false });
     }
   }
   upcoming.sort((a, b) => String(a.windowStart || "").localeCompare(String(b.windowStart || "")));
@@ -1124,4 +1146,5 @@ module.exports = {
   isActiveAtPatched,
   isEventOnlyItem,
   publicEvent,
+  nextOccurrence,
 };

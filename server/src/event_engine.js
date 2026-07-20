@@ -29,7 +29,50 @@ function clampInt(n, min, max, fallback) {
 }
 
 function clampReward(n, fallback = 0) {
-  return clampInt(n, 0, 50, fallback);
+  return clampInt(n, 0, 200, fallback);
+}
+
+const DEFAULT_EVENT_PROMPTS = [
+  "Herz",
+  "Stern",
+  "Sonne",
+  "Mond",
+  "Blume",
+  "Katze",
+  "Haus",
+  "Baum",
+  "Wolke",
+  "Regenbogen",
+];
+
+function defaultContestPlaces() {
+  const places = [
+    {
+      place: 1,
+      coins: 100,
+      rewardItem: {
+        kind: "stickers",
+        itemId: "🥇",
+        emoji: "🥇",
+        label: "Goldmedaille",
+      },
+    },
+    { place: 2, coins: 50, rewardItem: null },
+    { place: 3, coins: 25, rewardItem: null },
+  ];
+  for (let p = 4; p <= 10; p += 1) {
+    places.push({ place: p, coins: 10, rewardItem: null });
+  }
+  return places;
+}
+
+function pickEventPrompt(lobbyCfg, eventTitle) {
+  const fromCfg = Array.isArray(lobbyCfg?.prompts)
+    ? lobbyCfg.prompts.map((p) => String(p || "").trim()).filter(Boolean)
+    : [];
+  const pool = fromCfg.length ? fromCfg : DEFAULT_EVENT_PROMPTS;
+  const i = Math.floor(Math.random() * pool.length);
+  return String(pool[i] || "Herz").slice(0, 80);
 }
 
 function slugId(raw) {
@@ -151,20 +194,16 @@ function normalizeLobby(raw) {
 function normalizeContest(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
   if (!src.enabled) return { enabled: false };
-  const places = Array.isArray(src.places)
+  const places = Array.isArray(src.places) && src.places.length
     ? src.places
         .slice(0, 10)
         .map((p) => ({
           place: clampInt(p.place, 1, 10, 1),
-          coins: clampReward(p.coins, 5),
+          coins: clampReward(p.coins, 10),
           rewardItem: publicRewardItem(p.rewardItem),
         }))
         .sort((a, b) => a.place - b.place)
-    : [
-        { place: 1, coins: 15, rewardItem: null },
-        { place: 2, coins: 8, rewardItem: null },
-        { place: 3, coins: 5, rewardItem: null },
-      ];
+    : defaultContestPlaces();
   const vr = src.voteRequire && typeof src.voteRequire === "object" ? src.voteRequire : {};
   return {
     enabled: true,
@@ -301,14 +340,22 @@ function ensureUserProgress(user, eventId) {
       itemGranted: false,
       quests: {},
       votedEntryId: null,
+      votedEntries: {},
       voterRewarded: false,
       qualifiedStrokes: 0,
       eventLobbyOpens: 0,
+      lobbyCreated: false,
+      lobbyCode: null,
+      eventPrompt: null,
+      claimablePrize: null,
+      prizeClaimed: false,
     };
   }
   const p = user.eventProgress[id];
   if (!p.quests || typeof p.quests !== "object") p.quests = {};
+  if (!p.votedEntries || typeof p.votedEntries !== "object") p.votedEntries = {};
   p.qualifiedStrokes = Math.max(0, Math.floor(Number(p.qualifiedStrokes) || 0));
+  p.lobbyCreated = Boolean(p.lobbyCreated || p.lobbyCode);
   return p;
 }
 
@@ -437,22 +484,34 @@ function deleteCustomEvent(db, eventId) {
   return { ok: true, deleted: true };
 }
 
-function voteWindowOpen(contest, eventActive, now = Date.now()) {
+/** Vote-Fenster: Event-Ende … +24h, sofern Admin nichts setzt. */
+function resolveVoteBounds(contest, windowEndIso, now = Date.now()) {
+  let from = parseIsoMs(contest?.voteFrom);
+  let until = parseIsoMs(contest?.voteUntil);
+  const endMs = parseIsoMs(windowEndIso);
+  if (from == null && endMs != null) from = endMs;
+  if (until == null && endMs != null) until = endMs + 24 * 60 * 60 * 1000;
+  return { from, until };
+}
+
+function voteWindowOpen(contest, eventActive, now = Date.now(), windowEndIso = null) {
   if (!contest?.enabled) return false;
-  const from = parseIsoMs(contest.voteFrom);
-  const until = parseIsoMs(contest.voteUntil);
+  const { from, until } = resolveVoteBounds(contest, windowEndIso, now);
+  if (from == null && until == null) {
+    // Legacy: ohne Zeiten nur nach Event (nicht während aktiv)
+    return !eventActive;
+  }
   if (from != null && now < from) return false;
   if (until != null && now > until) return false;
-  // Wenn keine Zeiten: während Event aktiv
-  if (from == null && until == null) return eventActive;
   return true;
 }
 
 function canUserVote(user, eventObj, entryId) {
   const ev = enrichEvent(eventObj);
   const prog = ensureUserProgress(user, ev.id);
-  if (prog.votedEntryId) {
-    return { ok: false, error: "already_voted", message: "Du hast schon abgestimmt." };
+  const eid = String(entryId || "").trim();
+  if (eid && prog.votedEntries[eid] != null) {
+    return { ok: false, error: "already_voted", message: "Bereits abgestimmt." };
   }
   const req = ev.contest?.voteRequire || {};
   if (req.drewInEventLobby) {
@@ -477,7 +536,7 @@ function submitContestEntry(db, user, eventObj, payload) {
   const max = ev.contest.maxEntriesPerUser || 1;
   const mine = bucket.entries.filter((e) => e.userId === user.id);
   if (mine.length >= max) {
-    return { ok: false, error: "max_entries", message: "Bereits eingereicht." };
+    return { ok: false, error: "max_entries", message: "Bereits eingereicht.", entry: mine[0] };
   }
   const strokes = Math.max(0, Math.floor(Number(payload.strokes) || 0));
   const minQ = ev.lobby?.minStrokesToQualify || 0;
@@ -495,20 +554,39 @@ function submitContestEntry(db, user, eventObj, payload) {
     nickname: String(user.nickname || "Jemand").slice(0, 18),
     lobbyCode: String(payload.lobbyCode || "").slice(0, 16),
     imagePath: payload.imagePath || null,
+    prompt: String(payload.prompt || "").slice(0, 80) || null,
     strokes,
     createdAt: Date.now(),
-    votes: 0,
+    score: 0,
+    votes: {},
   };
   bucket.entries.push(entry);
   bucket.updatedAt = Date.now();
   const prog = ensureUserProgress(user, ev.id);
   prog.qualifiedStrokes = Math.max(prog.qualifiedStrokes || 0, strokes);
+  if (payload.prompt) prog.eventPrompt = String(payload.prompt).slice(0, 80);
   return { ok: true, entry };
 }
 
-function castVote(db, user, eventObj, entryId, applyLedgerFn, eventActive) {
+function entryScore(entry) {
+  if (entry && typeof entry.votes === "object" && entry.votes) {
+    let s = 0;
+    for (const v of Object.values(entry.votes)) {
+      const n = Number(v);
+      if (n === 1 || n === -1) s += n;
+    }
+    return s;
+  }
+  return Number(entry?.score ?? entry?.votes) || 0;
+}
+
+function castVote(db, user, eventObj, entryId, value, applyLedgerFn, eventActive, windowEndIso) {
   const ev = enrichEvent(eventObj);
-  if (!voteWindowOpen(ev.contest, eventActive)) {
+  const voteVal = Number(value) === -1 ? -1 : Number(value) === 1 ? 1 : 0;
+  if (!voteVal) {
+    return { ok: false, error: "bad_value", message: "value muss +1 oder −1 sein." };
+  }
+  if (!voteWindowOpen(ev.contest, eventActive, Date.now(), windowEndIso)) {
     return { ok: false, error: "vote_closed", message: "Abstimmung ist nicht offen." };
   }
   const elig = canUserVote(user, ev, entryId);
@@ -519,8 +597,11 @@ function castVote(db, user, eventObj, entryId, applyLedgerFn, eventActive) {
   if (entry.userId === user.id) {
     return { ok: false, error: "self_vote", message: "Eigenes Bild nicht wählbar." };
   }
-  entry.votes = (Number(entry.votes) || 0) + 1;
+  if (!entry.votes || typeof entry.votes !== "object") entry.votes = {};
+  entry.votes[user.id] = voteVal;
+  entry.score = entryScore(entry);
   const prog = ensureUserProgress(user, ev.id);
+  prog.votedEntries[entryId] = voteVal;
   prog.votedEntryId = entryId;
   let voterCoins = 0;
   if ((ev.contest.voterRewardCoins || 0) > 0 && !prog.voterRewarded) {
@@ -531,34 +612,180 @@ function castVote(db, user, eventObj, entryId, applyLedgerFn, eventActive) {
     }
   }
   bucket.updatedAt = Date.now();
-  return { ok: true, votes: entry.votes, voterCoins };
+  return { ok: true, score: entry.score, voterCoins };
 }
 
-function finalizeContestPrizes(db, eventObj, usersById, applyLedgerFn, giveItemFn) {
+/**
+ * Ranking speichern + Claim freischalten (ohne Auto-Gutschrift).
+ */
+function finalizeContestPrizes(db, eventObj, usersById) {
   const ev = enrichEvent(eventObj);
   if (!ev.contest?.enabled) return { ok: false, skipped: true };
   const bucket = contestBucket(db, ev.id);
-  if (bucket.prizesGranted) return { ok: true, already: true };
-  const ranked = [...bucket.entries].sort(
-    (a, b) => (b.votes || 0) - (a.votes || 0) || a.createdAt - b.createdAt
-  );
-  const granted = [];
-  for (const place of ev.contest.places || []) {
-    const entry = ranked[place.place - 1];
-    if (!entry) continue;
-    const u = usersById?.[entry.userId];
-    if (!u) continue;
-    if (place.coins > 0 && applyLedgerFn) {
-      applyLedgerFn(u.id, place.coins, "event_contest_prize", `${ev.id}:p${place.place}`);
-    }
-    if (place.rewardItem && giveItemFn) {
-      giveItemFn(u, place.rewardItem.kind, place.rewardItem.itemId);
-    }
-    granted.push({ place: place.place, userId: u.id, coins: place.coins });
+  if (bucket.prizesReady || bucket.prizesGranted) {
+    return { ok: true, already: true, ranking: bucket.ranking || [] };
   }
-  bucket.prizesGranted = true;
+  const ranked = [...bucket.entries].sort(
+    (a, b) => entryScore(b) - entryScore(a) || a.createdAt - b.createdAt
+  );
+  const ranking = ranked.map((e, i) => ({
+    place: i + 1,
+    entryId: e.entryId,
+    userId: e.userId,
+    nickname: e.nickname,
+    score: entryScore(e),
+    prompt: e.prompt || null,
+    imagePath: e.imagePath || null,
+  }));
+  bucket.ranking = ranking;
+  bucket.prizesReady = true;
   bucket.updatedAt = Date.now();
-  return { ok: true, granted };
+  for (const place of ev.contest.places || []) {
+    const row = ranking[place.place - 1];
+    if (!row) continue;
+    const u = usersById?.[row.userId];
+    if (!u) continue;
+    const prog = ensureUserProgress(u, ev.id);
+    if (prog.prizeClaimed) continue;
+    prog.claimablePrize = {
+      place: place.place,
+      coins: place.coins || 0,
+      rewardItem: place.rewardItem || null,
+      grantMedal: place.place === 1,
+    };
+  }
+  return { ok: true, ranking };
+}
+
+function claimContestPrize(db, user, eventObj, applyLedgerFn, giveItemFn) {
+  const ev = enrichEvent(eventObj);
+  if (!ev.contest?.enabled) {
+    return { ok: false, error: "no_contest", message: "Kein Wettbewerb." };
+  }
+  const bucket = contestBucket(db, ev.id);
+  if (!bucket.prizesReady && !bucket.prizesGranted) {
+    return { ok: false, error: "not_ready", message: "Ergebnisse noch nicht da." };
+  }
+  const prog = ensureUserProgress(user, ev.id);
+  if (prog.prizeClaimed) {
+    return { ok: false, error: "already_claimed", message: "Bereits abgeholt." };
+  }
+  const prize = prog.claimablePrize;
+  if (!prize || !(prize.coins > 0 || prize.rewardItem || prize.grantMedal)) {
+    return { ok: false, error: "not_winner", message: "Keine Belohnung für dich." };
+  }
+  let coins = Math.max(0, Math.floor(Number(prize.coins) || 0));
+  const items = [];
+  if (coins > 0 && typeof applyLedgerFn === "function") {
+    applyLedgerFn(user.id, coins, "event_contest_prize", `${ev.id}:p${prize.place}`);
+  }
+  if (prize.rewardItem && typeof giveItemFn === "function") {
+    if (giveItemFn(user, prize.rewardItem.kind, prize.rewardItem.itemId)) {
+      items.push(prize.rewardItem);
+    }
+  }
+  if (prize.grantMedal && typeof giveItemFn === "function") {
+    const hasSticker = items.some((it) => it.kind === "stickers" && it.itemId === "🥇");
+    if (!hasSticker && giveItemFn(user, "stickers", "🥇")) {
+      items.push({ kind: "stickers", itemId: "🥇", emoji: "🥇", label: "Goldmedaille" });
+    }
+    if (giveItemFn(user, "emojis", "🥇")) {
+      items.push({ kind: "emojis", itemId: "🥇", emoji: "🥇", label: "Goldmedaille" });
+    }
+  }
+  prog.prizeClaimed = true;
+  prog.claimablePrize = null;
+  return { ok: true, coinsGranted: coins, place: prize.place, items };
+}
+
+function nextFeedEntry(db, user, eventObj) {
+  const ev = enrichEvent(eventObj);
+  const prog = ensureUserProgress(user, ev.id);
+  const bucket = contestBucket(db, ev.id);
+  const entries = [...bucket.entries].sort((a, b) => a.createdAt - b.createdAt);
+  for (const e of entries) {
+    if (e.userId === user.id) continue;
+    if (prog.votedEntries[e.entryId] != null) continue;
+    return {
+      entryId: e.entryId,
+      nickname: e.nickname,
+      prompt: e.prompt || prog.eventPrompt || null,
+      imageUrl: e.imagePath
+        ? `/v1/me/events/${ev.id}/contest/entries/${e.entryId}/image`
+        : null,
+      strokes: e.strokes || 0,
+    };
+  }
+  return null;
+}
+
+function contestPublicForUser(db, user, eventObj, windowStart, windowEnd, active, now = Date.now()) {
+  const ev = enrichEvent(eventObj);
+  if (!ev.contest?.enabled) {
+    return { enabled: false };
+  }
+  const prog = ensureUserProgress(user, ev.id);
+  const bucket = contestBucket(db, ev.id);
+  const votingOpen = voteWindowOpen(ev.contest, active, now, windowEnd);
+  const { from, until } = resolveVoteBounds(ev.contest, windowEnd, now);
+  const voteEnded = until != null && now > until;
+  const req = ev.contest?.voteRequire || {};
+  let canVoteBase = true;
+  if (req.drewInEventLobby) {
+    const need = clampInt(req.minStrokes, 0, 500, 5);
+    canVoteBase = (prog.qualifiedStrokes || 0) >= need;
+  }
+  const feed = votingOpen ? nextFeedEntry(db, user, ev) : null;
+  const myEntry = bucket.entries.find((e) => e.userId === user.id) || null;
+  let winners = [];
+  if ((bucket.prizesReady || bucket.prizesGranted || voteEnded) && Array.isArray(bucket.ranking)) {
+    winners = bucket.ranking.slice(0, 3).map((w) => ({
+      place: w.place,
+      nickname: w.nickname,
+      entryId: w.entryId,
+      prompt: w.prompt,
+      imageUrl: w.imagePath
+        ? `/v1/me/events/${ev.id}/contest/entries/${w.entryId}/image`
+        : null,
+      score: w.score,
+    }));
+  }
+  const claimable = Boolean(prog.claimablePrize) && !prog.prizeClaimed;
+  return {
+    enabled: true,
+    votingOpen,
+    voteFrom: from != null ? new Date(from).toISOString() : null,
+    voteUntil: until != null ? new Date(until).toISOString() : null,
+    canVote: Boolean(votingOpen && canVoteBase && feed),
+    feedItem: feed,
+    myEntry: myEntry
+      ? {
+          entryId: myEntry.entryId,
+          prompt: myEntry.prompt,
+          strokes: myEntry.strokes,
+          score: entryScore(myEntry),
+          imageUrl: myEntry.imagePath
+            ? `/v1/me/events/${ev.id}/contest/entries/${myEntry.entryId}/image`
+            : null,
+        }
+      : null,
+    winners,
+    claimablePrize: claimable ? prog.claimablePrize : null,
+    prizeClaimed: Boolean(prog.prizeClaimed),
+    entryCount: bucket.entries.length,
+    qualifiedStrokes: prog.qualifiedStrokes || 0,
+    prizesReady: Boolean(bucket.prizesReady || bucket.prizesGranted),
+    promptHint: prog.eventPrompt || null,
+    lobbyCreated: Boolean(prog.lobbyCreated),
+    lobbyCode: prog.lobbyCode || null,
+  };
+}
+
+function noteEventLobbyStroke(user, eventId, amount = 1) {
+  const prog = ensureUserProgress(user, eventId);
+  const add = Math.max(1, Math.floor(Number(amount) || 1));
+  prog.qualifiedStrokes = (prog.qualifiedStrokes || 0) + add;
+  return prog.qualifiedStrokes;
 }
 
 function publicEventModules(ev, user, dayKey, now, helpers) {
@@ -575,7 +802,7 @@ function publicEventModules(ev, user, dayKey, now, helpers) {
       claimed: Boolean(qp.claimed),
     };
   });
-  const contestOpen = voteWindowOpen(e.contest, active, now.getTime());
+  const contestOpen = voteWindowOpen(e.contest, active, now.getTime(), occ?.end || e.schedule?.absoluteUntil || null);
   return {
     id: e.id,
     title: e.title,
@@ -600,9 +827,10 @@ function publicEventModules(ev, user, dayKey, now, helpers) {
           ...e.contest,
           votingOpen: contestOpen,
           entryCount: contestBucket(helpers.db, e.id).entries.length,
-          hasVoted: Boolean(prog?.votedEntryId),
+          hasVoted: Object.keys(prog?.votedEntries || {}).length > 0 || Boolean(prog?.votedEntryId),
           qualifiedStrokes: prog?.qualifiedStrokes || 0,
-          prizesGranted: Boolean(contestBucket(helpers.db, e.id).prizesGranted),
+          prizesGranted: Boolean(contestBucket(helpers.db, e.id).prizesGranted || contestBucket(helpers.db, e.id).prizesReady),
+          lobbyCreated: Boolean(prog?.lobbyCreated),
         }
       : { enabled: false },
     decor: e.decor,
@@ -631,7 +859,14 @@ module.exports = {
   submitContestEntry,
   castVote,
   finalizeContestPrizes,
+  claimContestPrize,
+  contestPublicForUser,
+  noteEventLobbyStroke,
+  pickEventPrompt,
+  defaultContestPlaces,
   voteWindowOpen,
+  resolveVoteBounds,
+  entryScore,
   publicEventModules,
   publicRewardItem,
   slugId,

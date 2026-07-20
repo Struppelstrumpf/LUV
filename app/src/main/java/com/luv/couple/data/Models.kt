@@ -144,12 +144,18 @@ data class Lobby(
      * Unveränderlicher Ersteller (auch nach Host-Failover).
      * Anzeige „Von dir erstellt“ hängt daran, nicht am aktuellen Live-Host.
      */
-    val createdByMe: Boolean = false
+    val createdByMe: Boolean = false,
+    val eventId: String? = null,
+    val eventPrompt: String? = null,
+    /** ISO-8601 Ende des Event-Fensters (Server). */
+    val eventEndsAt: String? = null,
 ) {
     val joinUrl: String
         get() = "https://reineke.pro/luv/j/$code"
 
     val coupleMode: Boolean get() = peakPeers <= 2
+
+    val isEventLobby: Boolean get() = !eventId.isNullOrBlank()
 }
 
 data class RoomPreview(

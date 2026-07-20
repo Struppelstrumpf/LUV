@@ -103,6 +103,9 @@ class LockDrawActivity : ComponentActivity() {
     private var weddingConfirmMine = false
     private var weddingConfirmPartner = false
     private var weddingConfirmBusy = false
+    private var eventLobbyActive = false
+    private var eventEndsAtMs: Long? = null
+    private var eventPromptText: String? = null
     private var emojiEditorHost: FrameLayout? = null
     private var brushStudioHost: FrameLayout? = null
     private var profileHost: FrameLayout? = null
@@ -314,9 +317,21 @@ class LockDrawActivity : ComponentActivity() {
             if (::drawingView.isInitialized) drawingView.myBrushWidth = brushW
             CanvasStore.updateKnownLobbies(snap.lobbies.map { it.id })
             val lobby = snap.lobbies.firstOrNull { it.id == lobbyId }
-            lobbyTitle.text = lobby?.name.orEmpty()
-            lobbyTitle.maxLines = 1
+            eventLobbyActive = lobby?.isEventLobby == true
+            eventEndsAtMs = lobby?.eventEndsAt?.let { iso ->
+                runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrNull()
+            }
+            eventPromptText = lobby?.eventPrompt
+            lobbyTitle.text = when {
+                eventLobbyActive -> "Event"
+                else -> lobby?.name.orEmpty()
+            }
+            lobbyTitle.maxLines = if (eventLobbyActive) 2 else 1
             lobbyTitle.ellipsize = android.text.TextUtils.TruncateAt.END
+            if (eventLobbyActive) {
+                btnTemplates.visibility = View.GONE
+                setupEventLobbyUi()
+            }
             weddingRetakeActive = lobby?.isWeddingRetake == true ||
                 (lobby?.isWedding == true && lobby.name.contains("Hochzeitsbild", ignoreCase = true))
             setupWeddingConfirmUi()
@@ -662,6 +677,61 @@ class LockDrawActivity : ComponentActivity() {
                     Toast.makeText(this@LockDrawActivity, msg, Toast.LENGTH_LONG).show()
                 }
             }
+        }
+    }
+
+    private fun setupEventLobbyUi() {
+        updateEventLobbyTitle()
+        val ends = eventEndsAtMs ?: return
+        lifecycleScope.launch {
+            while (true) {
+                val now = System.currentTimeMillis()
+                if (now >= ends) {
+                    flashStatus("Event beendet")
+                    val id = lobbyId
+                    withContext(Dispatchers.IO) {
+                        if (id != null) {
+                            val lobby = LuvApp.instance.prefs.snapshot()
+                                .lobbies.firstOrNull { it.id == id }
+                            lobby?.let { runCatching { LuvApiClient.leaveRoom(it.code) } }
+                            runCatching { LuvApp.instance.prefs.removeLobby(id) }
+                        }
+                    }
+                    finish()
+                    return@launch
+                }
+                updateEventLobbyTitle()
+                kotlinx.coroutines.delay(1000)
+            }
+        }
+    }
+
+    private fun updateEventLobbyTitle() {
+        if (!eventLobbyActive) return
+        val ends = eventEndsAtMs
+        val countdown = if (ends == null) {
+            "Event aktiv"
+        } else {
+            val diff = ends - System.currentTimeMillis()
+            if (diff <= 0L) {
+                "Event beendet"
+            } else {
+                val totalSec = diff / 1000
+                val h = totalSec / 3600
+                val m = (totalSec % 3600) / 60
+                val s = totalSec % 60
+                when {
+                    h > 0 -> "Noch ${h}h ${m}m ${s}s"
+                    m > 0 -> "Noch ${m}m ${s}s"
+                    else -> "Noch ${s}s"
+                }
+            }
+        }
+        val prompt = eventPromptText?.trim().orEmpty()
+        lobbyTitle.text = if (prompt.isNotBlank()) {
+            "Event · $countdown\nBegriff · $prompt"
+        } else {
+            "Event · $countdown"
         }
     }
 
@@ -1559,18 +1629,22 @@ class LockDrawActivity : ComponentActivity() {
         val id = lobbyId ?: return
         val mine = CanvasStore.cachedColorIndex
         val myUserId = AccountSession.account.value?.id
-        val taken = PairSessionState.takenColorIndices(
-            id,
-            CanvasStore.cachedNickname,
-            myUserId
-        ) +
-            CanvasStore.snapshot(id)
-                .filter {
-                    !it.isLocal &&
-                        !it.nickname.equals(CanvasStore.cachedNickname, ignoreCase = true)
-                }
-                .map { it.colorIndex }
-                .toSet()
+        val taken = if (eventLobbyActive) {
+            emptySet()
+        } else {
+            PairSessionState.takenColorIndices(
+                id,
+                CanvasStore.cachedNickname,
+                myUserId
+            ) +
+                CanvasStore.snapshot(id)
+                    .filter {
+                        !it.isLocal &&
+                            !it.nickname.equals(CanvasStore.cachedNickname, ignoreCase = true)
+                    }
+                    .map { it.colorIndex }
+                    .toSet()
+        }
         val host = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,

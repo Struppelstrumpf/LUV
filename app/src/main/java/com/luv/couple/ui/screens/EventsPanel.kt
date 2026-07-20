@@ -1,8 +1,12 @@
 package com.luv.couple.ui.screens
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,14 +34,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.luv.couple.lock.CanvasMemoryKeeper
 import com.luv.couple.net.AccountSession
+import com.luv.couple.net.EventContestFeedItem
+import com.luv.couple.net.EventContestInfo
+import com.luv.couple.net.EventContestWinner
 import com.luv.couple.net.EventSession
+import com.luv.couple.net.EventsState
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.SeasonEvent
 import com.luv.couple.ui.theme.AccentRose
@@ -47,7 +60,12 @@ import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 @Composable
 fun EventsPanel(
@@ -156,9 +174,9 @@ fun EventsPanel(
                                     busyId = null
                                 }
                             },
-                            onCreateLobby = {
-                                onCreateEventLobby(ev)
-                            }
+                            onCreateLobby = { onCreateEventLobby(ev) },
+                            onStateUpdated = { state = it },
+                            onCoinsGranted = onCoinsGranted,
                         )
                     }
                 }
@@ -188,10 +206,43 @@ private fun EventHeroCard(
     busy: Boolean,
     onCollect: () -> Unit,
     onCreateLobby: () -> Unit = {},
+    onStateUpdated: (EventsState) -> Unit = {},
+    onCoinsGranted: (Int) -> Unit = {},
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val accent = runCatching {
         Color(android.graphics.Color.parseColor(event.decor.accentHex))
     }.getOrDefault(AccentRose)
+    val contest = event.contest
+    var showVote by remember { mutableStateOf(false) }
+    var voteContest by remember { mutableStateOf(contest) }
+    var selectedWinner by remember { mutableStateOf<EventContestWinner?>(null) }
+    var claimBusy by remember { mutableStateOf(false) }
+
+    val drawHint = event.eventPrompt?.trim().orEmpty()
+        .ifBlank { contest?.promptHint?.trim().orEmpty() }
+        .takeIf { it.isNotBlank() }
+
+    if (showVote && voteContest != null) {
+        ContestVoteDialog(
+            eventId = event.id,
+            contest = voteContest!!,
+            accent = accent,
+            onDismiss = { showVote = false },
+            onContestUpdated = { voteContest = it },
+            onStateUpdated = onStateUpdated,
+            onCoinsGranted = onCoinsGranted,
+        )
+    }
+
+    selectedWinner?.let { winner ->
+        ContestWinnerPopup(
+            winner = winner,
+            onDismiss = { selectedWinner = null }
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -235,6 +286,14 @@ private fun EventHeroCard(
         )
         if (event.hint.isNotBlank()) {
             Text(event.hint, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
+        }
+        if (drawHint != null && (event.canCreateLobby || event.contestEnabled)) {
+            Text(
+                "Zeichne den Begriff „$drawHint“",
+                color = accent,
+                fontFamily = BodyFont,
+                fontSize = 12.sp
+            )
         }
         val reward = event.rewardItem
         if (reward != null) {
@@ -308,7 +367,7 @@ private fun EventHeroCard(
                 fontSize = 11.sp
             )
         }
-        if (event.lobbyEnabled) {
+        if (event.canCreateLobby) {
             TextButton(
                 onClick = onCreateLobby,
                 modifier = Modifier
@@ -317,7 +376,115 @@ private fun EventHeroCard(
                     .background(accent.copy(0.22f))
             ) {
                 Text(
-                    "${event.emoji} Event-Lobby erstellen",
+                    "Event-Lobby erstellen",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+        if (contest?.votingOpen == true) {
+            TextButton(
+                onClick = {
+                    scope.launch {
+                        runCatching { LuvApiClient.fetchEventContest(event.id) }
+                            .onSuccess { result ->
+                                voteContest = result.contest
+                                result.state?.let { onStateUpdated(it) }
+                                showVote = true
+                            }
+                            .onFailure { err ->
+                                Toast.makeText(
+                                    context,
+                                    err.message ?: "Abstimmung nicht verfügbar",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                    }
+                },
+                enabled = contest.canVote,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        if (contest.canVote) accent.copy(0.28f) else Color.White.copy(0.06f)
+                    )
+            ) {
+                Text(
+                    if (contest.canVote) "Abstimmen" else "Abstimmung — keine Beiträge mehr",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+        if (contest?.prizesReady == true && contest.winners.isNotEmpty()) {
+            Text(
+                "Gewinner",
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 14.sp
+            )
+            contest.winners.forEach { winner ->
+                Text(
+                    "${winner.place}. ${winner.nickname}",
+                    color = accent,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { selectedWinner = winner }
+                        .padding(vertical = 4.dp)
+                )
+            }
+        }
+        if (contest?.claimablePrize != null && !contest.prizeClaimed) {
+            TextButton(
+                onClick = {
+                    if (claimBusy) return@TextButton
+                    claimBusy = true
+                    scope.launch {
+                        runCatching { LuvApiClient.claimContestPrize(event.id) }
+                            .onSuccess { result ->
+                                onStateUpdated(result.state)
+                                if (result.coinsGranted > 0) {
+                                    onCoinsGranted(result.coinsGranted)
+                                    runCatching { LuvApiClient.me() }
+                                        .onSuccess { AccountSession.setAccount(it) }
+                                }
+                                Toast.makeText(
+                                    context,
+                                    if (result.coinsGranted > 0) {
+                                        "+${result.coinsGranted} Coins · Platz ${result.place}"
+                                    } else {
+                                        "Belohnung abgeholt"
+                                    },
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                            .onFailure { err ->
+                                Toast.makeText(
+                                    context,
+                                    err.message ?: "Abholen fehlgeschlagen",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        claimBusy = false
+                    }
+                },
+                enabled = !claimBusy,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(accent.copy(0.35f))
+            ) {
+                Text(
+                    if (claimBusy) "…" else "Belohnung abholen",
                     color = TextPrimary,
                     fontFamily = DisplayFont,
                     fontSize = 15.sp,
@@ -349,6 +516,296 @@ private fun EventHeroCard(
                 fontSize = 15.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+@Composable
+private fun ContestVoteDialog(
+    eventId: String,
+    contest: EventContestInfo,
+    accent: Color,
+    onDismiss: () -> Unit,
+    onContestUpdated: (EventContestInfo) -> Unit,
+    onStateUpdated: (EventsState) -> Unit,
+    onCoinsGranted: (Int) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var current by remember(contest) { mutableStateOf(contest) }
+    var voteBusy by remember { mutableStateOf(false) }
+    val feed = current.feedItem
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(BgDeep)
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (feed == null) {
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "Keine weiteren Beiträge zum Bewerten.",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 15.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                } else {
+                    ContestEntryImage(
+                        item = feed,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(BgSoft)
+                    )
+                    Text(
+                        feed.prompt?.trim().orEmpty().ifBlank { "Zeichnung" },
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 22.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "👎",
+                            fontSize = 36.sp,
+                            modifier = Modifier
+                                .clickable(enabled = !voteBusy) {
+                                    submitVote(
+                                        scope, context, eventId, feed.entryId, -1, voteBusySetter = {
+                                            voteBusy = it
+                                        },
+                                        onSuccess = { result ->
+                                            current = result.contest
+                                            onContestUpdated(result.contest)
+                                            result.state?.let { onStateUpdated(it) }
+                                            scope.launch {
+                                                runCatching { LuvApiClient.fetchEvents() }
+                                                    .onSuccess { onStateUpdated(it) }
+                                            }
+                                            if (result.voterCoins > 0) {
+                                                onCoinsGranted(result.voterCoins)
+                                            }
+                                        }
+                                    )
+                                }
+                                .padding(horizontal = 24.dp, vertical = 8.dp)
+                        )
+                        Text(
+                            "👍",
+                            fontSize = 36.sp,
+                            modifier = Modifier
+                                .clickable(enabled = !voteBusy) {
+                                    submitVote(
+                                        scope, context, eventId, feed.entryId, 1, voteBusySetter = {
+                                            voteBusy = it
+                                        },
+                                        onSuccess = { result ->
+                                            current = result.contest
+                                            onContestUpdated(result.contest)
+                                            result.state?.let { onStateUpdated(it) }
+                                            scope.launch {
+                                                runCatching { LuvApiClient.fetchEvents() }
+                                                    .onSuccess { onStateUpdated(it) }
+                                            }
+                                            if (result.voterCoins > 0) {
+                                                onCoinsGranted(result.voterCoins)
+                                            }
+                                        }
+                                    )
+                                }
+                                .padding(horizontal = 24.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Zurück", color = TextMuted, fontFamily = BodyFont, fontSize = 15.sp)
+                    }
+                    if (feed != null) {
+                        TextButton(
+                            onClick = {
+                                if (voteBusy) return@TextButton
+                                voteBusy = true
+                                scope.launch {
+                                    runCatching {
+                                        LuvApiClient.reportContestEntry(eventId, feed.entryId)
+                                    }
+                                        .onSuccess {
+                                            Toast.makeText(context, "Gemeldet", Toast.LENGTH_SHORT).show()
+                                            runCatching { LuvApiClient.fetchEventContest(eventId) }
+                                                .onSuccess { result ->
+                                                    current = result.contest
+                                                    onContestUpdated(result.contest)
+                                                    result.state?.let { onStateUpdated(it) }
+                                                }
+                                        }
+                                        .onFailure { err ->
+                                            Toast.makeText(
+                                                context,
+                                                err.message ?: "Melden fehlgeschlagen",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    voteBusy = false
+                                }
+                            },
+                            enabled = !voteBusy
+                        ) {
+                            Text("Melden", color = Color(0xFFFF5A6A), fontFamily = BodyFont, fontSize = 15.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun submitVote(
+    scope: kotlinx.coroutines.CoroutineScope,
+    context: android.content.Context,
+    eventId: String,
+    entryId: String,
+    value: Int,
+    voteBusySetter: (Boolean) -> Unit,
+    onSuccess: (LuvApiClient.EventContestVoteResult) -> Unit,
+) {
+    voteBusySetter(true)
+    scope.launch {
+        runCatching { LuvApiClient.voteContest(eventId, entryId, value) }
+            .onSuccess(onSuccess)
+            .onFailure { err ->
+                Toast.makeText(
+                    context,
+                    err.message ?: "Stimme fehlgeschlagen",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        voteBusySetter(false)
+    }
+}
+
+@Composable
+private fun ContestEntryImage(
+    item: EventContestFeedItem,
+    modifier: Modifier = Modifier,
+) {
+    var bitmap by remember(item.entryId, item.imageUrl) { mutableStateOf<Bitmap?>(null) }
+    var loading by remember(item.entryId) { mutableStateOf(true) }
+
+    LaunchedEffect(item.entryId, item.imageUrl) {
+        loading = true
+        val url = item.imageUrl
+        bitmap = if (url.isNullOrBlank()) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val abs = CanvasMemoryKeeper.absoluteImageUrl(url)
+                    val client = OkHttpClient.Builder()
+                        .connectTimeout(20, TimeUnit.SECONDS)
+                        .readTimeout(30, TimeUnit.SECONDS)
+                        .build()
+                    val req = Request.Builder().url(abs).get().build()
+                    client.newCall(req).execute().use { resp ->
+                        if (!resp.isSuccessful) return@runCatching null
+                        resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
+                    }
+                }.getOrNull()
+            }
+        }
+        loading = false
+    }
+
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        when {
+            loading -> Text("Lädt…", color = TextMuted, fontFamily = BodyFont)
+            bitmap != null -> Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = item.prompt,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
+            else -> Text("Kein Bild", color = TextMuted, fontFamily = BodyFont)
+        }
+    }
+}
+
+@Composable
+private fun ContestWinnerPopup(
+    winner: EventContestWinner,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(BgSoft)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                Text(
+                    "✕",
+                    color = TextMuted,
+                    fontSize = 20.sp,
+                    modifier = Modifier.clickable(onClick = onDismiss)
+                )
+            }
+            Text(
+                "${winner.place}. ${winner.nickname}",
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 18.sp
+            )
+            ContestEntryImage(
+                item = EventContestFeedItem(
+                    entryId = winner.entryId,
+                    nickname = winner.nickname,
+                    prompt = winner.prompt,
+                    imageUrl = winner.imageUrl,
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(280.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(BgDeep)
+            )
+            Text(
+                winner.prompt?.trim().orEmpty().ifBlank { "Zeichnung" },
+                color = TextPrimary,
+                fontFamily = BodyFont,
+                fontSize = 15.sp,
+                textAlign = TextAlign.Center
             )
         }
     }

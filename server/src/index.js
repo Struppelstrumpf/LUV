@@ -1779,6 +1779,105 @@ function dissolveWeddingLobby(code) {
   persistRooms();
 }
 
+const CONTEST_IMG_DIR = path.join(DATA_DIR, "contest");
+
+function ensureContestImgDir() {
+  fs.mkdirSync(CONTEST_IMG_DIR, { recursive: true });
+}
+
+/** Event-Lobby beenden: Snapshot → Contest-Entry → Room auflösen. */
+function closeEventLobbyRoom(code, room) {
+  if (!room?.eventId) return false;
+  const db = getDb();
+  const engine = require("./event_engine");
+  const cfg = seasonEvents.ensureEventsConfig(db);
+  const ev = (cfg.events || []).find((e) => e && e.id === room.eventId);
+  const hostId = room.hostUserId || room.createdByUserId;
+  const host = hostId ? db.users?.[hostId] : null;
+  let imagePath = null;
+  try {
+    ensureContestImgDir();
+    const mem = canvasMemories()?.[code];
+    const snapName = mem?.file || `${code}.png`;
+    const snapPath = path.join(SNAPSHOT_DIR, snapName);
+    if (fs.existsSync(snapPath)) {
+      const destRel = path.join("contest", `${room.eventId}_${code}.png`);
+      const destAbs = path.join(DATA_DIR, destRel);
+      fs.copyFileSync(snapPath, destAbs);
+      imagePath = destRel.replace(/\\/g, "/");
+    }
+  } catch (e) {
+    console.error("closeEventLobby snapshot", e);
+  }
+  if (host && ev) {
+    const strokes = Array.isArray(room.strokes) ? room.strokes.length : 0;
+    const prog = engine.ensureUserProgress(host, room.eventId);
+    const strokeCount = Math.max(strokes, prog.qualifiedStrokes || 0);
+    engine.submitContestEntry(db, host, ev, {
+      lobbyCode: code,
+      imagePath,
+      strokes: strokeCount,
+      prompt: room.eventPrompt || prog.eventPrompt || null,
+    });
+  }
+  for (const sock of [...(room.sockets?.values?.() || [])]) {
+    try {
+      sock.send(JSON.stringify({ type: "event_lobby_ended", eventId: room.eventId }));
+    } catch {
+      /* ignore */
+    }
+    try {
+      sock.close(4002, "event_ended");
+    } catch {
+      /* ignore */
+    }
+  }
+  forceDissolveLobby(code);
+  scheduleSave();
+  console.log(`closed event lobby ${code} event=${room.eventId}`);
+  return true;
+}
+
+function tickEventLobbiesAndContests() {
+  const db = getDb();
+  const engine = require("./event_engine");
+  const now = Date.now();
+  const nowDate = new Date(now);
+  // Event-Lobbys schließen
+  for (const [code, room] of [...rooms.entries()]) {
+    if (!room?.eventId || !room.eventEndsAt) continue;
+    const ends = Date.parse(String(room.eventEndsAt));
+    if (!Number.isFinite(ends) || now < ends) continue;
+    closeEventLobbyRoom(code, room);
+  }
+  // Disk-only rooms
+  for (const [code, data] of Object.entries(db.rooms || {})) {
+    if (rooms.has(code)) continue;
+    if (!data?.eventId || !data.eventEndsAt) continue;
+    const ends = Date.parse(String(data.eventEndsAt));
+    if (!Number.isFinite(ends) || now < ends) continue;
+    const hydrated = hydrateRoom(code, data);
+    rooms.set(code, hydrated);
+    closeEventLobbyRoom(code, hydrated);
+  }
+  // Contests finalisieren
+  const cfg = seasonEvents.ensureEventsConfig(db);
+  let dirty = false;
+  for (const ev of cfg.events || []) {
+    const pub = seasonEvents.publicEvent(ev);
+    if (!pub?.contest?.enabled) continue;
+    const occ = seasonEvents.nextOccurrence(ev, nowDate);
+    const active = seasonEvents.isActiveAtPatched(ev, nowDate);
+    const windowEnd = occ?.end || null;
+    const { until } = engine.resolveVoteBounds(pub.contest, windowEnd, now);
+    if (until == null || now <= until) continue;
+    const r = engine.finalizeContestPrizes(db, ev, db.users);
+    if (r?.ok && !r.already) dirty = true;
+    void active;
+  }
+  if (dirty) scheduleSave();
+}
+
 function finalizeWeddingMarriage(m, { force = false } = {}) {
   if (!m || m.status !== "wedding") return false;
   // Beide Partner müssen je WEDDING_MIN_STROKES Striche gemalt haben
@@ -2039,6 +2138,9 @@ function serializeRoom(code, room) {
       : [],
     marriageId: room.marriageId || null,
     eventId: room.eventId ? String(room.eventId).slice(0, 64) : null,
+    eventPrompt: room.eventPrompt ? String(room.eventPrompt).slice(0, 80) : null,
+    eventEndsAt: room.eventEndsAt ? String(room.eventEndsAt).slice(0, 40) : null,
+    invitesAllowed: room.invitesAllowed !== false,
     publicShare:
       room.publicShare && typeof room.publicShare === "object"
         ? {
@@ -2126,6 +2228,9 @@ function restoreRoomsFromDisk() {
           : [],
       marriageId: data.marriageId || null,
       eventId: data.eventId ? String(data.eventId).slice(0, 64) : null,
+      eventPrompt: data.eventPrompt ? String(data.eventPrompt).slice(0, 80) : null,
+      eventEndsAt: data.eventEndsAt ? String(data.eventEndsAt).slice(0, 40) : null,
+      invitesAllowed: data.invitesAllowed !== false,
       publicShare:
         data.publicShare && typeof data.publicShare === "object"
           ? {
@@ -2795,6 +2900,9 @@ function hydrateRoom(code, data, tokenOverride) {
         : [],
     marriageId: data.marriageId || null,
     eventId: data.eventId ? String(data.eventId).slice(0, 64) : null,
+    eventPrompt: data.eventPrompt ? String(data.eventPrompt).slice(0, 80) : null,
+    eventEndsAt: data.eventEndsAt ? String(data.eventEndsAt).slice(0, 40) : null,
+    invitesAllowed: data.invitesAllowed !== false,
     publicShare:
       data.publicShare && typeof data.publicShare === "object"
         ? {
@@ -2935,6 +3043,9 @@ function publicJoinedLobbies(user) {
     hostNickname: String(meta?.hostNickname || "Host").slice(0, 18),
     role: "join",
     createdByMe: isRoomCreator(user.id, room),
+    eventId: meta?.eventId || room?.eventId || null,
+    eventPrompt: meta?.eventPrompt || room?.eventPrompt || null,
+    eventEndsAt: meta?.eventEndsAt || room?.eventEndsAt || null,
   };
   });
 }
@@ -3292,6 +3403,10 @@ function publicRoom(room, code) {
     lastCanvasActorId: room.lastCanvasActorId || null,
     members: roster.map((m) => m.nickname),
     memberList: roster,
+    eventId: room.eventId || null,
+    eventPrompt: room.eventPrompt || null,
+    eventEndsAt: room.eventEndsAt || null,
+    invitesAllowed: room.invitesAllowed !== false,
     ...inviteFor(code),
   };
 }
@@ -3457,6 +3572,8 @@ const PAID_CREDIT_REASONS = new Set([
   "friendship_level",
   "event_collect",
   "event_quest",
+  "event_contest_prize",
+  "event_vote",
 ]);
 
 /** Soft-Earn (nicht als IAP-Äquivalent / Tip-fähig stapeln). */
@@ -4360,6 +4477,9 @@ function publicHostedLobbies(user) {
     invite: `${PUBLIC_JOIN_BASE}/${code}`,
     hostNickname: user.nickname || "Host",
     createdByMe: room ? isRoomCreator(user.id, room) : true,
+    eventId: meta?.eventId || room?.eventId || null,
+    eventPrompt: meta?.eventPrompt || room?.eventPrompt || null,
+    eventEndsAt: meta?.eventEndsAt || room?.eventEndsAt || null,
   };
   });
 }
@@ -5843,6 +5963,13 @@ function resolvePublicShare(room, code) {
 }
 
 setInterval(cleanupRooms, 60_000).unref();
+setInterval(() => {
+  try {
+    tickEventLobbiesAndContests();
+  } catch (e) {
+    console.error("tickEventLobbiesAndContests", e);
+  }
+}, 30_000).unref();
 setInterval(() => {
   try {
     tickMarriages();
@@ -8960,6 +9087,156 @@ app.post("/v1/me/events/:id/collect", (req, res) => {
   });
 });
 
+app.get("/v1/me/events/:id/contest", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const cfg = seasonEvents.ensureEventsConfig(db);
+  const ev = (cfg.events || []).find((e) => e && e.id === String(req.params.id || "").trim());
+  if (!ev) return res.status(404).json({ error: "not_found" });
+  const engine = require("./event_engine");
+  const now = new Date();
+  const occ = seasonEvents.nextOccurrence(ev, now);
+  const active = seasonEvents.isActiveAtPatched(ev, now);
+  const contest = engine.contestPublicForUser(
+    db,
+    ctx.user,
+    ev,
+    occ?.start || null,
+    occ?.end || null,
+    active,
+    now.getTime()
+  );
+  return res.json({
+    ok: true,
+    eventId: ev.id,
+    contest,
+    state: seasonEvents.meEventsPayload(db, ctx.user, todayKey(), now),
+  });
+});
+
+app.post("/v1/me/events/:id/contest/vote", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  if (!rateLimit(`evote:${ctx.user.id}`, 60, 60_000)) {
+    return res.status(429).json({ error: "rate_limited" });
+  }
+  const db = getDb();
+  const cfg = seasonEvents.ensureEventsConfig(db);
+  const ev = (cfg.events || []).find((e) => e && e.id === String(req.params.id || "").trim());
+  if (!ev) return res.status(404).json({ error: "not_found" });
+  const engine = require("./event_engine");
+  const now = new Date();
+  const occ = seasonEvents.nextOccurrence(ev, now);
+  const active = seasonEvents.isActiveAtPatched(ev, now);
+  const entryId = String(req.body?.entryId || "").trim();
+  const value = req.body?.value;
+  const result = engine.castVote(
+    db,
+    ctx.user,
+    ev,
+    entryId,
+    value,
+    (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref),
+    active,
+    occ?.end || null
+  );
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  scheduleSave();
+  return res.json({
+    ok: true,
+    ...result,
+    contest: engine.contestPublicForUser(
+      db,
+      ctx.user,
+      ev,
+      occ?.start || null,
+      occ?.end || null,
+      active,
+      now.getTime()
+    ),
+    user: publicUser(ctx.user),
+  });
+});
+
+app.post("/v1/me/events/:id/contest/claim-prize", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const cfg = seasonEvents.ensureEventsConfig(db);
+  const ev = (cfg.events || []).find((e) => e && e.id === String(req.params.id || "").trim());
+  if (!ev) return res.status(404).json({ error: "not_found" });
+  const engine = require("./event_engine");
+  const result = engine.claimContestPrize(
+    db,
+    ctx.user,
+    ev,
+    (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref),
+    (u, k, itemId) => safeGiveItem(u, k, itemId)
+  );
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  scheduleSave();
+  return res.json({
+    ok: true,
+    ...result,
+    state: seasonEvents.meEventsPayload(db, ctx.user, todayKey()),
+    user: publicUser(ctx.user),
+  });
+});
+
+app.post("/v1/me/events/:id/contest/report", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  if (!rateLimit(`econreport:${ctx.user.id}`, 10, 60_000)) {
+    return res.status(429).json({ error: "rate_limited" });
+  }
+  const db = getDb();
+  const eventId = String(req.params.id || "").trim();
+  const entryId = String(req.body?.entryId || "").trim();
+  const engine = require("./event_engine");
+  const bucket = engine.contestBucket(db, eventId);
+  const entry = bucket.entries.find((e) => e.entryId === entryId);
+  if (!entry) return res.status(404).json({ error: "not_found" });
+  const report = {
+    id: newId("ecr"),
+    eventId,
+    entryId,
+    targetUserId: entry.userId,
+    targetNickname: entry.nickname,
+    reporterUserId: ctx.user.id,
+    reporterNickname: ctx.user.nickname || "Jemand",
+    createdAt: Date.now(),
+    reason: String(req.body?.reason || "").slice(0, 200),
+  };
+  if (!db.contestReports || typeof db.contestReports !== "object") db.contestReports = {};
+  db.contestReports[report.id] = report;
+  scheduleSave();
+  console.log(
+    `contest report ${report.id} event=${eventId} entry=${entryId} by=${report.reporterNickname}`
+  );
+  return res.json({ ok: true, id: report.id });
+});
+
+app.get("/v1/me/events/:id/contest/entries/:entryId/image", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const engine = require("./event_engine");
+  const bucket = engine.contestBucket(db, req.params.id);
+  const entry = bucket.entries.find((e) => e.entryId === String(req.params.entryId || "").trim());
+  if (!entry?.imagePath) return res.status(404).json({ error: "not_found" });
+  const abs = path.isAbsolute(entry.imagePath)
+    ? entry.imagePath
+    : path.join(DATA_DIR, entry.imagePath);
+  if (!fs.existsSync(abs)) return res.status(404).json({ error: "missing" });
+  res.setHeader("Cache-Control", "private, max-age=300");
+  return res.sendFile(abs);
+});
+
 app.get("/v1/admin/daily-tasks", (req, res) => {
   const ctx = requireStaff(req, res, "market.settings");
   if (!ctx) return;
@@ -9734,6 +10011,7 @@ app.post("/v1/me/achievements/daily/claim", (req, res) => {
   return res.json({
     ok: true,
     coinsGranted: result.coinsGranted,
+    streak: result.streak,
     state: achPublicState(ctx.user),
     user: publicUser(ctx.user),
   });
@@ -11279,11 +11557,13 @@ app.post("/v1/rooms", (req, res) => {
       message: `Maximal ${MAX_LOBBIES} Lobbys.`,
     });
   }
-  const name = String(req.body?.name || "Zusammen").trim().slice(0, MAX_LOBBY_NAME_LENGTH) || "Zusammen";
   const hostColorSide = normalizeHostColorSide(req.body?.hostColorSide);
   const hostIdx = hostColorIndex(hostColorSide);
   const rawEventId = String(req.body?.eventId || "").trim().slice(0, 64);
   let eventId = null;
+  let eventPrompt = null;
+  let eventEndsAt = null;
+  let eventLobbyCfg = null;
   if (rawEventId) {
     const cfg = seasonEvents.ensureEventsConfig(getDb());
     const ev = (cfg.events || []).find((e) => e && e.id === rawEventId);
@@ -11293,41 +11573,80 @@ app.post("/v1/rooms", (req, res) => {
         message: "Event ist gerade nicht aktiv.",
       });
     }
-    const lobbyCfg = seasonEvents.publicEvent(ev)?.lobby;
+    const pub = seasonEvents.publicEvent(ev);
+    const lobbyCfg = pub?.lobby;
     if (!lobbyCfg || !lobbyCfg.enabled) {
       return res.status(400).json({
         error: "event_lobby_disabled",
         message: "Für dieses Event sind keine Event-Lobbys freigeschaltet.",
       });
     }
+    const prog = require("./event_engine").ensureUserProgress(ctx.user, rawEventId);
+    if (prog.lobbyCreated) {
+      return res.status(400).json({
+        error: "event_lobby_exists",
+        message: "Für dieses Event hast du schon eine Event-Lobby erstellt.",
+        lobbyCode: prog.lobbyCode || null,
+      });
+    }
     eventId = rawEventId;
+    eventLobbyCfg = lobbyCfg;
+    const engine = require("./event_engine");
+    eventPrompt = engine.pickEventPrompt(lobbyCfg, pub.title);
+    const enriched = engine.enrichEvent(ev);
+    if (enriched.schedule?.mode === "absolute" && enriched.schedule.absoluteUntil) {
+      eventEndsAt = String(enriched.schedule.absoluteUntil);
+    } else {
+      const occ = seasonEvents.nextOccurrence(ev, new Date());
+      if (occ?.end) {
+        const parts = String(occ.end).split("-").map((x) => Number(x));
+        if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) {
+          // Ende des Event-Tages (ca. 23:59 Berlin ≈ 21:59 UTC)
+          eventEndsAt = new Date(
+            Date.UTC(parts[0], parts[1] - 1, parts[2], 21, 59, 59, 999)
+          ).toISOString();
+        }
+      }
+    }
+    if (!eventEndsAt) {
+      eventEndsAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    }
   }
-  const eligibleFree = evaluateCanCreateFreeLobby(ctx.user);
+  const name = eventId
+    ? "Event"
+    : String(req.body?.name || "Zusammen").trim().slice(0, MAX_LOBBY_NAME_LENGTH) ||
+      "Zusammen";
   let charged = 0;
   let isFree = false;
-  if (eligibleFree) {
+  if (eventId) {
+    // Event-Lobby: gratis, ohne Tages-Free-Slot zu verbrauchen
     isFree = true;
-    ctx.user.freeLobbyCreateDay = todayKey();
   } else {
-    ensureDailyGrant(ctx.user);
-    if ((ctx.user.coins || 0) < LOBBY_CREATE_COST) {
-      return res.status(402).json({
-        error: "no_coins",
-        message: `Lobby kostet ${LOBBY_CREATE_COST} Coins (1 kostenlose Lobby/Tag, max. 1 aktiv).`,
-      });
+    const eligibleFree = evaluateCanCreateFreeLobby(ctx.user);
+    if (eligibleFree) {
+      isFree = true;
+      ctx.user.freeLobbyCreateDay = todayKey();
+    } else {
+      ensureDailyGrant(ctx.user);
+      if ((ctx.user.coins || 0) < LOBBY_CREATE_COST) {
+        return res.status(402).json({
+          error: "no_coins",
+          message: `Lobby kostet ${LOBBY_CREATE_COST} Coins (1 kostenlose Lobby/Tag, max. 1 aktiv).`,
+        });
+      }
+      if (!applyLedger(ctx.user.id, -LOBBY_CREATE_COST, "lobby_create", null)) {
+        return res.status(402).json({
+          error: "no_coins",
+          message: `Lobby kostet ${LOBBY_CREATE_COST} Coins (1 kostenlose Lobby/Tag, max. 1 aktiv).`,
+        });
+      }
+      charged = LOBBY_CREATE_COST;
     }
-    if (!applyLedger(ctx.user.id, -LOBBY_CREATE_COST, "lobby_create", null)) {
-      return res.status(402).json({
-        error: "no_coins",
-        message: `Lobby kostet ${LOBBY_CREATE_COST} Coins (1 kostenlose Lobby/Tag, max. 1 aktiv).`,
-      });
-    }
-    charged = LOBBY_CREATE_COST;
   }
   let code = randomCode();
   while (rooms.has(code)) code = randomCode();
   const token = randomToken().slice(0, 32);
-  const capacity = defaultLobbyCapacity(isFree);
+  const capacity = eventId ? 1 : defaultLobbyCapacity(isFree);
   rooms.set(code, {
     token,
     createdAt: Date.now(),
@@ -11349,6 +11668,9 @@ app.post("/v1/rooms", (req, res) => {
     publicShare: { day: "", count: 0, nextAt: 0 },
     publicProposal: null,
     eventId,
+    eventPrompt,
+    eventEndsAt,
+    invitesAllowed: eventId ? false : true,
     strokes: [],
     stickers: [],
   });
@@ -11362,11 +11684,20 @@ app.post("/v1/rooms", (req, res) => {
     hostColorSide,
     colorByUserId: { [ctx.user.id]: hostIdx },
     eventId,
+    eventPrompt,
+    eventEndsAt,
   };
+  if (eventId) {
+    const prog = require("./event_engine").ensureUserProgress(ctx.user, eventId);
+    prog.lobbyCreated = true;
+    prog.lobbyCode = code;
+    prog.eventPrompt = eventPrompt;
+    prog.eventLobbyOpens = (prog.eventLobbyOpens || 0) + 1;
+  }
   persistRooms();
   trackAch(ctx.user, "lobbies_created", 1);
-  if (isFree) trackAch(ctx.user, "free_lobbies", 1);
-  else trackAch(ctx.user, "paid_lobbies", 1);
+  if (isFree && !eventId) trackAch(ctx.user, "free_lobbies", 1);
+  else if (!isFree) trackAch(ctx.user, "paid_lobbies", 1);
   if (charged > 0) trackAch(ctx.user, "coins_spent", charged);
   if (eventId) trackAch(ctx.user, "event_lobby_opens", 1);
   const hostedN = Object.keys(ctx.user.hostedRooms || {}).length;
@@ -11385,6 +11716,9 @@ app.post("/v1/rooms", (req, res) => {
     suggestedColorIndex: hostIdx,
     charged,
     eventId,
+    eventPrompt,
+    eventEndsAt,
+    palette: eventLobbyCfg?.palette || null,
     user: publicUser(ctx.user),
     ...inviteFor(code),
   });
@@ -11844,6 +12178,12 @@ app.post("/v1/rooms/:code/join", (req, res) => {
     return res.status(403).json({
       error: "wedding_locked",
       message: "Nur das Brautpaar darf die Hochzeitsleinwand betreten.",
+    });
+  }
+  if (room.eventId && !isKnownMember) {
+    return res.status(403).json({
+      error: "event_lobby_solo",
+      message: "Event-Lobbys sind Solo — keine Einladungen.",
     });
   }
   // Neue Mitglieder: verbundene Sockets UND gespeicherte Members gegen Cap prüfen
@@ -13628,6 +13968,17 @@ wss.on("connection", (socket, req) => {
           (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref),
           (u, k, itemId) => safeGiveItem(u, k, itemId)
         );
+        if (room.eventId) {
+          require("./event_engine").noteEventLobbyStroke(user, room.eventId, 1);
+          seasonEvents.bumpQuestsForUser(
+            getDb(),
+            user,
+            "event_lobby_strokes",
+            1,
+            (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref),
+            (u, k, itemId) => safeGiveItem(u, k, itemId)
+          );
+        }
         if (stored.emoji) trackAch(user, "stickers_placed", 1);
         if (stored.templateParts) trackAch(user, "templates_placed", 1);
         if (drawResult && (drawResult.free || drawResult.charged) && !drawResult.already) {

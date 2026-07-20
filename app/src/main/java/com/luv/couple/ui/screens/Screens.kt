@@ -291,7 +291,7 @@ fun LobbiesScreen(
 ) {
     val accent = EventSession.menuAccentOrNull() ?: PeerPalette.menuAccent()
     val eventGlyph = EventSession.menuGlyphOrNull()
-    val eventLobby = EventSession.primaryEventForLobby()?.takeIf { it.lobbyEnabled }
+    val eventLobby = EventSession.primaryEventForLobby()?.takeIf { it.canCreateLobby }
     // eventsUi: hält Compose reaktiv auf EventSession
     @Suppress("UNUSED_VARIABLE")
     val eventsUi by EventSession.state.collectAsStateWithLifecycle()
@@ -476,7 +476,7 @@ fun LobbiesScreen(
                     )
                     if (eventLobby != null) {
                         PrimaryButton(
-                            label = "${eventLobby.emoji} Event-Lobby · ${eventLobby.title}",
+                            label = "Event Lobby",
                             color = accent,
                             onClick = {
                                 showLobbyPlusDialog = false
@@ -763,7 +763,8 @@ private fun LobbyCard(
     val glowSnoozed = (glowSnoozeMap[proximityCode] ?: 0L) > nowMs
     // Glow nur wenn jemand anderes in Abwesenheit gezeichnet/platziert hat
     // (nach Betreten 5 Min pausiert)
-    val hasNewDraw = !glowSnoozed &&
+    val hasNewDraw = !lobby.isEventLobby &&
+        !glowSnoozed &&
         lobby.lastCanvasAt > 0L &&
         lobby.lastCanvasAt > (canvasSeenMap[proximityCode] ?: 0L) &&
         !lobby.lastCanvasActorId.isNullOrBlank() &&
@@ -793,7 +794,11 @@ private fun LobbyCard(
             },
             text = {
                 Text(
-                    "Die anderen bleiben in der Lobby. Ausgegebene Coins (Plätze, Spiele, Leeren …) werden nicht erstattet.",
+                    if (lobby.isEventLobby) {
+                        "Für dieses Event keine neue Event-Lobby."
+                    } else {
+                        "Die anderen bleiben in der Lobby. Ausgegebene Coins (Plätze, Spiele, Leeren …) werden nicht erstattet."
+                    },
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 14.sp,
@@ -932,6 +937,7 @@ private fun LobbyCard(
                 Column(modifier = Modifier.weight(1f)) {
                     AutoShrinkLobbyName(
                         name = when {
+                            lobby.isEventLobby -> "Event"
                             lobby.isWedding && lobby.isWeddingRetake -> "💒 Hochzeitsbild"
                             lobby.isWedding -> "💒 Hochzeit"
                             lobby.isRandom -> "🎲 Random"
@@ -953,37 +959,43 @@ private fun LobbyCard(
                             Modifier
                         }
                     )
-                    Text(
-                        text = when {
-                            lobby.isWedding && lobby.isWeddingRetake ->
-                                "Hochzeitsbild nachholen · beide mit ✓ bestätigen"
-                            lobby.isWedding -> "Hochzeit · je 10 Striche, dann Timer oder Coins"
-                            lobby.isRandom -> "Zufalls-Lobby · max. 5"
-                            lobby.createdByMe -> "Von dir erstellt"
-                            else -> "Beigetreten"
-                        },
-                        color = TextMuted,
-                        fontFamily = BodyFont,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    if (lobby.isEventLobby) {
+                        EventLobbyCountdownText(endsAtIso = lobby.eventEndsAt)
+                    } else {
+                        Text(
+                            text = when {
+                                lobby.isWedding && lobby.isWeddingRetake ->
+                                    "Hochzeitsbild nachholen · beide mit ✓ bestätigen"
+                                lobby.isWedding -> "Hochzeit · je 10 Striche, dann Timer oder Coins"
+                                lobby.isRandom -> "Zufalls-Lobby · max. 5"
+                                lobby.createdByMe -> "Von dir erstellt"
+                                else -> "Beigetreten"
+                            },
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = if (proximityOn) "🔔" else "🔕",
-                        fontSize = 18.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .clickable { showProximityDialog = true }
-                            .padding(horizontal = 4.dp, vertical = 2.dp),
-                        color = if (proximityOn) accent else TextMuted
-                    )
-                    StatusChip(rememberStickyConnectionState(state))
+                    if (!lobby.isEventLobby) {
+                        Text(
+                            text = if (proximityOn) "🔔" else "🔕",
+                            fontSize = 18.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .clickable { showProximityDialog = true }
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                            color = if (proximityOn) accent else TextMuted
+                        )
+                        StatusChip(rememberStickyConnectionState(state))
+                    }
                 }
             }
             if (
@@ -994,7 +1006,17 @@ private fun LobbyCard(
                 ReconnectBanner(reconnect = reconnect, accent = accent, onReconnect = onReconnect)
             }
             PrimaryButton("Leinwand öffnen", accent, onOpen)
-            if (!lobby.isRandom && !lobby.isWedding) {
+            if (lobby.isEventLobby && !lobby.eventPrompt.isNullOrBlank()) {
+                Text(
+                    "Begriff · ${lobby.eventPrompt}",
+                    color = TextPrimary,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            if (!lobby.isRandom && !lobby.isWedding && !lobby.isEventLobby) {
                 SeatGrid(
                     capacity = capacity,
                     maxPeers = PeerPalette.MAX_PEERS,
@@ -1008,7 +1030,7 @@ private fun LobbyCard(
                     onBuy = onBuySeat
                 )
             }
-            if (lobby.role == Role.HOST && !lobby.isRandom && !lobby.isWedding) {
+            if (lobby.role == Role.HOST && !lobby.isRandom && !lobby.isWedding && !lobby.isEventLobby) {
                 PrimaryButton("Umbenennen", Color.Transparent, onRename, bordered = true)
             }
             if (!lobby.isWedding) {
@@ -1031,6 +1053,50 @@ private fun LobbyCard(
             corner = 22.dp,
             modifier = Modifier.matchParentSize()
         )
+    }
+}
+
+@Composable
+private fun EventLobbyCountdownText(endsAtIso: String?) {
+    var label by remember(endsAtIso) { mutableStateOf(formatEventCountdown(endsAtIso)) }
+    LaunchedEffect(endsAtIso) {
+        while (true) {
+            label = formatEventCountdown(endsAtIso)
+            val ends = parseEventEndsMs(endsAtIso) ?: break
+            if (ends <= System.currentTimeMillis()) break
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+    Text(
+        text = label,
+        color = TextMuted,
+        fontFamily = BodyFont,
+        fontSize = 12.sp,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Ellipsis
+    )
+}
+
+private fun parseEventEndsMs(iso: String?): Long? {
+    if (iso.isNullOrBlank()) return null
+    return runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrNull()
+}
+
+private fun formatEventCountdown(endsAtIso: String?): String {
+    val ends = parseEventEndsMs(endsAtIso) ?: return "Event aktiv"
+    val diff = ends - System.currentTimeMillis()
+    if (diff <= 0L) return "Event beendet"
+    val totalSec = diff / 1000
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) {
+        "Noch ${h}h ${m}m ${s}s"
+    } else if (m > 0) {
+        "Noch ${m}m ${s}s"
+    } else {
+        "Noch ${s}s"
     }
 }
 

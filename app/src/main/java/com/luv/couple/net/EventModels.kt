@@ -74,6 +74,109 @@ data class EventQuest(
     }
 }
 
+data class EventContestFeedItem(
+    val entryId: String,
+    val nickname: String,
+    val prompt: String?,
+    val imageUrl: String?,
+    val strokes: Int = 0,
+) {
+    companion object {
+        fun fromJson(o: JSONObject?): EventContestFeedItem? {
+            if (o == null) return null
+            val entryId = o.optString("entryId").trim()
+            if (entryId.isEmpty()) return null
+            return EventContestFeedItem(
+                entryId = entryId,
+                nickname = o.optString("nickname", "Jemand"),
+                prompt = o.optString("prompt").takeIf { it.isNotBlank() },
+                imageUrl = o.optString("imageUrl").takeIf { it.isNotBlank() },
+                strokes = o.optInt("strokes", 0),
+            )
+        }
+    }
+}
+
+data class EventContestWinner(
+    val place: Int,
+    val nickname: String,
+    val entryId: String,
+    val prompt: String?,
+    val imageUrl: String?,
+    val score: Int = 0,
+) {
+    companion object {
+        fun fromJson(o: JSONObject): EventContestWinner = EventContestWinner(
+            place = o.optInt("place", 0),
+            nickname = o.optString("nickname", "Jemand"),
+            entryId = o.optString("entryId"),
+            prompt = o.optString("prompt").takeIf { it.isNotBlank() },
+            imageUrl = o.optString("imageUrl").takeIf { it.isNotBlank() },
+            score = o.optInt("score", 0),
+        )
+    }
+}
+
+data class EventContestPrize(
+    val place: Int,
+    val coins: Int,
+    val rewardItem: EventRewardItem?,
+    val grantMedal: Boolean = false,
+) {
+    companion object {
+        fun fromJson(o: JSONObject?): EventContestPrize? {
+            if (o == null) return null
+            return EventContestPrize(
+                place = o.optInt("place", 0),
+                coins = o.optInt("coins", 0),
+                rewardItem = EventRewardItem.fromJson(o.optJSONObject("rewardItem")),
+                grantMedal = o.optBoolean("grantMedal", false),
+            )
+        }
+    }
+}
+
+data class EventContestInfo(
+    val enabled: Boolean = false,
+    val votingOpen: Boolean = false,
+    val canVote: Boolean = false,
+    val feedItem: EventContestFeedItem? = null,
+    val winners: List<EventContestWinner> = emptyList(),
+    val claimablePrize: EventContestPrize? = null,
+    val prizeClaimed: Boolean = false,
+    val promptHint: String? = null,
+    val lobbyCreated: Boolean = false,
+    val prizesReady: Boolean = false,
+) {
+    companion object {
+        fun fromJson(o: JSONObject?): EventContestInfo? {
+            if (o == null) return null
+            if (!o.optBoolean("enabled", true) && !o.has("votingOpen")) return null
+            val winnersArr = o.optJSONArray("winners")
+            val winners = buildList {
+                if (winnersArr != null) {
+                    for (i in 0 until winnersArr.length()) {
+                        val w = winnersArr.optJSONObject(i) ?: continue
+                        add(EventContestWinner.fromJson(w))
+                    }
+                }
+            }
+            return EventContestInfo(
+                enabled = o.optBoolean("enabled", true),
+                votingOpen = o.optBoolean("votingOpen", false),
+                canVote = o.optBoolean("canVote", false),
+                feedItem = EventContestFeedItem.fromJson(o.optJSONObject("feedItem")),
+                winners = winners,
+                claimablePrize = EventContestPrize.fromJson(o.optJSONObject("claimablePrize")),
+                prizeClaimed = o.optBoolean("prizeClaimed", false),
+                promptHint = o.optString("promptHint").takeIf { it.isNotBlank() },
+                lobbyCreated = o.optBoolean("lobbyCreated", false),
+                prizesReady = o.optBoolean("prizesReady", false),
+            )
+        }
+    }
+}
+
 data class SeasonEvent(
     val id: String,
     val title: String,
@@ -95,6 +198,9 @@ data class SeasonEvent(
     val quests: List<EventQuest> = emptyList(),
     val lobbyEnabled: Boolean = false,
     val contestEnabled: Boolean = false,
+    val canCreateLobby: Boolean = false,
+    val eventPrompt: String? = null,
+    val contest: EventContestInfo? = null,
 ) {
     companion object {
         fun fromJson(o: JSONObject): SeasonEvent {
@@ -128,6 +234,9 @@ data class SeasonEvent(
             quests = quests,
             lobbyEnabled = o.optJSONObject("lobby")?.optBoolean("enabled", false) == true,
             contestEnabled = o.optJSONObject("contest")?.optBoolean("enabled", false) == true,
+            canCreateLobby = o.optBoolean("canCreateLobby", false),
+            eventPrompt = o.optString("eventPrompt").takeIf { it.isNotBlank() },
+            contest = EventContestInfo.fromJson(o.optJSONObject("contest")),
             )
         }
     }
@@ -200,6 +309,7 @@ object EventSession {
 
     fun primaryEventForLobby(): SeasonEvent? {
         val s = _state.value ?: return null
-        return s.active.firstOrNull { it.lobbyEnabled }
+        return s.active.firstOrNull { it.canCreateLobby }
+            ?: s.active.firstOrNull { it.lobbyEnabled }
     }
 }

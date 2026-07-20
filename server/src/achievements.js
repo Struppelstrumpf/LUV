@@ -676,7 +676,6 @@ function bumpMetric(user, metric, amount, dayKey, applyLedgerFn) {
       a.daily.completed = true;
       a.daily.rewardClaimed = false;
       dailyJustCompleted = true;
-      onDailyTasksCompleted(user, dayKey);
       a.progress.dailies_completed = (Number(a.progress.dailies_completed) || 0) + 1;
     }
   }
@@ -874,13 +873,14 @@ function claimDailyReward(user, dayKey, applyLedgerFn) {
   );
   a.daily.rewardClaimed = true;
   a.daily.claimedAt = Date.now();
+  const streak = onDailyTasksCompleted(user, dayKey);
   if (applyLedgerFn && grant > 0) {
     applyLedgerFn(user.id, grant, "daily_tasks", dayKey);
     a.coinsEarnedToday += grant;
     a.totalAchCoins += grant;
   }
   a.progress.ach_coins_earned = a.totalAchCoins;
-  return { ok: true, coinsGranted: grant };
+  return { ok: true, coinsGranted: grant, streak };
 }
 
 function setMetricAtLeast(user, metric, value, dayKey, applyLedgerFn) {
