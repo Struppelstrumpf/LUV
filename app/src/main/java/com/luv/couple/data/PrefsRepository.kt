@@ -268,6 +268,8 @@ class PrefsRepository(private val context: Context) {
             it.remove(activeLobbyKey)
             it[tutorialDoneKey] = false
             it.remove(nicknameKey)
+            // Reaktionsleiste gehört zum Konto — nicht für den nächsten Login behalten
+            it.remove(emojiBarKey)
         }
     }
 
@@ -458,9 +460,14 @@ class PrefsRepository(private val context: Context) {
                 settings.lobbyProximity.isNotEmpty() && remoteProx.isEmpty()
             val finalProx = if (remoteLooksLikeLegacyUuids) localProx else remoteProx
             prefs[quietHoursKey] = encodeQuietHours(settings.quietHours)
-            if (settings.emojiBar.isNotEmpty()) {
-                prefs[emojiBarKey] = JSONArray(settings.emojiBar).toString()
-            }
+            // Leere Cloud-Bar = Default — nie die Bar eines anderen Kontos stehen lassen
+            prefs[emojiBarKey] = JSONArray(
+                if (settings.emojiBar.isNotEmpty()) {
+                    settings.emojiBar
+                } else {
+                    com.luv.couple.shop.ShopCatalog.DEFAULT_BAR
+                }
+            ).toString()
             prefs[partnerNotifyKey] = settings.partnerDrawNotify
             prefs[partnerHapticKey] = settings.partnerHaptic
             prefs[liveProximityRichKey] = settings.liveProximityRich

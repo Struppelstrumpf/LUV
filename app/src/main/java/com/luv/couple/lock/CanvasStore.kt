@@ -682,19 +682,88 @@ object CanvasStore {
         }
     }
 
+    private data class EraseSession(
+        val lobbyId: String,
+        val baselineIds: Set<String>,
+    )
+
+    /** Während Finger-down: nur lokal radiert, Sync erst bei [endEraseSession]. */
+    private var eraseSession: EraseSession? = null
+
+    /** Eraser-Radius aus Pinseldicke (6–40) → normalisierte Hit-Größe. */
+    fun eraseRadiusForBrush(brushWidth: Float): Float =
+        (0.008f + brushWidth.coerceIn(6f, 40f) / 850f).coerceIn(0.01f, 0.065f)
+
+    fun beginEraseSession(lobbyId: String? = null) {
+        val id = resolveLobbyId(lobbyId) ?: return
+        val c = canvas(id)
+        val nick = cachedNickname?.trim().orEmpty()
+        val mineIds = c.strokes
+            .filter { stroke ->
+                stroke.isLocal ||
+                    stroke.id in c.localStrokeIds ||
+                    (nick.isNotBlank() && stroke.nickname.equals(nick, ignoreCase = true))
+            }
+            .map { it.id }
+            .toSet()
+        eraseSession = EraseSession(lobbyId = id, baselineIds = mineIds)
+    }
+
+    /**
+     * Nach dem Wischt: einmal Undo der Original-Striche + finale Fragmente senden.
+     * Verhindert Flackern/Vibrations-Spam bei Peers.
+     */
+    fun endEraseSession(lobbyId: String? = null): Boolean {
+        val session = eraseSession ?: return false
+        eraseSession = null
+        val id = resolveLobbyId(lobbyId) ?: session.lobbyId
+        if (id != session.lobbyId) return false
+        val c = canvas(id)
+        if (!::appContext.isInitialized) return true
+        val nick = cachedNickname?.trim().orEmpty()
+        val currentIds = c.strokes.map { it.id }.toSet()
+        for (oid in session.baselineIds) {
+            if (oid !in currentIds) {
+                PairConnectionService.sendUndo(appContext, oid, id)
+            }
+        }
+        for (stroke in c.strokes) {
+            val mine =
+                stroke.isLocal ||
+                    stroke.id in c.localStrokeIds ||
+                    (nick.isNotBlank() && stroke.nickname.equals(nick, ignoreCase = true))
+            if (!mine) continue
+            if (stroke.id in session.baselineIds) continue
+            PairConnectionService.sendStroke(
+                appContext,
+                PairProtocol.encode(PairMessage.StrokeMsg(stroke)),
+                id
+            )
+        }
+        return true
+    }
+
+    fun cancelEraseSession() {
+        eraseSession = null
+    }
+
     /**
      * Radiert nur Stellen entlang des Brush-Pfads (normalisierte 0..1).
      * Eigene Striche werden an getroffenen Stellen geteilt — nicht komplett gelöscht.
+     * [broadcast]=false während Erase-Session (Netzwerk erst bei endEraseSession).
      */
     fun eraseLocalAlong(
         brush: List<StrokePoint>,
         radius: Float = 0.028f,
-        lobbyId: String? = null
+        lobbyId: String? = null,
+        broadcast: Boolean = true,
     ): Boolean {
         if (brush.isEmpty()) return false
         val id = resolveLobbyId(lobbyId) ?: return false
         val c = canvas(id)
         val nick = cachedNickname?.trim().orEmpty()
+        val inSession = eraseSession?.lobbyId == id
+        val doBroadcast = broadcast && !inSession
         val mine = c.strokes.filter { stroke ->
             stroke.isLocal ||
                 stroke.id in c.localStrokeIds ||
@@ -702,11 +771,15 @@ object CanvasStore {
         }
         if (mine.isEmpty()) return false
         var changed = false
-        val emojiR2 = 0.05f * 0.05f
+        val emojiR2 = (radius * 1.6f).coerceIn(0.03f, 0.08f).let { it * it }
         for (stroke in mine) {
             if (stroke.isEmoji || stroke.isTemplate) {
                 val p = stroke.points.firstOrNull() ?: continue
-                val hitR2 = if (stroke.isTemplate) 0.12f * 0.12f else emojiR2
+                val hitR2 = if (stroke.isTemplate) {
+                    (radius * 3.5f).coerceIn(0.08f, 0.16f).let { it * it }
+                } else {
+                    emojiR2
+                }
                 val hit = brush.any { b ->
                     val dx = p.x - b.x
                     val dy = p.y - b.y
@@ -716,20 +789,20 @@ object CanvasStore {
                 c.strokes.removeAll { it.id == stroke.id }
                 c.localStrokeIds.remove(stroke.id)
                 c.localUndo.removeAll { it is LocalUndo.Stroke && it.id == stroke.id }
-                if (::appContext.isInitialized) {
+                if (doBroadcast && ::appContext.isInitialized) {
                     PairConnectionService.sendUndo(appContext, stroke.id, id)
                 }
                 changed = true
                 continue
             }
-            val strokeRadius = radius + (stroke.width / 1100f).coerceIn(0.008f, 0.03f)
+            val strokeRadius = radius + (stroke.width / 1100f).coerceIn(0.006f, 0.035f)
             val fragments = splitStrokeAwayFromBrush(stroke.points, brush, strokeRadius)
             val unchanged = fragments.size == 1 && fragments[0].size == stroke.points.size &&
                 fragments[0].zip(stroke.points).all { (a, b) -> a.x == b.x && a.y == b.y }
             if (unchanged) continue
             c.strokes.removeAll { it.id == stroke.id }
             c.localStrokeIds.remove(stroke.id)
-            if (::appContext.isInitialized) {
+            if (doBroadcast && ::appContext.isInitialized) {
                 PairConnectionService.sendUndo(appContext, stroke.id, id)
             }
             for (frag in fragments) {
@@ -750,7 +823,7 @@ object CanvasStore {
                 )
                 c.strokes.add(neu)
                 c.localStrokeIds.add(neu.id)
-                if (::appContext.isInitialized) {
+                if (doBroadcast && ::appContext.isInitialized) {
                     PairConnectionService.sendStroke(
                         appContext,
                         PairProtocol.encode(PairMessage.StrokeMsg(neu)),

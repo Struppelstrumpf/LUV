@@ -1,5 +1,6 @@
 package com.luv.couple.net
 
+import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Stroke
 import com.luv.couple.data.StrokePoint
 import com.luv.couple.data.TemplateStrokePart
@@ -237,8 +238,8 @@ object PairProtocol {
         }.getOrNull()
     }
 
-    const val TEMPLATE_MAX_PARTS = 200
-    const val TEMPLATE_MAX_POINTS = 800
+    const val TEMPLATE_MAX_PARTS = 600
+    const val TEMPLATE_MAX_POINTS = 2400
     private const val TEMPLATE_MIN_POINT_DIST = 0.004f
 
     /** Abstand-Downsampling — behält Form bei langen Dauerstrichen. */
@@ -312,7 +313,8 @@ object PairProtocol {
                     TemplateStrokePart(
                         points = points,
                         width = o.optDouble("width", 18.0).toFloat().coerceIn(3f, 48f),
-                        colorIndex = o.optInt("colorIndex", 0).coerceIn(0, 31)
+                        colorIndex = o.optInt("colorIndex", 0)
+                            .coerceIn(0, PeerPalette.COLOR_COUNT - 1)
                     )
                 )
             }

@@ -17,9 +17,9 @@ enum class ConnectionState {
 }
 
 /**
- * Zeichenfarben + dunkle Leinwand-Hintergründe.
- * 0 = Blau (Host-Wahl), 1 = Lila (Gegenseite), ab 2 weitere gut sichtbare Farben.
- * Keine hellen/weißen Strokes — Menü nutzt [menuAccent], nicht die Zeichenfarbe.
+ * Zeichenfarben + dunkle Leinwand-Hintergründe (Leinwand & Vorlagen gleich).
+ * ~36 Farben: Brand + Jahreszeiten-Palette inkl. Weiß/Grau/Schwarz/Braun.
+ * Menü nutzt [menuAccent], nicht die Zeichenfarbe.
  */
 object PeerPalette {
     const val MAX_PEERS = 10
@@ -33,45 +33,90 @@ object PeerPalette {
 
     const val COLOR_BLUE = 0
     const val COLOR_PURPLE = 1
-    const val COLOR_COUNT = 16
+    const val COLOR_COUNT = 36
 
     private val strokeColors = intArrayOf(
-        0xFF00B7E4.toInt(), // 0 Blau (Brand)
-        0xFFC218A8.toInt(), // 1 Lila (Brand)
+        // Brand / Basics
+        0xFF00B7E4.toInt(), // 0 Blau
+        0xFFC218A8.toInt(), // 1 Lila
+        0xFFFFFFFF.toInt(), // Weiß
+        0xFFB0BEC5.toInt(), // Hellgrau
+        0xFF78909C.toInt(), // Grau
+        0xFF263238.toInt(), // Anthrazit
+        0xFF000000.toInt(), // Schwarz
+        0xFF6D4C41.toInt(), // Braun
+        0xFFA1887F.toInt(), // Hellbraun
+        // Frühling
+        0xFF7CFF6B.toInt(), // Limette
+        0xFF81C784.toInt(), // Blattgrün
+        0xFF2EE6A8.toInt(), // Minze
+        0xFFFF80AB.toInt(), // Blütenrosa
+        0xFFFFF59D.toInt(), // Softgelb
+        0xFFCE93D8.toInt(), // Flieder
+        // Sommer
         0xFFFF5A6A.toInt(), // Koralle
         0xFFFF8F3D.toInt(), // Orange
         0xFFFFD23F.toInt(), // Gold
-        0xFF7CFF6B.toInt(), // Limette
-        0xFF2EE6A8.toInt(), // Minze
         0xFF3DD6FF.toInt(), // Cyan
-        0xFF6B8CFF.toInt(), // Indigo
         0xFFFF4FC3.toInt(), // Hot Pink
-        0xFFFF7A9A.toInt(), // Rosen
-        0xFFFFB347.toInt(), // Amber
-        0xFFB388FF.toInt(), // Lavendel
+        0xFFE8FF4A.toInt(), // Neongelb
         0xFF5CFFEA.toInt(), // Aqua
+        // Herbst
+        0xFFFFB347.toInt(), // Amber
+        0xFFE65100.toInt(), // Rost
+        0xFFBF360C.toInt(), // Kupfer
+        0xFF8D6E63.toInt(), // Haselnuss
+        0xFFD4A574.toInt(), // Laub
+        0xFFC62828.toInt(), // Weinrot
+        0xFFFF7A9A.toInt(), // Rosen
+        // Winter
+        0xFF6B8CFF.toInt(), // Indigo
+        0xFFB388FF.toInt(), // Lavendel
+        0xFF90CAF9.toInt(), // Eisblau
+        0xFFE1F5FE.toInt(), // Schneeblau
+        0xFF0277BD.toInt(), // Tiefblau
         0xFFFF6B9D.toInt(), // Pink
-        0xFFE8FF4A.toInt()  // Neongelb
+        0xFF4A148C.toInt(), // Mitternacht
     )
 
-    /** Dunkle Tints — Strokes bleiben lesbar */
+    /** Dunkle Tints — Strokes bleiben lesbar (Index wrappt mit Farben). */
     private val lockTints = intArrayOf(
         0xFF0E1A24.toInt(),
         0xFF1A0E20.toInt(),
+        0xFF141418.toInt(),
+        0xFF16181A.toInt(),
+        0xFF141618.toInt(),
+        0xFF101214.toInt(),
+        0xFF0A0A0C.toInt(),
+        0xFF1A1410.toInt(),
+        0xFF1A1614.toInt(),
+        0xFF101A12.toInt(),
+        0xFF101812.toInt(),
+        0xFF0E1A18.toInt(),
+        0xFF1C1016.toInt(),
+        0xFF1A1810.toInt(),
+        0xFF18141C.toInt(),
         0xFF1E1214.toInt(),
         0xFF1E1610.toInt(),
         0xFF1A1810.toInt(),
-        0xFF101A12.toInt(),
-        0xFF0E1A18.toInt(),
         0xFF0E181C.toInt(),
-        0xFF10141E.toInt(),
         0xFF1C1018.toInt(),
-        0xFF1C1216.toInt(),
-        0xFF1A1610.toInt(),
-        0xFF16121C.toInt(),
+        0xFF16180E.toInt(),
         0xFF0E1A1A.toInt(),
+        0xFF1A1610.toInt(),
+        0xFF1C120C.toInt(),
+        0xFF1A100C.toInt(),
+        0xFF181410.toInt(),
+        0xFF1A1612.toInt(),
+        0xFF1A0E10.toInt(),
+        0xFF1C1216.toInt(),
+        0xFF10141E.toInt(),
+        0xFF16121C.toInt(),
+        0xFF0E1620.toInt(),
+        0xFF101820.toInt(),
+        0xFF0C1420.toInt(),
         0xFF1A1016.toInt(),
-        0xFF16180E.toInt()
+        0xFF120E1A.toInt(),
     )
 
     fun strokeColor(index: Int): Int =

@@ -116,6 +116,9 @@ class DrawingView @JvmOverloads constructor(
     var onDotPlaced: ((StrokePoint) -> Unit)? = null
     /** Normalisierte Brush-Proben — nur eigene Malerei an diesen Stellen. */
     var onErasePath: ((List<StrokePoint>) -> Unit)? = null
+    /** Start/Ende einer Radier-Geste — Sync erst am Ende. */
+    var onEraseGestureStart: (() -> Unit)? = null
+    var onEraseGestureEnd: (() -> Unit)? = null
 
     /** Nach 0,5 s ohne zweiten Tipp → Punkt setzen */
     private val singleTapDotRunnable = Runnable {
@@ -238,11 +241,13 @@ class DrawingView @JvmOverloads constructor(
         }
         if (eraserEnabled) {
             if (!eraserPath.isEmpty) { // Path.isEmpty() API 19+
+                // Dicke = aktuelle Pinselstärke (fein/dick einstellbar)
+                val core = myBrushWidth
                 paint.color = 0xCCFFD56A.toInt()
-                paint.strokeWidth = 28f
+                paint.strokeWidth = core
                 canvas.drawPath(eraserPath, paint)
-                paint.color = 0x66FFD56A.toInt()
-                paint.strokeWidth = 44f
+                paint.color = 0x55FFD56A.toInt()
+                paint.strokeWidth = core * 1.55f
                 canvas.drawPath(eraserPath, paint)
             }
         } else {
@@ -368,6 +373,7 @@ class DrawingView @JvmOverloads constructor(
                     eraseLastX = event.x
                     eraseLastY = event.y
                     parent.requestDisallowInterceptTouchEvent(true)
+                    onEraseGestureStart?.invoke()
                     onErasePath?.invoke(listOf(normalized))
                     invalidate()
                 }
@@ -388,6 +394,7 @@ class DrawingView @JvmOverloads constructor(
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     eraserPath.reset()
+                    onEraseGestureEnd?.invoke()
                     invalidate()
                 }
             }

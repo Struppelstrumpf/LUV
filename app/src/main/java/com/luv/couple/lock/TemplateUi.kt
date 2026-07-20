@@ -396,54 +396,36 @@ fun TemplateEditorSheet(
             )
         }
         Spacer(modifier = Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            repeat(8) { i ->
-                val c = Color(PeerPalette.strokeColor(i))
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .aspectRatio(1f)
-                        .clip(CircleShape)
-                        .background(c)
-                        .border(
-                            if (!eraserOn && colorIndex == i) 2.dp else 0.dp,
-                            Color.White,
-                            CircleShape
-                        )
-                        .clickable {
-                            colorIndex = i
-                            eraserOn = false
-                        }
-                )
-            }
-        }
-        Spacer(modifier = Modifier.height(6.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            repeat(8) { j ->
-                val i = j + 8
-                val c = Color(PeerPalette.strokeColor(i))
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .aspectRatio(1f)
-                        .clip(CircleShape)
-                        .background(c)
-                        .border(
-                            if (!eraserOn && colorIndex == i) 2.dp else 0.dp,
-                            Color.White,
-                            CircleShape
-                        )
-                        .clickable {
-                            colorIndex = i
-                            eraserOn = false
-                        }
-                )
+        // Gleiche Palette wie Leinwand (chunked Rows)
+        PeerPalette.allIndices().toList().chunked(9).forEach { row ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                row.forEach { i ->
+                    val c = Color(PeerPalette.strokeColor(i))
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                            .clip(CircleShape)
+                            .background(c)
+                            .border(
+                                if (!eraserOn && colorIndex == i) 2.dp else 0.dp,
+                                Color.White,
+                                CircleShape
+                            )
+                            .clickable {
+                                colorIndex = i
+                                eraserOn = false
+                            }
+                    )
+                }
+                repeat((9 - row.size).coerceAtLeast(0)) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
@@ -552,7 +534,7 @@ fun TemplateEditorSheet(
                             }
                             if (eraserOn) {
                                 val radius =
-                                    0.018f + (brushWidth / 1100f).coerceIn(0.01f, 0.045f)
+                                    (0.008f + brushWidth / 850f).coerceIn(0.01f, 0.065f)
                                 val next = eraseTemplateParts(parts.toList(), saved, radius)
                                 if (next != parts.toList()) {
                                     pushUndo()

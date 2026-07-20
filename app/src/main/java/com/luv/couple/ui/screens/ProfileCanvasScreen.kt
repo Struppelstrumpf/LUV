@@ -2805,7 +2805,10 @@ private fun WeddingOverviewCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(a?.petEmoji ?: "💍", fontSize = 20.sp)
+            com.luv.couple.ui.CompanionGlyph(
+                petId = a?.petEmoji ?: "💍",
+                fontSize = 20.sp
+            )
             Text(
                 a?.nickname ?: partner?.partnerNickname ?: "…",
                 color = WeddingInk,
@@ -2823,7 +2826,10 @@ private fun WeddingOverviewCard(
                 maxLines = 1,
                 softWrap = false
             )
-            Text(b?.petEmoji ?: "💕", fontSize = 20.sp)
+            com.luv.couple.ui.CompanionGlyph(
+                petId = b?.petEmoji ?: "💕",
+                fontSize = 20.sp
+            )
         }
 
         val weddingAr = weddingBmp?.let { bmp ->
@@ -2959,7 +2965,10 @@ private fun WeddingGuestbookBookCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            Text(a?.petEmoji ?: "💍", fontSize = 22.sp)
+            com.luv.couple.ui.CompanionGlyph(
+                petId = a?.petEmoji ?: "💍",
+                fontSize = 22.sp
+            )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
                 a?.nickname ?: "…",
@@ -2979,7 +2988,10 @@ private fun WeddingGuestbookBookCard(
                 softWrap = false
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text(b?.petEmoji ?: "💍", fontSize = 22.sp)
+            com.luv.couple.ui.CompanionGlyph(
+                petId = b?.petEmoji ?: "💍",
+                fontSize = 22.sp
+            )
         }
         Spacer(modifier = Modifier.height(12.dp))
 

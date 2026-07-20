@@ -12,6 +12,14 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.28",
+            listOf(
+                "Radierer: Sync ohne Flackern, Dicke folgt dem Pinsel",
+                "Gemeinsame Jahreszeiten-Farbpalette für Leinwand und Vorlagen",
+                "Galerie-Popup und Löschen-Button stabil; mehr Striche auf Leinwand und Vorlagen",
+            )
+        ),
+        Entry(
             "2.2.27",
             listOf(
                 "Profil-Leinwand: bis zu 75 Sticker",

@@ -2263,7 +2263,7 @@ function restoreRoomsFromDisk() {
 const SNAPSHOT_DIR = path.join(DATA_DIR, "snapshots");
 const STROKES_DIR = path.join(DATA_DIR, "strokes");
 const MEMORY_TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_STROKES_PER_ROOM = 2500;
+const MAX_STROKES_PER_ROOM = 5000;
 const MAX_STICKERS_PER_ROOM = 80;
 const MAX_POINTS_PER_STROKE = 420;
 const STROKE_HISTORY_CHUNK = 35;
@@ -2422,8 +2422,8 @@ function removeRoomSticker(room, code, stickerId) {
   return true;
 }
 
-const TEMPLATE_MAX_PARTS = 200;
-const TEMPLATE_MAX_POINTS = 800;
+const TEMPLATE_MAX_PARTS = 600;
+const TEMPLATE_MAX_POINTS = 2400;
 const TEMPLATE_MIN_POINT_DIST = 0.004; // ~0.4% der Fläche — lange Striche ohne Riesen-Payload
 
 /** Abstand-Downsampling: behält Form, reduziert Punktdichte. */
@@ -2478,7 +2478,7 @@ function sanitizeTemplateParts(rawParts) {
     out.push({
       points,
       width: Math.min(48, Math.max(3, Number(part.width) || 18)),
-      colorIndex: Math.max(0, Math.min(31, Number(part.colorIndex) || 0)),
+      colorIndex: Math.max(0, Math.min(35, Number(part.colorIndex) || 0)),
     });
   }
   return out.length ? out : null;
@@ -2517,7 +2517,7 @@ function sanitizeStoredStroke(raw) {
       ? Math.min(48, Math.max(0, Number(raw.width) || 0))
       : Math.min(48, Math.max(3, Number(raw.width) || 18)),
     nickname: String(raw.nickname || "").trim().slice(0, 18) || null,
-    colorIndex: Math.max(0, Math.min(31, Number(raw.colorIndex) || 0)),
+    colorIndex: Math.max(0, Math.min(35, Number(raw.colorIndex) || 0)),
     authorId: String(raw.authorId || "").trim().slice(0, 64) || null,
     colorLocked: Boolean(raw.colorLocked),
   };
@@ -3494,7 +3494,7 @@ function publicRoom(room, code) {
 
 const COLOR_BLUE = 0;
 const COLOR_PURPLE = 1;
-const COLOR_COUNT = 16;
+const COLOR_COUNT = 36;
 
 function normalizeHostColorSide(side) {
   const s = String(side || "blue").toLowerCase();

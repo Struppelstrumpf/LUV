@@ -60,6 +60,7 @@ import com.luv.couple.data.LocalMoments
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.ui.theme.AccentRose
+import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
@@ -137,128 +138,136 @@ fun GalleryScreen(
         if (selectedIds.isEmpty()) selecting = false
     }
 
-    MenuBackdrop(includeNavigationBars = false) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .navigationBarsPadding()
-                .padding(horizontal = 24.dp)
-                .padding(top = 20.dp, bottom = 16.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(BgDeep)
+    ) {
+        MenuBackdrop(includeNavigationBars = false) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 24.dp)
+                    .padding(top = 20.dp)
             ) {
-                Text(
-                    "Galerie",
-                    fontFamily = DisplayFont,
-                    fontSize = 34.sp,
-                    color = TextPrimary,
-                    modifier = Modifier.weight(1f)
-                )
-                if (onClose != null) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(0.1f))
-                            .clickable(onClick = onClose),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("✕", color = TextMuted, fontSize = 16.sp)
-                    }
-                }
-            }
-            if (selecting && selectedIds.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    "${selectedIds.size} ausgewählt",
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 14.sp
-                )
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-
-            when {
-                loading && moments.isEmpty() -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("Lade...", color = TextMuted, fontFamily = BodyFont, fontSize = 15.sp)
-                    }
-                }
-                moments.isEmpty() -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(22.dp))
-                            .background(BgSoft)
-                            .padding(22.dp)
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                "Noch keine Bilder",
-                                color = TextPrimary,
-                                fontFamily = DisplayFont,
-                                fontSize = 20.sp
-                            )
-                            Text(
-                                "Auf der Leinwand speichern — dann erscheinen sie hier.",
-                                color = TextMuted,
-                                fontFamily = BodyFont,
-                                fontSize = 14.sp
-                            )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Galerie",
+                        fontFamily = DisplayFont,
+                        fontSize = 34.sp,
+                        color = TextPrimary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (onClose != null) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(0.1f))
+                                .clickable(onClick = onClose),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("✕", color = TextMuted, fontSize = 16.sp)
                         }
                     }
                 }
-                else -> {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(
-                            bottom = if (selecting && selectedIds.isNotEmpty()) 8.dp else 12.dp
-                        ),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(moments, key = { it.id }) { moment ->
-                            val checked = moment.id in selectedIds
-                            GalleryThumb(
-                                moment = moment,
-                                selecting = selecting,
-                                selected = checked,
-                                onClick = {
-                                    if (selecting) {
-                                        toggleSelect(moment.id)
-                                    } else {
-                                        preview = moment
-                                    }
-                                },
-                                onLongClick = {
-                                    selecting = true
-                                    selectedIds = selectedIds + moment.id
-                                },
-                                onPublishedBadge = {
-                                    publishedInfo = moment
+                if (selecting && selectedIds.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "${selectedIds.size} ausgewählt",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 14.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Box(modifier = Modifier.weight(1f)) {
+                    when {
+                        loading && moments.isEmpty() -> {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Lade...", color = TextMuted, fontFamily = BodyFont, fontSize = 15.sp)
+                            }
+                        }
+                        moments.isEmpty() -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(22.dp))
+                                    .background(BgSoft)
+                                    .padding(22.dp)
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        "Noch keine Bilder",
+                                        color = TextPrimary,
+                                        fontFamily = DisplayFont,
+                                        fontSize = 20.sp
+                                    )
+                                    Text(
+                                        "Auf der Leinwand speichern — dann erscheinen sie hier.",
+                                        color = TextMuted,
+                                        fontFamily = BodyFont,
+                                        fontSize = 14.sp
+                                    )
                                 }
-                            )
+                            }
+                        }
+                        else -> {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(2),
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(bottom = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                items(moments, key = { it.id }) { moment ->
+                                    val checked = moment.id in selectedIds
+                                    GalleryThumb(
+                                        moment = moment,
+                                        selecting = selecting,
+                                        selected = checked,
+                                        onClick = {
+                                            if (selecting) {
+                                                toggleSelect(moment.id)
+                                            } else {
+                                                preview = moment
+                                            }
+                                        },
+                                        onLongClick = {
+                                            selecting = true
+                                            selectedIds = selectedIds + moment.id
+                                        },
+                                        onPublishedBadge = {
+                                            publishedInfo = moment
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
-            }
 
-            if (selecting && selectedIds.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(12.dp))
-                PrimaryButton(
-                    "Löschen (${selectedIds.size})",
-                    AccentRose,
-                    {
-                        confirmDelete = moments.filter { it.id in selectedIds }
-                    }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
+                // Löschen immer unten fest (über Safe-Area), unabhängig von Bildanzahl
+                if (selecting && selectedIds.isNotEmpty()) {
+                    PrimaryButton(
+                        "Löschen (${selectedIds.size})",
+                        AccentRose,
+                        {
+                            confirmDelete = moments.filter { it.id in selectedIds }
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                } else {
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
             }
         }
     }

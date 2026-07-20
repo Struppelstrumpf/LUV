@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Base64
 import android.util.TypedValue
 import android.view.Gravity
@@ -381,11 +382,20 @@ class LockDrawActivity : ComponentActivity() {
             )
             drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
         }
+        drawingView.onEraseGestureStart = {
+            CanvasStore.beginEraseSession(lobbyId)
+        }
         drawingView.onErasePath = { brush ->
-            if (CanvasStore.eraseLocalAlong(brush, lobbyId = lobbyId)) {
+            val radius = CanvasStore.eraseRadiusForBrush(drawingView.myBrushWidth)
+            if (CanvasStore.eraseLocalAlong(brush, radius = radius, lobbyId = lobbyId, broadcast = false)) {
                 drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
                 refreshLegend()
             }
+        }
+        drawingView.onEraseGestureEnd = {
+            CanvasStore.endEraseSession(lobbyId)
+            drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
+            refreshLegend()
         }
 
         WindowInsetsControllerCompat(window, window.decorView).let { controller ->
@@ -404,15 +414,24 @@ class LockDrawActivity : ComponentActivity() {
         lifecycleScope.launch {
             // collect (nicht collectLatest): Striche dürfen nicht verworfen werden,
             // wenn der nächste Event schon ankommt.
+            var lastRemoteUndoAt = 0L
             PairConnectionService.events.collect { event ->
                 val id = lobbyId ?: return@collect
                 when (event) {
                     is PairEvent.StrokeReceived -> if (event.lobbyId == id) {
-                        drawingView.addStroke(event.stroke, fadeIn = true)
-                        maybeHaptic()
+                        // Nach Undo/Erase-Batch: kein Fade/Haptic — sonst Flackern + Vibrations-Spam
+                        val quiet =
+                            SystemClock.uptimeMillis() - lastRemoteUndoAt < 1600L
+                        if (quiet) {
+                            drawingView.setStrokes(CanvasStore.snapshot(id), animateNew = false)
+                        } else {
+                            drawingView.addStroke(event.stroke, fadeIn = true)
+                            maybeHaptic()
+                        }
                         refreshLegend()
                     }
                     is PairEvent.StrokeUndone -> if (event.lobbyId == id) {
+                        lastRemoteUndoAt = SystemClock.uptimeMillis()
                         drawingView.setStrokes(CanvasStore.snapshot(id), animateNew = false)
                     }
                     is PairEvent.HistoryApplied -> if (event.lobbyId == id) {

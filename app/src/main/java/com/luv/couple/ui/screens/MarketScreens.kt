@@ -2524,7 +2524,13 @@ fun InventoryScreen(
             onDismissRequest = { showGallery = false },
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
-            GalleryScreen(onClose = { showGallery = false })
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(BgDeep)
+            ) {
+                GalleryScreen(onClose = { showGallery = false })
+            }
         }
     }
     pendingBarEmoji?.let { emoji ->
