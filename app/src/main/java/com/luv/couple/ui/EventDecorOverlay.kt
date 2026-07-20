@@ -38,14 +38,11 @@ fun EventDecorHost(
             runCatching { LuvApiClient.fetchEvents() }
         }
     }
-    val decor = events?.primaryDecor?.takeIf { it.particles != "none" }
-    Box(modifier = modifier.fillMaxSize()) {
-        // Nur dezente Partikel hinter dem Content — kein Banner / keine Seiten-Herzen
-        if (decor != null) {
-            EventParticleLayer(decor = decor)
-        }
-        content()
-    }
+    // Partikel nur auf Haupt-Tabs (siehe MenuAmbientBackground in LuvAppNav) —
+    // hier nur Event-State laden, kein Overlay auf Unterseiten/Inventar.
+    @Suppress("UNUSED_VARIABLE")
+    val _events = events
+    Box(modifier = modifier.fillMaxSize(), content = content)
 }
 
 @Composable

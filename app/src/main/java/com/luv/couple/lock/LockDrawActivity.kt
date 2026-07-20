@@ -715,30 +715,28 @@ class LockDrawActivity : ComponentActivity() {
 
     private fun updateEventLobbyTitle() {
         if (!eventLobbyActive) return
-        val ends = eventEndsAtMs
-        val countdown = if (ends == null) {
-            "Event aktiv"
-        } else {
-            val diff = ends - System.currentTimeMillis()
-            if (diff <= 0L) {
-                "Event beendet"
-            } else {
-                val totalSec = diff / 1000
-                val h = totalSec / 3600
-                val m = (totalSec % 3600) / 60
-                val s = totalSec % 60
-                when {
-                    h > 0 -> "Noch ${h}h ${m}m ${s}s"
-                    m > 0 -> "Noch ${m}m ${s}s"
-                    else -> "Noch ${s}s"
-                }
-            }
-        }
+        lobbyTitle.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14f)
         val prompt = eventPromptText?.trim().orEmpty()
+        val countdown = formatEventLobbyCountdownLabel(eventEndsAtMs)
         lobbyTitle.text = if (prompt.isNotBlank()) {
             "Event · $countdown\nBegriff · $prompt"
         } else {
             "Event · $countdown"
+        }
+    }
+
+    private fun formatEventLobbyCountdownLabel(endsMs: Long?): String {
+        if (endsMs == null) return "aktiv"
+        val diff = endsMs - System.currentTimeMillis()
+        if (diff <= 0L) return "beendet"
+        val totalMin = (diff / 60_000L).coerceAtLeast(0L)
+        val days = totalMin / (60 * 24)
+        val hours = (totalMin % (60 * 24)) / 60
+        val mins = totalMin % 60
+        return when {
+            days >= 1L -> "${days}t ${hours}h ${mins}m"
+            hours >= 1L -> "${hours}h ${mins}m"
+            else -> "${mins}m"
         }
     }
 

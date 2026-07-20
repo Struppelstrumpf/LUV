@@ -60,8 +60,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -126,7 +128,7 @@ internal fun ScreenBackdrop(
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    listOf(Color(0xFF121821), BgDeep, Color(0xFF1A1220))
+                    listOf(Color(0xFF121821), BgDeep, Color(0xFF151A22))
                 )
             )
             .statusBarsPadding()
@@ -135,12 +137,18 @@ internal fun ScreenBackdrop(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(AccentRose.copy(alpha = 0.18f), Color.Transparent),
-                        radius = 900f
+                .drawBehind {
+                    drawRect(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                AccentRose.copy(alpha = 0.10f),
+                                Color.Transparent
+                            ),
+                            center = Offset(size.width * 0.5f, size.height * 0.1f),
+                            radius = size.minDimension * 0.8f
+                        )
                     )
-                )
+                }
         )
         content()
     }
@@ -811,54 +819,63 @@ private fun LobbyCard(
     val occupied = nicknames.size.coerceAtLeast(1)
 
     if (confirmLeave) {
-        AlertDialog(
-            onDismissRequest = { confirmLeave = false },
-            containerColor = BgSoft,
-            title = {
-                Text(
-                    "Lobby verlassen?",
-                    fontFamily = DisplayFont,
-                    fontSize = 22.sp,
-                    color = TextPrimary
-                )
-            },
-            text = {
-                Text(
-                    if (lobby.isEventLobby) {
-                        "Für dieses Event keine neue Event-Lobby."
-                    } else {
-                        "Die anderen bleiben in der Lobby. Ausgegebene Coins (Plätze, Spiele, Leeren …) werden nicht erstattet."
-                    },
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmLeave = false
-                    onLeave()
-                }) {
+        if (lobby.isEventLobby) {
+            HoldSlideConfirmDialog(
+                title = "Event-Lobby verlassen?",
+                body = "Für dieses Event kannst du keine neue Event-Lobby erstellen. " +
+                    "Schiebe den Regler nach rechts und halte ihn 5 Sekunden.",
+                holdSeconds = 5,
+                accent = accent,
+                confirmHint = "Nach rechts schieben und halten",
+                onDismiss = { confirmLeave = false },
+                onConfirmed = onLeave
+            )
+        } else {
+            AlertDialog(
+                onDismissRequest = { confirmLeave = false },
+                containerColor = BgSoft,
+                title = {
                     Text(
-                        "Ja, verlassen",
-                        color = Color(0xFFFF5A6A),
+                        "Lobby verlassen?",
                         fontFamily = DisplayFont,
-                        fontSize = 15.sp
+                        fontSize = 22.sp,
+                        color = TextPrimary
                     )
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmLeave = false }) {
+                },
+                text = {
                     Text(
-                        "Lieber bleiben",
-                        color = TextPrimary,
+                        "Die anderen bleiben in der Lobby. Ausgegebene Coins (Plätze, Spiele, Leeren …) werden nicht erstattet.",
+                        color = TextMuted,
                         fontFamily = BodyFont,
-                        fontSize = 15.sp
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp
                     )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmLeave = false
+                        onLeave()
+                    }) {
+                        Text(
+                            "Ja, verlassen",
+                            color = Color(0xFFFF5A6A),
+                            fontFamily = DisplayFont,
+                            fontSize = 15.sp
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmLeave = false }) {
+                        Text(
+                            "Lieber bleiben",
+                            color = TextPrimary,
+                            fontFamily = BodyFont,
+                            fontSize = 15.sp
+                        )
+                    }
                 }
-            }
-        )
+            )
+        }
     }
 
     if (showProximityDialog) {
@@ -1003,7 +1020,7 @@ private fun LobbyCard(
                             },
                             color = TextMuted,
                             fontFamily = BodyFont,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             maxLines = 1,
                             softWrap = false,
                             overflow = TextOverflow.Ellipsis
@@ -1105,7 +1122,7 @@ private fun EventLobbyCountdownText(endsAtIso: String?) {
         text = label,
         color = TextMuted,
         fontFamily = BodyFont,
-        fontSize = 12.sp,
+        fontSize = 11.sp,
         maxLines = 1,
         softWrap = false,
         overflow = TextOverflow.Ellipsis
@@ -1117,21 +1134,21 @@ private fun parseEventEndsMs(iso: String?): Long? {
     return runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrNull()
 }
 
+/** z. B. „Event · 3t 5h 27m“, unter 1 Tag „5h 27m“, unter 1 Stunde „27m“. */
 private fun formatEventCountdown(endsAtIso: String?): String {
     val ends = parseEventEndsMs(endsAtIso.asCleanJsonString()) ?: return "Event aktiv"
     val diff = ends - System.currentTimeMillis()
     if (diff <= 0L) return "Event beendet"
-    val totalSec = diff / 1000
-    val h = totalSec / 3600
-    val m = (totalSec % 3600) / 60
-    val s = totalSec % 60
-    return if (h > 0) {
-        "Noch ${h}h ${m}m ${s}s"
-    } else if (m > 0) {
-        "Noch ${m}m ${s}s"
-    } else {
-        "Noch ${s}s"
+    val totalMin = (diff / 60_000L).coerceAtLeast(0L)
+    val days = totalMin / (60 * 24)
+    val hours = (totalMin % (60 * 24)) / 60
+    val mins = totalMin % 60
+    val body = when {
+        days >= 1L -> "${days}t ${hours}h ${mins}m"
+        hours >= 1L -> "${hours}h ${mins}m"
+        else -> "${mins}m"
     }
+    return "Event · $body"
 }
 
 @Composable
@@ -2003,7 +2020,7 @@ private fun AutoShrinkLobbyName(
     name: String,
     modifier: Modifier = Modifier
 ) {
-    var fontSize by remember(name) { mutableStateOf(22f) }
+    var fontSize by remember(name) { mutableStateOf(18f) }
     Text(
         text = name,
         color = TextPrimary,
@@ -2014,8 +2031,8 @@ private fun AutoShrinkLobbyName(
         overflow = TextOverflow.Clip,
         modifier = modifier.fillMaxWidth(),
         onTextLayout = { layout ->
-            if (layout.hasVisualOverflow && fontSize > 13f) {
-                fontSize = (fontSize - 1.5f).coerceAtLeast(13f)
+            if (layout.hasVisualOverflow && fontSize > 12f) {
+                fontSize = (fontSize - 1.2f).coerceAtLeast(12f)
             }
         }
     )

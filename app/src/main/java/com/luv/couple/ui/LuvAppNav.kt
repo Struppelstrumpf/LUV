@@ -23,8 +23,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.sp
+import android.view.WindowManager
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import androidx.compose.ui.graphics.Brush
@@ -56,6 +60,7 @@ import com.luv.couple.lock.LockDrawActivity
 import com.luv.couple.lock.LockScreenWidgetProvider
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.AchievementsBadge
+import com.luv.couple.net.EventSession
 import com.luv.couple.net.GoogleAuth
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.LuvApiException
@@ -130,6 +135,16 @@ object Routes {
 @Composable
 fun LuvAppNav() {
     val context = LocalContext.current
+    val view = LocalView.current
+    // Bildschirm bleibt an, solange die App sichtbar ist
+    DisposableEffect(view) {
+        view.keepScreenOn = true
+        val activity = context.findActivity()
+        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            view.keepScreenOn = false
+        }
+    }
     val prefs = LuvApp.instance.prefs
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
@@ -1226,25 +1241,41 @@ fun LuvAppNav() {
         }
 
         composable(Routes.MAIN) {
+            val eventsUi by EventSession.state.collectAsStateWithLifecycle()
+            val ambientDecor = eventsUi?.primaryDecor
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color(0xFF121821), BgDeep, Color(0xFF1A1220))
+                            listOf(Color(0xFF121821), BgDeep, Color(0xFF151A22))
                         )
                     )
             ) {
+                // Rosa nur oben — kein farbiger Streifen hinter der Bottom-Bar
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(AccentRose.copy(alpha = 0.18f), Color.Transparent),
-                                radius = 900f
+                        .drawBehind {
+                            drawRect(
+                                brush = Brush.radialGradient(
+                                    colors = listOf(
+                                        AccentRose.copy(alpha = 0.12f),
+                                        Color.Transparent
+                                    ),
+                                    center = Offset(size.width * 0.5f, size.height * 0.08f),
+                                    radius = size.minDimension * 0.85f
+                                )
                             )
-                        )
+                        }
                 )
+                // Seichte Ambient-Animation: Home / Sozial / Markt / Zahnrad — nicht Inventar
+                if (tab != 2) {
+                    MenuAmbientBackground(
+                        eventDecor = ambientDecor,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
                 Column(modifier = Modifier.fillMaxSize()) {
                 Box(modifier = Modifier.weight(1f)) {
                     when (tab) {

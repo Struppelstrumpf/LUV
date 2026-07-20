@@ -40,7 +40,7 @@
         android:shadowDy="2"
         android:shadowRadius="8"
         android:textColor="@color/ink_white"
-        android:textSize="22sp"
+        android:textSize="18sp"
         android:textStyle="bold" />
 
     <!-- Nachträgliches Hochzeitsbild: Bestätigen links neben 🙂 -->

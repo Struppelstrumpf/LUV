@@ -41,6 +41,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -738,19 +740,25 @@ fun MenuBackdrop(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0xFF121821), BgDeep, Color(0xFF1A1220))))
+            .background(Brush.verticalGradient(listOf(Color(0xFF121821), BgDeep, Color(0xFF151A22))))
             .statusBarsPadding()
             .then(if (includeNavigationBars) Modifier.navigationBarsPadding() else Modifier)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(AccentRose.copy(alpha = 0.18f), Color.Transparent),
-                        radius = 900f
+                .drawBehind {
+                    drawRect(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                AccentRose.copy(alpha = 0.10f),
+                                Color.Transparent
+                            ),
+                            center = Offset(size.width * 0.5f, size.height * 0.1f),
+                            radius = size.minDimension * 0.8f
+                        )
                     )
-                )
+                }
         )
         content()
     }
@@ -837,9 +845,19 @@ fun SimpleBottomBar(
 ) {
     // Home · Sozial · Inventar · Markt · Zahnrad (Konto)
     val labels = listOf("Home", "Sozial", "Inventar", "Markt", null)
+    // Volle Breite mit weichem Verlauf — keine farbige Kante über der Leiste
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.Transparent,
+                        Color(0xE0121821),
+                        Color(0xF0121821)
+                    )
+                )
+            )
             .navigationBarsPadding()
             .padding(horizontal = 12.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center

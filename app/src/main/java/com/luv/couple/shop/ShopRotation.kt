@@ -24,7 +24,10 @@ object ShopRotation {
     data class RotateResult<T>(
         val grid: List<T>,
         val preview: List<T>,
+        /** Baldigster Eintritt der Vorschau-Items (für Tab-Badge). */
         val daysUntilPreview: Int?,
+        /** Tage bis Aktivierung je Vorschau-Item (gleiche Reihenfolge wie [preview]). */
+        val previewDays: List<Int> = emptyList(),
     )
 
     fun cycleInfo(nowMs: Long = System.currentTimeMillis()): CycleInfo {
@@ -125,7 +128,7 @@ object ShopRotation {
                 }
             } else shopable
             val gridIds = grid.map { idOf(it) }.toHashSet()
-            val (preview, days) = pickPreview(
+            val (preview, days, perItem) = pickPreview(
                 pool = previewPool ?: shopable,
                 gridIds = gridIds,
                 day = day,
@@ -133,7 +136,7 @@ object ShopRotation {
                 idOf = idOf,
                 priceOf = priceOf,
             )
-            return RotateResult(grid, preview, days)
+            return RotateResult(grid, preview, days, perItem)
         }
 
         val timed = shopable.filter { (remainingOf(it) ?: 0L) > 0L }
@@ -196,7 +199,7 @@ object ShopRotation {
             rotating.isNotEmpty() -> rotating
             else -> shopable
         }
-        val (preview, days) = pickPreview(
+        val (preview, days, perItem) = pickPreview(
             pool = pool,
             gridIds = gridIds,
             day = day,
@@ -204,12 +207,12 @@ object ShopRotation {
             idOf = idOf,
             priceOf = priceOf,
         )
-        return RotateResult(grid, preview, days)
+        return RotateResult(grid, preview, days, perItem)
     }
 
     /**
      * Nächste Shop-Items, die gerade nicht im Grid sind.
-     * Unabhängig von Server-Timer vs. Client-Rotation — immer bis [previewCount] füllen.
+     * Tage = echter Offset bis zur nächsten Aktivierung je Item.
      */
     private fun <T> pickPreview(
         pool: List<T>,
@@ -218,24 +221,27 @@ object ShopRotation {
         previewCount: Int,
         idOf: (T) -> String,
         priceOf: (T) -> Int,
-    ): Pair<List<T>, Int?> {
-        if (previewCount <= 0 || pool.isEmpty()) return emptyList<T>() to null
+    ): Triple<List<T>, Int?, List<Int>> {
+        if (previewCount <= 0 || pool.isEmpty()) {
+            return Triple(emptyList(), null, emptyList())
+        }
 
         val picked = ArrayList<T>(previewCount)
+        val pickedDays = ArrayList<Int>(previewCount)
         val pickedIds = LinkedHashSet<String>()
-        var farthestOffset = 0
 
         fun tryAdd(item: T, offset: Int): Boolean {
             if (picked.size >= previewCount) return false
             val id = idOf(item)
             if (id in gridIds || id in pickedIds) return false
+            val days = offset.coerceIn(1, PREVIEW_HORIZON_DAYS)
             picked.add(item)
+            pickedDays.add(days)
             pickedIds.add(id)
-            farthestOffset = maxOf(farthestOffset, offset.coerceAtLeast(1))
             return true
         }
 
-        // 1) Items die heute nicht aktiv sind, bald schon
+        // 1) Items die heute nicht aktiv sind, bald schon (frühste zuerst)
         for (offset in 1..PREVIEW_HORIZON_DAYS) {
             if (picked.size >= previewCount) break
             val batch = pool.filter {
@@ -255,7 +261,7 @@ object ShopRotation {
             }
         }
 
-        // 2) Alles außer Grid, nach baldiger Aktivierung
+        // 2) Rest außer Grid, nach baldiger Aktivierung
         if (picked.size < previewCount) {
             val rest = pool
                 .filter { idOf(it) !in gridIds && idOf(it) !in pickedIds }
@@ -272,43 +278,35 @@ object ShopRotation {
             }
         }
 
-        // 3) Katalog winzig / alles im Grid: nächster Zyklus der günstigsten Grid-fremden,
-        // sonst aus dem Pool mit Zyklus-Länge als Offset
+        // 3) Fallback: nächster Zyklus außerhalb des Grids
         if (picked.size < previewCount) {
             val rest = pool
-                .filter { idOf(it) !in pickedIds }
+                .filter { idOf(it) !in pickedIds && idOf(it) !in gridIds }
                 .sortedWith(compareBy({ priceOf(it) }, { idOf(it) }))
             for (item in rest) {
                 if (picked.size >= previewCount) break
                 val id = idOf(item)
-                val off = if (id in gridIds || isActiveInRotation(id, day)) {
+                val off = if (isActiveInRotation(id, day)) {
                     cycleLenFor(id)
                 } else {
                     daysUntilActive(id, day)
                 }
-                // Grid-Items nur als letzter Ausweg
-                if (id in gridIds && picked.size + (rest.size - rest.indexOf(item)) > previewCount) {
-                    continue
-                }
-                if (id in gridIds) continue
                 tryAdd(item, off)
             }
         }
 
-        // 4) Wirklich nichts außerhalb? Zeige die nächsten aus dem Pool mit Zyklus-Offset
+        // 4) Wirklich nichts außerhalb? Zeige günstigste mit Zyklus-Offset
         if (picked.isEmpty() && pool.isNotEmpty()) {
             val sorted = pool.sortedWith(compareBy({ priceOf(it) }, { idOf(it) }))
             for (item in sorted) {
                 if (picked.size >= previewCount) break
                 val id = idOf(item)
                 if (id in pickedIds) continue
-                picked.add(item)
-                pickedIds.add(id)
-                farthestOffset = maxOf(farthestOffset, cycleLenFor(id))
+                tryAdd(item, cycleLenFor(id))
             }
         }
 
-        val days = if (picked.isEmpty()) null else farthestOffset.coerceIn(1, PREVIEW_HORIZON_DAYS)
-        return picked.take(previewCount) to days
+        val soonest = pickedDays.minOrNull()
+        return Triple(picked.take(previewCount), soonest, pickedDays.take(previewCount))
     }
 }

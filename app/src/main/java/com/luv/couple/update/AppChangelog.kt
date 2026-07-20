@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.23",
+            listOf(
+                "Event-Lobby: Schieberegler zum Verlassen, klarer Timer",
+                "Seichte Menü-Animationen, schnellere Lootbox, Coins-Symbol im Shop",
+            )
+        ),
+        Entry(
             "2.2.21",
             listOf(
                 "Familien-Lobbys bleiben beim Sync erhalten",

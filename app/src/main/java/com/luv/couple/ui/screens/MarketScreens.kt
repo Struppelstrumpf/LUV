@@ -1092,11 +1092,12 @@ private fun ItemShopContent(
                             )
                         }
                         val preview = rotated.preview
-                        val badge = rotated.daysUntilPreview?.let { ShopRotation.daysUntilLabel(it) }.orEmpty()
+                        val days = rotated.previewDays
                         if (preview.isNotEmpty()) {
                             ShopFeaturedRow(
                                 scale = scale,
-                                badge = badge,
+                                leftBadge = days.getOrNull(0)?.let { ShopRotation.daysUntilLabel(it) }.orEmpty(),
+                                rightBadge = days.getOrNull(1)?.let { ShopRotation.daysUntilLabel(it) }.orEmpty(),
                                 leftEmoji = preview.getOrNull(0)?.emoji,
                                 leftName = preview.getOrNull(0)?.let {
                                     it.label.ifBlank { ItemLabels.stickerLabel(it.emoji) }
@@ -1125,11 +1126,12 @@ private fun ItemShopContent(
                             )
                         }
                         val preview = rotated.preview
-                        val badge = rotated.daysUntilPreview?.let { ShopRotation.daysUntilLabel(it) }.orEmpty()
+                        val days = rotated.previewDays
                         if (preview.isNotEmpty()) {
                             ShopFeaturedRow(
                                 scale = scale,
-                                badge = badge,
+                                leftBadge = days.getOrNull(0)?.let { ShopRotation.daysUntilLabel(it) }.orEmpty(),
+                                rightBadge = days.getOrNull(1)?.let { ShopRotation.daysUntilLabel(it) }.orEmpty(),
                                 leftEmoji = preview.getOrNull(0)?.emoji,
                                 leftName = preview.getOrNull(0)?.label,
                                 leftPrice = preview.getOrNull(0)?.priceCoins,
@@ -1154,11 +1156,12 @@ private fun ItemShopContent(
                             )
                         }
                         val preview = rotated.preview
-                        val badge = rotated.daysUntilPreview?.let { ShopRotation.daysUntilLabel(it) }.orEmpty()
+                        val days = rotated.previewDays
                         if (preview.isNotEmpty()) {
                             ShopFeaturedRow(
                                 scale = scale,
-                                badge = badge,
+                                leftBadge = days.getOrNull(0)?.let { ShopRotation.daysUntilLabel(it) }.orEmpty(),
+                                rightBadge = days.getOrNull(1)?.let { ShopRotation.daysUntilLabel(it) }.orEmpty(),
                                 leftEmoji = preview.getOrNull(0)?.emoji,
                                 leftName = preview.getOrNull(0)?.let {
                                     it.label.ifBlank { ItemLabels.petLabel(it.emoji) }
@@ -1187,11 +1190,12 @@ private fun ItemShopContent(
                             )
                         }
                         val preview = rotated.preview
-                        val badge = rotated.daysUntilPreview?.let { ShopRotation.daysUntilLabel(it) }.orEmpty()
+                        val days = rotated.previewDays
                         if (preview.isNotEmpty()) {
                             ShopFeaturedRow(
                                 scale = scale,
-                                badge = badge,
+                                leftBadge = days.getOrNull(0)?.let { ShopRotation.daysUntilLabel(it) }.orEmpty(),
+                                rightBadge = days.getOrNull(1)?.let { ShopRotation.daysUntilLabel(it) }.orEmpty(),
                                 leftEmoji = preview.getOrNull(0)?.emoji,
                                 leftName = preview.getOrNull(0)?.let {
                                     it.label.ifBlank { ItemLabels.emojiLabel(it.emoji) }
@@ -1572,14 +1576,22 @@ private fun LootboxTab(
         scope.launch {
             runCatching { LuvApiClient.buyLootbox(qty) }
                 .onSuccess { result ->
-                    onRefresh()
+                    // Sofort Opening starten — kein Warten auf vollen Shop-Reload
                     val all = result.pending.ifEmpty { result.purchased }
                     val first = all.firstOrNull()
                     if (first == null) {
                         Toast.makeText(context, "Kauf fehlgeschlagen", Toast.LENGTH_SHORT).show()
                     } else {
                         beginOpening(first, all.drop(1))
+                        val n = all.size
+                        Toast.makeText(
+                            context,
+                            if (n == 1) "Lootbox gekauft" else "$n Lootboxen gekauft",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
+                    // Inventar/Coins im Hintergrund nachziehen
+                    scope.launch { runCatching { onRefresh() } }
                 }
                 .onFailure {
                     Toast.makeText(
@@ -2000,7 +2012,8 @@ private fun ThemePreviewCard(themeId: String, emoji: String, label: String) {
 @Composable
 private fun ShopFeaturedRow(
     scale: Float,
-    badge: String,
+    leftBadge: String,
+    rightBadge: String,
     leftEmoji: String?,
     leftName: String?,
     leftPrice: Int?,
@@ -2021,7 +2034,7 @@ private fun ShopFeaturedRow(
         )
         Spacer(modifier = Modifier.height(s(6.dp)))
         AnimatedContent(
-            targetState = "${leftEmoji ?: ""}|${rightEmoji ?: ""}|$badge",
+            targetState = "${leftEmoji ?: ""}|${rightEmoji ?: ""}|$leftBadge|$rightBadge",
             transitionSpec = {
                 (fadeIn() + slideInHorizontally { it / 8 }) togetherWith
                     (fadeOut() + slideOutHorizontally { -it / 8 })
@@ -2039,7 +2052,7 @@ private fun ShopFeaturedRow(
                     name = leftName,
                     price = leftPrice,
                     themeId = leftThemeId,
-                    badge = badge
+                    badge = leftBadge
                 )
                 ShopFeaturedCard(
                     modifier = Modifier.weight(1f),
@@ -2048,7 +2061,7 @@ private fun ShopFeaturedRow(
                     name = rightName,
                     price = rightPrice,
                     themeId = rightThemeId,
-                    badge = badge
+                    badge = rightBadge
                 )
             }
         }
@@ -2123,8 +2136,8 @@ private fun ShopFeaturedCard(
             Text(
                 when {
                     price == null -> ""
-                    price <= 0 -> "frei · Vorschau"
-                    else -> "$price · Vorschau"
+                    price <= 0 -> "frei"
+                    else -> "$price 🪙"
                 },
                 color = TextMuted,
                 fontFamily = BodyFont,
@@ -2226,7 +2239,7 @@ private fun ShopGridCell(
                 Column {
                     if (compareAtPrice != null && compareAtPrice > price) {
                         Text(
-                            "$compareAtPrice",
+                            "$compareAtPrice 🪙",
                             color = TextMuted,
                             fontFamily = BodyFont,
                             fontSize = 9.sp,
@@ -2237,7 +2250,7 @@ private fun ShopGridCell(
                         )
                     }
                     Text(
-                        if (price <= 0) "frei" else "$price",
+                        if (price <= 0) "frei" else "$price 🪙",
                         color = if (themeId != null) Color.White else AccentRose,
                         fontFamily = DisplayFont,
                         fontSize = 12.sp,
