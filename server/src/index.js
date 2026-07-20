@@ -2826,28 +2826,37 @@ function reconcileAbandonedLobbyOwnership(user) {
     if (!room) {
       const saved = getDb().rooms?.[code];
       if (saved && typeof saved === "object") {
-        const members = Array.isArray(saved.memberUserIds) ? saved.memberUserIds : [];
-        if (!members.includes(user.id)) {
-          delete user.hostedRooms[code];
-          dirty = true;
-          if (members.length === 0) {
-            delete getDb().rooms[code];
-          } else if (saved.hostUserId === user.id) {
-            room = hydrateRoom(code, saved);
-            rooms.set(code, room);
-            if (!promoteNextHostFromMembers(room, code)) {
-              dissolveEmptyLobby(room, code);
-            }
-          }
-        }
-        continue;
+        room = hydrateRoom(code, saved);
+        rooms.set(code, room);
+        healRoomMembership(room);
       }
+    }
+    if (!room) {
+      // Raum wirklich weg (aufgelöst) → Ownership weg
       delete user.hostedRooms[code];
       dirty = true;
       continue;
     }
+    healRoomMembership(room);
     const members = Array.isArray(room.memberUserIds) ? room.memberUserIds : [];
-    if (members.includes(user.id)) continue;
+    // Host/Ersteller zählt immer als Mitglied — nie Ownership nur wegen leerer Liste killen
+    if (
+      members.includes(user.id) ||
+      room.hostUserId === user.id ||
+      room.createdByUserId === user.id
+    ) {
+      if (!members.includes(user.id)) {
+        rememberMember(room, user.id);
+        dirty = true;
+      }
+      // Token in hostedRooms nachziehen
+      const meta = user.hostedRooms[code];
+      if (meta && typeof meta === "object" && !meta.token && room.token) {
+        meta.token = room.token;
+        dirty = true;
+      }
+      continue;
+    }
     delete user.hostedRooms[code];
     dirty = true;
     if (room.hostUserId === user.id) {
@@ -3028,7 +3037,7 @@ function publicJoinedLobbies(user) {
     return {
     code,
     name: String(meta?.name || "Lobby").slice(0, MAX_LOBBY_NAME_LENGTH),
-    token: meta?.token || null,
+    token: meta?.token || room?.token || null,
     capacity: Math.min(
       MAX_PEERS,
       Math.max(
@@ -3332,7 +3341,14 @@ function healRoomMembership(room) {
   if (!room) return false;
   const pruned = pruneUnknownMembers(room);
   const cap = healRoomCapacity(room);
-  return pruned || cap;
+  let fixed = false;
+  if (!Array.isArray(room.memberUserIds)) room.memberUserIds = [];
+  const hostId = room.hostUserId || room.createdByUserId;
+  if (hostId && typeof hostId === "string" && !room.memberUserIds.includes(hostId)) {
+    room.memberUserIds.unshift(hostId);
+    fixed = true;
+  }
+  return pruned || cap || fixed;
 }
 
 /**
@@ -4455,7 +4471,7 @@ function publicHostedLobbies(user) {
     return {
     code,
     name: String(meta?.name || "Lobby").slice(0, MAX_LOBBY_NAME_LENGTH),
-    token: meta?.token || null,
+    token: meta?.token || room?.token || null,
     capacity: Math.min(
       MAX_PEERS,
       Math.max(
