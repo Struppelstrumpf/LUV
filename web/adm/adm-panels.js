@@ -1580,21 +1580,281 @@
 
       const createBtn = $("evCreateBtn");
       if (createBtn) {
-        createBtn.onclick = async () => {
-          const title = prompt("Titel für das neue Event?", "Mein Event");
-          if (title == null) return;
-          const emoji = prompt("Emoji?", "🎉") || "🎉";
-          const month = Number(prompt("Start-Monat (1–12)?", String(new Date().getMonth() + 1)) || 1);
-          const day = Number(prompt("Start-Tag (1–31)?", "1") || 1);
+        createBtn.onclick = () => openCreateEventWizard();
+      }
+
+      function openCreateEventWizard() {
+        const now = new Date();
+        const state = {
+          viewY: now.getFullYear(),
+          viewM: now.getMonth(), // 0-based
+          start: null, // {y,m,d} m 1-based
+          end: null,
+          pick: "start", // start | end
+        };
+
+        const MONTHS_SHORT = [
+          "Jan",
+          "Feb",
+          "Mär",
+          "Apr",
+          "Mai",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Okt",
+          "Nov",
+          "Dez",
+        ];
+        const WD = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+
+        function ymdKey(p) {
+          return p ? `${p.y}-${String(p.m).padStart(2, "0")}-${String(p.d).padStart(2, "0")}` : "";
+        }
+        function fmtDe(p) {
+          if (!p) return "—";
+          return `${String(p.d).padStart(2, "0")}.${String(p.m).padStart(2, "0")}.${p.y}`;
+        }
+        function dayMs(p) {
+          return Date.UTC(p.y, p.m - 1, p.d);
+        }
+        function daysInclusive(a, b) {
+          return Math.floor((dayMs(b) - dayMs(a)) / 86400000) + 1;
+        }
+        function berlinDayStartMs(p) {
+          let utc = Date.UTC(p.y, p.m - 1, p.d, 0, 0, 0);
+          for (let i = 0; i < 6; i++) {
+            const parts = Object.fromEntries(
+              new Intl.DateTimeFormat("en-US", {
+                timeZone: "Europe/Berlin",
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+                hour: "2-digit",
+                hourCycle: "h23",
+              })
+                .formatToParts(new Date(utc))
+                .filter((x) => x.type !== "literal")
+                .map((x) => [x.type, x.value])
+            );
+            const by = Number(parts.year);
+            const bm = Number(parts.month);
+            const bd = Number(parts.day);
+            const bh = Number(parts.hour);
+            const desired = ymdKey(p);
+            const got = `${by}-${String(bm).padStart(2, "0")}-${String(bd).padStart(2, "0")}`;
+            if (got === desired && bh === 0) return utc;
+            if (got !== desired) {
+              utc += Math.round((Date.UTC(p.y, p.m - 1, p.d) - Date.UTC(by, bm - 1, bd)) / 86400000) * 86400000;
+            } else {
+              utc -= bh * 3600000;
+            }
+          }
+          return utc;
+        }
+        function berlinDayIso(p, endOfDay) {
+          const start = berlinDayStartMs(p);
+          if (endOfDay) return new Date(start + 86400000 - 1).toISOString();
+          return new Date(start).toISOString();
+        }
+
+        function syncModes() {
+          const sBtn = $("evCalModeStart");
+          const eBtn = $("evCalModeEnd");
+          if (sBtn) sBtn.classList.toggle("on", state.pick === "start");
+          if (eBtn) eBtn.classList.toggle("on", state.pick === "end");
+        }
+
+        function paintCal() {
+          const grid = document.getElementById("evCalGrid");
+          const label = document.getElementById("evCalLabel");
+          const rangeEl = document.getElementById("evCalRange");
+          const hint = document.getElementById("evCalHint");
+          const submit = document.getElementById("evCreateSubmit");
+          if (!grid || !label) return;
+
+          label.textContent = `${MONTHS_SHORT[state.viewM]} ${state.viewY}`;
+          const first = new Date(state.viewY, state.viewM, 1);
+          const startPad = (first.getDay() + 6) % 7;
+          const daysInMonth = new Date(state.viewY, state.viewM + 1, 0).getDate();
+          const cells = [];
+          for (let i = 0; i < startPad; i++) {
+            cells.push(`<span class="ev-cal-cell is-empty"></span>`);
+          }
+          const a = state.start;
+          const b = state.end || state.start;
+          const lo = a && b ? (dayMs(a) <= dayMs(b) ? a : b) : null;
+          const hi = a && b ? (dayMs(a) <= dayMs(b) ? b : a) : null;
+
+          for (let d = 1; d <= daysInMonth; d++) {
+            const p = { y: state.viewY, m: state.viewM + 1, d };
+            const key = ymdKey(p);
+            const ms = dayMs(p);
+            let cls = "ev-cal-cell";
+            if (lo && hi && ms >= dayMs(lo) && ms <= dayMs(hi)) cls += " in-range";
+            if (state.start && key === ymdKey(state.start)) cls += " is-start";
+            if (state.end && key === ymdKey(state.end)) cls += " is-end";
+            const today = new Date();
+            if (
+              p.y === today.getFullYear() &&
+              p.m === today.getMonth() + 1 &&
+              p.d === today.getDate()
+            ) {
+              cls += " is-today";
+            }
+            cells.push(
+              `<button type="button" class="${cls}" data-y="${p.y}" data-m="${p.m}" data-d="${p.d}">${d}</button>`
+            );
+          }
+          grid.innerHTML = WD.map((w) => `<span class="ev-cal-wd">${w}</span>`).join("") + cells.join("");
+
+          if (rangeEl) {
+            if (state.start && state.end) {
+              const from = dayMs(state.start) <= dayMs(state.end) ? state.start : state.end;
+              const to = dayMs(state.start) <= dayMs(state.end) ? state.end : state.start;
+              const days = daysInclusive(from, to);
+              rangeEl.innerHTML = `<strong>${fmtDe(from)}</strong> → <strong>${fmtDe(to)}</strong> <span class="muted">(${days} Tag${days === 1 ? "" : "e"})</span>`;
+            } else if (state.start) {
+              rangeEl.innerHTML = `<strong>${fmtDe(state.start)}</strong> → <span class="muted">Letzten Tag tippen</span>`;
+            } else {
+              rangeEl.innerHTML = `<span class="muted">Noch kein Zeitraum gewählt</span>`;
+            }
+          }
+          if (hint) {
+            hint.textContent =
+              state.pick === "start"
+                ? "Tippe den ersten Tag des Events."
+                : "Tippe den letzten Tag des Events.";
+          }
+          if (submit) submit.disabled = !(state.start && state.end);
+          syncModes();
+
+          grid.querySelectorAll("button.ev-cal-cell").forEach((btn) => {
+            btn.onclick = () => {
+              const p = {
+                y: Number(btn.getAttribute("data-y")),
+                m: Number(btn.getAttribute("data-m")),
+                d: Number(btn.getAttribute("data-d")),
+              };
+              if (state.pick === "start" || !state.start) {
+                state.start = p;
+                state.end = null;
+                state.pick = "end";
+              } else {
+                if (dayMs(p) < dayMs(state.start)) {
+                  state.end = state.start;
+                  state.start = p;
+                } else {
+                  state.end = p;
+                }
+                state.pick = "start";
+              }
+              paintCal();
+            };
+          });
+        }
+
+        openModal(
+          `
+          <h3 style="font-family:var(--display);margin:0 0 0.35rem">Neues Event</h3>
+          <p class="help" style="margin:0 0 0.85rem">Titel wählen und Zeitraum im Kalender tippen (erster und letzter Tag).</p>
+          <form id="evCreateForm" class="ev-create-form">
+            <div class="grid-2">
+              <label class="field">Titel
+                <input name="title" maxlength="60" value="Mein Event" required autocomplete="off" />
+              </label>
+              <label class="field">Emoji
+                <input name="emoji" maxlength="8" value="🎉" autocomplete="off" />
+              </label>
+            </div>
+            <div class="ev-cal">
+              <div class="ev-cal-toolbar">
+                <button type="button" class="btn ghost" id="evCalPrev" aria-label="Vorheriger Monat">‹</button>
+                <div class="ev-cal-month" id="evCalLabel"></div>
+                <button type="button" class="btn ghost" id="evCalNext" aria-label="Nächster Monat">›</button>
+              </div>
+              <div class="ev-cal-pick">
+                <button type="button" class="ev-cal-mode on" id="evCalModeStart" data-mode="start">Erster Tag</button>
+                <button type="button" class="ev-cal-mode" id="evCalModeEnd" data-mode="end">Letzter Tag</button>
+              </div>
+              <p class="help" id="evCalHint" style="margin:0.35rem 0 0.5rem"></p>
+              <div class="ev-cal-grid" id="evCalGrid"></div>
+              <div class="ev-cal-range" id="evCalRange"></div>
+            </div>
+            <div class="actions" style="margin-top:1rem">
+              <button type="submit" class="btn" id="evCreateSubmit" disabled>Event anlegen</button>
+              <button type="button" class="btn ghost" id="cancelModal">Abbrechen</button>
+            </div>
+            <p class="help" id="evCreateErr" hidden style="color:#f88;margin:0.5rem 0 0"></p>
+          </form>`,
+          true
+        );
+
+        $("cancelModal").onclick = closeModal;
+        $("evCalPrev").onclick = () => {
+          state.viewM -= 1;
+          if (state.viewM < 0) {
+            state.viewM = 11;
+            state.viewY -= 1;
+          }
+          paintCal();
+        };
+        $("evCalNext").onclick = () => {
+          state.viewM += 1;
+          if (state.viewM > 11) {
+            state.viewM = 0;
+            state.viewY += 1;
+          }
+          paintCal();
+        };
+        $("evCalModeStart").onclick = () => {
+          state.pick = "start";
+          paintCal();
+        };
+        $("evCalModeEnd").onclick = () => {
+          state.pick = state.start ? "end" : "start";
+          paintCal();
+        };
+
+        paintCal();
+
+        $("evCreateForm").onsubmit = async (e) => {
+          e.preventDefault();
+          const errEl = $("evCreateErr");
+          if (errEl) {
+            errEl.hidden = true;
+            errEl.textContent = "";
+          }
+          if (!state.start || !state.end) return;
+          const lo = dayMs(state.start) <= dayMs(state.end) ? state.start : state.end;
+          const hi = dayMs(state.start) <= dayMs(state.end) ? state.end : state.start;
+          const span = daysInclusive(lo, hi);
+          if (span > 31) {
+            if (errEl) {
+              errEl.hidden = false;
+              errEl.textContent = "Maximal 31 Tage.";
+            }
+            return;
+          }
+          const durationDays = Math.max(1, span);
+          const form = e.target;
+          const title = String(form.title?.value || "").trim() || "Neues Event";
+          const emoji = String(form.emoji?.value || "").trim() || "🎉";
+          const submit = $("evCreateSubmit");
+          if (submit) submit.disabled = true;
           try {
             const res = await api("/admin/events", {
               method: "POST",
               body: JSON.stringify({
-                title: String(title).trim() || "Neues Event",
-                emoji: String(emoji).trim() || "🎉",
-                month,
-                day,
-                durationDays: 3,
+                title,
+                emoji,
+                month: lo.m,
+                day: lo.d,
+                durationDays,
+                absolute: true,
+                absoluteFrom: berlinDayIso(lo, false),
+                absoluteUntil: berlinDayIso(hi, true),
                 rewardCoinsPerCollect: 2,
                 collectTarget: 3,
                 milestoneBonusCoins: 5,
@@ -1608,10 +1868,14 @@
               overview.year = res.year.year || overview.year;
             }
             selectedId = res.event?.id || selectedId;
-            alert("Event angelegt — rechts bearbeiten und speichern.");
+            closeModal();
             paint();
           } catch (err) {
-            alert(err?.message || "Anlegen fehlgeschlagen");
+            if (errEl) {
+              errEl.hidden = false;
+              errEl.textContent = err?.message || "Anlegen fehlgeschlagen";
+            }
+            if (submit) submit.disabled = false;
           }
         };
       }
