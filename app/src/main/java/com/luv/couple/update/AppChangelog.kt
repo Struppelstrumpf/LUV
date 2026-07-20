@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.1.9",
+            listOf(
+                "Marktplatz: Itemname und „DEINS“ bleiben in einer Zeile",
+            )
+        ),
+        Entry(
             "2.1.8",
             listOf(
                 "Geänderte Item-Namen aus dem Admin greifen jetzt zuverlässig",

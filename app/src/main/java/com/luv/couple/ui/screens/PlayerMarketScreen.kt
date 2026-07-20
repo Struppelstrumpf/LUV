@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import com.luv.couple.ui.ItemGlyph
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -1102,23 +1103,29 @@ private fun MarketItemRow(
             ItemGlyph(id = item.emoji, fontSize = ui.ts(22.sp))
         }
         Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ui.s(6.dp))
+            ) {
                 Text(
                     marketDisplayLabel(item.kind, item.itemId, item.label),
                     color = MarketBrown,
                     fontFamily = DisplayFont,
                     fontSize = ui.ts(14.sp),
-                    softWrap = true,
+                    softWrap = false,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
                 if (item.ownedByViewer) {
-                    Spacer(modifier = Modifier.width(ui.s(6.dp)))
                     Text(
                         "DEINS",
                         color = MarketGold,
                         fontFamily = DisplayFont,
                         fontSize = ui.ts(9.sp),
                         softWrap = false,
+                        maxLines = 1,
                         modifier = Modifier
                             .clip(RoundedCornerShape(ui.s(4.dp)))
                             .background(MarketGold.copy(0.15f))
