@@ -1527,7 +1527,10 @@ data class AccountInfo(
     val lastDailyGrantDate: String? = null,
     val isStaff: Boolean = false,
     val permissions: Set<String> = emptySet(),
-    val googleEmail: String? = null
+    val googleEmail: String? = null,
+    val isTrial: Boolean = false,
+    val trialRoomCode: String? = null,
+    val trialDrawUntil: Long? = null
 ) {
     val isAdmin: Boolean get() = role == "admin"
     val isModerator: Boolean get() = role == "mod"
@@ -1553,6 +1556,9 @@ data class AccountInfo(
         .put("isStaff", isStaff || isAdmin || isModerator)
         .put("permissions", org.json.JSONArray(permissions.toList()))
         .put("googleEmail", googleEmail)
+        .put("isTrial", isTrial)
+        .put("trialRoomCode", trialRoomCode)
+        .put("trialDrawUntil", trialDrawUntil ?: JSONObject.NULL)
         .toString()
 
     companion object {
@@ -1602,7 +1608,10 @@ data class AccountInfo(
                 lastDailyGrantDate = o.optString("lastDailyGrantDate").takeIf { it.isNotBlank() },
                 isStaff = staff,
                 permissions = perms,
-                googleEmail = o.optString("googleEmail").takeIf { it.isNotBlank() && it != "null" }
+                googleEmail = o.optString("googleEmail").takeIf { it.isNotBlank() && it != "null" },
+                isTrial = o.optBoolean("isTrial", false),
+                trialRoomCode = o.optString("trialRoomCode").takeIf { it.isNotBlank() && it != "null" },
+                trialDrawUntil = o.optLong("trialDrawUntil", 0L).takeIf { it > 0L }
             )
         }
     }

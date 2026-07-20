@@ -358,7 +358,11 @@ class DrawingView @JvmOverloads constructor(
         }
     }
 
+    /** Probezeichnen abgelaufen / Google-Gate */
+    var inputBlocked: Boolean = false
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (inputBlocked) return true
         val w = width.toFloat().coerceAtLeast(1f)
         val h = height.toFloat().coerceAtLeast(1f)
         val normalized = StrokePoint(

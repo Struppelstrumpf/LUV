@@ -38,6 +38,8 @@ data class RoomSession(
     val eventId: String? = null,
     val eventPrompt: String? = null,
     val eventEndsAt: String? = null,
+    val trialDrawUntil: Long? = null,
+    val sessionToken: String? = null,
 )
 
 data class LootboxResult(
@@ -3374,6 +3376,26 @@ object LuvApiClient {
         executeRoom(request)
     }
 
+    /** 60s Probezeichnen ohne Google — nur diese Lobby. */
+    suspend fun trialJoinRoom(rawCode: String, installId: String? = null): RoomSession =
+        withContext(Dispatchers.IO) {
+            val code = normalizeCode(rawCode)
+                ?: throw LuvApiException("Ungültiger Link oder Code.")
+            val body = JSONObject()
+                .apply {
+                    if (!installId.isNullOrBlank()) put("installId", installId)
+                }
+                .toString()
+                .toRequestBody(jsonMedia)
+            val request = Request.Builder()
+                .url("${baseUrl()}/v1/rooms/$code/trial-join")
+                .post(body)
+                .header("X-Luv-Version-Code", BuildConfig.VERSION_CODE.toString())
+                .header("X-Luv-Version-Name", BuildConfig.VERSION_NAME)
+                .build()
+            executeRoom(request)
+        }
+
     suspend fun roomPreview(rawCode: String): RoomPreview = withContext(Dispatchers.IO) {
         val code = normalizeCode(rawCode)
             ?: throw LuvApiException("Ungültiger Link oder Code.")
@@ -3612,12 +3634,18 @@ object LuvApiClient {
             parsed.optJSONObject("user")?.let { userJson ->
                 AccountSession.setAccount(AccountInfo.fromApi(userJson))
             }
+            val sess = parsed.optString("sessionToken").takeIf { it.isNotBlank() }
+                ?: parsed.optString("trialToken").takeIf { it.isNotBlank() }
+            if (!sess.isNullOrBlank()) {
+                sessionToken = sess
+            }
             val code = parsed.getString("code")
             val suggested = if (parsed.has("suggestedColorIndex")) {
                 parsed.optInt("suggestedColorIndex", -1).takeIf { it >= 0 }
             } else {
                 null
             }
+            val trialUntil = parsed.optLong("trialDrawUntil", 0L).takeIf { it > 0L }
             return RoomSession(
                 code = code,
                 token = parsed.optString("token").ifBlank {
@@ -3642,6 +3670,8 @@ object LuvApiClient {
                 eventId = parsed.optCleanString("eventId"),
                 eventPrompt = parsed.optCleanString("eventPrompt"),
                 eventEndsAt = parsed.optCleanString("eventEndsAt"),
+                trialDrawUntil = trialUntil,
+                sessionToken = sess,
             )
         }
     }

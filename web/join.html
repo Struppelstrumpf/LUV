@@ -3,87 +3,21 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>LUV — jemand will mit dir verbunden sein</title>
-  <meta name="description" content="Jemand möchte mit dir auf LUV zeichnen — live, nah, auf dem Sperrbildschirm. Nur für euch." />
-  <meta name="theme-color" content="#0B0E14" />
-  <meta property="og:type" content="website" />
-  <meta property="og:site_name" content="LUV" />
-  <meta property="og:title" content="LUV — jemand will mit dir verbunden sein" />
-  <meta property="og:description" content="Ein Moment nur für euch: gemeinsam zeichnen, live auf dem Sperrbildschirm." />
-  <meta property="og:image" content="https://reineke.pro/downloads/luv/og.jpg?v=1813" />
-  <meta property="og:image:type" content="image/jpeg" />
-  <meta property="og:image:width" content="1200" />
-  <meta property="og:image:height" content="1200" />
-  <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="LUV — jemand will mit dir verbunden sein" />
-  <meta name="twitter:description" content="Ein Moment nur für euch: gemeinsam zeichnen, live auf dem Sperrbildschirm." />
-  <meta name="twitter:image" content="https://reineke.pro/downloads/luv/og.jpg?v=1813" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/luv/styles.css" />
-  <style>
-    .join-stage { min-height: 100dvh; display: grid; place-content: center; padding: 2rem 1.25rem; text-align: center; }
-    .join-stage .brand { font-family: Fraunces, serif; font-size: clamp(3rem, 10vw, 5rem); letter-spacing: 0.12em; margin: 0; color: #f4f1ec; }
-    .join-stage .brand .c-l { color: #00b7e4; }
-    .join-stage .brand .c-u {
-      display: inline-block;
-      background: linear-gradient(90deg, #00b7e4 0%, #c218a8 100%);
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-      -webkit-text-fill-color: transparent;
-    }
-    .join-stage .brand .c-v { color: #c218a8; }
-    .join-stage .headline { font-family: Fraunces, serif; font-weight: 500; font-size: clamp(1.4rem, 4vw, 2rem); margin: 1rem 0 0.5rem; }
-    .join-stage .lede { opacity: 0.72; max-width: 28rem; margin: 0 auto 1.75rem; line-height: 1.5; }
-    .join-stage .code { font-family: Outfit, sans-serif; font-weight: 600; letter-spacing: 0.08em; opacity: 0.9; margin-bottom: 1.5rem; }
-    .join-stage .cta-row { display: flex; flex-direction: column; gap: 0.85rem; align-items: center; }
-    .join-stage .download { text-decoration: none; }
-  </style>
-</head>
-<body>
-  <div class="atmosphere" aria-hidden="true">
-    <div class="wash wash-a"></div>
-    <div class="wash wash-b"></div>
-    <div class="grain"></div>
-  </div>
-  <main class="join-stage">
-    <p class="brand" aria-label="LUV"><span class="c-l">L</span><span class="c-u">U</span><span class="c-v">V</span></p>
-    <h1 class="headline">Jemand denkt an dich.</h1>
-    <p class="lede">Öffne die Einladung — und teilt denselben Moment auf dem Sperrbildschirm. Nah. Live. Nur für euch.</p>
-    <p class="code" id="codeLabel">…</p>
-    <div class="cta-row">
-      <a class="download" id="openApp" href="#">
-        <span class="download-label">Jetzt verbinden</span>
-        <span class="download-meta">Einladung öffnen</span>
-      </a>
-      <a class="download download-play" href="https://play.google.com/store/apps/details?id=com.luv.couple" target="_blank" rel="noopener noreferrer" style="opacity:.9">
-        <span class="play-ico" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="26" height="26" focusable="false">
-            <path fill="#EA4335" d="M3.6 2.2 13.5 12 3.6 21.8c-.5-.3-.8-.9-.8-1.5V3.7c0-.6.3-1.2.8-1.5z"/>
-            <path fill="#FBBC04" d="m13.5 12 2.9-2.9 4.2 2.4c.7.4.7 1.4 0 1.8l-4.2 2.4L13.5 12z"/>
-            <path fill="#4285F4" d="M13.5 12 3.6 2.2c.3-.2.7-.3 1.1-.1l11.7 6.7L13.5 12z"/>
-            <path fill="#34A853" d="M13.5 12 16.4 14.9 4.7 21.6c-.4.2-.8.1-1.1-.1L13.5 12z"/>
-          </svg>
-        </span>
-        <span class="download-text">
-          <span class="download-label">Auf Play Store downloaden</span>
-          <span class="download-meta">Android · installieren</span>
-        </span>
-      </a>
-    </div>
-  </main>
+  <title>LUV — Einladung</title>
+  <meta http-equiv="refresh" content="0;url=https://reineke.pro/luv/" />
   <script>
     (function () {
       var parts = location.pathname.split("/").filter(Boolean);
       var code = (parts[parts.length - 1] || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-      if (!code || code === "J") code = "";
-      document.getElementById("codeLabel").textContent = code ? ("LUV-" + code) : "Kein Code";
-      var deep = code ? ("luv://join/" + code) : "https://reineke.pro/luv/";
-      document.getElementById("openApp").href = deep;
-      if (code) setTimeout(function () { window.location.href = deep; }, 400);
+      if (code && code !== "J") {
+        location.replace("https://reineke.pro/luv/j/" + code);
+      } else {
+        location.replace("https://reineke.pro/luv/");
+      }
     })();
   </script>
+</head>
+<body>
+  <p>Weiterleitung zur Einladung…</p>
 </body>
 </html>

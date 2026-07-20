@@ -21,8 +21,8 @@ android {
         applicationId = "com.luv.couple"
         minSdk = 28
         targetSdk = 35
-        versionCode = 355
-        versionName = "2.2.32"
+        versionCode = 356
+        versionName = "2.2.33"
 
         // Hetzner/API-URL hier oder in gradle.properties setzen:
         // luv.api.baseUrl=https://luv.deinedomain.de
@@ -100,5 +100,6 @@ dependencies {
     implementation("com.android.billingclient:billing-ktx:7.1.1")
     implementation("com.google.android.play:app-update-ktx:2.1.0")
     implementation("com.google.android.play:integrity:1.4.0")
+    implementation("com.android.installreferrer:installreferrer:2.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

@@ -5,10 +5,14 @@ import android.graphics.Bitmap
 import android.util.Base64
 import com.luv.couple.LuvApp
 import com.luv.couple.data.Lobby
-import com.luv.couple.net.CanvasMemory
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.notify.LuvAlertNotifier
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -17,13 +21,18 @@ import java.io.ByteArrayOutputStream
 /**
  * Speichert ein Abbild der Leinwand auf dem Server und prüft
  * freigegebene 24h-Erinnerungen nach langer Inaktivität.
+ * Snapshots auch für Invite-Landing (öffentliches Vorschaubild).
  */
 object CanvasMemoryKeeper {
     private val uploadMutex = Mutex()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var debounceJob: Job? = null
+    private var lastUploadAt = 0L
 
     suspend fun uploadSnapshot(lobby: Lobby) = withContext(Dispatchers.IO) {
         uploadMutex.withLock {
             runCatching {
+                if (LuvApiClient.sessionToken.isNullOrBlank()) return@runCatching
                 val bg = CanvasStore.backgroundFor(CanvasStore.cachedColorIndex)
                 val bitmap = CanvasStore.renderBitmap(720, 1280, bg, lobby.id)
                 val stream = ByteArrayOutputStream()
@@ -31,7 +40,21 @@ object CanvasMemoryKeeper {
                 val b64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
                 LuvApiClient.uploadCanvasSnapshot(lobby.code, lobby.token, b64)
                 LuvApiClient.touchCanvas(lobby.code, lobby.token)
+                lastUploadAt = System.currentTimeMillis()
             }
+        }
+    }
+
+    /** Nach Strichen: Snapshot verzögert hochladen (Invite-Preview aktuell halten). */
+    fun scheduleUploadForActiveLobby(delayMs: Long = 4_500L) {
+        debounceJob?.cancel()
+        debounceJob = scope.launch {
+            delay(delayMs)
+            if (System.currentTimeMillis() - lastUploadAt < 3_000L) return@launch
+            val lobbyId = CanvasStore.activeLobbyId.value ?: return@launch
+            val lobby = LuvApp.instance.prefs.snapshot().lobbies
+                .firstOrNull { it.id == lobbyId } ?: return@launch
+            uploadSnapshot(lobby)
         }
     }
 
@@ -56,7 +79,6 @@ object CanvasMemoryKeeper {
                     mem.imageUrl
                 )
             }
-            // Pro Lobby auch einzeln prüfen (falls /me/memories leer, lokal aber Lobby da)
             for (lobby in snap.lobbies) {
                 val mem = LuvApiClient.fetchRoomMemory(lobby.code, lobby.token) ?: continue
                 if (prefs.wasMemorySeen(mem.code, mem.releasedAt)) continue

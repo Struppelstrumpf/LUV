@@ -922,6 +922,16 @@ class PairConnectionService : Service() {
                     )
                     return
                 }
+                "trial_expired" -> {
+                    AccountSession.emitTrialExpired(json.optLong("trialDrawUntil", 0L))
+                    AccountSession.emitEconomyBlock(
+                        json.optString(
+                            "message",
+                            "Probezeit vorbei — melde dich mit Google an, um weiterzumalen."
+                        )
+                    )
+                    return
+                }
                 "economy_ok" -> {
                     val userJson = json.optJSONObject("user")
                     if (userJson != null) {

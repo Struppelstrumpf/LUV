@@ -49,6 +49,9 @@ class LuvApp : Application() {
             delay(4_000)
             CanvasMemoryKeeper.checkAndNotify(this@LuvApp)
         }
+        appScope.launch {
+            runCatching { com.luv.couple.net.InstallReferrerJoin.captureOnce(this@LuvApp) }
+        }
     }
 
     private fun createNotificationChannel() {

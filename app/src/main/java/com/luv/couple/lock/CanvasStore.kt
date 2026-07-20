@@ -499,7 +499,7 @@ object CanvasStore {
                 PairProtocol.encode(PairMessage.StrokeMsg(stroke)),
                 id
             )
-            // Widget-Update läuft debounced über bump() — nicht synchron auf dem UI-Thread
+            CanvasMemoryKeeper.scheduleUploadForActiveLobby()
         }
     }
 
@@ -548,6 +548,7 @@ object CanvasStore {
                 PairProtocol.encode(PairMessage.StrokeMsg(stroke)),
                 lobby
             )
+            CanvasMemoryKeeper.scheduleUploadForActiveLobby()
         }
         return stroke
     }
@@ -592,6 +593,7 @@ object CanvasStore {
                 PairProtocol.encode(PairMessage.StrokeMsg(stroke)),
                 lobby
             )
+            CanvasMemoryKeeper.scheduleUploadForActiveLobby()
         }
         return stroke
     }

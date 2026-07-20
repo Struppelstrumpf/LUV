@@ -22,6 +22,7 @@ const shopCatalog = require("./shop_catalog");
 const petImages = require("./pet_images");
 const playBilling = require("./play_billing");
 const playIntegrity = require("./play_integrity");
+const inviteTrial = require("./invite_trial");
 const itemTrade = require("./item_trade");
 const itemLabels = require("./item_labels");
 const notifyPhrases = require("./notify_phrases");
@@ -3484,6 +3485,11 @@ function publicRoom(room, code) {
   const roster = roomRosterAll(room);
   const online = roster.filter((m) => m.online).length;
   const peak = Math.max(1, Number(room.peakPeers) || 1, online);
+  const hasSnap = inviteTrial.hasInviteSnapshot(SNAPSHOT_DIR, code);
+  const hasDrawing =
+    hasSnap ||
+    (Array.isArray(room.strokes) && room.strokes.length > 0) ||
+    Number(room.lastCanvasAt) > 0;
   return {
     code,
     name: room.name || "Lobby",
@@ -3506,6 +3512,9 @@ function publicRoom(room, code) {
     eventPrompt: room.eventPrompt || null,
     eventEndsAt: room.eventEndsAt || null,
     invitesAllowed: room.invitesAllowed !== false,
+    hasDrawing: Boolean(hasDrawing),
+    inviteImageUrl: hasSnap ? `/v1/rooms/${code}/invite-image` : null,
+    inviteBlurb: invitePublicBlurb(room, room.hostNickname || "Host"),
     ...inviteFor(code),
   };
 }
@@ -3631,6 +3640,7 @@ function syncCoinTotal(user) {
  */
 function ensureDailyGrant(user) {
   if (!user) return false;
+  if (user.isTrial) return false;
   ensureCoinBuckets(user);
   const day = todayKey();
   if (user.lastDailyGrantDate === day) {
@@ -4018,6 +4028,9 @@ function publicUser(user) {
     dailyGrantedJustNow: Boolean(dailyGrantedJustNow),
     googleLinked: Boolean(user.googleSub),
     pendingLootboxes: pendingLootboxPublic(user).length,
+    isTrial: Boolean(user.isTrial),
+    trialRoomCode: user.isTrial ? user.trialRoomCode || null : null,
+    trialDrawUntil: user.isTrial ? Number(user.trialDrawUntil) || 0 : null,
   };
 }
 
@@ -4657,7 +4670,7 @@ function authUser(req) {
   return { user, token, sessionKind: session.kind === "staff" ? "staff" : "app" };
 }
 
-function requireAuth(req, res) {
+function requireAuth(req, res, opts = {}) {
   const ctx = authUser(req);
   if (!ctx) {
     res.status(401).json({ error: "unauthorized" });
@@ -4667,6 +4680,15 @@ function requireAuth(req, res) {
     res.status(403).json({
       error: "banned",
       message: "Dieses Konto ist gesperrt.",
+    });
+    return null;
+  }
+  if (ctx.user.isTrial && !opts.allowTrial) {
+    res.status(403).json({
+      error: "trial_login_required",
+      message: "Bitte mit Google anmelden, um weiterzumachen.",
+      trialDrawUntil: Number(ctx.user.trialDrawUntil) || null,
+      trialRoomCode: ctx.user.trialRoomCode || null,
     });
     return null;
   }
@@ -5143,6 +5165,18 @@ function userFromSessionToken(sessionToken) {
 
 /** First draw in a lobby today: free slot or 1 coin. */
 function consumeDrawSession(user, lobbyCode) {
+  if (user?.isTrial) {
+    const roomOk =
+      String(user.trialRoomCode || "").toUpperCase() ===
+      String(lobbyCode || "").toUpperCase();
+    if (!roomOk) {
+      return { ok: false, error: "trial_room" };
+    }
+    if (Date.now() > (Number(user.trialDrawUntil) || 0)) {
+      return { ok: false, error: "trial_expired" };
+    }
+    return { ok: true, charged: false, free: true, trial: true };
+  }
   const day = todayKey();
   if (!user.drawLocks) user.drawLocks = {};
   if (!user.sessionsByDay) user.sessionsByDay = {};
@@ -6504,6 +6538,30 @@ app.post("/v1/auth/google", async (req, res) => {
     authed.user.googleSub = profile.sub;
     authed.user.googleEmail = profile.email;
     applySuperAdmin(authed.user);
+    // Trial → echtes Konto: Probezeichnen-Flags weg, Start-Coins falls leer
+    if (authed.user.isTrial) {
+      delete authed.user.isTrial;
+      delete authed.user.trialRoomCode;
+      delete authed.user.trialDrawUntil;
+      ensureCoinBuckets(authed.user);
+      if ((Number(authed.user.coins) || 0) < 1) {
+        authed.user.dailyBalance = STARTING_COINS;
+        syncCoinTotal(authed.user);
+        db.ledger.push({
+          id: newId("led"),
+          userId: authed.user.id,
+          delta: STARTING_COINS,
+          reason: "signup_grant",
+          refId: null,
+          at: Date.now(),
+          balance: authed.user.coins,
+          note: "trial_upgrade",
+        });
+      }
+      if (!authed.user.nickname || authed.user.nickname === "Gast") {
+        authed.user.nickname = "Luv";
+      }
+    }
     // Nickname bewusst nicht aus Google übernehmen — Nutzer wählt selbst.
     user = authed.user;
     linked = true;
@@ -6768,7 +6826,7 @@ app.put("/v1/me/settings", (req, res) => {
 });
 
 app.get("/v1/me", (req, res) => {
-  const ctx = requireAuth(req, res);
+  const ctx = requireAuth(req, res, { allowTrial: true });
   if (!ctx) return;
   if (ctx.decoy) {
     return res.json({
@@ -12272,7 +12330,7 @@ app.post("/v1/rooms/:code/slots", (req, res) => {
 
 /** Verlassen ohne die Lobby für andere zu zerstören — Ownership des Leavers immer weg. */
 app.post("/v1/rooms/:code/leave", (req, res) => {
-  const ctx = requireAuth(req, res);
+  const ctx = requireAuth(req, res, { allowTrial: true });
   if (!ctx) return;
   const code = String(req.params.code || "")
     .toUpperCase()
@@ -12708,20 +12766,156 @@ app.post("/v1/rooms/:code/join", (req, res) => {
   });
 });
 
-app.get("/v1/rooms/:code/preview", (req, res) => {
-  const code = String(req.params.code || "")
+function loadRoomForInvite(code) {
+  const clean = String(code || "")
     .toUpperCase()
-    .replace(/^LUV-/, "");
-  let room = rooms.get(code);
+    .replace(/^LUV-/, "")
+    .replace(/[^A-Z0-9]/g, "");
+  if (!clean) return { code: "", room: null };
+  let room = rooms.get(clean);
   if (!room) {
-    const saved = getDb().rooms?.[code];
+    const saved = getDb().rooms?.[clean];
     if (saved) {
-      room = hydrateRoom(code, saved);
-      rooms.set(code, room);
+      room = hydrateRoom(clean, saved);
+      rooms.set(clean, room);
     }
   }
-  if (!room) return res.status(404).json({ error: "room_not_found", message: "Lobby nicht gefunden." });
+  if (room && !Array.isArray(room.strokes)) {
+    try {
+      room.strokes = loadRoomStrokes(clean);
+    } catch {
+      room.strokes = [];
+    }
+  }
+  return { code: clean, room };
+}
+
+app.get("/v1/rooms/:code/preview", (req, res) => {
+  const { code, room } = loadRoomForInvite(req.params.code);
+  if (!room) {
+    return res.status(404).json({ error: "room_not_found", message: "Lobby nicht gefunden." });
+  }
   return res.json(publicRoom(room, code));
+});
+
+/** Öffentliches Lobby-Vorschaubild für Invite-Landing (Snapshot). */
+app.get("/v1/rooms/:code/invite-image", (req, res) => {
+  const ip = clientIp(req);
+  if (!rateLimit(`invite_image:${ip || "x"}`, 120, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: "rate_limited" });
+  }
+  const { code, room } = loadRoomForInvite(req.params.code);
+  if (!room) return res.status(404).end();
+  if (room.invitesAllowed === false) return res.status(404).end();
+  const file = inviteTrial.snapshotFile(SNAPSHOT_DIR, code);
+  if (!fs.existsSync(file)) return res.status(404).end();
+  res.setHeader("Cache-Control", "public, max-age=60");
+  res.type("png");
+  return fs.createReadStream(file).pipe(res);
+});
+
+/**
+ * Probezeichnen ohne Google — nur diese Lobby, 60 Sekunden.
+ * Body optional: { installId? }
+ */
+app.post("/v1/rooms/:code/trial-join", (req, res) => {
+  const ip = clientIp(req);
+  if (!rateLimit(`trial_join_ip:${ip || "x"}`, 8, 60 * 60 * 1000)) {
+    return res.status(429).json({
+      error: "rate_limited",
+      message: "Zu viele Probe-Zugänge. Bitte später erneut oder mit Google anmelden.",
+    });
+  }
+  const installId = String(req.body?.installId || "").trim().slice(0, 80);
+  if (installId) {
+    if (!rateLimit(`trial_join_install:${installId}`, 4, 60 * 60 * 1000)) {
+      return res.status(429).json({
+        error: "rate_limited",
+        message: "Probezeichnen auf diesem Gerät schon genutzt. Bitte mit Google anmelden.",
+      });
+    }
+  }
+  const { code, room } = loadRoomForInvite(req.params.code);
+  if (!room) {
+    return res.status(404).json({
+      error: "room_not_found",
+      message: "Lobby nicht gefunden. Bitte den Link erneut öffnen.",
+    });
+  }
+  if (room.invitesAllowed === false) {
+    return res.status(403).json({
+      error: "invites_closed",
+      message: "Einladungen sind für diese Lobby geschlossen.",
+    });
+  }
+  if (room.isWedding) {
+    return res.status(403).json({
+      error: "wedding_locked",
+      message: "Nur das Brautpaar darf die Hochzeitsleinwand betreten.",
+    });
+  }
+  if (room.eventId) {
+    return res.status(403).json({
+      error: "event_lobby_solo",
+      message: "Event-Lobbys sind Solo — keine Einladungen.",
+    });
+  }
+  healRoomMembership(room);
+  const capacity = roomCapacity(room);
+  const seatsTaken = Math.max(uniqueConnectedCount(room), roomMemberCount(room));
+  if (seatsTaken >= capacity) {
+    return res.status(409).json({
+      error: "room_full",
+      message: "Lobby ist voll.",
+    });
+  }
+
+  const db = getDb();
+  const drawUntil = Date.now() + inviteTrial.TRIAL_DRAW_MS;
+  const user = {
+    id: newId("u"),
+    secretHash: hashSecret(`trial:${code}:${crypto.randomBytes(16).toString("hex")}`),
+    installIdHash: installId ? hashSecret(installId) : null,
+    nickname: "Gast",
+    paidCoins: 0,
+    dailyBalance: 0,
+    coins: 0,
+    role: "user",
+    lastDailyGrantDate: todayKey(),
+    sessionsByDay: {},
+    drawLocks: {},
+    createdAt: Date.now(),
+    googleSub: null,
+    googleEmail: null,
+    signupIp: ip,
+    hostedRooms: {},
+    joinedRooms: {},
+    isTrial: true,
+    trialRoomCode: code,
+    trialDrawUntil: drawUntil,
+  };
+  db.users[user.id] = user;
+  rememberMember(room, user.id);
+  healRoomMembership(room);
+  cancelEmptyFreeLobbyTimer(code);
+  touchRoom(room);
+  persistRooms();
+  const sessionToken = createSession(user.id, Math.max(inviteTrial.TRIAL_DRAW_MS * 30, 2 * 60 * 60 * 1000));
+  const isHost = false;
+  const suggestedColorIndex = assignRoomColor(room, user.id, isHost);
+  scheduleSave();
+  const pub = publicRoom(room, code);
+  return res.json({
+    ok: true,
+    sessionToken,
+    trialToken: sessionToken,
+    drawUntilMs: inviteTrial.TRIAL_DRAW_MS,
+    trialDrawUntil: drawUntil,
+    token: room.token,
+    suggestedColorIndex,
+    user: publicUser(user),
+    ...pub,
+  });
 });
 
 function escapeHtml(value) {
@@ -13176,146 +13370,34 @@ function serveLandingHtml(req, res) {
 app.get("/", serveLandingHtml);
 app.get("/landing", serveLandingHtml);
 
-/** WhatsApp / Social Preview + Deep-Link Landing für /luv/j/:code */
+/** WhatsApp / Social Preview + Invite-Landing für /luv/j/:code */
 app.get("/invite/:code", (req, res) => {
-  const code = String(req.params.code || "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
-  const room = rooms.get(code);
+  const { code, room } = loadRoomForInvite(req.params.code);
   const host = room?.hostNickname || "Jemand";
   const joinUrl = `https://reineke.pro/luv/j/${code}`;
   const deep = code ? `luv://join/${code}` : "https://reineke.pro/luv/";
-  const picked = pickRandomPublicCanvas()?.entry || null;
-  const ogImage = picked
-    ? publicCanvasImageUrl(picked.id)
-    : "https://reineke.pro/downloads/luv/og.jpg?v=1813";
-  const ogType = picked ? "image/png" : "image/jpeg";
-  const imageAlt = picked
-    ? publicCanvasCredit(picked)
-    : "LUV — Nähe, die mitgeht";
-  const title = room
-    ? `${host} will mit dir verbunden sein`
-    : "LUV — Nähe, die mitgeht";
-  const description = room
-    ? inviteShareDescription(host, picked)
-    : landingShareDescription(notifyPhrases.pickShareLineFromDb(getDb()), picked);
-  const inviteLede = room
-    ? invitePublicBlurb(room, host)
-    : "Diese Verbindung ist gerade still. Der Host muss online sein — dann seid ihr wieder nah.";
+  const playUrl = inviteTrial.playStoreUrl(code);
   const found = Boolean(room);
-  const previewBlock = picked
-    ? `<figure class="public-preview">
-      <img src="${escapeHtml(ogImage)}" alt="${escapeHtml(imageAlt)}" width="1200" height="1200" loading="lazy" />
-      <figcaption>${escapeHtml(imageAlt)}</figcaption>
-    </figure>`
-    : "";
-
+  const hasSnap = found && inviteTrial.hasInviteSnapshot(SNAPSHOT_DIR, code);
+  const hasDrawing = found && inviteTrial.roomHasDrawing(SNAPSHOT_DIR, code, room);
+  const inviteImageUrl = hasSnap ? inviteTrial.inviteImageAbsoluteUrl(code) : null;
   // Immer 200 — WhatsApp/Link-Preview crawlen keine 404-Seiten für OG-Tags
   res
     .status(200)
     .type("html")
-    .send(`<!DOCTYPE html>
-<html lang="de">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>${escapeHtml(title)}</title>
-  <meta name="description" content="${escapeHtml(description)}" />
-  <meta name="theme-color" content="#0B0E14" />
-  <meta property="og:type" content="website" />
-  <meta property="og:site_name" content="LUV" />
-  <meta property="og:url" content="${escapeHtml(joinUrl)}" />
-  <meta property="og:title" content="${escapeHtml(title)}" />
-  <meta property="og:description" content="${escapeHtml(description)}" />
-  <meta property="og:image" content="${ogImage}" />
-  <meta property="og:image:secure_url" content="${ogImage}" />
-  <meta property="og:image:alt" content="${escapeHtml(imageAlt)}" />
-  <meta property="og:image:type" content="${ogType}" />
-  <meta property="og:image:width" content="1200" />
-  <meta property="og:image:height" content="1200" />
-  <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="${escapeHtml(title)}" />
-  <meta name="twitter:description" content="${escapeHtml(description)}" />
-  <meta name="twitter:image" content="${ogImage}" />
-  <meta name="twitter:image:alt" content="${escapeHtml(imageAlt)}" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/luv/styles.css" />
-  <style>
-    .join-stage { min-height: 100dvh; display: grid; place-content: center; padding: 2rem 1.25rem; text-align: center; }
-    .join-stage .brand { font-family: Fraunces, serif; font-size: clamp(3rem, 10vw, 5rem); letter-spacing: 0.12em; margin: 0; color: #f4f1ec; }
-    .join-stage .brand .c-l { color: #00b7e4; }
-    .join-stage .brand .c-u {
-      display: inline-block;
-      background: linear-gradient(90deg, #00b7e4 0%, #c218a8 100%);
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-      -webkit-text-fill-color: transparent;
-    }
-    .join-stage .brand .c-v { color: #c218a8; }
-    .join-stage .headline { font-family: Fraunces, serif; font-weight: 500; font-size: clamp(1.4rem, 4vw, 2rem); margin: 1rem 0 0.5rem; }
-    .join-stage .lede { opacity: 0.72; max-width: 28rem; margin: 0 auto 1.25rem; line-height: 1.5; }
-    .join-stage .cta-row { display: flex; flex-direction: column; gap: 0.85rem; align-items: center; }
-    .join-stage .download { text-decoration: none; }
-    .public-preview {
-      margin: 0 auto 1.5rem;
-      max-width: min(22rem, 88vw);
-      border-radius: 1.1rem;
-      overflow: hidden;
-      border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(0,0,0,0.28);
-    }
-    .public-preview img {
-      display: block;
-      width: 100%;
-      height: auto;
-      aspect-ratio: 1;
-      object-fit: cover;
-    }
-    .public-preview figcaption {
-      font-family: Outfit, system-ui, sans-serif;
-      font-size: 0.78rem;
-      line-height: 1.35;
-      padding: 0.7rem 0.85rem 0.85rem;
-      color: rgba(244,241,236,0.78);
-      text-align: left;
-    }
-  </style>
-</head>
-<body>
-  <div class="atmosphere" aria-hidden="true">
-    <div class="wash wash-a"></div>
-    <div class="wash wash-b"></div>
-    <div class="grain"></div>
-  </div>
-  <main class="join-stage">
-    <p class="brand" aria-label="LUV"><span class="c-l">L</span><span class="c-u">U</span><span class="c-v">V</span></p>
-    <h1 class="headline">${escapeHtml(found ? `${host} will mit dir verbunden sein` : "Einladung")}</h1>
-    <p class="lede">${escapeHtml(inviteLede)}</p>
-    ${previewBlock}
-    <div class="cta-row">
-      <a class="download" id="openApp" href="${escapeHtml(deep)}">
-        <span class="download-label">Jetzt verbinden</span>
-        <span class="download-meta">Einladung öffnen</span>
-      </a>
-      <a class="download" href="https://reineke.pro/downloads/luv/LUV.apk" download="LUV.apk" style="opacity:.9">
-        <span class="download-label">App herunterladen</span>
-        <span class="download-meta">Android · APK</span>
-      </a>
-    </div>
-  </main>
-  <script>
-    (function () {
-      var deep = ${JSON.stringify(deep)};
-      if (${found ? "true" : "false"} && deep.indexOf("luv://") === 0) {
-        setTimeout(function () { window.location.href = deep; }, 450);
-      }
-    })();
-  </script>
-</body>
-</html>`);
+    .send(
+      inviteTrial.buildInviteLandingHtml({
+        code,
+        found,
+        host,
+        lobbyName: room?.name || "Lobby",
+        hasDrawing: Boolean(hasDrawing && hasSnap),
+        inviteImageUrl,
+        joinUrl,
+        deep,
+        playUrl,
+      })
+    );
 });
 
 app.get("/v1/rooms/:code", (req, res) => {
@@ -13694,6 +13776,17 @@ wss.on("connection", (socket, req) => {
     }
     return;
   }
+  if (user?.isTrial) {
+    const trialRoom = String(user.trialRoomCode || "").toUpperCase();
+    if (trialRoom && trialRoom !== code) {
+      try {
+        socket.close(4403, "trial_room");
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+  }
   // Mehrere Geräte desselben Kontos dürfen in der Lobby verbunden bleiben.
   // Exklusivität gilt nur für die Leinwand (siehe presence → kickOtherCanvasSockets).
   healRoomMembership(room);
@@ -13778,6 +13871,8 @@ wss.on("connection", (socket, req) => {
       memberList,
       // Client kann veraltetes Token angleichen (verhindert Split-Lobbys)
       token: room.token || null,
+      isTrial: Boolean(user?.isTrial),
+      trialDrawUntil: user?.isTrial ? Number(user.trialDrawUntil) || 0 : null,
     })
   );
   // Leinwand-Historie nach Welcome — überlebt App-/Server-Updates
@@ -14412,14 +14507,42 @@ wss.on("connection", (socket, req) => {
         );
         return;
       }
+      if (user.isTrial) {
+        const trialRoom = String(user.trialRoomCode || "").toUpperCase();
+        if (trialRoom && trialRoom !== code) {
+          socket.send(
+            JSON.stringify({
+              type: "economy_block",
+              error: "trial_room",
+              message: "Probezeichnen gilt nur für die eingeladene Lobby.",
+            })
+          );
+          return;
+        }
+        if (Date.now() > (Number(user.trialDrawUntil) || 0)) {
+          socket.send(
+            JSON.stringify({
+              type: "trial_expired",
+              error: "trial_expired",
+              message: "Probezeit vorbei — melde dich mit Google an, um weiterzumalen.",
+              trialDrawUntil: Number(user.trialDrawUntil) || 0,
+            })
+          );
+          return;
+        }
+      }
       let drawResult = null;
       drawResult = consumeDrawSession(user, code);
       if (!drawResult.ok) {
+        const trialGone = drawResult.error === "trial_expired";
         socket.send(
           JSON.stringify({
-            type: "economy_block",
-            error: "no_coins",
-            message: "Keine freien Sessions/Coins — Zuschauen geht weiter.",
+            type: trialGone ? "trial_expired" : "economy_block",
+            error: drawResult.error || "no_coins",
+            message: trialGone
+              ? "Probezeit vorbei — melde dich mit Google an, um weiterzumalen."
+              : "Keine freien Sessions/Coins — Zuschauen geht weiter.",
+            trialDrawUntil: Number(user.trialDrawUntil) || 0,
           })
         );
         return;

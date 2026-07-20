@@ -67,6 +67,7 @@ import com.luv.couple.net.LuvApiException
 import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairEvent
 import com.luv.couple.net.PairSessionState
+import com.luv.couple.net.InstallReferrerJoin
 import com.luv.couple.net.PendingJoin
 import com.luv.couple.net.PendingShop
 import com.luv.couple.net.PendingShopReturn
@@ -811,6 +812,76 @@ fun LuvAppNav() {
         }
     }
 
+    /** Invite ohne Google: 60s Probezeichnen, dann Gate in LockDraw. */
+    suspend fun trialJoinWithCode(raw: String): Boolean {
+        if (busy) return false
+        busy = true
+        joinError = null
+        return try {
+            val (installId, _) = prefs.ensureInstallCredentials()
+            val room = LuvApiClient.trialJoinRoom(raw, installId)
+            val token = room.sessionToken ?: LuvApiClient.sessionToken
+            val user = AccountSession.account.value
+            if (token.isNullOrBlank() || user == null) {
+                joinError = "Probezeichnen nicht möglich."
+                return false
+            }
+            prefs.saveSession(token, user, applyNickname = true)
+            prefs.setTutorialDone(true)
+            val nick = user.nickname.ifBlank { "Gast" }
+            prefs.setNickname(nick)
+            room.suggestedColorIndex?.let { suggested ->
+                prefs.setColorIndex(suggested)
+                colorIndex = suggested
+                CanvasStore.updateProfile(nick, suggested)
+            }
+            val lobby = Lobby(
+                id = UUID.randomUUID().toString(),
+                name = room.name.ifBlank { "Lobby" },
+                role = Role.JOIN,
+                code = room.code,
+                token = room.token,
+                invite = room.invite,
+                capacity = room.capacity,
+                isFree = room.isFree,
+                isRandom = room.isRandom,
+                isWedding = room.isWedding,
+                isWeddingRetake = room.isWeddingRetake,
+                hostNickname = room.hostNickname,
+                hostColorSide = room.hostColorSide,
+                createdByMe = false,
+                eventId = room.eventId,
+                eventPrompt = room.eventPrompt,
+                eventEndsAt = room.eventEndsAt,
+            )
+            prefs.upsertLobby(lobby)
+            prefs.setActiveLobby(lobby.id)
+            PairSessionState.setCapacity(lobby.id, room.capacity)
+            CanvasStore.setActiveLobby(lobby.id)
+            PairConnectionService.startAll(context)
+            LockScreenWidgetProvider.requestUpdate(context)
+            context.startActivity(
+                Intent(context, LockDrawActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
+                    putExtra(
+                        LockDrawActivity.EXTRA_TRIAL_DRAW_UNTIL,
+                        room.trialDrawUntil ?: (user.trialDrawUntil ?: 0L)
+                    )
+                }
+            )
+            true
+        } catch (e: Exception) {
+            joinError = when (e) {
+                is LuvApiException -> e.message
+                else -> "Einladung konnte nicht geöffnet werden."
+            }
+            false
+        } finally {
+            busy = false
+        }
+    }
+
     fun inviteSeat(lobby: Lobby) {
         inviteLobby = lobby
     }
@@ -901,6 +972,7 @@ fun LuvAppNav() {
     }
 
     LaunchedEffect(Unit) {
+        runCatching { InstallReferrerJoin.captureOnce(context) }
         val snapshot = prefs.snapshot()
         colorIndex = snapshot.colorIndex
         LuvApiClient.sessionToken = snapshot.sessionToken
@@ -910,7 +982,12 @@ fun LuvAppNav() {
         scope.launch {
             googleEnabled = runCatching { LuvApiClient.authConfig().googleEnabled }.getOrDefault(false)
         }
-        startDestination = if (!snapshot.tutorialDone || !snapshot.hasNickname || snapshot.sessionToken.isNullOrBlank()) {
+        val inviteCode = PendingJoin.peek()
+        val inviteBoot = !inviteCode.isNullOrBlank() &&
+            (snapshot.sessionToken.isNullOrBlank() || snapshot.account?.isTrial == true)
+        startDestination = if (inviteBoot) {
+            Routes.MAIN
+        } else if (!snapshot.tutorialDone || !snapshot.hasNickname || snapshot.sessionToken.isNullOrBlank()) {
             Routes.TUTORIAL
         } else {
             if (snapshot.hasLobbies) {
@@ -919,7 +996,6 @@ fun LuvAppNav() {
             }
             scope.launch {
                 runCatching { LuvApiClient.claimDaily(); refreshAccount() }
-                // Session prüfen + Lobbys aus der Cloud holen (nicht nur Cache)
                 val sessionOk = runCatching {
                     val user = LuvApiClient.me()
                     prefs.updateAccount(user)
@@ -929,11 +1005,47 @@ fun LuvAppNav() {
                 if (sessionOk && AccountSession.account.value?.googleLinked == true) {
                     runCatching { syncCloudAccount(force = true) }
                 } else if (!sessionOk && !snapshot.sessionToken.isNullOrBlank()) {
-                    // Alte Session tot → Nutzer soll Google neu verbinden
                     accountMessage = "Bitte erneut mit Google anmelden, um Lobbys zu laden."
                 }
             }
             Routes.MAIN
+        }
+    }
+
+    // Invite-Deep-Link / Install-Referrer → Trial oder normaler Join
+    LaunchedEffect(pendingJoin, startDestination) {
+        val code = PendingJoin.peek() ?: return@LaunchedEffect
+        if (startDestination == null) return@LaunchedEffect
+        val linked = AccountSession.account.value?.googleLinked == true
+        val hasSession = !LuvApiClient.sessionToken.isNullOrBlank()
+        if (linked && hasSession) {
+            PendingJoin.consume()
+            if (startDestination != Routes.MAIN) startDestination = Routes.MAIN
+            if (joinWithCode(code)) {
+                val lobby = prefs.snapshot().lobbies.firstOrNull {
+                    it.code.equals(code, ignoreCase = true)
+                }
+                if (lobby != null) {
+                    context.startActivity(
+                        Intent(context, LockDrawActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
+                        }
+                    )
+                }
+            } else if (!joinError.isNullOrBlank()) {
+                Toast.makeText(context, joinError, Toast.LENGTH_LONG).show()
+            }
+            return@LaunchedEffect
+        }
+        if (startDestination != Routes.MAIN) startDestination = Routes.MAIN
+        PendingJoin.consume()
+        val ok = trialJoinWithCode(code)
+        if (!ok && !joinError.isNullOrBlank()) {
+            Toast.makeText(context, joinError, Toast.LENGTH_LONG).show()
+            if (prefs.snapshot().sessionToken.isNullOrBlank()) {
+                startDestination = Routes.TUTORIAL
+            }
         }
     }
 
@@ -994,14 +1106,6 @@ fun LuvAppNav() {
         state = updateState,
         onUpdate = { startAppUpdate() }
     )
-
-    LaunchedEffect(startDestination, nickname, pendingJoin) {
-        if (startDestination != Routes.MAIN) return@LaunchedEffect
-        if (nickname.isNullOrBlank()) return@LaunchedEffect
-        val code = PendingJoin.consume() ?: return@LaunchedEffect
-        tab = 0
-        openJoinPreview(code)
-    }
 
     LaunchedEffect(startDestination, pendingShopReturn) {
         if (startDestination != Routes.MAIN) return@LaunchedEffect

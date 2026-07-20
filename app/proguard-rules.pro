@@ -25,6 +25,10 @@
 -keep class com.google.android.play.core.integrity.** { *; }
 -dontwarn com.google.android.play.core.**
 
+# Play Install Referrer (Invite-Deep-Link nach Install)
+-keep class com.android.installreferrer.** { *; }
+-dontwarn com.android.installreferrer.**
+
 # Credentials / Google Sign-In
 -keep class androidx.credentials.** { *; }
 -keep class com.google.android.libraries.identity.googleid.** { *; }

@@ -16,6 +16,9 @@ object AccountSession {
     private val _economyBlocks = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val economyBlocks: SharedFlow<String> = _economyBlocks.asSharedFlow()
 
+    private val _trialExpired = MutableSharedFlow<Long>(extraBufferCapacity = 2)
+    val trialExpired: SharedFlow<Long> = _trialExpired.asSharedFlow()
+
     private val _clearVotes = MutableSharedFlow<ClearVoteEvent>(extraBufferCapacity = 8)
     val clearVotes: SharedFlow<ClearVoteEvent> = _clearVotes.asSharedFlow()
 
@@ -43,6 +46,10 @@ object AccountSession {
 
     fun emitEconomyBlock(message: String) {
         _economyBlocks.tryEmit(message)
+    }
+
+    fun emitTrialExpired(drawUntil: Long = 0L) {
+        _trialExpired.tryEmit(drawUntil)
     }
 
     fun emitClearVote(event: ClearVoteEvent) {

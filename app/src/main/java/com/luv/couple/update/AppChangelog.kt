@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.33",
+            listOf(
+                "Einladungs-Link zeigt Host und Leinwand; 60 Sekunden Probezeichnen ohne Anmeldung",
+            )
+        ),
+        Entry(
             "2.2.32",
             listOf(
                 "Coin-Käufe zusätzlich mit Geräteprüfung abgesichert",

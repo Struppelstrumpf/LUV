@@ -24,6 +24,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.ComposeView
 import androidx.core.view.ViewCompat
 import androidx.activity.enableEdgeToEdge
@@ -34,6 +35,8 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.luv.couple.LuvApp
 import com.luv.couple.R
+import com.luv.couple.net.GoogleAuth
+import com.luv.couple.ui.security.PlayIntegrityGate
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -98,6 +101,53 @@ class LockDrawActivity : ComponentActivity() {
     private lateinit var btnReactionToggle: TextView
     private lateinit var reactionFlyout: View
     private lateinit var reactionEmojiList: LinearLayout
+    private var trialOverlay: FrameLayout? = null
+    private var trialDrawUntil: Long = 0L
+    private var trialGateActive: Boolean = false
+    private val trialGoogleLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        lifecycleScope.launch {
+            try {
+                val google = GoogleAuth.parseSignInIntentResult(result.data, result.resultCode)
+                val attestation = runCatching {
+                    kotlinx.coroutines.withTimeoutOrNull(12_000L) {
+                        PlayIntegrityGate.attestForSignup(this@LockDrawActivity)
+                    }
+                }.getOrNull()
+                val auth = LuvApiClient.authGoogle(
+                    idToken = google.idToken,
+                    integrityToken = attestation?.integrityToken,
+                    integrityNonce = attestation?.nonce
+                )
+                LuvApiClient.sessionToken = auth.sessionToken
+                LuvApp.instance.prefs.saveSession(
+                    auth.sessionToken,
+                    auth.user,
+                    applyNickname = true
+                )
+                LuvApp.instance.prefs.setTutorialDone(true)
+                AccountSession.setAccount(auth.user)
+                dismissTrialGate()
+                Toast.makeText(
+                    this@LockDrawActivity,
+                    "Angemeldet — weiter malen ♥",
+                    Toast.LENGTH_SHORT
+                ).show()
+                PairConnectionService.startAll(this@LockDrawActivity)
+            } catch (e: Exception) {
+                if (e is com.luv.couple.net.LuvApiException && e.error == "cancelled") {
+                    Toast.makeText(this@LockDrawActivity, "Abgebrochen", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(
+                        this@LockDrawActivity,
+                        e.message ?: "Google-Anmeldung fehlgeschlagen",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
     private lateinit var btnEmojiEdit: TextView
     private lateinit var btnWeddingConfirm: TextView
     private lateinit var stickerOverlay: FrameLayout
@@ -221,6 +271,10 @@ class LockDrawActivity : ComponentActivity() {
         btnGuess = findViewById(R.id.btnGuess)
 
         lobbyId = intent.getStringExtra(EXTRA_LOBBY_ID)
+        trialDrawUntil = intent.getLongExtra(EXTRA_TRIAL_DRAW_UNTIL, 0L)
+        if (trialDrawUntil <= 0L) {
+            trialDrawUntil = AccountSession.account.value?.trialDrawUntil ?: 0L
+        }
         lifecycleScope.launch {
             runCatching { LuvApiClient.pingAchievement("lobby_opens") }
         }
@@ -233,6 +287,7 @@ class LockDrawActivity : ComponentActivity() {
         drawingView.myColorIndex = CanvasStore.cachedColorIndex
         drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
         paintEraserButton()
+        setupTrialGate()
 
         btnBack.setOnClickListener { finish() }
         btnColor.setOnClickListener {
@@ -2858,8 +2913,123 @@ class LockDrawActivity : ComponentActivity() {
         legendScroll.layoutParams = lp
     }
 
+    private fun setupTrialGate() {
+        val until = trialDrawUntil
+        val isTrial = AccountSession.account.value?.isTrial == true || until > System.currentTimeMillis()
+        if (!isTrial) return
+        lifecycleScope.launch {
+            AccountSession.trialExpired.collect {
+                showTrialGate()
+            }
+        }
+        if (until > System.currentTimeMillis()) {
+            val delayMs = until - System.currentTimeMillis()
+            lifecycleScope.launch {
+                kotlinx.coroutines.delay(delayMs)
+                val acc = AccountSession.account.value
+                if (acc?.googleLinked == true && acc.isTrial != true) return@launch
+                showTrialGate()
+            }
+        } else if (until > 0L) {
+            showTrialGate()
+        }
+    }
+
+    private fun showTrialGate() {
+        if (trialGateActive) return
+        if (AccountSession.account.value?.googleLinked == true &&
+            AccountSession.account.value?.isTrial != true
+        ) {
+            return
+        }
+        trialGateActive = true
+        drawingView.inputBlocked = true
+        val root = rootView ?: return
+        val overlay = FrameLayout(this).apply {
+            setBackgroundColor(0xCC0B0E14.toInt())
+            isClickable = true
+            isFocusable = true
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(48, 48, 48, 48)
+        }
+        val title = TextView(this).apply {
+            text = "Schön, dass du da bist"
+            setTextColor(0xFFF4F1EC.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+            gravity = Gravity.CENTER
+            typeface = Typeface.create("serif", Typeface.NORMAL)
+        }
+        val lede = TextView(this).apply {
+            text = "Melde dich kurz mit Google an, um weiter mitzuzeichnen."
+            setTextColor(0xCCF4F1EC.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            gravity = Gravity.CENTER
+            setPadding(0, 24, 0, 36)
+        }
+        val btn = TextView(this).apply {
+            text = "Mit Google anmelden"
+            setTextColor(0xFF111111.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setPadding(48, 28, 48, 28)
+            background = GradientDrawable().apply {
+                cornerRadius = 28f
+                setColor(0xFFFFFFFF.toInt())
+            }
+            setOnClickListener { launchTrialGoogle() }
+        }
+        col.addView(title)
+        col.addView(lede)
+        col.addView(btn)
+        overlay.addView(
+            col,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            )
+        )
+        root.addView(overlay)
+        trialOverlay = overlay
+    }
+
+    private fun dismissTrialGate() {
+        trialGateActive = false
+        drawingView.inputBlocked = false
+        trialOverlay?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        trialOverlay = null
+        trialDrawUntil = 0L
+    }
+
+    private fun launchTrialGoogle() {
+        lifecycleScope.launch {
+            try {
+                val webClientId = GoogleAuth.fetchWebClientId()
+                    ?: throw com.luv.couple.net.LuvApiException(
+                        "Google-Login ist noch nicht eingerichtet.",
+                        error = "google_disabled"
+                    )
+                trialGoogleLauncher.launch(GoogleAuth.signInIntent(this@LockDrawActivity, webClientId))
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this@LockDrawActivity,
+                    e.message ?: "Google-Anmeldung fehlgeschlagen",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
     companion object {
         const val EXTRA_LOBBY_ID = "lobby_id"
+        /** Epoch-ms: Probezeichnen bis dahin (Invite-Trial). */
+        const val EXTRA_TRIAL_DRAW_UNTIL = "trial_draw_until"
         /** Intensiv-Modus: von Nähe-Notification geweckt. */
         const val EXTRA_WAKE_NEAR = "wake_near"
 
