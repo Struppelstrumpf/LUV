@@ -73,6 +73,7 @@ import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val MarketCream = Color(0xFFF7F0E4)
@@ -128,6 +129,12 @@ fun PlayerMarketScreen(
     var offersInsight by remember { mutableStateOf<LuvApiClient.MarketPriceInsight?>(null) }
     var offersLoading by remember { mutableStateOf(false) }
     var previewListing by remember { mutableStateOf<LuvApiClient.MarketListing?>(null) }
+    var purchaseFlash by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    LaunchedEffect(purchaseFlash) {
+        if (purchaseFlash == null) return@LaunchedEffect
+        delay(1000)
+        purchaseFlash = null
+    }
     var friends by remember { mutableStateOf<List<LuvApiClient.FriendCard>>(emptyList()) }
     var pendingSales by remember {
         mutableStateOf<com.luv.couple.net.PendingSalesResult?>(null)
@@ -747,11 +754,11 @@ fun PlayerMarketScreen(
                             LuvApiClient.buyMarketListing(listing.id)
                         }.onSuccess {
                             syncInventory()
-                            Toast.makeText(
-                                context,
-                                "${marketDisplayLabel(listing.kind, listing.itemId, listing.label)} gekauft",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                            purchaseFlash = marketDisplayLabel(
+                                listing.kind,
+                                listing.itemId,
+                                listing.label
+                            ) to listing.priceCoins
                             previewListing = null
                             refreshOffersIfOpen()
                             reloadMarket()
@@ -768,6 +775,9 @@ fun PlayerMarketScreen(
                 }
             }
         )
+    }
+    purchaseFlash?.let { (title, pricePaid) ->
+        PurchaseFlashPopup(title = title, priceCoins = pricePaid)
     }
 }
 

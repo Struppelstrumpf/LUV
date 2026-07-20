@@ -531,6 +531,7 @@ fun AdminHubScreen(
                                 message = m.message,
                                 createdAt = m.createdAt,
                                 canAct = can("reports.act"),
+                                canOpenUser = can("gm.search") && !m.userId.isNullOrBlank(),
                                 onDelete = {
                                     scope.launch {
                                         runCatching { LuvApiClient.deleteHelpMessage(m.id) }
@@ -540,6 +541,18 @@ fun AdminHubScreen(
                                                 reloadOverview()
                                             }
                                             .onFailure { toast(it.message ?: "Fehler") }
+                                    }
+                                },
+                                onOpenProfile = {
+                                    val uid = m.userId
+                                    if (!uid.isNullOrBlank()) {
+                                        onOpenProfile(uid, m.nickname)
+                                    }
+                                },
+                                onOpenAdminUser = {
+                                    val uid = m.userId
+                                    if (!uid.isNullOrBlank()) {
+                                        openUserById(uid, m.nickname)
                                     }
                                 }
                             )
@@ -1617,7 +1630,10 @@ private fun HubHelpCard(
     message: String,
     createdAt: Long,
     canAct: Boolean,
-    onDelete: () -> Unit
+    canOpenUser: Boolean,
+    onDelete: () -> Unit,
+    onOpenProfile: () -> Unit,
+    onOpenAdminUser: () -> Unit,
 ) {
     val whenLabel = remember(createdAt) {
         if (createdAt <= 0L) ""
@@ -1642,8 +1658,17 @@ private fun HubHelpCard(
             fontSize = 14.sp,
             lineHeight = 20.sp
         )
-        if (canAct) {
-            AdminDangerBtn("Löschen", onDelete)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (canOpenUser) {
+                AdminGhostBtn("Profil", onOpenProfile)
+                AdminGhostBtn("Nutzer", onOpenAdminUser)
+            }
+            if (canAct) {
+                AdminDangerBtn("Löschen", onDelete)
+            }
         }
     }
 }

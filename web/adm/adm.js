@@ -2397,14 +2397,8 @@
                   .map(
                     (v) => `<div class="list-item">
               <strong>${esc(v.code)}</strong>
-              <div class="muted">${v.coins || 0} Coins · ${v.redeemed || 0}/${v.maxRedeems ?? "∞"} · ${
-                      v.revoked ? "widerrufen" : "aktiv"
-                    }</div>
-              ${
-                !v.revoked
-                  ? `<div class="actions"><button class="btn ghost" data-revoke="${esc(v.code)}">Widerrufen</button></div>`
-                  : ""
-              }
+              <div class="muted">${v.coins || 0} Coins · ${v.redeemCount || v.redeemed || 0}/${v.maxRedeems ?? "∞"} · aktiv</div>
+              <div class="actions"><button class="btn ghost" data-revoke="${esc(v.code)}">Widerrufen</button></div>
             </div>`
                   )
                   .join("")

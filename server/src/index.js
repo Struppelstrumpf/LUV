@@ -7855,7 +7855,7 @@ app.get("/v1/admin/overview", (req, res) => {
     openPeerReports: openPeer,
     openHelpMessages: openHelp,
     moderators: mods,
-    vouchers: Object.keys(db.vouchers || {}).length,
+    vouchers: Object.values(db.vouchers || {}).filter((v) => v && !v.revoked).length,
     me: publicUser(ctx.user),
     permissionGroups: MOD_PERMISSION_GROUPS,
   });
@@ -9087,6 +9087,7 @@ app.get("/v1/admin/vouchers", (req, res) => {
   const ctx = requireStaff(req, res, "codes.view");
   if (!ctx) return;
   const list = Object.values(getDb().vouchers)
+    .filter((v) => v && !v.revoked)
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 100)
     .map((v) => ({
@@ -9097,7 +9098,7 @@ app.get("/v1/admin/vouchers", (req, res) => {
       maxRedeems: v.maxRedeems,
       redeemCount: v.redeemCount,
       expiresAt: v.expiresAt,
-      revoked: Boolean(v.revoked),
+      revoked: false,
       createdAt: v.createdAt,
     }));
   return res.json({ vouchers: list });
@@ -9151,12 +9152,34 @@ app.post("/v1/admin/vouchers", (req, res) => {
 app.post("/v1/admin/vouchers/:code/revoke", (req, res) => {
   const ctx = requireStaff(req, res, "codes.revoke");
   if (!ctx) return;
-  const code = String(req.params.code || "").toUpperCase();
-  const voucher = getDb().vouchers[code];
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  const db = getDb();
+  const key =
+    (db.vouchers[code] && code) ||
+    Object.keys(db.vouchers || {}).find(
+      (k) => String(db.vouchers[k]?.code || k).toUpperCase() === code
+    ) ||
+    null;
+  const voucher = key ? db.vouchers[key] : null;
   if (!voucher) return res.status(404).json({ error: "not_found" });
   voucher.revoked = true;
-  scheduleSave();
-  return res.json({ ok: true });
+  voucher.revokedAt = Date.now();
+  voucher.revokedBy = ctx.user.id;
+  // Entfernen — erscheint nicht mehr in der Liste und ist nicht einlösbar
+  delete db.vouchers[key];
+  if (db.redeems && typeof db.redeems === "object") {
+    const vid = String(voucher.id || "");
+    for (const rk of Object.keys(db.redeems)) {
+      const entry = db.redeems[rk];
+      if (entry && String(entry.voucherId || "") === vid) {
+        delete db.redeems[rk];
+      }
+    }
+  }
+  flushSave();
+  return res.json({ ok: true, code: voucher.code || code });
 });
 
 app.get("/v1/shop/packs", (req, res) => {

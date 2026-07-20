@@ -105,6 +105,7 @@ import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.MaleBlue
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 enum class MarketPanel { Hub, Marketplace, ItemShop, CoinShop }
@@ -805,6 +806,12 @@ private fun ItemShopContent(
         mutableIntStateOf(initialTab.coerceIn(0, ShopCatalog.ITEM_SHOP_TAB_LABELS.lastIndex))
     }
     var showLootbox by remember { mutableStateOf(false) }
+    var purchaseFlash by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    LaunchedEffect(purchaseFlash) {
+        if (purchaseFlash == null) return@LaunchedEffect
+        delay(1000)
+        purchaseFlash = null
+    }
     val ownedEmojis by prefs.ownedEmojisFlow.collectAsStateWithLifecycle(initialValue = emptyMap())
     val ownedThemes by prefs.ownedThemesFlow.collectAsStateWithLifecycle(
         initialValue = listOf(ProfileCatalog.DEFAULT_THEME_ID)
@@ -975,12 +982,7 @@ private fun ItemShopContent(
                                         reloadShopAndInventory()
                                     }
                                 }
-                                Toast.makeText(
-                                    context,
-                                    if (price <= 0) "$titleLabel erhalten"
-                                    else "$titleLabel gekauft (−$price)",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                                purchaseFlash = titleLabel to price
                                 pendingBuy = null
                             }.onFailure {
                                 Toast.makeText(
@@ -1434,6 +1436,53 @@ private fun ItemShopContent(
                     }
                 )
             }
+            purchaseFlash?.let { (title, pricePaid) ->
+                PurchaseFlashPopup(
+                    title = title,
+                    priceCoins = pricePaid
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun PurchaseFlashPopup(
+    title: String,
+    priceCoins: Int,
+) {
+    Dialog(
+        onDismissRequest = {},
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 36.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(BgSoft)
+                .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(20.dp))
+                .padding(horizontal = 28.dp, vertical = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                title,
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 20.sp,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                if (priceCoins <= 0) "Kostenlos erhalten" else "Gekauft · −$priceCoins Coins",
+                color = AccentRose,
+                fontFamily = BodyFont,
+                fontSize = 15.sp,
+                textAlign = TextAlign.Center
+            )
         }
     }
 }
