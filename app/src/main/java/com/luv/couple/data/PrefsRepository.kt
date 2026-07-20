@@ -288,10 +288,13 @@ class PrefsRepository(private val context: Context) {
 
     /**
      * Host- und Join-Lobbys vom Server spiegeln (Google-Konto / Multi-Gerät).
-     * [dropUnknownJoins]=true entfernt lokale Joins, die der Server nicht mehr kennt —
-     * aber nicht bei verdächtig leerer Server-Antwort (Schutz vor Sync-Wipe).
-     * Host-Lobbys (Freund) bleiben lokal erhalten, auch wenn der Server sie kurz auslässt.
-     * Event-Lobbys ohne Server-Eintrag werden entfernt (Auto-Close).
+     *
+     * Regeln (Familien-Lobbys dürfen nie durch Event-Sync verschwinden):
+     * - Normale Freund-Hosts bleiben lokal, auch wenn der Server sie kurz auslässt.
+     * - Normale Freund-Joins bleiben lokal; Sync löscht sie nicht bei partieller Liste.
+     * - Nur Event-Lobbys ohne Server-Eintrag werden entfernt (Auto-Close / Solo).
+     * - Fremde Event-Lobbys aus `joined` werden ignoriert (Solo nur für den Ersteller).
+     * - eventId kommt immer vom Server (kein sticky lokaler Müll wie „null“).
      * Lokal verlassene Codes ([dismissedLobbiesKey]) werden nicht wieder eingefügt.
      */
     suspend fun replaceCloudLobbiesFromRemote(
@@ -300,7 +303,7 @@ class PrefsRepository(private val context: Context) {
         dropUnknownJoins: Boolean = true
     ) {
         context.dataStore.edit { prefs ->
-            val existing = parseLobbies(prefs[lobbiesKey])
+            val existing = parseLobbies(prefs[lobbiesKey]).map { sanitizeEventLobbyFields(it) }
             val dismissedMut = parseDismissedLobbyCodes(prefs[dismissedLobbiesKey]).toMutableSet()
             // Server meldet Mitgliedschaft noch → lokale Leave-Sperre aufheben
             // (schützt vor versehentlichem Wipe + erlaubt Recovery)
@@ -320,7 +323,7 @@ class PrefsRepository(private val context: Context) {
                 if (code in dismissed) continue
                 byCode[code] = h
             }
-            // Joins vorerst behalten; unten ggf. droppen
+            // Joins vorerst behalten; Event-Geister unten droppen, Freund-Joins nie
             for (j in existing.filter { it.role == Role.JOIN }) {
                 val code = j.code.uppercase()
                 if (code in dismissed) continue
@@ -329,10 +332,16 @@ class PrefsRepository(private val context: Context) {
             fun upsert(r: com.luv.couple.net.RemoteLobby, role: Role) {
                 val code = r.code.uppercase()
                 if (code in dismissed) return
+                val remoteEventId = r.eventId.asCleanJsonString()
+                // Solo-Event: nur als Host vom Ersteller — nie als fremder Join importieren
+                if (role == Role.JOIN && remoteEventId != null) return
                 val prev = existing.firstOrNull { it.code.equals(code, ignoreCase = true) }
                     ?: byCode[code]
                 val token = r.token?.takeIf { it.isNotBlank() } ?: prev?.token
                 if (token.isNullOrBlank()) return
+                // Server gewinnt bei Event-Feldern (auch null → Pollution löschen)
+                val remotePrompt = r.eventPrompt.asCleanJsonString()
+                val remoteEnds = r.eventEndsAt.asCleanJsonString()
                 byCode[code] = Lobby(
                     id = prev?.id ?: UUID.randomUUID().toString(),
                     name = r.name.ifBlank { prev?.name ?: "Lobby" }
@@ -354,43 +363,41 @@ class PrefsRepository(private val context: Context) {
                     lastCanvasActorId = r.lastCanvasActorId
                         ?: prev?.lastCanvasActorId,
                     createdByMe = r.createdByMe || (prev?.createdByMe == true),
-                    eventId = r.eventId.asCleanJsonString() ?: prev?.eventId.asCleanJsonString(),
-                    eventPrompt = r.eventPrompt.asCleanJsonString()
-                        ?: prev?.eventPrompt.asCleanJsonString(),
-                    eventEndsAt = r.eventEndsAt.asCleanJsonString()
-                        ?: prev?.eventEndsAt.asCleanJsonString(),
+                    eventId = remoteEventId,
+                    eventPrompt = if (remoteEventId == null) null else remotePrompt,
+                    eventEndsAt = if (remoteEventId == null) null else remoteEnds,
                 )
             }
             val hostedCodes = hosted.map { it.code.uppercase() }.toSet()
-            val joinedCodes = joined.map { it.code.uppercase() }.toSet()
+            val joinedCodes = joined
+                .filter { it.eventId.asCleanJsonString() == null }
+                .map { it.code.uppercase() }
+                .toSet()
             for (r in hosted) upsert(r, Role.HOST)
             for (r in joined) {
                 val code = r.code.uppercase()
                 if (byCode[code]?.role == Role.HOST) continue
                 upsert(r, Role.JOIN)
             }
-            // Hosts: Event-Lobbys ohne Server-Eintrag entfernen (geschlossen).
-            // Normale Freund-Hosts lokal behalten, außer sie sind dismissed.
+            // Nur Event-Hosts ohne Server-Eintrag entfernen (geschlossen).
+            // Normale Freund-Hosts bleiben immer lokal.
             for (code in byCode.keys.toList()) {
                 val lobby = byCode[code] ?: continue
                 if (lobby.role != Role.HOST) continue
                 if (code in hostedCodes) continue
                 if (lobby.isEventLobby) byCode.remove(code)
             }
-            // Joins: nur droppen wenn Server Joins geliefert hat ODER lokal keine Joins mehr
-            // erwartet werden — nie alle Joins löschen bei komplett leerer joined-Liste,
-            // wenn wir lokal noch welche hatten (Schutz vor Sync-Wipe).
-            if (dropUnknownJoins) {
-                val hadLocalJoins = existing.any { it.role == Role.JOIN }
-                val suspiciousEmpty = joined.isEmpty() && hadLocalJoins
-                if (!suspiciousEmpty) {
-                    for (code in byCode.keys.toList()) {
-                        val lobby = byCode[code] ?: continue
-                        if (lobby.role != Role.JOIN) continue
-                        if (code !in joinedCodes) byCode.remove(code)
-                    }
-                }
+            // Joins: Event-Geister droppen. Normale Freund-Joins nie wegen Sync löschen.
+            for (code in byCode.keys.toList()) {
+                val lobby = byCode[code] ?: continue
+                if (lobby.role != Role.JOIN) continue
+                if (!lobby.isEventLobby) continue
+                if (code !in joinedCodes) byCode.remove(code)
             }
+            // dropUnknownJoins: absichtlich kein Wipe mehr für normale Joins
+            // (früher: partielle Server-Liste löschte Familien-Joins).
+            @Suppress("UNUSED_VARIABLE")
+            val _dropUnknownJoins = dropUnknownJoins
             // Pro Event nur eine Lobby — Geister-/Sync-Duplikate entfernen
             dedupeEventLobbiesInPlace(byCode, hostedCodes, joinedCodes)
             val seen = linkedSetOf<String>()
@@ -1241,7 +1248,7 @@ class PrefsRepository(private val context: Context) {
                         )
                     }
                 }
-            }.getOrDefault(emptyList())
+            }.getOrDefault(emptyList()).map { sanitizeEventLobbyFields(it) }
         }
 
         fun encodeLobbies(list: List<Lobby>): String {

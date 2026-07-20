@@ -2837,6 +2837,27 @@ function reconcileAbandonedLobbyOwnership(user) {
       dirty = true;
       continue;
     }
+    // Event-Lobby: Ownership nur für Host/Ersteller; nie Host-Promote an Dritte
+    if (room.eventId) {
+      const isOwner =
+        room.hostUserId === user.id || room.createdByUserId === user.id;
+      if (!isOwner) {
+        delete user.hostedRooms[code];
+        dirty = true;
+        continue;
+      }
+      healRoomMembership(room);
+      if (!Array.isArray(room.memberUserIds) || !room.memberUserIds.includes(user.id)) {
+        rememberMember(room, user.id);
+        dirty = true;
+      }
+      const meta = user.hostedRooms[code];
+      if (meta && typeof meta === "object" && !meta.token && room.token) {
+        meta.token = room.token;
+        dirty = true;
+      }
+      continue;
+    }
     healRoomMembership(room);
     const members = Array.isArray(room.memberUserIds) ? room.memberUserIds : [];
     // Host/Ersteller zählt immer als Mitglied — nie Ownership nur wegen leerer Liste killen
@@ -2949,6 +2970,12 @@ function findRoomCode(room) {
 
 function rememberJoinedLobby(user, code, room) {
   if (!user || !code || !room) return;
+  // Event-Lobbys sind Solo — nie in joinedRooms anderer Nutzer
+  if (room.eventId) {
+    const j = ensureJoinedRooms(user);
+    delete j[code];
+    return;
+  }
   const j = ensureJoinedRooms(user);
   if (room.hostUserId && room.hostUserId === user.id) {
     delete j[code];
@@ -2978,29 +3005,30 @@ function healJoinedRoomsFromMembership(user) {
   ensureJoinedRooms(user);
   const db = getDb();
   const seen = new Set();
-  for (const [code, room] of rooms.entries()) {
-    if (
-      Array.isArray(room.memberUserIds) &&
-      room.memberUserIds.includes(user.id) &&
-      room.hostUserId !== user.id
-    ) {
-      rememberJoinedLobby(user, code, room);
+  const consider = (code, roomLike) => {
+    if (!roomLike || roomLike.eventId) return; // Event = Solo, nie in joined
+    const ids = Array.isArray(roomLike.memberUserIds) ? roomLike.memberUserIds : [];
+    if (ids.includes(user.id) && roomLike.hostUserId !== user.id) {
+      rememberJoinedLobby(user, code, roomLike);
       seen.add(code);
     }
+  };
+  for (const [code, room] of rooms.entries()) {
+    consider(code, room);
   }
   for (const [code, data] of Object.entries(db.rooms || {})) {
     if (seen.has(code)) continue;
-    const ids = Array.isArray(data.memberUserIds) ? data.memberUserIds : [];
-    if (ids.includes(user.id) && data.hostUserId !== user.id) {
-      rememberJoinedLobby(user, code, data);
-      seen.add(code);
-    }
+    consider(code, data);
   }
-  // Verwaiste Einträge entfernen (Lobby weg / nicht mehr Mitglied)
+  // Verwaiste Einträge entfernen (Lobby weg / nicht mehr Mitglied / Event-Geister)
   for (const code of Object.keys(user.joinedRooms)) {
     if (seen.has(code)) continue;
     const live = rooms.get(code);
     const stored = db.rooms?.[code];
+    if ((live && live.eventId) || (stored && stored.eventId)) {
+      delete user.joinedRooms[code];
+      continue;
+    }
     const still =
       (live &&
         Array.isArray(live.memberUserIds) &&
@@ -3032,7 +3060,12 @@ function isRoomCreator(userId, room) {
 
 function publicJoinedLobbies(user) {
   healJoinedRoomsFromMembership(user);
-  return Object.entries(user.joinedRooms || {}).map(([code, meta]) => {
+  return Object.entries(user.joinedRooms || {})
+    .filter(([code]) => {
+      const room = rooms.get(code) || getDb().rooms?.[code] || null;
+      return !room?.eventId; // Event nie als Join listen
+    })
+    .map(([code, meta]) => {
     const room = rooms.get(code) || getDb().rooms?.[code] || null;
     return {
     code,
@@ -3059,15 +3092,21 @@ function publicJoinedLobbies(user) {
     hostNickname: String(meta?.hostNickname || "Host").slice(0, 18),
     role: "join",
     createdByMe: isRoomCreator(user.id, room),
-    eventId: meta?.eventId || room?.eventId || null,
-    eventPrompt: meta?.eventPrompt || room?.eventPrompt || null,
-    eventEndsAt: meta?.eventEndsAt || room?.eventEndsAt || null,
+    eventId: null,
+    eventPrompt: null,
+    eventEndsAt: null,
   };
   });
 }
 
 function rememberMember(room, userId) {
   if (!room || !userId) return false;
+  // Event-Lobby: nur Host/Ersteller als Mitglied
+  if (room.eventId) {
+    const allowed =
+      room.hostUserId === userId || room.createdByUserId === userId;
+    if (!allowed) return false;
+  }
   if (!Array.isArray(room.memberUserIds)) room.memberUserIds = [];
   let added = false;
   if (!room.memberUserIds.includes(userId)) {
@@ -3343,6 +3382,24 @@ function healRoomMembership(room) {
   const cap = healRoomCapacity(room);
   let fixed = false;
   if (!Array.isArray(room.memberUserIds)) room.memberUserIds = [];
+  // Event-Lobby: strikt Solo — nur Host/Ersteller, Cap 1
+  if (room.eventId) {
+    const owner = room.hostUserId || room.createdByUserId || null;
+    const next = owner ? [owner] : [];
+    if (
+      room.memberUserIds.length !== next.length ||
+      room.memberUserIds[0] !== next[0]
+    ) {
+      room.memberUserIds = next;
+      fixed = true;
+    }
+    if ((Number(room.capacity) || 0) !== 1) {
+      room.capacity = 1;
+      fixed = true;
+    }
+    room.invitesAllowed = false;
+    return pruned || cap || fixed;
+  }
   const hostId = room.hostUserId || room.createdByUserId;
   if (hostId && typeof hostId === "string" && !room.memberUserIds.includes(hostId)) {
     room.memberUserIds.unshift(hostId);
@@ -5477,6 +5534,14 @@ function scheduleHostFailover(room, code) {
  */
 function ensureHostOrDissolve(room, code, { immediateEmpty = false } = {}) {
   if (!room) return;
+  // Event-Lobby: nie Host-Transfer an andere — Solo schließen / warten
+  if (room.eventId) {
+    cancelHostFailoverTimer(code);
+    if ((room.sockets?.size || 0) === 0 && immediateEmpty) {
+      closeEventLobbyRoom(code, room);
+    }
+    return;
+  }
   if ((room.sockets?.size || 0) === 0) {
     cancelHostFailoverTimer(code);
     if (immediateEmpty) {
@@ -6990,7 +7055,8 @@ app.post("/v1/me/lobby-invites", (req, res) => {
   ).slice(0, 40);
   const isRandom = Boolean(meta?.isRandom || live?.isRandom || stored?.isRandom);
   const isWedding = Boolean(meta?.isWedding || live?.isWedding || stored?.isWedding);
-  if (isRandom || isWedding) {
+  const isEvent = Boolean(meta?.eventId || live?.eventId || stored?.eventId);
+  if (isRandom || isWedding || isEvent) {
     return res.status(400).json({
       error: "lobby_type",
       message: "In diese Lobby kann nicht eingeladen werden.",
@@ -13304,8 +13370,16 @@ wss.on("connection", (socket, req) => {
   const isKnownMember = Boolean(
     user?.id &&
       ((Array.isArray(room.memberUserIds) && room.memberUserIds.includes(user.id)) ||
-        room.hostUserId === user.id)
+        room.hostUserId === user.id ||
+        room.createdByUserId === user.id)
   );
+  if (room.eventId && !isKnownMember) {
+    console.log(
+      `ws event_lobby_solo code=${code} user=${user?.id || "?"}`
+    );
+    socket.close(4403, "event_lobby_solo");
+    return;
+  }
   if (!isKnownMember) {
     const seatsTaken = Math.max(others, roomMemberCount(room));
     if (seatsTaken >= capacity) {

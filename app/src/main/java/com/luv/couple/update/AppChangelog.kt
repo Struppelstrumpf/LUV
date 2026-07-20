@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.21",
+            listOf(
+                "Familien-Lobbys bleiben beim Sync erhalten",
+                "Event-Lobbys sind Solo und vermischen sich nicht mehr mit normalen Lobbys",
+            )
+        ),
+        Entry(
             "2.2.20",
             listOf(
                 "Itemshop: Demnächst-Vorschau in allen Kategorien",
