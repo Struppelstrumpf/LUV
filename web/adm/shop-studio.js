@@ -332,23 +332,29 @@
     }
 
     function loadBitmap(fileOrBlob) {
-      const url = URL.createObjectURL(fileOrBlob);
-      const img = new Image();
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        sourceImg = img;
-        stage.hidden = false;
-        hint.hidden = false;
-        drop.classList.add("on");
-        crop = { x: 0.12, y: 0.12, s: 0.76 };
-        layoutCrop();
-        redrawKeyed();
+      // data:-URL statt blob: — CSP img-src erlaubt data: zuverlässig
+      const reader = new FileReader();
+      reader.onerror = () => alert("Bild konnte nicht geladen werden.");
+      reader.onload = () => {
+        const dataUrl = String(reader.result || "");
+        if (!dataUrl.startsWith("data:image/")) {
+          alert("Bild konnte nicht geladen werden.");
+          return;
+        }
+        const img = new Image();
+        img.onload = () => {
+          sourceImg = img;
+          stage.hidden = false;
+          hint.hidden = false;
+          drop.classList.add("on");
+          crop = { x: 0.12, y: 0.12, s: 0.76 };
+          layoutCrop();
+          redrawKeyed();
+        };
+        img.onerror = () => alert("Bild konnte nicht geladen werden.");
+        img.src = dataUrl;
       };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        alert("Bild konnte nicht geladen werden.");
-      };
-      img.src = url;
+      reader.readAsDataURL(fileOrBlob);
     }
 
     function sampleKeyAtClient(clientX, clientY) {
