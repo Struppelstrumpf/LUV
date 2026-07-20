@@ -5965,7 +5965,11 @@ app.put("/v1/me/settings", (req, res) => {
 app.get("/v1/me", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
-  return res.json({ user: publicUser(ctx.user) });
+  // displayLabels mitliefern — App braucht Admin-Namen ohne extra Shop-Aufruf
+  return res.json({
+    user: publicUser(ctx.user),
+    displayLabels: { ...itemLabels.ensureItemLabels(getDb()) },
+  });
 });
 
 app.patch("/v1/me", (req, res) => {

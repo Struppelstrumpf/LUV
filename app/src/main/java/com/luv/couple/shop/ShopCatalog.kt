@@ -491,32 +491,58 @@ object LiveShopCatalog {
         val k = kind.trim().lowercase()
         val id = itemId.trim()
         if (k.isEmpty() || id.isEmpty()) return null
-        return displayLabels["$k:$id"]?.trim()?.takeIf { it.isNotEmpty() }
+        displayLabels["$k:$id"]?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        // Emoji-Varianten (z. B. mit/ohne VS16) abfangen
+        val bare = id.replace("\uFE0F", "")
+        if (bare == id) return null
+        displayLabels["$k:$bare"]?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        return displayLabels.entries.firstOrNull { (key, value) ->
+            val parts = key.split(":", limit = 2)
+            parts.size == 2 &&
+                parts[0].equals(k, ignoreCase = true) &&
+                parts[1].replace("\uFE0F", "") == bare &&
+                value.isNotBlank()
+        }?.value?.trim()
     }
 
     fun emojis(): List<ShopEmoji> =
         mergeEmojiLists(ShopCatalog.EMOJIS, remoteEmojis)
+            .map { e -> displayLabel("emojis", e.emoji)?.let { e.copy(label = it) } ?: e }
 
     fun stickers(): List<ShopEmoji> =
         mergeEmojiLists(ShopCatalog.STICKERS, remoteStickers)
+            .map { e -> displayLabel("stickers", e.emoji)?.let { e.copy(label = it) } ?: e }
 
     fun themes(): List<ShopTheme> {
         val local = ShopCatalog.THEMES.filter { it.priceCoins > 0 || it.id == "meadow" }
         val remote = remoteThemes
-        if (remote.isNullOrEmpty()) return local.sortedBy { it.priceCoins }
-        val byId = LinkedHashMap<String, ShopTheme>()
-        local.forEach { byId[it.id] = it }
-        remote.forEach { byId[it.id] = it } // Remote gewinnt bei Preis/Angebot
-        return byId.values.sortedBy { it.priceCoins }
+        val merged = if (remote.isNullOrEmpty()) {
+            local
+        } else {
+            val byId = LinkedHashMap<String, ShopTheme>()
+            local.forEach { byId[it.id] = it }
+            remote.forEach { byId[it.id] = it } // Remote gewinnt bei Preis/Angebot
+            byId.values.toList()
+        }
+        return merged
+            .map { t -> displayLabel("themes", t.id)?.let { t.copy(label = it) } ?: t }
+            .sortedBy { it.priceCoins }
     }
 
     fun pets(): List<ShopPet> {
         val remote = remotePets
-        if (remote.isNullOrEmpty()) return ShopCatalog.PETS.sortedBy { it.priceCoins }
-        val byId = LinkedHashMap<String, ShopPet>()
-        ShopCatalog.PETS.forEach { byId[it.emoji] = it }
-        remote.forEach { byId[it.emoji] = it }
-        return byId.values.sortedBy { it.priceCoins }
+        val merged = if (remote.isNullOrEmpty()) {
+            ShopCatalog.PETS
+        } else {
+            val byId = LinkedHashMap<String, ShopPet>()
+            ShopCatalog.PETS.forEach { byId[it.emoji] = it }
+            remote.forEach { byId[it.emoji] = it }
+            byId.values.toList()
+        }
+        // Admin-Anzeigename schlägt immer lokale Hardcodes (z. B. „Tiger“)
+        return merged
+            .map { p -> displayLabel("pets", p.emoji)?.let { p.copy(label = it) } ?: p }
+            .sortedBy { it.priceCoins }
     }
 
     private fun mergeEmojiLists(

@@ -21,11 +21,13 @@ object ItemLabels {
     }
 
     fun petLabel(id: String): String {
+        // 1) Admin-Override (höchste Priorität)
         LiveShopCatalog.displayLabel("pets", id)?.let { return it }
-        LiveShopCatalog.remotePets?.firstOrNull { it.emoji == id }?.label
+        // 2) Live-Katalog (bereits mit Override gemerged)
+        LiveShopCatalog.pets().firstOrNull { it.emoji == id }?.label
             ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) && it != id }
             ?.let { return it }
-        LiveShopCatalog.pets().firstOrNull { it.emoji == id }?.label
+        LiveShopCatalog.remotePets?.firstOrNull { it.emoji == id }?.label
             ?.takeIf { it.isNotBlank() && !looksLikeRawId(it) && it != id }
             ?.let { return it }
         ShopCatalog.PETS.firstOrNull { it.emoji == id }?.label

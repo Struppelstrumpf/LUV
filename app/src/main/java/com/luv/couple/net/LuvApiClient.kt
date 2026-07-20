@@ -590,6 +590,15 @@ object LuvApiClient {
 
     suspend fun me(): AccountInfo = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/me")
+        // Admin-Anzeigenamen möglichst früh — nicht erst beim Shop-Öffnen
+        applyDisplayLabelsJson(json.optJSONObject("displayLabels"))
+        if (com.luv.couple.shop.LiveShopCatalog.displayLabels.isEmpty()) {
+            runCatching {
+                applyDisplayLabelsJson(
+                    authedGet("/v1/item-labels").optJSONObject("displayLabels")
+                )
+            }
+        }
         AccountInfo.fromApi(json.getJSONObject("user"))
     }
 

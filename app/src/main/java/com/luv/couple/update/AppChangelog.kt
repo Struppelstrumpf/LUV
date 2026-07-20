@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.1.8",
+            listOf(
+                "Geänderte Item-Namen aus dem Admin greifen jetzt zuverlässig",
+            )
+        ),
+        Entry(
             "2.1.7",
             listOf(
                 "Tagesaufgaben: klare Anleitung, was du tun musst",

@@ -279,6 +279,8 @@ fun LuvAppNav() {
                     dayKey = day
                 )
             }
+            // Katalog + Admin-Namen syncen (sonst bleiben lokale Hardcodes wie „Tiger“)
+            runCatching { LuvApiClient.fetchShopCatalog() }
             val (enabled, list) = LuvApiClient.shopPacks()
             shopEnabled = enabled
             val playPrices = runCatching {

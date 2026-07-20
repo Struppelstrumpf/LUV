@@ -1713,9 +1713,8 @@ private fun ItemShopContent(
             is ShopPendingBuy.Emoji -> ItemLabels.emojiLabel(pending.item.emoji)
             is ShopPendingBuy.Theme -> ItemLabels.themeLabel(pending.item.id)
             is ShopPendingBuy.Sticker -> ItemLabels.stickerLabel(pending.item.emoji)
-            is ShopPendingBuy.Pet ->
-                pending.item.label.takeIf { it.isNotBlank() && !ItemLabels.looksLikeRawId(it) }
-                    ?: ItemLabels.petLabel(pending.item.emoji)
+            // Immer ItemLabels — sonst gewinnt der lokale Hardcode („Tiger“) über Admin-Namen
+            is ShopPendingBuy.Pet -> ItemLabels.petLabel(pending.item.emoji)
         }
 
         val kindLabel = when (pending) {
@@ -1775,7 +1774,7 @@ private fun ItemShopContent(
 
                             emoji = pending.item.emoji,
 
-                            label = pending.item.label
+                            label = ItemLabels.themeLabel(pending.item.id)
 
                         )
 
