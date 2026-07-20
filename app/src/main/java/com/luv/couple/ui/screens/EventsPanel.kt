@@ -413,7 +413,13 @@ private fun EventHeroCard(
                     )
             ) {
                 Text(
-                    if (contest.canVote) "Abstimmen" else "Abstimmung — keine Beiträge mehr",
+                    when {
+                        contest.canVote && contest.votesRemaining > 0 ->
+                            "Abstimmen · noch ${contest.votesRemaining}"
+                        contest.votesRemaining <= 0 ->
+                            "Bewertungslimit erreicht"
+                        else -> "Abstimmung — keine Beiträge mehr"
+                    },
                     color = TextPrimary,
                     fontFamily = DisplayFont,
                     fontSize = 15.sp,
@@ -564,15 +570,39 @@ private fun ContestVoteDialog(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            "Keine weiteren Beiträge zum Bewerten.",
-                            color = TextMuted,
-                            fontFamily = BodyFont,
-                            fontSize = 15.sp,
-                            textAlign = TextAlign.Center
-                        )
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                if (current.votesRemaining <= 0) {
+                                    "Bewertungslimit erreicht (${current.votesMax})."
+                                } else {
+                                    "Keine weiteren Beiträge zum Bewerten."
+                                },
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 15.sp,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                "Noch ${current.votesRemaining} von ${current.votesMax}",
+                                color = accent,
+                                fontFamily = DisplayFont,
+                                fontSize = 16.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 } else {
+                    Text(
+                        "Noch ${current.votesRemaining} Bewertungen",
+                        color = accent,
+                        fontFamily = DisplayFont,
+                        fontSize = 15.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     ContestEntryImage(
                         item = feed,
                         modifier = Modifier
@@ -663,14 +693,19 @@ private fun ContestVoteDialog(
                                     runCatching {
                                         LuvApiClient.reportContestEntry(eventId, feed.entryId)
                                     }
-                                        .onSuccess {
+                                        .onSuccess { contestFromReport ->
                                             Toast.makeText(context, "Gemeldet", Toast.LENGTH_SHORT).show()
-                                            runCatching { LuvApiClient.fetchEventContest(eventId) }
-                                                .onSuccess { result ->
-                                                    current = result.contest
-                                                    onContestUpdated(result.contest)
-                                                    result.state?.let { onStateUpdated(it) }
-                                                }
+                                            if (contestFromReport != null) {
+                                                current = contestFromReport
+                                                onContestUpdated(contestFromReport)
+                                            } else {
+                                                runCatching { LuvApiClient.fetchEventContest(eventId) }
+                                                    .onSuccess { result ->
+                                                        current = result.contest
+                                                        onContestUpdated(result.contest)
+                                                        result.state?.let { onStateUpdated(it) }
+                                                    }
+                                            }
                                         }
                                         .onFailure { err ->
                                             Toast.makeText(

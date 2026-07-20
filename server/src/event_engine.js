@@ -606,6 +606,47 @@ function entryScore(entry) {
   return Number(entry?.score ?? entry?.votes) || 0;
 }
 
+/** Anzahl abgegebener Stimmen auf einem Beitrag (für faire Verteilung). */
+function entryVoteCount(entry) {
+  if (!entry?.votes || typeof entry.votes !== "object") return 0;
+  let n = 0;
+  for (const v of Object.values(entry.votes)) {
+    const x = Number(v);
+    if (x === 1 || x === -1) n += 1;
+  }
+  return n;
+}
+
+/** Max. Bilder, die ein Nutzer pro Event bewerten / überspringen darf. */
+const MAX_CONTEST_VOTES_PER_USER = 100;
+
+function userContestVoteCount(prog) {
+  if (!prog?.votedEntries || typeof prog.votedEntries !== "object") return 0;
+  return Object.keys(prog.votedEntries).length;
+}
+
+function votesRemainingFor(prog) {
+  return Math.max(0, MAX_CONTEST_VOTES_PER_USER - userContestVoteCount(prog));
+}
+
+/**
+ * Beitrag als gesehen markieren (Vote ±1 oder Skip/Report 0), ohne Score-Änderung.
+ * Zählt gegen das 100er-Limit.
+ */
+function markContestEntrySeen(user, eventId, entryId, value = 0) {
+  const prog = ensureUserProgress(user, eventId);
+  const eid = String(entryId || "").trim();
+  if (!eid) return { ok: false };
+  if (prog.votedEntries[eid] != null) return { ok: true, already: true };
+  if (userContestVoteCount(prog) >= MAX_CONTEST_VOTES_PER_USER) {
+    return { ok: false, error: "vote_limit", message: "Bewertungslimit erreicht (100)." };
+  }
+  const v = Number(value) === -1 ? -1 : Number(value) === 1 ? 1 : 0;
+  prog.votedEntries[eid] = v;
+  if (v === 1 || v === -1) prog.votedEntryId = eid;
+  return { ok: true };
+}
+
 function castVote(db, user, eventObj, entryId, value, applyLedgerFn, eventActive, windowEndIso) {
   const ev = enrichEvent(eventObj);
   const voteVal = Number(value) === -1 ? -1 : Number(value) === 1 ? 1 : 0;
@@ -614,6 +655,14 @@ function castVote(db, user, eventObj, entryId, value, applyLedgerFn, eventActive
   }
   if (!voteWindowOpen(ev.contest, eventActive, Date.now(), windowEndIso)) {
     return { ok: false, error: "vote_closed", message: "Abstimmung ist nicht offen." };
+  }
+  const prog = ensureUserProgress(user, ev.id);
+  if (userContestVoteCount(prog) >= MAX_CONTEST_VOTES_PER_USER) {
+    return {
+      ok: false,
+      error: "vote_limit",
+      message: "Du hast schon 100 Bilder bewertet.",
+    };
   }
   const elig = canUserVote(user, ev, entryId);
   if (!elig.ok) return elig;
@@ -626,7 +675,6 @@ function castVote(db, user, eventObj, entryId, value, applyLedgerFn, eventActive
   if (!entry.votes || typeof entry.votes !== "object") entry.votes = {};
   entry.votes[user.id] = voteVal;
   entry.score = entryScore(entry);
-  const prog = ensureUserProgress(user, ev.id);
   prog.votedEntries[entryId] = voteVal;
   prog.votedEntryId = entryId;
   let voterCoins = 0;
@@ -638,7 +686,14 @@ function castVote(db, user, eventObj, entryId, value, applyLedgerFn, eventActive
     }
   }
   bucket.updatedAt = Date.now();
-  return { ok: true, score: entry.score, voterCoins };
+  return {
+    ok: true,
+    score: entry.score,
+    voterCoins,
+    votesRemaining: votesRemainingFor(prog),
+    votesUsed: userContestVoteCount(prog),
+    votesMax: MAX_CONTEST_VOTES_PER_USER,
+  };
 }
 
 /**
@@ -727,22 +782,39 @@ function claimContestPrize(db, user, eventObj, applyLedgerFn, giveItemFn) {
 function nextFeedEntry(db, user, eventObj) {
   const ev = enrichEvent(eventObj);
   const prog = ensureUserProgress(user, ev.id);
+  if (userContestVoteCount(prog) >= MAX_CONTEST_VOTES_PER_USER) return null;
   const bucket = contestBucket(db, ev.id);
-  const entries = [...bucket.entries].sort((a, b) => a.createdAt - b.createdAt);
-  for (const e of entries) {
-    if (e.userId === user.id) continue;
-    if (prog.votedEntries[e.entryId] != null) continue;
-    return {
-      entryId: e.entryId,
-      nickname: e.nickname,
-      prompt: e.prompt || prog.eventPrompt || null,
-      imageUrl: e.imagePath
-        ? `/v1/me/events/${ev.id}/contest/entries/${e.entryId}/image`
-        : null,
-      strokes: e.strokes || 0,
-    };
+  const candidates = bucket.entries.filter(
+    (e) => e && e.userId !== user.id && prog.votedEntries[e.entryId] == null
+  );
+  if (!candidates.length) return null;
+  // Fairness: Bilder mit den wenigsten Bewertungen zuerst
+  let minVotes = Infinity;
+  for (const e of candidates) {
+    const c = entryVoteCount(e);
+    if (c < minVotes) minVotes = c;
   }
-  return null;
+  const pool = candidates.filter((e) => entryVoteCount(e) === minVotes);
+  // Bei Gleichstand: älteres Bild zuerst, leichte Streuung
+  pool.sort((a, b) => {
+    const t = (a.createdAt || 0) - (b.createdAt || 0);
+    if (t !== 0) return t;
+    return String(a.entryId).localeCompare(String(b.entryId));
+  });
+  const pick =
+    pool.length <= 1
+      ? pool[0]
+      : pool[Math.floor(Math.random() * Math.min(3, pool.length))];
+  if (!pick) return null;
+  return {
+    entryId: pick.entryId,
+    nickname: pick.nickname,
+    prompt: pick.prompt || prog.eventPrompt || null,
+    imageUrl: pick.imagePath
+      ? `/v1/me/events/${ev.id}/contest/entries/${pick.entryId}/image`
+      : null,
+    strokes: pick.strokes || 0,
+  };
 }
 
 function contestPublicForUser(db, user, eventObj, windowStart, windowEnd, active, now = Date.now()) {
@@ -761,7 +833,10 @@ function contestPublicForUser(db, user, eventObj, windowStart, windowEnd, active
     const need = clampInt(req.minStrokes, 0, 500, 5);
     canVoteBase = (prog.qualifiedStrokes || 0) >= need;
   }
-  const feed = votingOpen ? nextFeedEntry(db, user, ev) : null;
+  const votesUsed = userContestVoteCount(prog);
+  const votesRemaining = votesRemainingFor(prog);
+  const underLimit = votesRemaining > 0;
+  const feed = votingOpen && underLimit ? nextFeedEntry(db, user, ev) : null;
   const myEntry = bucket.entries.find((e) => e.userId === user.id) || null;
   let winners = [];
   if ((bucket.prizesReady || bucket.prizesGranted || voteEnded) && Array.isArray(bucket.ranking)) {
@@ -782,8 +857,11 @@ function contestPublicForUser(db, user, eventObj, windowStart, windowEnd, active
     votingOpen,
     voteFrom: from != null ? new Date(from).toISOString() : null,
     voteUntil: until != null ? new Date(until).toISOString() : null,
-    canVote: Boolean(votingOpen && canVoteBase && feed),
+    canVote: Boolean(votingOpen && canVoteBase && feed && underLimit),
     feedItem: feed,
+    votesUsed,
+    votesRemaining,
+    votesMax: MAX_CONTEST_VOTES_PER_USER,
     myEntry: myEntry
       ? {
           entryId: myEntry.entryId,
@@ -869,6 +947,7 @@ function publicEventModules(ev, user, dayKey, now, helpers) {
 
 module.exports = {
   QUEST_METRICS,
+  MAX_CONTEST_VOTES_PER_USER,
   enrichEvent,
   normalizeDecor,
   normalizeLobby,
@@ -884,6 +963,7 @@ module.exports = {
   contestBucket,
   submitContestEntry,
   castVote,
+  markContestEntrySeen,
   finalizeContestPrizes,
   claimContestPrize,
   contestPublicForUser,
@@ -895,6 +975,7 @@ module.exports = {
   eventWindowEndIso,
   eventWindowEndIsoFromOccEnd,
   entryScore,
+  entryVoteCount,
   publicEventModules,
   publicRewardItem,
   slugId,

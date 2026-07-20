@@ -9298,6 +9298,11 @@ app.post("/v1/me/events/:id/contest/report", (req, res) => {
   const bucket = engine.contestBucket(db, eventId);
   const entry = bucket.entries.find((e) => e.entryId === entryId);
   if (!entry) return res.status(404).json({ error: "not_found" });
+  // Melden = Beitrag überspringen, zählt gegen 100er-Limit
+  const skip = engine.markContestEntrySeen(ctx.user, eventId, entryId, 0);
+  if (!skip.ok && skip.error === "vote_limit") {
+    return res.status(400).json({ error: skip.error, message: skip.message });
+  }
   const report = {
     id: newId("ecr"),
     eventId,
@@ -9315,7 +9320,28 @@ app.post("/v1/me/events/:id/contest/report", (req, res) => {
   console.log(
     `contest report ${report.id} event=${eventId} entry=${entryId} by=${report.reporterNickname}`
   );
-  return res.json({ ok: true, id: report.id });
+  const now = new Date();
+  const cfg = seasonEvents.ensureEventsConfig(db);
+  const ev = (cfg.events || []).find((e) => e && e.id === eventId);
+  let contest = null;
+  if (ev) {
+    const occ = seasonEvents.nextOccurrence(ev, now);
+    const active = seasonEvents.isActiveAtPatched(ev, now);
+    const windowEnd =
+      engine.eventWindowEndIso(ev, now) ||
+      engine.eventWindowEndIsoFromOccEnd(occ?.end) ||
+      null;
+    contest = engine.contestPublicForUser(
+      db,
+      ctx.user,
+      ev,
+      occ?.start || null,
+      windowEnd,
+      active,
+      now.getTime()
+    );
+  }
+  return res.json({ ok: true, id: report.id, contest });
 });
 
 app.get("/v1/me/events/:id/contest/entries/:entryId/image", (req, res) => {

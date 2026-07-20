@@ -148,6 +148,9 @@ data class EventContestInfo(
     val promptHint: String? = null,
     val lobbyCreated: Boolean = false,
     val prizesReady: Boolean = false,
+    val votesUsed: Int = 0,
+    val votesRemaining: Int = 100,
+    val votesMax: Int = 100,
 ) {
     companion object {
         fun fromJson(o: JSONObject?): EventContestInfo? {
@@ -162,6 +165,13 @@ data class EventContestInfo(
                     }
                 }
             }
+            val votesMax = o.optInt("votesMax", 100).coerceIn(1, 500)
+            val votesUsed = o.optInt("votesUsed", 0).coerceAtLeast(0)
+            val votesRemaining = if (o.has("votesRemaining")) {
+                o.optInt("votesRemaining", votesMax - votesUsed)
+            } else {
+                (votesMax - votesUsed).coerceAtLeast(0)
+            }
             return EventContestInfo(
                 enabled = o.optBoolean("enabled", true),
                 votingOpen = o.optBoolean("votingOpen", false),
@@ -173,6 +183,9 @@ data class EventContestInfo(
                 promptHint = o.optCleanString("promptHint"),
                 lobbyCreated = o.optBoolean("lobbyCreated", false),
                 prizesReady = o.optBoolean("prizesReady", false),
+                votesUsed = votesUsed,
+                votesRemaining = votesRemaining.coerceAtLeast(0),
+                votesMax = votesMax,
             )
         }
     }

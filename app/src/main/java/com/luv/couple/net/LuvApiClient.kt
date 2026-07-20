@@ -2747,14 +2747,15 @@ object LuvApiClient {
             )
         }
 
-    suspend fun reportContestEntry(eventId: String, entryId: String) = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("entryId", entryId.trim()).toString()
-        authedPost(
-            "/v1/me/events/${eventId.trim().encodeURL()}/contest/report",
-            body
-        )
-        Unit
-    }
+    suspend fun reportContestEntry(eventId: String, entryId: String): EventContestInfo? =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("entryId", entryId.trim()).toString()
+            val json = authedPost(
+                "/v1/me/events/${eventId.trim().encodeURL()}/contest/report",
+                body
+            )
+            EventContestInfo.fromJson(json.optJSONObject("contest"))
+        }
 
     suspend fun pingAchievement(metric: String, amount: Int = 1): AchievementPingResult =
         withContext(Dispatchers.IO) {
