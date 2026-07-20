@@ -42,11 +42,13 @@ function playStoreUrl(code) {
   return `https://play.google.com/store/apps/details?id=com.luv.couple&referrer=${referrer}`;
 }
 
-function inviteImageAbsoluteUrl(code) {
+function inviteImageAbsoluteUrl(code, version) {
   const clean = String(code || "")
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "");
-  return `https://reineke.pro/luv/v1/rooms/${clean}/invite-image`;
+  const v = Number(version) > 0 ? String(Math.floor(Number(version))) : String(Date.now());
+  // ?v= bricht WhatsApp/Link-Preview-Caches nach frischem Snapshot
+  return `https://reineke.pro/luv/v1/rooms/${clean}/invite-image?v=${v}`;
 }
 
 /**
@@ -64,15 +66,21 @@ function buildInviteLandingHtml({
   playUrl,
 }) {
   const safeHost = String(host || "Jemand").trim() || "Jemand";
+  // Klar & einfach — WhatsApp zeigt title/description + Bild
   const title = found
-    ? `${safeHost} lädt dich zu LUV ein`
+    ? "Du wurdest eingeladen mitzuzeichnen"
     : "LUV — Einladung";
   const lede = found
-    ? `${safeHost} möchte mit dir auf einer gemeinsamen Leinwand zeichnen — live, egal wo ihr seid.`
+    ? hasDrawing && inviteImageUrl
+      ? `${safeHost} zeichnet gerade — das ist die Leinwand. Komm rein und male mit.`
+      : `${safeHost} zeichnet gerade auf LUV — komm rein und male mit.`
     : "Diese Einladung ist gerade nicht erreichbar. Bitte den Link später erneut öffnen.";
   const ogImage = hasDrawing && inviteImageUrl ? inviteImageUrl : FALLBACK_OG;
   const ogType = hasDrawing && inviteImageUrl ? "image/png" : "image/jpeg";
   const ctaLabel = "Jetzt mitmachen!";
+  const headline = found
+    ? "Du wurdest eingeladen mitzuzeichnen"
+    : "Einladung";
 
   const previewBlock = hasDrawing && inviteImageUrl
     ? `<figure class="lobby-preview">
@@ -204,7 +212,7 @@ function buildInviteLandingHtml({
   </div>
   <main class="join-stage">
     <p class="brand" aria-label="LUV"><span class="c-l">L</span><span class="c-u">U</span><span class="c-v">V</span></p>
-    <h1 class="headline">${escapeHtml(found ? `${safeHost} lädt dich ein` : "Einladung")}</h1>
+    <h1 class="headline">${escapeHtml(headline)}</h1>
     <p class="lede">${escapeHtml(lede)}</p>
     ${previewBlock}
     <div class="cta-row">

@@ -1750,8 +1750,8 @@ fun InviteLobbyDialog(
                     textAlign = TextAlign.Center
                 )
                 Text(
-                    "Gib den Code weiter oder lass den QR scannen. " +
-                        "Beim Teilen bleibt der Link dabei — die App nimmt die Einladung direkt an.",
+                    "Teile den Link — WhatsApp zeigt eure aktuelle Leinwand. " +
+                        "Oder Code / QR weitergeben.",
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 13.sp,

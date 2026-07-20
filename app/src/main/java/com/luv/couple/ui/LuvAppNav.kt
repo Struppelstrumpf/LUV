@@ -218,11 +218,17 @@ fun LuvAppNav() {
     }
 
     fun inviteMessage(lobby: Lobby): String {
-        val who = nickname?.takeIf { it.isNotBlank() }
-            ?: lobby.hostNickname.takeIf { it.isNotBlank() }
-            ?: "Jemand"
-        // Titelzeile fest — der cozy Spruch kommt in der Link-Vorschau (OG) random
-        return "$who will mit dir verbunden sein\n${lobby.joinUrl}"
+        // Kurz im Chat; Bild + Titel kommen aus der Link-Vorschau (OG)
+        return "Das zeichnen wir gerade — komm mit rein!\n${lobby.joinUrl}"
+    }
+
+    fun shareInviteLink(lobby: Lobby) {
+        scope.launch {
+            // Momentaufnahme jetzt hochladen → WhatsApp zeigt die aktuelle Leinwand
+            runCatching { CanvasMemoryKeeper.uploadSnapshot(lobby) }
+            shareText(inviteMessage(lobby))
+            inviteLobby = null
+        }
     }
 
     fun openJoinPreview(code: String) {
@@ -1233,12 +1239,10 @@ fun LuvAppNav() {
     inviteLobby?.let { lobby ->
         InviteLobbyDialog(
             lobby = lobby,
-            onShare = {
-                shareText(inviteMessage(lobby))
-                inviteLobby = null
-            },
+            onShare = { shareInviteLink(lobby) },
             onShareToFriend = { friend ->
                 scope.launch {
+                    runCatching { CanvasMemoryKeeper.uploadSnapshot(lobby) }
                     runCatching {
                         LuvApiClient.inviteFriendToLobby(friend.userId, lobby.code)
                     }.onSuccess {

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.34",
+            listOf(
+                "Beim Einladen: aktuelle Leinwand in der Link-Vorschau (WhatsApp & Co.)",
+            )
+        ),
+        Entry(
             "2.2.33",
             listOf(
                 "Einladungs-Link zeigt Host und Leinwand; 60 Sekunden Probezeichnen ohne Anmeldung",

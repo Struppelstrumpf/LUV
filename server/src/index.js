@@ -12809,7 +12809,14 @@ app.get("/v1/rooms/:code/invite-image", (req, res) => {
   if (room.invitesAllowed === false) return res.status(404).end();
   const file = inviteTrial.snapshotFile(SNAPSHOT_DIR, code);
   if (!fs.existsSync(file)) return res.status(404).end();
-  res.setHeader("Cache-Control", "public, max-age=60");
+  let mtime = Date.now();
+  try {
+    mtime = Math.floor(fs.statSync(file).mtimeMs);
+  } catch {
+    /* ignore */
+  }
+  res.setHeader("Cache-Control", "public, max-age=120");
+  res.setHeader("ETag", `"inv-${code}-${mtime}"`);
   res.type("png");
   return fs.createReadStream(file).pipe(res);
 });
@@ -13380,7 +13387,19 @@ app.get("/invite/:code", (req, res) => {
   const found = Boolean(room);
   const hasSnap = found && inviteTrial.hasInviteSnapshot(SNAPSHOT_DIR, code);
   const hasDrawing = found && inviteTrial.roomHasDrawing(SNAPSHOT_DIR, code, room);
-  const inviteImageUrl = hasSnap ? inviteTrial.inviteImageAbsoluteUrl(code) : null;
+  let imageVer = Date.now();
+  if (hasSnap) {
+    try {
+      imageVer = Math.floor(fs.statSync(inviteTrial.snapshotFile(SNAPSHOT_DIR, code)).mtimeMs);
+    } catch {
+      /* ignore */
+    }
+    const memAt = Number(canvasMemories()?.[code]?.updatedAt) || 0;
+    if (memAt > 0) imageVer = Math.max(imageVer, memAt);
+  }
+  const inviteImageUrl = hasSnap
+    ? inviteTrial.inviteImageAbsoluteUrl(code, imageVer)
+    : null;
   // Immer 200 — WhatsApp/Link-Preview crawlen keine 404-Seiten für OG-Tags
   res
     .status(200)
