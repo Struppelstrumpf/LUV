@@ -1992,9 +1992,25 @@ object LuvApiClient {
         }
     }
 
-    suspend fun fetchFriends(): FriendsBag = withContext(Dispatchers.IO) {
+    @Volatile
+    private var friendsCacheAt = 0L
+    @Volatile
+    private var friendsCache: FriendsBag? = null
+    private const val FRIENDS_CACHE_MS = 8_000L
+
+    fun invalidateFriendsCache() {
+        friendsCache = null
+        friendsCacheAt = 0L
+    }
+
+    suspend fun fetchFriends(force: Boolean = false): FriendsBag = withContext(Dispatchers.IO) {
+        val cached = friendsCache
+        val age = System.currentTimeMillis() - friendsCacheAt
+        if (!force && cached != null && age in 0 until FRIENDS_CACHE_MS) {
+            return@withContext cached
+        }
         val json = authedGet("/v1/me/friends")
-        FriendsBag(
+        val snap = FriendsBag(
             friends = parseFriendCards(json.optJSONArray("friends")),
             incoming = parseFriendCards(json.optJSONArray("incoming")),
             outgoing = parseFriendCards(json.optJSONArray("outgoing")),
@@ -2008,6 +2024,9 @@ object LuvApiClient {
                 ?.takeIf { json.optLong("marriageCooldownRemainingMs", 0L) > 0L },
             pendingFriendshipCoins = json.optInt("pendingFriendshipCoins", 0)
         )
+        friendsCache = snap
+        friendsCacheAt = System.currentTimeMillis()
+        snap
     }
 
     private fun parseLobbyInvites(arr: org.json.JSONArray?): List<LobbyInvite> {
@@ -2283,26 +2302,34 @@ object LuvApiClient {
         }
 
     suspend fun sendFriendRequest(userId: String): String = withContext(Dispatchers.IO) {
+        invalidateFriendsCache()
         val uid = userId.trim()
         val json = authedPost("/v1/users/${uid.encodeURL()}/friend-request", "{}")
+        invalidateFriendsCache()
         json.optString("friendStatus", "outgoing")
     }
 
     suspend fun acceptFriend(userId: String): FriendCard? = withContext(Dispatchers.IO) {
+        invalidateFriendsCache()
         val body = JSONObject().put("userId", userId.trim()).toString()
         val json = authedPost("/v1/me/friends/accept", body)
+        invalidateFriendsCache()
         parseFriendCard(json.optJSONObject("friend"))
     }
 
     suspend fun declineFriend(userId: String) = withContext(Dispatchers.IO) {
+        invalidateFriendsCache()
         val body = JSONObject().put("userId", userId.trim()).toString()
         authedPost("/v1/me/friends/decline", body)
+        invalidateFriendsCache()
         Unit
     }
 
     suspend fun removeFriend(userId: String) = withContext(Dispatchers.IO) {
+        invalidateFriendsCache()
         val body = JSONObject().put("userId", userId.trim()).toString()
         authedPost("/v1/me/friends/remove", body)
+        invalidateFriendsCache()
         Unit
     }
 

@@ -753,24 +753,28 @@ fun PlayerMarketScreen(
                         runCatching {
                             LuvApiClient.buyMarketListing(listing.id)
                         }.onSuccess {
-                            syncInventory()
                             purchaseFlash = marketDisplayLabel(
                                 listing.kind,
                                 listing.itemId,
                                 listing.label
                             ) to listing.priceCoins
                             previewListing = null
-                            refreshOffersIfOpen()
-                            reloadMarket()
-                            reloadMine()
+                            busyId = null
+                            // Inventar/Listen im Hintergrund — Kauf-UI sofort frei
+                            scope.launch {
+                                runCatching { syncInventory() }
+                                refreshOffersIfOpen()
+                                reloadMarket()
+                                reloadMine()
+                            }
                         }.onFailure {
                             Toast.makeText(
                                 context,
                                 it.message ?: "Kauf fehlgeschlagen",
                                 Toast.LENGTH_SHORT
                             ).show()
+                            busyId = null
                         }
-                        busyId = null
                     }
                 }
             }

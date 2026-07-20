@@ -1456,17 +1456,35 @@ function ensureWeddingDir() {
   fs.mkdirSync(WEDDING_DIR, { recursive: true });
 }
 
+/** Kurzzeit-Cache: Freunde-GET darf nicht jedes Mal 5000 Strokes von Disk lesen. */
+const weddingStrokeCache = new Map(); // code -> { at, strokes }
+const WEDDING_STROKE_CACHE_MS = 8_000;
+
+function loadRoomStrokesCached(code) {
+  const key = String(code || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  if (!key) return [];
+  const hit = weddingStrokeCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.at < WEDDING_STROKE_CACHE_MS) return hit.strokes;
+  let strokes = [];
+  try {
+    strokes = loadRoomStrokes(key);
+  } catch {
+    strokes = [];
+  }
+  weddingStrokeCache.set(key, { at: now, strokes });
+  return strokes;
+}
+
 /** publicMarriage inkl. Strich-Fortschritt der Hochzeitsleinwand */
 function publicMarriageView(m, viewerId) {
   if (!m) return null;
   const db = getDb();
   let strokes = [];
   if (m.status === "wedding" && m.weddingLobbyCode) {
-    try {
-      strokes = loadRoomStrokes(m.weddingLobbyCode);
-    } catch {
-      strokes = [];
-    }
+    strokes = loadRoomStrokesCached(m.weddingLobbyCode);
   }
   return marriage.publicMarriage(m, viewerId, db.users, { strokes });
 }
@@ -1476,7 +1494,7 @@ function weddingStrokesReadyFor(m) {
   if (!m.weddingLobbyCode) return false;
   try {
     return marriage.areWeddingStrokesReady(
-      loadRoomStrokes(m.weddingLobbyCode),
+      loadRoomStrokesCached(m.weddingLobbyCode),
       m.a,
       m.b
     );
@@ -4021,12 +4039,23 @@ function pendingLootboxPublic(user) {
   }));
 }
 
+let lootboxPoolCache = { at: 0, pool: null };
+const LOOTBOX_POOL_CACHE_MS = 60_000;
+
 function buildLootboxPoolForUser(user) {
   ensureInventory(user);
+  const now = Date.now();
+  if (
+    Array.isArray(lootboxPoolCache.pool) &&
+    lootboxPoolCache.pool.length > 0 &&
+    now - lootboxPoolCache.at < LOOTBOX_POOL_CACHE_MS
+  ) {
+    return lootboxPoolCache.pool;
+  }
   // Volle Pool — Duplikate sind erlaubt (Emojis/Sticker stapeln;
   // Themes/Begleiter bei Besitz → Coin-Ausgleich beim Öffnen).
   // Nachträglich angelegte Katalog-Items landen automatisch mit Preis-Rarity drin.
-  return lootbox.buildPool({
+  const pool = lootbox.buildPool({
     emojiPrices: EMOJI_SHOP_PRICES,
     themePrices: THEME_SHOP_PRICES,
     petPrices: PET_SHOP_PRICES,
@@ -4037,6 +4066,8 @@ function buildLootboxPoolForUser(user) {
     starterEmojis: STARTER_EMOJIS,
     extraItems: catalogLootboxExtras(),
   });
+  lootboxPoolCache = { at: now, pool };
+  return pool;
 }
 
 /** Lootbox-Belohnung gutschreiben. Duplikat-Theme/Pet → Coins statt leerem Treffer. */
@@ -4784,6 +4815,7 @@ function backfillShopStatsFromLedger(db) {
 function topShopPurchases(limit = 2) {
   const db = getDb();
   backfillShopStatsFromLedger(db);
+  seedShopCatalogIfNeeded();
   const stats = ensureShopStats(db);
   const ranked = Object.entries(stats)
     .map(([key, n]) => {
@@ -4795,12 +4827,23 @@ function topShopPurchases(limit = 2) {
       if (!isKnownInventoryItem(kind, itemId)) return null;
       const meta = marketItemMeta(kind, itemId);
       if (!meta) return null;
+      const p = shopCatalog.priceOf(db, kind, itemId);
+      const priceCoins =
+        p != null
+          ? p
+          : kind === "emojis"
+            ? Number(EMOJI_SHOP_PRICES[itemId]) || 0
+            : kind === "stickers"
+              ? Number(STICKER_SHOP_PRICES[itemId]) || 0
+              : kind === "pets"
+                ? Number(PET_SHOP_PRICES[itemId]) || 0
+                : Number(THEME_SHOP_PRICES[itemId]) || 0;
       return {
         kind,
         itemId,
         emoji: meta.emoji || itemId,
         label: meta.label || itemId,
-        priceCoins: shopItemPrice(kind, itemId),
+        priceCoins,
         bought: Number(n) || 0,
       };
     })
@@ -4821,6 +4864,10 @@ function topShopPurchases(limit = 2) {
   }
   return out.slice(0, limit);
 }
+
+/** Markt-Hub: 15s Cache — Kacheln nicht bei jedem Tab-Wechsel neu scannen. */
+let marketHubCache = { at: 0, marketNewest: null, shopTop: null };
+const MARKET_HUB_CACHE_MS = 15_000;
 
 function newestMarketListings(limit = 2) {
   const db = getDb();
@@ -7115,13 +7162,12 @@ app.get("/v1/users/:userId/profile", (req, res) => {
 app.get("/v1/me/friends", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
-  try {
-    tickMarriages();
-  } catch {
-    /* ignore */
-  }
+  // tickMarriages läuft bereits per Interval — nicht bei jedem GET (Stroke-I/O)
   const db = getDb();
   const f = ensureFriends(ctx.user);
+  const listBefore = f.list.length;
+  const inBefore = f.incoming.length;
+  const outBefore = f.outgoing.length;
   // Verwaiste IDs + einseitige Freundschaften bereinigen (beide Seiten nötig)
   f.list = f.list.filter((id) => {
     const other = db.users?.[id];
@@ -7131,6 +7177,10 @@ app.get("/v1/me/friends", (req, res) => {
   });
   f.incoming = f.incoming.filter((id) => db.users?.[id]);
   f.outgoing = f.outgoing.filter((id) => db.users?.[id]);
+  const cleaned =
+    f.list.length !== listBefore ||
+    f.incoming.length !== inBefore ||
+    f.outgoing.length !== outBefore;
   // Verwaiste Hochzeits-/Ehe-Links nach Google-Merge reparieren
   const myMarriage =
     marriage.repairMarriageLinks(db, ctx.user, WEDDING_DIR) ||
@@ -7155,7 +7205,7 @@ app.get("/v1/me/friends", (req, res) => {
       });
     }
   }
-  scheduleSave();
+  if (cleaned) scheduleSave();
   const friendCards = sortFriendsSpouseFirst(
     f.list.map((id) => friendPublicCard(db.users[id], ctx.user)).filter(Boolean)
   );
@@ -10471,10 +10521,22 @@ app.get("/v1/market/hub", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   const ip = clientIp(req);
+  const now = Date.now();
+  if (
+    !marketHubCache.marketNewest ||
+    !marketHubCache.shopTop ||
+    now - marketHubCache.at > MARKET_HUB_CACHE_MS
+  ) {
+    marketHubCache = {
+      at: now,
+      marketNewest: newestMarketListings(2),
+      shopTop: topShopPurchases(2),
+    };
+  }
   return res.json({
     ok: true,
-    marketNewest: newestMarketListings(2),
-    shopTop: topShopPurchases(2),
+    marketNewest: marketHubCache.marketNewest,
+    shopTop: marketHubCache.shopTop,
     coinNewest: listShopPacks(ctx.user, ip).slice(0, 2),
   });
 });

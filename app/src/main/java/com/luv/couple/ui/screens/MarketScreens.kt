@@ -821,6 +821,9 @@ private fun ItemShopContent(
     val ownedPets by prefs.ownedPetsFlow.collectAsStateWithLifecycle(
         initialValue = listOf(ShopCatalog.DEFAULT_PET)
     )
+    val equippedPet by prefs.equippedPetFlow.collectAsStateWithLifecycle(
+        initialValue = ShopCatalog.DEFAULT_PET
+    )
     var busyKey by remember { mutableStateOf<String?>(null) }
     var pendingBuy by remember { mutableStateOf<ShopPendingBuy?>(null) }
     var searchOpen by remember { mutableStateOf(false) }
@@ -972,19 +975,41 @@ private fun ItemShopContent(
                                     }
                                     is ShopPendingBuy.Theme -> {
                                         LuvApiClient.buyTheme(pending.item.id)
-                                        reloadShopAndInventory()
+                                        prefs.applyInventorySnap(
+                                            emojis = ownedEmojis,
+                                            themes = (ownedThemes + pending.item.id).distinct(),
+                                            stickers = ownedStickers,
+                                            pets = ownedPets,
+                                            equippedPet = equippedPet
+                                        )
                                     }
                                     is ShopPendingBuy.Sticker -> {
-                                        LuvApiClient.buySticker(pending.item.emoji)
-                                        reloadShopAndInventory()
+                                        val (_, ownedCount) = LuvApiClient.buySticker(pending.item.emoji)
+                                        val next = ownedStickers.toMutableMap()
+                                        next[pending.item.emoji] = ownedCount
+                                        prefs.applyInventorySnap(
+                                            emojis = ownedEmojis,
+                                            themes = ownedThemes,
+                                            stickers = next,
+                                            pets = ownedPets,
+                                            equippedPet = equippedPet
+                                        )
                                     }
                                     is ShopPendingBuy.Pet -> {
                                         LuvApiClient.buyPet(pending.item.emoji)
-                                        reloadShopAndInventory()
+                                        prefs.applyInventorySnap(
+                                            emojis = ownedEmojis,
+                                            themes = ownedThemes,
+                                            stickers = ownedStickers,
+                                            pets = (ownedPets + pending.item.emoji).distinct(),
+                                            equippedPet = equippedPet
+                                        )
                                     }
                                 }
                                 purchaseFlash = titleLabel to price
                                 pendingBuy = null
+                                // Katalog/Inventar im Hintergrund — UI sofort frei
+                                scope.launch { runCatching { reloadShopAndInventory() } }
                             }.onFailure {
                                 Toast.makeText(
                                     context,
@@ -1624,7 +1649,9 @@ private fun LootboxTab(
                     revealedReward = reward
                     phase = "reveal"
                     activePendingId = null
-                    onRefresh()
+                    onBusy(null)
+                    // Inventar im Hintergrund — Chance/Reveal sofort zeigen
+                    scope.launch { runCatching { onRefresh() } }
                 }
                 .onFailure {
                     Toast.makeText(

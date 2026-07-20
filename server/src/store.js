@@ -38,14 +38,16 @@ function ensureDir() {
 function load() {
   ensureDir();
   if (!fs.existsSync(DATA_FILE)) {
-    save(DEFAULT);
-    return structuredClone(DEFAULT);
+    // Sync-Bootstrap wie zuvor — leere DB anlegen
+    const empty = structuredClone(DEFAULT);
+    const tmp = DATA_FILE + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(empty, null, 0), "utf8");
+    fs.renameSync(tmp, DATA_FILE);
+    return empty;
   }
   try {
     const raw = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-    // WICHTIG: Immer ...raw behalten + marriages explizit laden.
-    // Früher Whitelist ohne marriages → jeder Deploy/Restart wischte Ehen weg
-    // (Hochzeitsbilder blieben als Dateien, Gästebuch war verloren).
+    // WICHTIG: ...raw behalten (shopStats, staffAudit, …) + kritische Keys normalisieren
     return {
       ...raw,
       users: raw.users || {},
@@ -120,25 +122,84 @@ function load() {
 
 let db = load();
 let writeTimer = null;
+/** Serialize async writes so HTTP handlers don't block on full-DB sync I/O. */
+let writeChain = Promise.resolve();
+let writeQueued = false;
 
-function save(next = db) {
+function ensureDirExists() {
   ensureDir();
+}
+
+/** Sync write — nur Shutdown / Migration. */
+function save(next = db) {
+  ensureDirExists();
+  if (next !== db) db = next;
   const tmp = DATA_FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(next, null, 0), "utf8");
+  fs.writeFileSync(tmp, JSON.stringify(db, null, 0), "utf8");
   fs.renameSync(tmp, DATA_FILE);
-  db = next;
+}
+
+function enqueueSave() {
+  if (writeQueued) return;
+  writeQueued = true;
+  writeChain = writeChain
+    .then(
+      () =>
+        new Promise((resolve) => {
+          setImmediate(() => {
+            writeQueued = false;
+            let payload;
+            try {
+              payload = JSON.stringify(db, null, 0);
+            } catch (err) {
+              console.error("[store] stringify failed", err?.message || err);
+              resolve();
+              return;
+            }
+            const tmp = DATA_FILE + ".tmp";
+            ensureDirExists();
+            fs.writeFile(tmp, payload, "utf8", (err) => {
+              if (err) {
+                console.error("[store] write failed", err?.message || err);
+                resolve();
+                return;
+              }
+              fs.rename(tmp, DATA_FILE, (err2) => {
+                if (err2) {
+                  console.error("[store] rename failed", err2?.message || err2);
+                }
+                resolve();
+              });
+            });
+          });
+        })
+    )
+    .catch((err) => {
+      console.error("[store] write chain", err?.message || err);
+    });
 }
 
 function scheduleSave() {
   if (writeTimer) return;
   writeTimer = setTimeout(() => {
     writeTimer = null;
-    save(db);
+    enqueueSave();
   }, 200);
 }
 
-/** Sofort speichern — für Coin-/Item-Transaktionen (Markt, Tip, …). */
+/**
+ * Persistenz anstoßen ohne den Event-Loop zu blockieren.
+ * HTTP-Antworten können sofort danach gesendet werden.
+ */
 function flushSave() {
+  if (writeTimer) {
+    clearTimeout(writeTimer);
+    writeTimer = null;
+  }
+  enqueueSave();
+}
+
+function flushSaveSync() {
   if (writeTimer) {
     clearTimeout(writeTimer);
     writeTimer = null;
@@ -147,7 +208,6 @@ function flushSave() {
 }
 
 function todayKey(tzOffsetMin = 0) {
-  // Tagesgrenze 0:00 Europe/Berlin (MEZ/MESZ)
   void tzOffsetMin;
   try {
     return new Intl.DateTimeFormat("en-CA", {
@@ -157,16 +217,14 @@ function todayKey(tzOffsetMin = 0) {
       day: "2-digit",
     }).format(new Date());
   } catch {
-    // Fallback: Europe/Berlin ≈ UTC+1/+2 — nie reines UTC (Mitternacht-Fehler)
     const d = new Date();
     const offsetMin = Number(process.env.TZ_OFFSET_MINUTES);
     if (Number.isFinite(offsetMin)) {
       d.setMinutes(d.getMinutes() + offsetMin);
     } else {
-      // Grobe MESZ/MEZ-Näherung ohne Intl
       const m = d.getUTCMonth();
       const utcH = d.getUTCHours();
-      const berlinOffset = m >= 2 && m <= 9 ? 2 : 1; // grob Sommer/Winter
+      const berlinOffset = m >= 2 && m <= 9 ? 2 : 1;
       d.setUTCHours(utcH + berlinOffset);
     }
     const y = d.getUTCFullYear();
@@ -188,13 +246,32 @@ function getDb() {
   return db;
 }
 
+function onProcessExit() {
+  try {
+    flushSaveSync();
+  } catch (err) {
+    console.error("[store] exit flush failed", err?.message || err);
+  }
+}
+
+process.once("SIGINT", () => {
+  onProcessExit();
+  process.exit(0);
+});
+process.once("SIGTERM", () => {
+  onProcessExit();
+  process.exit(0);
+});
+
 module.exports = {
   getDb,
   save,
   scheduleSave,
   flushSave,
+  flushSaveSync,
   todayKey,
   hashSecret,
   newId,
   DATA_DIR,
+  DATA_FILE,
 };

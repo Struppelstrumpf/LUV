@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.31",
+            listOf(
+                "App wieder flüssiger: Freunde, Markt, Käufe und Lootbox ohne Wartezeiten",
+            )
+        ),
+        Entry(
             "2.2.30",
             listOf(
                 "Radierer trifft nur noch die eingestellte Pinselbreite",
