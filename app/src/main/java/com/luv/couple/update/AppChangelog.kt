@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.26",
+            listOf(
+                "Admin-Web: Zugang per App-Auth-Code statt Browser-Passwort",
+                "Admin-Menü: neuer Bereich Auth zum Authentifizieren",
+            )
+        ),
+        Entry(
             "2.2.25",
             listOf(
                 "Event-Animation fullscreen auf Home, Sozial, Markt und Zahnrad",

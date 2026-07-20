@@ -1046,6 +1046,15 @@ object LuvApiClient {
         )
     }
 
+    /** Web-Admin Authentifizierungs-Code (XX-XXX-XX, 20s). */
+    suspend fun createWebAdminAuthCode(): Pair<String, Long> = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/admin/web-auth/challenge", "{}")
+        val code = json.optString("code").trim()
+        if (code.isBlank()) throw LuvApiException("Kein Code erhalten")
+        val expiresAt = json.optLong("expiresAt", 0L)
+        code to expiresAt
+    }
+
     suspend fun listModerators(): Pair<List<StaffUserCard>, List<StaffPermGroup>> =
         withContext(Dispatchers.IO) {
             val json = authedGet("/v1/admin/moderators")

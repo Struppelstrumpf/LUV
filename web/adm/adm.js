@@ -2,10 +2,13 @@
   const API = "/luv/v1";
   const TOKEN_KEY = "luv_adm_token";
   const USER_KEY = "luv_adm_user";
+  const TICKET_KEY = "luv_adm_web_ticket";
 
   const state = {
     token: localStorage.getItem(TOKEN_KEY) || "",
     user: null,
+    webAuthTicket: sessionStorage.getItem(TICKET_KEY) || "",
+    decoy: false,
     tab: "overview",
     shopItems: [],
     shopKind: "",
@@ -70,10 +73,20 @@
   function isAdmin(u) {
     return u && u.role === "admin";
   }
+  function isDecoy(u) {
+    return Boolean(u && (u.decoy === true || state.decoy));
+  }
   function hasPerm(id) {
     if (!state.user) return false;
+    if (isDecoy(state.user)) return id === "gm.search";
     if (isAdmin(state.user)) return true;
     return Boolean(state.user.permissions && state.user.permissions[id]);
+  }
+
+  function setWebTicket(ticket) {
+    state.webAuthTicket = ticket || "";
+    if (ticket) sessionStorage.setItem(TICKET_KEY, ticket);
+    else sessionStorage.removeItem(TICKET_KEY);
   }
 
   async function api(path, opts = {}) {
@@ -97,38 +110,73 @@
   function setSession(token, user) {
     state.token = token || "";
     state.user = user;
+    state.decoy = Boolean(user && user.decoy);
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);
     if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
     else localStorage.removeItem(USER_KEY);
   }
 
+  function showCodeGate() {
+    const codeGate = $("codeGate");
+    const googleGate = $("googleGate");
+    if (codeGate) codeGate.hidden = false;
+    if (googleGate) googleGate.hidden = true;
+  }
+
+  function showGoogleGate() {
+    const codeGate = $("codeGate");
+    const googleGate = $("googleGate");
+    if (codeGate) codeGate.hidden = true;
+    if (googleGate) googleGate.hidden = false;
+  }
+
   function showLogin(err) {
     loginView.hidden = false;
     appView.hidden = true;
+    if (state.webAuthTicket) showGoogleGate();
+    else showCodeGate();
     const el = $("loginError");
-    if (err) {
-      el.hidden = false;
-      el.textContent = err;
-    } else {
-      el.hidden = true;
+    const ge = $("googleError");
+    if (el) {
+      if (err) {
+        el.hidden = false;
+        el.textContent = err;
+      } else {
+        el.hidden = true;
+      }
     }
+    if (ge && !err) ge.hidden = true;
   }
 
   function showApp() {
     loginView.hidden = true;
     appView.hidden = false;
     $("userNick").textContent = state.user.nickname || "Staff";
-    $("userRole").textContent = state.user.role === "admin" ? "Admin" : "Moderator";
+    $("userRole").textContent =
+      state.decoy || state.user.decoy
+        ? "Moderator"
+        : state.user.role === "admin"
+          ? "Admin"
+          : "Moderator";
     renderNav();
     loadTab(state.tab);
   }
 
+  function showDecoyApp() {
+    state.decoy = true;
+    state.tab = "users";
+    showApp();
+  }
+
   function renderNav() {
     nav.innerHTML = "";
-    TABS.forEach((t) => {
+    const tabs = state.decoy || isDecoy(state.user)
+      ? TABS.filter((t) => t.id === "users")
+      : TABS;
+    tabs.forEach((t) => {
       if (t.adminOnly && !isAdmin(state.user)) return;
-      if (t.perm && !hasPerm(t.perm) && !isAdmin(state.user)) return;
+      if (t.perm && !hasPerm(t.perm) && !isAdmin(state.user) && !state.decoy) return;
       const b = document.createElement("button");
       b.type = "button";
       b.textContent = t.label;
@@ -184,20 +232,42 @@
   );
 
   async function googleCredential(idToken) {
+    if (!state.webAuthTicket) {
+      showGoogleError("Bitte zuerst den Code aus der App eingeben.");
+      showCodeGate();
+      return;
+    }
     const json = await api("/auth/google", {
       method: "POST",
-      body: JSON.stringify({ idToken, staffOnly: true }),
+      body: JSON.stringify({
+        idToken,
+        staffOnly: true,
+        webAuthTicket: state.webAuthTicket,
+      }),
     });
     const token = json.sessionToken || json.token;
     const user = json.user;
     if (!token || !user) throw new Error("Login unvollständig");
-    if (!isStaff(user)) throw new Error("Kein Admin-/Mod-Zugang für dieses Konto.");
+    setWebTicket("");
     setSession(token, user);
+    if (json.decoy || user.decoy) {
+      showDecoyApp();
+      return;
+    }
+    if (!isStaff(user)) throw new Error("Kein Admin-/Mod-Zugang für dieses Konto.");
     showApp();
   }
 
   function showLoginError(msg) {
     const el = $("loginError");
+    if (!el) return;
+    el.hidden = false;
+    el.textContent = msg;
+  }
+
+  function showGoogleError(msg) {
+    const el = $("googleError") || $("loginError");
+    if (!el) return;
     el.hidden = false;
     el.textContent = msg;
   }
@@ -208,7 +278,7 @@
     window.google.accounts.id.initialize({
       client_id: clientId,
       callback: (resp) => {
-        googleCredential(resp.credential).catch((e) => showLoginError(e.message));
+        googleCredential(resp.credential).catch((e) => showGoogleError(e.message));
       },
       auto_select: false,
       cancel_on_tap_outside: true,
@@ -276,14 +346,21 @@
   }
 
   async function resume() {
+    if (state.user && state.user.decoy) state.decoy = true;
     if (!state.token) {
       showLogin();
-      initGoogle();
+      if (state.webAuthTicket) initGoogle();
+      wireAuthCodeUi();
       return;
     }
     try {
       const me = await api("/me");
       const user = me.user || me;
+      if (user.decoy) {
+        setSession(state.token, user);
+        showDecoyApp();
+        return;
+      }
       if (!isStaff(user)) throw new Error("Kein Staff");
       setSession(state.token, user);
       showApp();
@@ -295,7 +372,70 @@
       }
       setSession("", null);
       showLogin();
-      initGoogle();
+      if (state.webAuthTicket) initGoogle();
+      wireAuthCodeUi();
+    }
+  }
+
+  function formatAuthCodeInput(raw) {
+    const s = String(raw || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 7);
+    if (s.length <= 2) return s;
+    if (s.length <= 5) return `${s.slice(0, 2)}-${s.slice(2)}`;
+    return `${s.slice(0, 2)}-${s.slice(2, 5)}-${s.slice(5)}`;
+  }
+
+  function wireAuthCodeUi() {
+    const input = $("authCodeInput");
+    const submit = $("authCodeSubmit");
+    const reset = $("authCodeReset");
+    if (input && !input._luvWired) {
+      input._luvWired = true;
+      input.addEventListener("input", () => {
+        const formatted = formatAuthCodeInput(input.value);
+        if (input.value !== formatted) input.value = formatted;
+      });
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submit?.click();
+        }
+      });
+    }
+    if (submit && !submit._luvWired) {
+      submit._luvWired = true;
+      submit.onclick = async () => {
+        const code = formatAuthCodeInput(input?.value || "");
+        if (code.replace(/-/g, "").length !== 7) {
+          showLoginError("Code im Format XX-XXX-XX eingeben.");
+          return;
+        }
+        submit.disabled = true;
+        try {
+          const res = await api("/admin/web-auth/redeem", {
+            method: "POST",
+            body: JSON.stringify({ code }),
+          });
+          if (!res?.ticket) throw new Error("Kein Ticket erhalten");
+          setWebTicket(res.ticket);
+          showGoogleGate();
+          initGoogle();
+        } catch (err) {
+          showLoginError(err?.message || "Code ungültig");
+        } finally {
+          submit.disabled = false;
+        }
+      };
+    }
+    if (reset && !reset._luvWired) {
+      reset._luvWired = true;
+      reset.onclick = () => {
+        setWebTicket("");
+        if (input) input.value = "";
+        showCodeGate();
+      };
     }
   }
 
@@ -327,6 +467,10 @@
   }
 
   async function loadTab(id) {
+    if ((state.decoy || isDecoy(state.user)) && id !== "users") {
+      id = "users";
+      state.tab = "users";
+    }
     const meta = TABS.find((t) => t.id === id) || TABS[0];
     pageTitle.textContent = meta.label;
     pageHint.textContent = meta.hint || "";
@@ -346,7 +490,10 @@
       else if (id === "phrases") await window.LuvAdmPanels.renderPhrases();
       else if (id === "reports") await renderReports();
       else if (id === "codes") await renderCodes();
-      else if (id === "users") await window.LuvAdmPanels.renderUsers();
+      else if (id === "users") {
+        if (state.decoy || isDecoy(state.user)) await renderDecoyUsers();
+        else await window.LuvAdmPanels.renderUsers();
+      }
       else if (id === "mods") await renderMods();
       else if (id === "market") await renderMarketSettings();
       else if (id === "live") await renderLive();
@@ -2629,11 +2776,57 @@
     } catch {
       /* Session lokal trotzdem beenden */
     }
+    setWebTicket("");
     setSession("", null);
+    state.decoy = false;
     showLogin();
-    initGoogle();
+    wireAuthCodeUi();
   };
   $("refreshBtn").onclick = () => loadTab(state.tab);
+
+  async function renderDecoyUsers() {
+    pageTitle.textContent = "Nutzer";
+    pageHint.textContent = "Nutzerverwaltung";
+    try {
+      const data = await api("/admin/decoy/users");
+      const users = data.users || [];
+      content.innerHTML = `
+        <div class="panel">
+          <h3 style="margin:0 0 0.75rem">Nutzer</h3>
+          <div class="grid-2" style="gap:0.55rem">
+            ${users
+              .map(
+                (u) => `<button type="button" class="btn secondary decoy-user" data-id="${esc(u.id)}" style="justify-content:flex-start;text-align:left">
+                  <strong>${esc(u.nickname)}</strong>
+                  <span class="muted" style="margin-left:0.5rem">${esc(u.coins)} Coins</span>
+                </button>`
+              )
+              .join("")}
+          </div>
+          <p class="help" id="decoyErr" hidden style="color:#f88;margin-top:0.75rem"></p>
+        </div>`;
+      content.querySelectorAll(".decoy-user").forEach((btn) => {
+        btn.onclick = async () => {
+          const err = $("decoyErr");
+          try {
+            await api("/admin/decoy/act", {
+              method: "POST",
+              body: JSON.stringify({ userId: btn.getAttribute("data-id"), action: "view" }),
+            });
+          } catch (e) {
+            if (err) {
+              err.hidden = false;
+              err.textContent = e?.message || "Internal Server Error";
+            } else {
+              alert(e?.message || "Internal Server Error");
+            }
+          }
+        };
+      });
+    } catch (e) {
+      content.innerHTML = `<p class="error">${esc(e?.message || "Internal Server Error")}</p>`;
+    }
+  }
 
   window.LuvAdmHost = {
     api,
@@ -2647,6 +2840,7 @@
   };
 
   // boot
+  wireAuthCodeUi();
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", resume);
   } else {

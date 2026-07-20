@@ -48,8 +48,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,9 +71,6 @@ import com.luv.couple.net.StaffLobbyCard
 import com.luv.couple.net.StaffPermGroup
 import com.luv.couple.net.StaffUserCard
 import com.luv.couple.net.VoucherInfo
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -76,16 +78,21 @@ import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.util.concurrent.TimeUnit
 
 private enum class AdminTab(val label: String, val icon: String) {
     Overview("Übersicht", "🏠"),
+    Auth("Auth", "🔑"),
     Mods("Moderatoren", "🛡️"),
     Reports("Meldungen", "🚩"),
     Codes("Codes", "🎟️"),
@@ -108,6 +115,7 @@ fun AdminHubScreen(
     val tabs = remember(account?.role, account?.permissions) {
         buildList {
             add(AdminTab.Overview)
+            add(AdminTab.Auth)
             if (isAdmin || can("mods.manage")) add(AdminTab.Mods)
             if (can("reports.view")) add(AdminTab.Reports)
             if (can("codes.view")) add(AdminTab.Codes)
@@ -152,6 +160,9 @@ fun AdminHubScreen(
     var nickEdit by remember { mutableStateOf("") }
     var coinDelta by remember { mutableStateOf("10") }
 
+    var authCode by remember { mutableStateOf<String?>(null) }
+    var authExpiresAt by remember { mutableStateOf(0L) }
+    var authSecondsLeft by remember { mutableIntStateOf(0) }
     var liveText by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var banner by remember { mutableStateOf<String?>(null) }
@@ -222,6 +233,22 @@ fun AdminHubScreen(
 
     LaunchedEffect(Unit) { reloadOverview() }
 
+    LaunchedEffect(authExpiresAt, authCode) {
+        if (authCode.isNullOrBlank() || authExpiresAt <= 0L) {
+            authSecondsLeft = 0
+            return@LaunchedEffect
+        }
+        while (isActive) {
+            val left = ((authExpiresAt - System.currentTimeMillis()) / 1000L).toInt().coerceAtLeast(0)
+            authSecondsLeft = left
+            if (left <= 0) {
+                authCode = null
+                break
+            }
+            delay(250)
+        }
+    }
+
     LaunchedEffect(tab) {
         when (tab) {
             AdminTab.Mods -> if (isAdmin || can("mods.manage")) {
@@ -231,6 +258,7 @@ fun AdminHubScreen(
                         if (it.second.isNotEmpty()) permGroups = it.second
                     }
             }
+            AdminTab.Auth -> Unit
             AdminTab.Reports -> if (can("reports.view")) {
                 publicReports = runCatching { LuvApiClient.listPublicReports() }.getOrDefault(emptyList())
                 peerReports = runCatching { LuvApiClient.listPeerReports() }.getOrDefault(emptyList())
@@ -450,6 +478,82 @@ fun AdminHubScreen(
                                     fontSize = 13.sp
                                 )
                             }
+                        }
+                    }
+
+                    AdminTab.Auth -> {
+                        val clipboard = LocalClipboardManager.current
+                        AdminCard {
+                            Text(
+                                "Web-Admin Authentifizieren",
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 20.sp
+                            )
+                            Text(
+                                "Erzeugt einen Code für https://reineke.pro/luv/adm/ — 20 Sekunden gültig. Danach dort denselben Google-Account wählen.",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 13.sp
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            AdminGhostBtn(
+                                if (busy) "…" else "Authentifizieren"
+                            ) {
+                                if (busy) return@AdminGhostBtn
+                                scope.launch {
+                                    busy = true
+                                    banner = null
+                                    runCatching { LuvApiClient.createWebAdminAuthCode() }
+                                        .onSuccess { (code, exp) ->
+                                            authCode = code
+                                            authExpiresAt = exp
+                                            clipboard.setText(AnnotatedString(code))
+                                            toast("Code kopiert")
+                                        }
+                                        .onFailure {
+                                            banner = it.message ?: "Authentifizieren fehlgeschlagen"
+                                            authCode = null
+                                        }
+                                    busy = false
+                                }
+                            }
+                        }
+                        val code = authCode
+                        if (!code.isNullOrBlank() && authSecondsLeft > 0) {
+                            AdminCard {
+                                Text(
+                                    "Dein Code",
+                                    color = TextMuted,
+                                    fontFamily = BodyFont,
+                                    fontSize = 13.sp
+                                )
+                                Text(
+                                    code,
+                                    color = TextPrimary,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 28.sp,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            clipboard.setText(AnnotatedString(code))
+                                            toast("Code kopiert")
+                                        }
+                                        .padding(vertical = 8.dp)
+                                )
+                                Text(
+                                    "Noch ${authSecondsLeft}s gültig · tippen zum Kopieren",
+                                    color = AccentRose,
+                                    fontFamily = BodyFont,
+                                    fontSize = 13.sp,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        } else if (authExpiresAt > 0L && authSecondsLeft <= 0) {
+                            AdminEmpty("Code abgelaufen — erneut Authentifizieren.")
                         }
                     }
 

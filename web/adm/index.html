@@ -19,10 +19,23 @@
     <div class="login-card">
       <p class="brand"><span class="c-l">L</span><span class="c-u">U</span><span class="c-v">V</span></p>
       <h1>Admin &amp; Moderation</h1>
-      <p class="lede">Melde dich mit Google an. Zugang nur für Admins und Moderatoren.</p>
-      <div id="googleBtn" class="google-slot"></div>
-      <p id="loginError" class="error" hidden></p>
-      <p class="hint">Nur Staff-Konten. Session gilt nur für diese Admin-Anmeldung (nicht die App-Session).</p>
+
+      <div id="codeGate">
+        <p class="lede">Öffne in der LUV-App <strong>Admin → Auth</strong> und tippe auf <strong>Authentifizieren</strong>. Gib den Code hier ein (20&nbsp;Sekunden gültig).</p>
+        <label class="field" style="margin-top:0.75rem">Code
+          <input id="authCodeInput" type="text" inputmode="text" autocomplete="one-time-code" maxlength="9" placeholder="XX-XXX-XX" spellcheck="false" />
+        </label>
+        <button type="button" class="btn" id="authCodeSubmit" style="width:100%;margin-top:0.75rem">Code prüfen</button>
+        <p id="loginError" class="error" hidden></p>
+        <p class="hint">Kein Browser-Passwort mehr — nur der App-Code, danach Google mit demselben Konto.</p>
+      </div>
+
+      <div id="googleGate" hidden>
+        <p class="lede">Code akzeptiert. Melde dich jetzt mit dem <strong>selben Google-Konto</strong> an wie in der App.</p>
+        <div id="googleBtn" class="google-slot"></div>
+        <p id="googleError" class="error" hidden></p>
+        <button type="button" class="btn ghost" id="authCodeReset" style="margin-top:0.75rem">Anderen Code eingeben</button>
+      </div>
     </div>
   </section>
 
@@ -52,11 +65,11 @@
   </section>
 
   <div id="modal" class="modal" hidden>
-    <div class="modal-card" id="modalCard"></div>
+    <div id="modalCard" class="modal-card"></div>
   </div>
 
-  <script src="/luv/adm/shop-studio.js"></script>
   <script src="/luv/adm/adm-panels.js"></script>
+  <script src="/luv/adm/shop-studio.js"></script>
   <script src="/luv/adm/adm.js"></script>
 </body>
 </html>

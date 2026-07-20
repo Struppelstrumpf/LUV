@@ -28,6 +28,7 @@ const notifyPhrases = require("./notify_phrases");
 const dailyTasks = require("./daily_tasks");
 const shopCalendar = require("./shop_calendar");
 const seasonEvents = require("./events");
+const adminWebAuth = require("./admin_web_auth");
 ach.bindGetDb(getDb);
 const {
   STICKER_SHOP_PRICES,
@@ -4134,10 +4135,14 @@ function createSession(userId, ttlMs = SESSION_TTL_MS, opts = {}) {
   const db = getDb();
   const token = randomToken();
   const ttl = Math.max(60_000, Number(ttlMs) || SESSION_TTL_MS);
-  const kind = opts.kind === "staff" ? "staff" : "app";
+  let kind = "app";
+  if (opts.kind === "staff") kind = "staff";
+  else if (opts.kind === "decoy") kind = "decoy";
   db.sessions[token] = {
-    userId,
+    userId: kind === "decoy" ? String(userId || "decoy") : userId,
     kind,
+    decoy: kind === "decoy",
+    googleSub: opts.googleSub || null,
     createdAt: Date.now(),
     expiresAt: Date.now() + ttl,
   };
@@ -4597,6 +4602,25 @@ function authUser(req) {
   const db = getDb();
   const session = db.sessions[token];
   if (!session || session.expiresAt < Date.now()) return null;
+  if (session.kind === "decoy" || session.decoy) {
+    return {
+      user: {
+        id: String(session.userId || "decoy"),
+        nickname: "Moderator",
+        role: "mod",
+        modPermissions: { "gm.search": true },
+        permissions: { "gm.search": true },
+        isStaff: true,
+        decoy: true,
+        googleSub: session.googleSub || null,
+        banned: false,
+        coins: 0,
+      },
+      token,
+      sessionKind: "decoy",
+      decoy: true,
+    };
+  }
   const user = db.users[session.userId];
   if (!user) return null;
   return { user, token, sessionKind: session.kind === "staff" ? "staff" : "app" };
@@ -4912,6 +4936,18 @@ function requireAdmin(req, res) {
 function requireStaff(req, res, perm) {
   const ctx = requireAuth(req, res);
   if (!ctx) return null;
+  if (ctx.decoy || ctx.sessionKind === "decoy") {
+    // Honeypot: immer wie ein Serverfehler wirken
+    res.status(500).json({
+      error: "server_error",
+      message: "Internal Server Error",
+    });
+    staffAudit(ctx.user, "decoy_admin_probe", {
+      path: String(req.path || "").slice(0, 80),
+      method: String(req.method || "").slice(0, 8),
+    });
+    return null;
+  }
   ensureStaffFields(ctx.user);
   if (!isStaff(ctx.user)) {
     res.status(403).json({ error: "forbidden", message: "Kein Staff-Zugang." });
@@ -6324,12 +6360,77 @@ app.post("/v1/auth/google", async (req, res) => {
   const idToken = String(req.body?.idToken || "").trim();
   if (!idToken) return res.status(400).json({ error: "missing_token" });
   const staffOnly = Boolean(req.body?.staffOnly);
+  const webAuthTicket = String(req.body?.webAuthTicket || req.body?.adminAuthTicket || "").trim();
   const profile = await verifyGoogleIdToken(idToken);
   if (!profile) {
     return res.status(401).json({
       error: "invalid_google_token",
       message: "Google-Anmeldung fehlgeschlagen.",
     });
+  }
+
+  // —— Web-Admin: Code-Ticket vor Google (Staff oder Decoy) ——
+  if (staffOnly) {
+    if (!webAuthTicket) {
+      return res.status(403).json({
+        error: "auth_code_required",
+        message: "Bitte zuerst den Authentifizierungs-Code aus der LUV-App eingeben.",
+      });
+    }
+    const dbTicket = getDb();
+    const consumed = adminWebAuth.consumeTicket(dbTicket, webAuthTicket);
+    scheduleSave();
+    if (!consumed) {
+      return res.status(403).json({
+        error: "auth_ticket_invalid",
+        message: "Code abgelaufen oder ungültig. Bitte in der App neu authentifizieren.",
+      });
+    }
+    if (consumed.kind === "decoy") {
+      // Optional: wenn Decoy an ein googleSub gebunden war, muss es matchen
+      if (consumed.googleSub && consumed.googleSub !== profile.sub) {
+        return res.status(403).json({
+          error: "auth_account_mismatch",
+          message: "Dieses Google-Konto passt nicht zum Code.",
+        });
+      }
+      const decoyToken = createSession(`decoy_${profile.sub.slice(0, 12)}`, STAFF_SESSION_TTL_MS, {
+        kind: "decoy",
+        googleSub: profile.sub,
+      });
+      staffAudit(
+        { id: "decoy", nickname: "decoy", role: "mod" },
+        "decoy_staff_login",
+        { email: profile.email || null, sub: profile.sub.slice(0, 8) }
+      );
+      return res.json({
+        sessionToken: decoyToken,
+        created: false,
+        linked: false,
+        decoy: true,
+        user: {
+          id: `decoy_${profile.sub.slice(0, 12)}`,
+          nickname: "Moderator",
+          role: "mod",
+          isStaff: true,
+          decoy: true,
+          permissions: { "gm.search": true },
+          googleEmail: profile.email || null,
+        },
+      });
+    }
+    // Staff-Ticket: Google-Konto muss exakt dem App-Konto entsprechen
+    if (!consumed.googleSub || consumed.googleSub !== profile.sub) {
+      staffAudit(
+        { id: consumed.userId, nickname: "?", role: null },
+        "staff_login_sub_mismatch",
+        { expected: Boolean(consumed.googleSub), got: profile.sub.slice(0, 8) }
+      );
+      return res.status(403).json({
+        error: "auth_account_mismatch",
+        message: "Dieses Google-Konto passt nicht zum Code aus der App.",
+      });
+    }
   }
 
   const db = getDb();
@@ -6339,7 +6440,7 @@ app.post("/v1/auth/google", async (req, res) => {
   let linked = false;
   let created = false;
 
-  if (authed?.user) {
+  if (authed?.user && !authed.decoy) {
     // Verknüpfen mit aktuellem Geräte-Konto
     if (authed.user.googleSub && authed.user.googleSub !== profile.sub) {
       return res.status(409).json({
@@ -6473,6 +6574,87 @@ app.post("/v1/auth/logout", (req, res) => {
   return res.json({ ok: true });
 });
 
+/**
+ * App: Authentifizierungs-Code für Web-Admin erzeugen (XX-XXX-XX, 20s).
+ * Staff → echter Code (an googleSub gebunden).
+ * Nicht-Staff → Decoy-Code (gleiche Form, führt zu Fake-Admin).
+ */
+app.post("/v1/admin/web-auth/challenge", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx || ctx.decoy) return;
+  const ip = clientIp(req);
+  if (!rateLimit(`web_auth_chal:${ctx.user.id}`, 8, 60_000)) {
+    return res.status(429).json({
+      error: "rate_limited",
+      message: "Zu viele Codes — bitte kurz warten.",
+    });
+  }
+  if (!rateLimit(`web_auth_chal_ip:${ip}`, 20, 60_000)) {
+    return res.status(429).json({ error: "rate_limited", message: "Zu viele Anfragen." });
+  }
+  if (!ctx.user.googleSub) {
+    return res.status(403).json({
+      error: "google_required",
+      message: "Bitte zuerst mit Google in der App anmelden.",
+    });
+  }
+  ensureStaffFields(ctx.user);
+  const db = getDb();
+  adminWebAuth.ensureBucket(db);
+  const issued = adminWebAuth.issueChallenge(db, {
+    googleSub: ctx.user.googleSub,
+    userId: ctx.user.id,
+    isStaff: isStaff(ctx.user),
+  });
+  scheduleSave();
+  staffAudit(ctx.user, "web_auth_challenge", {
+    kind: issued.kind,
+    exp: issued.expiresAt,
+  });
+  // Client sieht nie kind — Response immer gleich
+  return res.json(adminWebAuth.publicChallengeResponse(issued));
+});
+
+/**
+ * Web: Code einlösen → einmaliges Ticket (vor Google).
+ * Immer gleiche Response-Form (Anti-Enumeration).
+ */
+app.post("/v1/admin/web-auth/redeem", (req, res) => {
+  const ip = clientIp(req);
+  if (!rateLimit(`web_auth_redeem:${ip}`, 30, 60_000)) {
+    return res.status(429).json({
+      error: "rate_limited",
+      message: "Zu viele Versuche. Bitte später erneut.",
+    });
+  }
+  // künstliche leichte Verzögerung gegen Timing-Angriffe
+  const delayMs = 80 + Math.floor(Math.random() * 120);
+  setTimeout(() => {
+    const db = getDb();
+    const result = adminWebAuth.redeemCode(db, req.body?.code);
+    scheduleSave();
+    return res.json(adminWebAuth.publicRedeemResponse(result));
+  }, delayMs);
+});
+
+/** Fake-Admin: Nutzerliste (nur Decoy-Sessions). */
+app.get("/v1/admin/decoy/users", (req, res) => {
+  const ctx = authUser(req);
+  if (!ctx || !ctx.decoy) {
+    return res.status(500).json({ error: "server_error", message: "Internal Server Error" });
+  }
+  return res.json({ ok: true, users: adminWebAuth.fakeDecoyUsers() });
+});
+
+/** Fake-Admin: jede andere Aktion → Server Error */
+app.all("/v1/admin/decoy/*", (req, res) => {
+  const ctx = authUser(req);
+  if (!ctx || !ctx.decoy) {
+    return res.status(500).json({ error: "server_error", message: "Internal Server Error" });
+  }
+  return res.status(500).json({ error: "server_error", message: "Internal Server Error" });
+});
+
 app.delete("/v1/me", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
@@ -6540,6 +6722,21 @@ app.put("/v1/me/settings", (req, res) => {
 app.get("/v1/me", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
+  if (ctx.decoy) {
+    return res.json({
+      user: {
+        id: ctx.user.id,
+        nickname: "Moderator",
+        role: "mod",
+        isStaff: true,
+        decoy: true,
+        permissions: { "gm.search": true },
+        coins: 0,
+        googleEmail: null,
+      },
+      displayLabels: {},
+    });
+  }
   // displayLabels mitliefern — App braucht Admin-Namen ohne extra Shop-Aufruf
   return res.json({
     user: publicUser(ctx.user),
