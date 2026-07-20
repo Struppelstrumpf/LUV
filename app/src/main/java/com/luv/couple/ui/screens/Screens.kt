@@ -97,8 +97,10 @@ import com.luv.couple.data.Role
 import com.luv.couple.data.RoomPreview
 import com.luv.couple.lock.CanvasStore
 import com.luv.couple.net.AccountSession
+import com.luv.couple.net.EventSession
 import com.luv.couple.net.LobbyReconnectUi
 import com.luv.couple.net.PairSessionState
+import com.luv.couple.net.SeasonEvent
 import com.luv.couple.update.UpdateUiState
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
@@ -272,6 +274,7 @@ fun LobbiesScreen(
     error: String?,
     onOpenLobby: (Lobby) -> Unit,
     onCreateLobby: () -> Unit,
+    onCreateEventLobby: (SeasonEvent) -> Unit = {},
     onJoinLobby: () -> Unit,
     onRandomLobby: () -> Unit,
     onInviteSeat: (Lobby) -> Unit,
@@ -286,7 +289,12 @@ fun LobbiesScreen(
     googleBusy: Boolean = false,
     onGoogleSignIn: () -> Unit = {}
 ) {
-    val accent = PeerPalette.menuAccent()
+    val accent = EventSession.menuAccentOrNull() ?: PeerPalette.menuAccent()
+    val eventGlyph = EventSession.menuGlyphOrNull()
+    val eventLobby = EventSession.primaryEventForLobby()?.takeIf { it.lobbyEnabled }
+    // eventsUi: hält Compose reaktiv auf EventSession
+    @Suppress("UNUSED_VARIABLE")
+    val eventsUi by EventSession.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -466,6 +474,16 @@ fun LobbiesScreen(
                             onCreateLobby()
                         }
                     )
+                    if (eventLobby != null) {
+                        PrimaryButton(
+                            label = "${eventLobby.emoji} Event-Lobby · ${eventLobby.title}",
+                            color = accent,
+                            onClick = {
+                                showLobbyPlusDialog = false
+                                onCreateEventLobby(eventLobby)
+                            }
+                        )
+                    }
                     PrimaryButton(
                         "Beitreten",
                         BgSoft,
@@ -550,22 +568,30 @@ fun LobbiesScreen(
                     )
                 }
                 if (!requireGoogleLogin) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .aspectRatio(1f)
-                            .clip(CircleShape)
-                            .background(accent)
-                            .clickable { showLobbyPlusDialog = true },
-                        contentAlignment = Alignment.Center
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            "+",
-                            color = Color.White,
-                            fontFamily = DisplayFont,
-                            fontSize = 36.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        if (!eventGlyph.isNullOrBlank()) {
+                            Text(eventGlyph, fontSize = 22.sp)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .aspectRatio(1f)
+                                .clip(CircleShape)
+                                .background(accent)
+                                .clickable { showLobbyPlusDialog = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "+",
+                                color = Color.White,
+                                fontFamily = DisplayFont,
+                                fontSize = 36.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }

@@ -545,8 +545,8 @@ function ensureDaily(user, dayKey) {
       completed: false,
       rewardClaimed: false,
     };
-    // Pausentag(e): Streak ehrlich auf 0, bis heute wieder aktiv
-    const prev = a.lastStreakDate || a.lastDailyCompleteDate || null;
+    // Verpasster Tag (keine vollständigen Tagesaufgaben): Streak → 0
+    const prev = a.lastDailyCompleteDate || null;
     if (prev && prev !== dayKey) {
       const gap = dayDiffBerlin(prev, dayKey);
       if (gap > 1) {
@@ -575,27 +575,35 @@ function dayDiffBerlin(fromKey, toKey) {
 }
 
 /**
- * Day-Streak: einmal pro Berlin-Tag +1 bei Aktivität (App öffnen / Daily).
- * Aufeinanderfolgende Tage erhöhen, Lücke setzt auf 1 zurück.
+ * Day-Streak nur bei vollständigen Tagesaufgaben:
+ * +1 wenn gestern auch komplett, sonst Start bei 1.
+ * (Lücken → 0 passiert in ensureDaily beim nächsten Tag.)
  */
-function touchDayStreak(user, dayKey) {
+function onDailyTasksCompleted(user, dayKey) {
   const a = ensureAchievements(user);
   const day = String(dayKey || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return a.streak || 0;
-  const prev = a.lastStreakDate || a.lastDailyCompleteDate || null;
-  if (prev === day) {
+  if (a.lastDailyCompleteDate === day) {
     a.progress.daily_streak = Math.max(Number(a.progress.daily_streak) || 0, a.streak || 0);
     return a.streak || 0;
   }
+  const prev = a.lastDailyCompleteDate || null;
   const diff = prev ? dayDiffBerlin(prev, day) : null;
   if (diff === 1) {
     a.streak = Math.max(1, (Number(a.streak) || 0) + 1);
   } else {
     a.streak = 1;
   }
+  a.lastDailyCompleteDate = day;
   a.lastStreakDate = day;
   a.progress.daily_streak = Math.max(Number(a.progress.daily_streak) || 0, a.streak);
   return a.streak;
+}
+
+/** Früher App-Open-Streak — absichtlich no-op (Streak nur bei Tagesaufgaben). */
+function touchDayStreak(user, _dayKey) {
+  const a = ensureAchievements(user);
+  return a.streak || 0;
 }
 
 function yesterdayKeyFrom(dayKey) {
@@ -668,8 +676,7 @@ function bumpMetric(user, metric, amount, dayKey, applyLedgerFn) {
       a.daily.completed = true;
       a.daily.rewardClaimed = false;
       dailyJustCompleted = true;
-      a.lastDailyCompleteDate = dayKey;
-      touchDayStreak(user, dayKey);
+      onDailyTasksCompleted(user, dayKey);
       a.progress.dailies_completed = (Number(a.progress.dailies_completed) || 0) + 1;
     }
   }
@@ -1059,6 +1066,7 @@ module.exports = {
   ensureAchievementDefs,
   itemReward,
   touchDayStreak,
+  onDailyTasksCompleted,
   dayDiffBerlin,
   yesterdayKeyFrom,
 };

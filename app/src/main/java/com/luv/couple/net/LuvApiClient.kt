@@ -3219,15 +3219,21 @@ object LuvApiClient {
         }
     }
 
-    suspend fun createRoom(name: String = "Lobby", hostColorSide: String = "blue"): RoomSession =
+    suspend fun createRoom(
+        name: String = "Lobby",
+        hostColorSide: String = "blue",
+        eventId: String? = null,
+    ): RoomSession =
         withContext(Dispatchers.IO) {
             val side = if (hostColorSide.equals("purple", ignoreCase = true)) "purple" else "blue"
             val body = JSONObject()
                 .put("name", name.trim().take(PeerPalette.MAX_LOBBY_NAME_LENGTH).ifBlank { "Lobby" })
                 .put("hostColorSide", side)
-                .toString()
-                .toRequestBody(jsonMedia)
-            val request = authedRequestBuilder("/v1/rooms").post(body).build()
+            val eid = eventId?.trim().orEmpty()
+            if (eid.isNotEmpty()) body.put("eventId", eid.take(64))
+            val request = authedRequestBuilder("/v1/rooms")
+                .post(body.toString().toRequestBody(jsonMedia))
+                .build()
             executeRoom(request)
         }
 

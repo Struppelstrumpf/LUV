@@ -63,6 +63,7 @@ import com.luv.couple.data.PeerPalette
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.AchievementsBadge
 import com.luv.couple.net.LuvApiClient
+import com.luv.couple.net.SeasonEvent
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgSoft
 import com.luv.couple.ui.theme.BodyFont
@@ -75,7 +76,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun SocialScreen(
     initialTab: Int = 0,
-    onOpenFriendProfile: (userId: String, nickname: String) -> Unit
+    onOpenFriendProfile: (userId: String, nickname: String) -> Unit,
+    onCreateEventLobby: (SeasonEvent) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 2)) }
@@ -168,7 +170,8 @@ fun SocialScreen(
                                     .onSuccess { AccountSession.setAccount(it) }
                             }
                         }
-                    }
+                    },
+                    onCreateEventLobby = onCreateEventLobby
                 )
                 else -> AchievementsPanel(
                     modifier = Modifier

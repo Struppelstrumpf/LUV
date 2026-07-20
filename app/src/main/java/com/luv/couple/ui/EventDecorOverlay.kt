@@ -7,33 +7,23 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.net.EventDecor
 import com.luv.couple.net.EventSession
 import com.luv.couple.net.LuvApiClient
-import com.luv.couple.ui.theme.BodyFont
-import com.luv.couple.ui.theme.DisplayFont
-import com.luv.couple.ui.theme.TextPrimary
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -48,18 +38,13 @@ fun EventDecorHost(
             runCatching { LuvApiClient.fetchEvents() }
         }
     }
-    val decor = events?.primaryDecor?.takeIf {
-        it.particles != "none" || it.bannerText.isNotBlank() || it.ornaments != "none"
-    }
+    val decor = events?.primaryDecor?.takeIf { it.particles != "none" }
     Box(modifier = modifier.fillMaxSize()) {
-        // Partikel hinter Content, damit Touches nicht blockiert werden
-        if (decor != null && decor.particles != "none") {
+        // Nur dezente Partikel hinter dem Content — kein Banner / keine Seiten-Herzen
+        if (decor != null) {
             EventParticleLayer(decor = decor)
         }
         content()
-        if (decor != null) {
-            EventBannerAndOrnaments(decor = decor)
-        }
     }
 }
 
@@ -95,60 +80,6 @@ private fun EventParticleLayer(decor: EventDecor) {
             accent = accent,
             intensity = intensity
         )
-    }
-}
-
-@Composable
-private fun EventBannerAndOrnaments(decor: EventDecor) {
-    val accent = remember(decor.accentHex) {
-        runCatching { Color(android.graphics.Color.parseColor(decor.accentHex)) }
-            .getOrDefault(Color(0xFFE94E77))
-    }
-    val intensity = decor.intensity.coerceIn(0.15f, 1f)
-    Box(modifier = Modifier.fillMaxWidth()) {
-        if (decor.bannerText.isNotBlank()) {
-            Text(
-                decor.bannerText,
-                color = TextPrimary,
-                fontFamily = DisplayFont,
-                fontSize = 12.sp,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 6.dp)
-                    .background(
-                        accent.copy(0.22f * intensity + 0.15f),
-                        RoundedCornerShape(999.dp)
-                    )
-                    .padding(horizontal = 12.dp, vertical = 5.dp)
-            )
-        }
-        when (decor.ornaments) {
-            "wreath", "hearts", "spark" -> {
-                val glyph = when (decor.ornaments) {
-                    "wreath" -> "🎄"
-                    "hearts" -> "💕"
-                    else -> "✨"
-                }
-                Text(
-                    glyph,
-                    fontSize = 16.sp,
-                    fontFamily = BodyFont,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(10.dp)
-                )
-                Text(
-                    glyph,
-                    fontSize = 16.sp,
-                    fontFamily = BodyFont,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(10.dp)
-                )
-            }
-        }
     }
 }
 

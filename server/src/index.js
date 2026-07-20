@@ -2035,6 +2035,7 @@ function serializeRoom(code, room) {
       ? room.joinAnnouncedUserIds.filter((id) => typeof id === "string")
       : [],
     marriageId: room.marriageId || null,
+    eventId: room.eventId ? String(room.eventId).slice(0, 64) : null,
     publicShare:
       room.publicShare && typeof room.publicShare === "object"
         ? {
@@ -2120,6 +2121,7 @@ function restoreRoomsFromDisk() {
           ? data.memberUserIds.filter((id) => typeof id === "string")
           : [],
       marriageId: data.marriageId || null,
+      eventId: data.eventId ? String(data.eventId).slice(0, 64) : null,
       publicShare:
         data.publicShare && typeof data.publicShare === "object"
           ? {
@@ -2787,6 +2789,7 @@ function hydrateRoom(code, data, tokenOverride) {
         ? data.memberUserIds.filter((id) => typeof id === "string")
         : [],
     marriageId: data.marriageId || null,
+    eventId: data.eventId ? String(data.eventId).slice(0, 64) : null,
     publicShare:
       data.publicShare && typeof data.publicShare === "object"
         ? {
@@ -3397,8 +3400,6 @@ function ensureDailyGrant(user) {
   }
   user.dailyBalance = DAILY_COINS;
   user.lastDailyGrantDate = day;
-  // Day-Streak: aktiver Tag (Coins abholen / App öffnen)
-  ach.touchDayStreak(user, day);
   syncCoinTotal(user);
   const db = getDb();
   db.ledger.push({
@@ -9604,7 +9605,6 @@ app.get("/v1/me/achievements", (req, res) => {
   if (a.progress._activeDayMarked !== todayKey()) {
     a.progress._activeDayMarked = todayKey();
     trackAch(ctx.user, "active_days", 1);
-    ach.touchDayStreak(ctx.user, todayKey());
   }
   // Nachträglich Items nachreichen (z. B. Kapelle nach Katalog-Fix)
   if (repairAchievementItemRewards(ctx.user) > 0) {
@@ -11221,6 +11221,26 @@ app.post("/v1/rooms", (req, res) => {
   const name = String(req.body?.name || "Zusammen").trim().slice(0, MAX_LOBBY_NAME_LENGTH) || "Zusammen";
   const hostColorSide = normalizeHostColorSide(req.body?.hostColorSide);
   const hostIdx = hostColorIndex(hostColorSide);
+  const rawEventId = String(req.body?.eventId || "").trim().slice(0, 64);
+  let eventId = null;
+  if (rawEventId) {
+    const cfg = seasonEvents.ensureEventsConfig(getDb());
+    const ev = (cfg.events || []).find((e) => e && e.id === rawEventId);
+    if (!ev || ev.enabled === false || !seasonEvents.isActiveAtPatched(ev, new Date())) {
+      return res.status(400).json({
+        error: "event_inactive",
+        message: "Event ist gerade nicht aktiv.",
+      });
+    }
+    const lobbyCfg = seasonEvents.publicEvent(ev)?.lobby;
+    if (!lobbyCfg || !lobbyCfg.enabled) {
+      return res.status(400).json({
+        error: "event_lobby_disabled",
+        message: "Für dieses Event sind keine Event-Lobbys freigeschaltet.",
+      });
+    }
+    eventId = rawEventId;
+  }
   const eligibleFree = evaluateCanCreateFreeLobby(ctx.user);
   let charged = 0;
   let isFree = false;
@@ -11266,6 +11286,7 @@ app.post("/v1/rooms", (req, res) => {
     joinAnnouncedUserIds: [ctx.user.id],
     publicShare: { day: "", count: 0, nextAt: 0 },
     publicProposal: null,
+    eventId,
     strokes: [],
     stickers: [],
   });
@@ -11278,12 +11299,14 @@ app.post("/v1/rooms", (req, res) => {
     token,
     hostColorSide,
     colorByUserId: { [ctx.user.id]: hostIdx },
+    eventId,
   };
   persistRooms();
   trackAch(ctx.user, "lobbies_created", 1);
   if (isFree) trackAch(ctx.user, "free_lobbies", 1);
   else trackAch(ctx.user, "paid_lobbies", 1);
   if (charged > 0) trackAch(ctx.user, "coins_spent", charged);
+  if (eventId) trackAch(ctx.user, "event_lobby_opens", 1);
   const hostedN = Object.keys(ctx.user.hostedRooms || {}).length;
   ach.setMetricAtLeast(ctx.user, "lobbies_active", hostedN, todayKey(), (uid, d, r, ref) =>
     applyLedger(uid, d, r, ref)
@@ -11299,6 +11322,7 @@ app.post("/v1/rooms", (req, res) => {
     hostColorSide,
     suggestedColorIndex: hostIdx,
     charged,
+    eventId,
     user: publicUser(ctx.user),
     ...inviteFor(code),
   });

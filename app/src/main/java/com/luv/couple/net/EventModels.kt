@@ -172,4 +172,34 @@ object EventSession {
 
     val activeDecor: EventDecor?
         get() = _state.value?.primaryDecor?.takeIf { it.particles != "none" || it.bannerText.isNotBlank() }
+
+    /** Menü-Akzentfarbe vom aktiven Event (sonst null). */
+    fun menuAccentOrNull(): androidx.compose.ui.graphics.Color? {
+        val hex = _state.value?.primaryDecor?.accentHex?.trim().orEmpty()
+        if (hex.isBlank()) return null
+        return runCatching {
+            androidx.compose.ui.graphics.Color(android.graphics.Color.parseColor(hex))
+        }.getOrNull()
+    }
+
+    /** Kleines Schmuck-Emoji fürs Hauptmenü (neben +). */
+    fun menuGlyphOrNull(): String? {
+        val s = _state.value ?: return null
+        val decor = s.primaryDecor ?: return null
+        val fromOrnament = when (decor.ornaments) {
+            "wreath" -> "🎄"
+            "hearts" -> "💕"
+            "spark" -> "✨"
+            else -> null
+        }
+        if (fromOrnament != null) return fromOrnament
+        val emoji = s.active.firstOrNull { it.id == s.primaryEventId }?.emoji
+            ?: s.active.firstOrNull()?.emoji
+        return emoji?.takeIf { it.isNotBlank() }
+    }
+
+    fun primaryEventForLobby(): SeasonEvent? {
+        val s = _state.value ?: return null
+        return s.active.firstOrNull { it.lobbyEnabled }
+    }
 }

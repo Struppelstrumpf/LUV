@@ -53,6 +53,7 @@ import kotlinx.coroutines.launch
 fun EventsPanel(
     modifier: Modifier = Modifier,
     onCoinsGranted: (Int) -> Unit = {},
+    onCreateEventLobby: (SeasonEvent) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -91,12 +92,6 @@ fun EventsPanel(
                 fontSize = 20.sp
             )
         }
-        Text(
-            "Wiederkehrende Feste mit kleinen Sammel-Belohnungen — und etwas Schmuck in der App.",
-            color = TextMuted,
-            fontFamily = BodyFont,
-            fontSize = 13.sp
-        )
 
         when {
             loading -> Text("Lädt…", color = TextMuted, fontFamily = BodyFont)
@@ -160,6 +155,9 @@ fun EventsPanel(
                                         }
                                     busyId = null
                                 }
+                            },
+                            onCreateLobby = {
+                                onCreateEventLobby(ev)
                             }
                         )
                     }
@@ -189,6 +187,7 @@ private fun EventHeroCard(
     event: SeasonEvent,
     busy: Boolean,
     onCollect: () -> Unit,
+    onCreateLobby: () -> Unit = {},
 ) {
     val accent = runCatching {
         Color(android.graphics.Color.parseColor(event.decor.accentHex))
@@ -308,6 +307,24 @@ private fun EventHeroCard(
                 fontFamily = BodyFont,
                 fontSize = 11.sp
             )
+        }
+        if (event.lobbyEnabled) {
+            TextButton(
+                onClick = onCreateLobby,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(accent.copy(0.22f))
+            ) {
+                Text(
+                    "${event.emoji} Event-Lobby erstellen",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
         TextButton(
             onClick = onCollect,

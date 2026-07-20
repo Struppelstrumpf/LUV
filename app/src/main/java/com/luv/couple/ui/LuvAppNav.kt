@@ -355,6 +355,75 @@ fun LuvAppNav() {
         return false
     }
 
+    fun createEventLobby(event: com.luv.couple.net.SeasonEvent) {
+        if (busy) return
+        if (!requireGoogleOrToast()) return
+        scope.launch {
+            busy = true
+            joinError = null
+            try {
+                val snap = prefs.snapshot()
+                if (snap.lobbies.size >= PeerPalette.MAX_LOBBIES) {
+                    joinError = "Maximal ${PeerPalette.MAX_LOBBIES} Lobbys."
+                    return@launch
+                }
+                val hostColorSide = if (colorIndex % 2 == 0) "blue" else "purple"
+                val lobbyName = "${event.emoji} ${event.title}"
+                    .trim()
+                    .take(PeerPalette.MAX_LOBBY_NAME_LENGTH)
+                    .ifBlank { "Event-Lobby" }
+                val room = LuvApiClient.createRoom(
+                    name = lobbyName,
+                    hostColorSide = hostColorSide,
+                    eventId = event.id
+                )
+                AccountSession.account.value?.let { prefs.updateAccount(it) }
+                val myColor = PeerPalette.hostSideColor(hostColorSide)
+                prefs.setColorIndex(myColor)
+                colorIndex = myColor
+                CanvasStore.updateProfile(snap.nickname.orEmpty(), myColor)
+                val lobby = Lobby(
+                    id = UUID.randomUUID().toString(),
+                    name = room.name.ifBlank { lobbyName },
+                    role = Role.HOST,
+                    code = room.code,
+                    token = room.token,
+                    invite = room.invite,
+                    capacity = room.capacity,
+                    isFree = room.isFree,
+                    hostNickname = room.hostNickname.ifBlank { nickname.orEmpty() },
+                    hostColorSide = hostColorSide
+                )
+                prefs.upsertLobby(lobby)
+                PairSessionState.setCapacity(lobby.id, room.capacity)
+                CanvasStore.setActiveLobby(lobby.id)
+                PairConnectionService.startAll(context)
+                shareLobby = lobby
+                navController.navigate(Routes.HOST_SHARE) {
+                    popUpTo(Routes.MAIN) { inclusive = false }
+                }
+                refreshAccount()
+            } catch (e: Exception) {
+                if (e is LuvApiException && e.isNoCoins) {
+                    showNoCoins = true
+                    joinError = null
+                } else {
+                    joinError = when (e) {
+                        is LuvApiException -> e.message
+                        else -> "API nicht erreichbar."
+                    }
+                    Toast.makeText(
+                        context,
+                        joinError ?: "Event-Lobby fehlgeschlagen",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } finally {
+                busy = false
+            }
+        }
+    }
+
     fun isChosenNickname(nick: String?): Boolean {
         val n = nick?.trim().orEmpty()
         return n.length >= 2 && !n.equals("Luv", ignoreCase = true)
@@ -1173,6 +1242,7 @@ fun LuvAppNav() {
                                     navController.navigate(Routes.CREATE)
                                 }
                             },
+                            onCreateEventLobby = { event -> createEventLobby(event) },
                             onJoinLobby = {
                                 if (requireGoogleOrToast()) {
                                     joinError = null
@@ -1278,7 +1348,8 @@ fun LuvAppNav() {
                                     ?.savedStateHandle
                                     ?.set("peer_nick", nick)
                                 navController.navigate(Routes.peerProfile(userId))
-                            }
+                            },
+                            onCreateEventLobby = { event -> createEventLobby(event) }
                         )
                         2 -> InventoryScreen(
                             nickname = nickname ?: "Du",
