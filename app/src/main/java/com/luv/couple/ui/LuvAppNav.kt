@@ -316,9 +316,17 @@ fun LuvAppNav() {
     suspend fun fulfillPlayPurchase(
         productId: String,
         purchaseToken: String,
-        orderId: String?
+        orderId: String?,
+        integrityToken: String? = null,
+        integrityNonce: String? = null
     ): Boolean {
-        val granted = LuvApiClient.confirmPlayPurchase(productId, purchaseToken, orderId)
+        val granted = LuvApiClient.confirmPlayPurchase(
+            productId = productId,
+            purchaseToken = purchaseToken,
+            orderId = orderId,
+            integrityToken = integrityToken,
+            integrityNonce = integrityNonce
+        )
         playBilling.consume(purchaseToken)
         refreshAccount()
         accountMessage = if (granted > 0) {
@@ -1011,7 +1019,14 @@ fun LuvAppNav() {
         val pending = runCatching { playBilling.queryUnconsumedPurchases() }.getOrDefault(emptyList())
         for (p in pending) {
             runCatching {
-                fulfillPlayPurchase(p.productId, p.purchaseToken, p.orderId)
+                val att = com.luv.couple.ui.security.PlayIntegrityGate.attestForPurchase(context)
+                fulfillPlayPurchase(
+                    p.productId,
+                    p.purchaseToken,
+                    p.orderId,
+                    integrityToken = att?.integrityToken,
+                    integrityNonce = att?.nonce
+                )
             }
         }
     }
@@ -1509,10 +1524,17 @@ fun LuvAppNav() {
                                         }
                                         runCatching {
                                             val purchase = playBilling.launchPurchase(activity, pack.id)
+                                            // Nach Play-Dialog: Integrity + Server-Gutschrift
+                                            val att =
+                                                com.luv.couple.ui.security.PlayIntegrityGate.attestForPurchase(
+                                                    context
+                                                )
                                             fulfillPlayPurchase(
                                                 purchase.productId.ifBlank { pack.id },
                                                 purchase.purchaseToken,
-                                                purchase.orderId
+                                                purchase.orderId,
+                                                integrityToken = att?.integrityToken,
+                                                integrityNonce = att?.nonce
                                             )
                                             Toast.makeText(
                                                 context,

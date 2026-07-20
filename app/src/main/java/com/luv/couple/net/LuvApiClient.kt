@@ -3319,12 +3319,18 @@ object LuvApiClient {
     suspend fun confirmPlayPurchase(
         productId: String,
         purchaseToken: String,
-        orderId: String? = null
+        orderId: String? = null,
+        integrityToken: String? = null,
+        integrityNonce: String? = null
     ): Int = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("productId", productId)
             .put("purchaseToken", purchaseToken)
             .put("orderId", orderId ?: JSONObject.NULL)
+            .apply {
+                if (!integrityToken.isNullOrBlank()) put("integrityToken", integrityToken)
+                if (!integrityNonce.isNullOrBlank()) put("integrityNonce", integrityNonce)
+            }
             .toString()
             .toRequestBody(jsonMedia)
         val request = authedRequestBuilder("/v1/shop/play-purchase").post(body).build()

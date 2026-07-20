@@ -11,7 +11,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * Play Integrity: Token beweist grob „echte Play-App auf echtem Gerät“.
- * Kein Captcha — läuft unsichtbar vor der Google-Neuanmeldung.
+ * Kein Captcha — läuft unsichtbar vor Signup / Coin-Kauf.
  */
 object PlayIntegrityGate {
     private const val TAG = "LuvPlayIntegrity"
@@ -22,14 +22,29 @@ object PlayIntegrityGate {
     )
 
     /**
-     * @return Attestation oder null wenn Server Integrity nicht verlangt / nicht konfiguriert.
+     * Signup: nur wenn Server Enforcement verlangt.
      */
-    suspend fun attestForSignup(context: Context): Attestation? = withContext(Dispatchers.IO) {
+    suspend fun attestForSignup(context: Context): Attestation? =
+        attest(context, onlyWhenRequired = true)
+
+    /**
+     * Coin-Kauf: Token holen sobald Server einen Nonce ausstellt (auch Soft-Mode).
+     */
+    suspend fun attestForPurchase(context: Context): Attestation? =
+        attest(context, onlyWhenRequired = false)
+
+    /**
+     * @param onlyWhenRequired wenn true und Server `required=false`, kein Token (spart Play-API).
+     */
+    private suspend fun attest(
+        context: Context,
+        onlyWhenRequired: Boolean
+    ): Attestation? = withContext(Dispatchers.IO) {
         val challenge = runCatching { LuvApiClient.fetchIntegrityNonce() }.getOrNull()
             ?: return@withContext null
         val nonce = challenge.nonce?.takeIf { it.isNotBlank() }
             ?: return@withContext null
-        if (!challenge.required) {
+        if (onlyWhenRequired && !challenge.required) {
             return@withContext null
         }
         val projectNumber = challenge.cloudProjectNumber?.toLongOrNull()

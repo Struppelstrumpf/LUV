@@ -116,7 +116,7 @@ async function verifyIntegrityToken(integrityToken, expectedNonce) {
     return {
       ok: false,
       error: "bad_nonce",
-      message: "Geräteprüfung abgelaufen — bitte erneut mit Google anmelden.",
+      message: "Geräteprüfung abgelaufen — bitte erneut versuchen.",
     };
   }
   try {

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.32",
+            listOf(
+                "Coin-Käufe zusätzlich mit Geräteprüfung abgesichert",
+            )
+        ),
+        Entry(
             "2.2.31",
             listOf(
                 "App wieder flüssiger: Freunde, Markt, Käufe und Lootbox ohne Wartezeiten",

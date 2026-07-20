@@ -6267,7 +6267,8 @@ app.get("/v1/auth/config", (_req, res) => {
  */
 app.post("/v1/auth/integrity-nonce", (req, res) => {
   const ip = clientIp(req);
-  if (!rateLimit(`integrity_nonce:${ip}`, 30, 60 * 60 * 1000)) {
+  // Höheres Limit: Signup + Coin-Käufe teilen sich denselben Endpoint
+  if (!rateLimit(`integrity_nonce:${ip}`, 80, 60 * 60 * 1000)) {
     return res.status(429).json({
       error: "rate_limited",
       message: "Zu viele Anfragen. Bitte kurz warten.",
@@ -11461,7 +11462,7 @@ app.post("/v1/webhooks/mollie", (_req, res) => {
 
 /**
  * Google Play In-App-Kauf verifizieren und Coins gutschreiben (Consumable).
- * Body: { productId, purchaseToken, orderId? }
+ * Body: { productId, purchaseToken, orderId?, integrityToken?, integrityNonce? }
  */
 app.post("/v1/shop/play-purchase", async (req, res) => {
   const ctx = requireAuth(req, res);
@@ -11478,6 +11479,55 @@ app.post("/v1/shop/play-purchase", async (req, res) => {
       message: "Shop kommt bald — bis dahin Daily Coins & Gutscheine.",
     });
   }
+  const ip = clientIp(req);
+  if (!rateLimit(`play_purchase_user:${ctx.user.id}`, 12, 10 * 60 * 1000)) {
+    return res.status(429).json({
+      error: "rate_limited",
+      message: "Zu viele Kaufversuche. Bitte in ein paar Minuten erneut.",
+    });
+  }
+  if (!rateLimit(`play_purchase_ip:${ip || "unknown"}`, 24, 10 * 60 * 1000)) {
+    return res.status(429).json({
+      error: "rate_limited",
+      message: "Zu viele Kaufversuche aus diesem Netz. Bitte kurz warten.",
+    });
+  }
+
+  // Play Integrity zusätzlich zur Google-Play-Billing-Prüfung
+  if (playIntegrity.isConfigured()) {
+    const integrityToken = String(req.body?.integrityToken || "").trim();
+    const integrityNonce = String(req.body?.integrityNonce || "").trim();
+    if (playIntegrity.isEnforced()) {
+      const verdict = await playIntegrity.verifyIntegrityToken(
+        integrityToken,
+        integrityNonce
+      );
+      if (!verdict.ok) {
+        const missing = !integrityToken || verdict.error === "missing_integrity";
+        return res.status(403).json({
+          error: verdict.error || "integrity_required",
+          updateRequired: missing,
+          message: missing
+            ? "Bitte aktualisiere LUV im Play Store, um Coins zu kaufen."
+            : verdict.message ||
+              "Käufe nur über die echte Play-Store-App auf einem Android-Gerät.",
+        });
+      }
+    } else if (integrityToken || integrityNonce) {
+      const verdict = await playIntegrity.verifyIntegrityToken(
+        integrityToken,
+        integrityNonce
+      );
+      if (!verdict.ok) {
+        console.warn(
+          "[play-purchase] soft integrity failed",
+          verdict.error,
+          ctx.user.id
+        );
+      }
+    }
+  }
+
   const productId = String(req.body?.productId || "").trim();
   const purchaseToken = String(req.body?.purchaseToken || "").trim();
   const orderId = String(req.body?.orderId || "").trim() || null;
@@ -11497,7 +11547,6 @@ app.post("/v1/shop/play-purchase", async (req, res) => {
       message: "Dieses Angebot ist nicht mehr verfügbar.",
     });
   }
-  const ip = clientIp(req);
   if (pack.oncePerUserAndIp && !canClaimIntroOffer(ctx.user, ip)) {
     return res.status(403).json({
       error: "offer_used",
