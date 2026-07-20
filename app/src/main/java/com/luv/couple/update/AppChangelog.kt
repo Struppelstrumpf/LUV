@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.27",
+            listOf(
+                "Profil-Leinwand: bis zu 75 Sticker",
+            )
+        ),
+        Entry(
             "2.2.26",
             listOf(
                 "Admin-Web: Zugang per App-Auth-Code statt Browser-Passwort",

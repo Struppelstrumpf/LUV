@@ -6821,7 +6821,8 @@ function sanitizeProfileCanvas(raw) {
     "engaged",
     "streak",
   ]);
-  for (const el of layoutIn.slice(0, 48)) {
+  // Profil-Dekor: bis ~75 Sticker + Kern-Elemente (Avatar, Name, …)
+  for (const el of layoutIn.slice(0, 96)) {
     if (!el || typeof el !== "object") continue;
     const id = String(el.id || "").trim().slice(0, 64);
     let type = String(el.type || "sticker").trim().slice(0, 16).toLowerCase();

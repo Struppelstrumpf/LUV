@@ -157,7 +157,7 @@ data class ProfileState(
 
 object ProfileCatalog {
     const val DEFAULT_THEME_ID = "meadow"
-    const val MAX_DECOR = 36
+    const val MAX_DECOR = 75
     const val MAX_BIO = 500
     const val DECOR_Y_MIN = 52f
     /** Obere Grenze für z — nach Bring-to-Front ggf. neu nummerieren. */
