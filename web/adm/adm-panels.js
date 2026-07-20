@@ -1593,6 +1593,90 @@
           pick: "start", // start | end
         };
 
+        const QUEST_PRESETS = [
+          {
+            metric: "strokes",
+            title: "10 Striche malen",
+            hint: "In einer Lobby zeichnen",
+            target: 10,
+            coins: 3,
+            on: true,
+          },
+          {
+            metric: "draw_sessions",
+            title: "Eine Mal-Session starten",
+            hint: "Einmal mit Zeichnen beginnen",
+            target: 1,
+            coins: 2,
+            on: true,
+          },
+          {
+            metric: "event_lobby_opens",
+            title: "Event-Lobby öffnen",
+            hint: "Eigene Event-Lobby starten",
+            target: 1,
+            coins: 2,
+            on: false,
+          },
+          {
+            metric: "event_lobby_strokes",
+            title: "20 Striche in der Event-Lobby",
+            hint: "Zum Begriff zeichnen",
+            target: 20,
+            coins: 4,
+            on: false,
+          },
+          {
+            metric: "krauls",
+            title: "Begleiter kraulen",
+            hint: "3× kraulen",
+            target: 3,
+            coins: 2,
+            on: false,
+          },
+          {
+            metric: "social_opens",
+            title: "Sozial öffnen",
+            hint: "Sozial-Tab öffnen",
+            target: 1,
+            coins: 1,
+            on: false,
+          },
+          {
+            metric: "gallery_opens",
+            title: "Galerie öffnen",
+            hint: "Galerie besuchen",
+            target: 1,
+            coins: 1,
+            on: false,
+          },
+          {
+            metric: "reactions_sent",
+            title: "Reaktion senden",
+            hint: "Eine Reaktion schicken",
+            target: 1,
+            coins: 1,
+            on: false,
+          },
+          {
+            metric: "moments_saved",
+            title: "Moment speichern",
+            hint: "Einen Moment sichern",
+            target: 1,
+            coins: 2,
+            on: false,
+          },
+          {
+            metric: "lobby_opens",
+            title: "Lobby öffnen",
+            hint: "Beliebige Lobby öffnen",
+            target: 1,
+            coins: 1,
+            on: false,
+          },
+        ];
+        const DEFAULT_PROMPTS = ["Herz", "Stern", "Sonne", "Katze", "Blume", "Mond", "Haus", "Baum"];
+
         const MONTHS_SHORT = [
           "Jan",
           "Feb",
@@ -1758,7 +1842,7 @@
         openModal(
           `
           <h3 style="font-family:var(--display);margin:0 0 0.35rem">Neues Event</h3>
-          <p class="help" style="margin:0 0 0.85rem">Titel wählen und Zeitraum im Kalender tippen (erster und letzter Tag).</p>
+          <p class="help" style="margin:0 0 0.85rem">Titel, Zeitraum, Quests und optional Event-Lobby mit Wortliste (pro Nutzer zufällig).</p>
           <form id="evCreateForm" class="ev-create-form">
             <div class="grid-2">
               <label class="field">Titel
@@ -1782,6 +1866,38 @@
               <div class="ev-cal-grid" id="evCalGrid"></div>
               <div class="ev-cal-range" id="evCalRange"></div>
             </div>
+
+            <h4 style="margin:1rem 0 0.35rem">Quests</h4>
+            <p class="help" style="margin:0 0 0.5rem">Welche Aufgaben die Nutzer während des Events erfüllen sollen.</p>
+            <div class="ev-quest-pick" id="evQuestPick">
+              ${QUEST_PRESETS.map(
+                (q) => `<label class="ev-quest-opt">
+                  <input type="checkbox" name="quest" value="${esc(q.metric)}" data-target="${q.target}" data-coins="${q.coins}" data-title="${esc(q.title)}" ${q.on ? "checked" : ""} />
+                  <span>
+                    <strong>${esc(q.title)}</strong>
+                    <span class="muted">${esc(q.hint)}</span>
+                  </span>
+                </label>`
+              ).join("")}
+            </div>
+
+            <h4 style="margin:1rem 0 0.35rem">Event-Lobby</h4>
+            <label class="ev-quest-opt" style="margin-bottom:0.55rem">
+              <input type="checkbox" id="evLobbyEnabled" checked />
+              <span>
+                <strong>Event-Lobby aktiv</strong>
+                <span class="muted">Zeichnen nach Begriff — jeder Nutzer bekommt ein Wort zufällig aus der Liste.</span>
+              </span>
+            </label>
+            <div id="evLobbyFields">
+              <label class="field">Wörter (eines pro Zeile, max. 40)
+                <textarea id="evLobbyPrompts" rows="5" placeholder="Herz&#10;Stern&#10;Sonne">${esc(
+                  DEFAULT_PROMPTS.join("\n")
+                )}</textarea>
+              </label>
+              <p class="help" style="margin:0.25rem 0 0">Beim Öffnen der eigenen Event-Lobby wird <strong>zufällig eines</strong> gewählt — nicht dasselbe Wort für alle.</p>
+            </div>
+
             <div class="actions" style="margin-top:1rem">
               <button type="submit" class="btn" id="evCreateSubmit" disabled>Event anlegen</button>
               <button type="button" class="btn ghost" id="cancelModal">Abbrechen</button>
@@ -1817,6 +1933,14 @@
           paintCal();
         };
 
+        const lobbyToggle = $("evLobbyEnabled");
+        const lobbyFields = $("evLobbyFields");
+        const syncLobbyFields = () => {
+          if (lobbyFields) lobbyFields.hidden = !(lobbyToggle && lobbyToggle.checked);
+        };
+        if (lobbyToggle) lobbyToggle.onchange = syncLobbyFields;
+        syncLobbyFields();
+
         paintCal();
 
         $("evCreateForm").onsubmit = async (e) => {
@@ -1841,6 +1965,46 @@
           const form = e.target;
           const title = String(form.title?.value || "").trim() || "Neues Event";
           const emoji = String(form.emoji?.value || "").trim() || "🎉";
+
+          const quests = Array.from(form.querySelectorAll('input[name="quest"]:checked')).map(
+            (inp, i) => ({
+              id: `q_${inp.value}_${i + 1}`,
+              title: inp.getAttribute("data-title") || inp.value,
+              hint: "",
+              metric: inp.value,
+              target: Number(inp.getAttribute("data-target") || 1),
+              rewardCoins: Number(inp.getAttribute("data-coins") || 1),
+            })
+          );
+
+          const lobbyOn = Boolean(lobbyToggle && lobbyToggle.checked);
+          let lobby = { enabled: false };
+          if (lobbyOn) {
+            const rawPrompts = String($("evLobbyPrompts")?.value || "")
+              .split(/[\n,;]+/)
+              .map((s) => s.trim())
+              .filter(Boolean)
+              .slice(0, 40);
+            if (!rawPrompts.length) {
+              if (errEl) {
+                errEl.hidden = false;
+                errEl.textContent = "Mindestens ein Wort für die Event-Lobby eintragen.";
+              }
+              return;
+            }
+            lobby = {
+              enabled: true,
+              access: "friends",
+              createMode: "manual",
+              palette: "event",
+              invitesAllowed: false,
+              drawMode: "promptList",
+              prompts: rawPrompts,
+              minStrokesToQualify: 5,
+              sessionSeconds: 180,
+            };
+          }
+
           const submit = $("evCreateSubmit");
           if (submit) submit.disabled = true;
           try {
@@ -1855,9 +2019,12 @@
                 absolute: true,
                 absoluteFrom: berlinDayIso(lo, false),
                 absoluteUntil: berlinDayIso(hi, true),
+                recurrence: { type: "annual", month: lo.m, day: lo.d },
                 rewardCoinsPerCollect: 2,
                 collectTarget: 3,
                 milestoneBonusCoins: 5,
+                quests,
+                lobby,
               }),
             });
             const next = res.events || [];

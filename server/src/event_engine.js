@@ -176,7 +176,7 @@ function normalizeLobby(raw) {
   const palette = ["blue", "purple", "event"].includes(src.palette) ? src.palette : "event";
   const drawMode = src.drawMode === "promptList" ? "promptList" : "free";
   const prompts = Array.isArray(src.prompts)
-    ? src.prompts.map((p) => String(p || "").trim().slice(0, 80)).filter(Boolean).slice(0, 20)
+    ? src.prompts.map((p) => String(p || "").trim().slice(0, 80)).filter(Boolean).slice(0, 40)
     : [];
   return {
     enabled: true,
@@ -185,7 +185,8 @@ function normalizeLobby(raw) {
     palette,
     invitesAllowed: src.invitesAllowed !== false,
     drawMode,
-    prompts: drawMode === "promptList" ? prompts : [],
+    // Wortliste auch speichern wenn drawMode free — Auswahl bleibt random pro Lobby
+    prompts,
     minStrokesToQualify: clampInt(src.minStrokesToQualify, 0, 500, 5),
     sessionSeconds: clampInt(src.sessionSeconds, 30, 3600, 180),
   };
@@ -223,12 +224,18 @@ function normalizeSchedule(raw, ev) {
   const src = raw && typeof raw === "object" ? raw : {};
   const mode = src.mode === "absolute" ? "absolute" : "recurring";
   if (mode === "absolute") {
+    let durationDays = clampInt(src.durationDays ?? ev?.durationDays, 1, 31, 1);
+    const fromMs = src.absoluteFrom ? Date.parse(String(src.absoluteFrom)) : NaN;
+    const untilMs = src.absoluteUntil ? Date.parse(String(src.absoluteUntil)) : NaN;
+    if (Number.isFinite(fromMs) && Number.isFinite(untilMs) && untilMs >= fromMs) {
+      durationDays = Math.max(1, Math.min(31, Math.floor((untilMs - fromMs) / 86400000) + 1));
+    }
     return {
       mode: "absolute",
       absoluteFrom: src.absoluteFrom || null,
       absoluteUntil: src.absoluteUntil || null,
       recurrence: null,
-      durationDays: 1,
+      durationDays,
     };
   }
   return {
@@ -268,9 +275,15 @@ function enrichEvent(ev) {
     lobby,
     contest,
     decor: normalizeDecor(ev.decor, ev.decor),
-    // flat fields for backwards compat
-    recurrence: schedule.mode === "recurring" ? schedule.recurrence : ev.recurrence,
-    durationDays: schedule.mode === "recurring" ? schedule.durationDays : ev.durationDays || 1,
+    // flat fields for backwards compat (absolute behält recurrence-Hinweis für Jahrkalender-Fallback)
+    recurrence:
+      schedule.mode === "recurring"
+        ? schedule.recurrence
+        : ev.recurrence || null,
+    durationDays:
+      schedule.mode === "recurring"
+        ? schedule.durationDays
+        : schedule.durationDays || ev.durationDays || 1,
     rewardCoinsPerCollect: collect.rewardCoinsPerCollect,
     collectTarget: collect.collectTarget,
     milestoneBonusCoins: collect.milestoneBonusCoins,
@@ -419,6 +432,10 @@ function createOrUpdateEvent(db, raw, { isCreate = false } = {}) {
   if (raw.hint != null) base.hint = String(raw.hint).slice(0, 200);
   if (raw.enabled != null) base.enabled = Boolean(raw.enabled);
   if (raw.sort != null) base.sort = clampInt(raw.sort, 0, 9999, 500);
+  if (raw.durationDays != null) base.durationDays = clampInt(raw.durationDays, 1, 31, 3);
+  if (raw.recurrence != null && typeof raw.recurrence === "object") {
+    base.recurrence = raw.recurrence;
+  }
   if (raw.schedule != null) base.schedule = normalizeSchedule(raw.schedule, base);
   else if (raw.recurrence) {
     base.schedule = normalizeSchedule(

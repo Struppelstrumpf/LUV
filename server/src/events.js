@@ -1092,7 +1092,35 @@ function yearOverview(db, year) {
   const months = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, events: [] }));
   for (const e of cfg.events) {
     if (e.enabled === false) continue;
-    const r = e.recurrence || {};
+    const enriched = engine.enrichEvent(e);
+    // Absolute Events: direkt aus absoluteFrom/Until (nicht recurrence → 1.1.)
+    if (enriched?.schedule?.mode === "absolute") {
+      const fromMs = Date.parse(enriched.schedule.absoluteFrom || "");
+      const untilMs = Date.parse(enriched.schedule.absoluteUntil || "");
+      if (!Number.isFinite(fromMs)) continue;
+      const sp = berlinParts(new Date(fromMs));
+      const ep = Number.isFinite(untilMs) ? berlinParts(new Date(untilMs)) : sp;
+      if (sp.year !== y && ep.year !== y) continue;
+      if (sp.year === y) {
+        const startLabel = sp.day;
+        const endLabel = ep.year === y && ep.month === sp.month ? ep.day : ep.day;
+        const label =
+          sp.month === ep.month && sp.year === ep.year && startLabel === endLabel
+            ? `${startLabel}.`
+            : `${startLabel}.–${endLabel}.`;
+        months[sp.month - 1].events.push({
+          id: e.id,
+          title: e.title,
+          emoji: e.emoji,
+          label,
+          start: berlinYmd(new Date(fromMs)),
+          end: Number.isFinite(untilMs) ? berlinYmd(new Date(untilMs)) : berlinYmd(new Date(fromMs)),
+          absolute: true,
+        });
+      }
+      continue;
+    }
+    const r = e.recurrence || enriched?.recurrence || {};
     if (r.type === "full_moon") {
       for (const mo of months) {
         mo.events.push({
