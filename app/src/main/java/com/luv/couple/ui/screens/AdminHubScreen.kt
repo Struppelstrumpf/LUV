@@ -491,7 +491,7 @@ fun AdminHubScreen(
                                 fontSize = 20.sp
                             )
                             Text(
-                                "Erzeugt einen Code für https://reineke.pro/luv/adm/ — 20 Sekunden gültig. Danach dort denselben Google-Account wählen.",
+                                "Erzeugt einen Code für https://reineke.pro/luv/adm/ — 40 Sekunden gültig. Danach dort denselben Google-Account wählen.",
                                 color = TextMuted,
                                 fontFamily = BodyFont,
                                 fontSize = 13.sp

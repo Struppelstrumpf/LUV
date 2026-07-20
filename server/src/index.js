@@ -6575,7 +6575,7 @@ app.post("/v1/auth/logout", (req, res) => {
 });
 
 /**
- * App: Authentifizierungs-Code für Web-Admin erzeugen (XX-XXX-XX, 20s).
+ * App: Authentifizierungs-Code für Web-Admin erzeugen (XX-XXX-XX, 40s).
  * Staff → echter Code (an googleSub gebunden).
  * Nicht-Staff → Decoy-Code (gleiche Form, führt zu Fake-Admin).
  */
@@ -14426,6 +14426,62 @@ wss.on("connection", (socket, req) => {
         return;
       }
       removeRoomStroke(room, code, json.id);
+    }
+
+    if (type === "erase_commit") {
+      if (!user || !socket.luvUserId) {
+        socket.send(
+          JSON.stringify({
+            type: "economy_block",
+            error: "auth_required",
+            message: "Bitte einloggen zum Radieren.",
+          })
+        );
+        return;
+      }
+      const removeIds = Array.isArray(json.remove)
+        ? json.remove.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 400)
+        : [];
+      const rawAdd = Array.isArray(json.add) ? json.add.slice(0, 400) : [];
+      const added = [];
+      for (const id of removeIds) {
+        removeRoomStroke(room, code, id);
+      }
+      for (const raw of rawAdd) {
+        const stored = strokeFromSocketMessage(
+          typeof raw === "object" && raw ? { ...raw, type: "stroke" } : null,
+          socket
+        );
+        if (!stored) continue;
+        if (appendRoomStroke(room, code, stored)) added.push(stored);
+      }
+      touchCanvasActivity(room, room.sockets.size, user?.id || socket.luvUserId);
+      const relay = JSON.stringify({
+        type: "erase_commit",
+        remove: removeIds,
+        add: added.map((stored) => {
+          const o = {
+            type: "stroke",
+            id: stored.id,
+            width: stored.width,
+            nickname: stored.nickname,
+            colorIndex: stored.colorIndex,
+            authorId: stored.authorId,
+            points: stored.points,
+            colorLocked: Boolean(stored.colorLocked),
+          };
+          if (stored.emoji) o.emoji = stored.emoji;
+          if (stored.templateParts) {
+            o.templateParts = stored.templateParts;
+            o.templateScale = stored.templateScale;
+            o.templateRotation = stored.templateRotation;
+            if (stored.templateCoordSpace) o.templateCoordSpace = stored.templateCoordSpace;
+          }
+          return o;
+        }),
+      });
+      relayToPeers(room, relay, peerId);
+      return;
     }
 
     if (type === "sticker_place") {

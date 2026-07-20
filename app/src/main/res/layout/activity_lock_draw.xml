@@ -329,6 +329,20 @@
                     android:textSize="18sp" />
 
                 <TextView
+                    android:id="@+id/btnBrush"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="4dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/lock_dock_slot"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:contentDescription="Pinseldicke"
+                    android:text="🖌"
+                    android:textSize="18sp" />
+
+                <TextView
                     android:id="@+id/btnColor"
                     android:layout_width="0dp"
                     android:layout_height="40dp"
@@ -338,6 +352,7 @@
                     android:clickable="true"
                     android:focusable="true"
                     android:gravity="center"
+                    android:contentDescription="Farbe"
                     android:text="🎨"
                     android:textSize="18sp" />
             </LinearLayout>

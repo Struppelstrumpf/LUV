@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -162,6 +163,26 @@ fun GalleryScreen(
                         color = TextPrimary,
                         modifier = Modifier.weight(1f)
                     )
+                    if (selecting && selectedIds.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .padding(end = 8.dp)
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.radialGradient(
+                                        listOf(AccentRose.copy(0.95f), Color(0xFFE11D48))
+                                    )
+                                )
+                                .border(1.dp, Color.White.copy(0.28f), CircleShape)
+                                .clickable {
+                                    confirmDelete = moments.filter { it.id in selectedIds }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("🗑", fontSize = 15.sp)
+                        }
+                    }
                     if (onClose != null) {
                         Box(
                             modifier = Modifier
@@ -178,7 +199,7 @@ fun GalleryScreen(
                 if (selecting && selectedIds.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        "${selectedIds.size} ausgewählt",
+                        "${selectedIds.size} ausgewählt · Mülleimer tippen",
                         color = TextMuted,
                         fontFamily = BodyFont,
                         fontSize = 14.sp
@@ -224,7 +245,7 @@ fun GalleryScreen(
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(2),
                                 modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(bottom = 12.dp),
+                                contentPadding = PaddingValues(bottom = 16.dp),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
@@ -254,20 +275,7 @@ fun GalleryScreen(
                         }
                     }
                 }
-
-                // Löschen immer unten fest (über Safe-Area), unabhängig von Bildanzahl
-                if (selecting && selectedIds.isNotEmpty()) {
-                    PrimaryButton(
-                        "Löschen (${selectedIds.size})",
-                        AccentRose,
-                        {
-                            confirmDelete = moments.filter { it.id in selectedIds }
-                        }
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                } else {
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }

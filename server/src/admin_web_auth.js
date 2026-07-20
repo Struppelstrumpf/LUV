@@ -1,11 +1,11 @@
 /**
- * Web-Admin Auth-Codes (XX-XXX-XX), 20s TTL.
+ * Web-Admin Auth-Codes (XX-XXX-XX), 40s TTL.
  * Speichert nur HMAC-Hashes — Klartext-Codes nie persistent.
  * Staff-Codes sind an googleSub gebunden; sonst Decoy (Fake-Admin).
  */
 const crypto = require("crypto");
 
-const CODE_TTL_MS = 20_000;
+const CODE_TTL_MS = 40_000;
 const TICKET_TTL_MS = 5 * 60_000;
 const ALPH = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 

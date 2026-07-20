@@ -57,6 +57,7 @@ import com.luv.couple.shop.ShopCatalog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.ui.ItemImageCache
 import com.luv.couple.ui.isImagePetId
+import com.luv.couple.ui.screens.BrushStudioMode
 import com.luv.couple.ui.screens.BrushStudioSheet
 import com.luv.couple.ui.screens.EmojiBarEditorDialog
 import com.luv.couple.ui.screens.ForcedUpdateDialog
@@ -91,6 +92,7 @@ class LockDrawActivity : ComponentActivity() {
     private lateinit var btnClear: TextView
     private lateinit var btnEraser: TextView
     private lateinit var btnColor: TextView
+    private lateinit var btnBrush: TextView
     private lateinit var bottomDock: View
     private lateinit var reactionPanel: View
     private lateinit var btnReactionToggle: TextView
@@ -194,6 +196,7 @@ class LockDrawActivity : ComponentActivity() {
         btnClear = findViewById(R.id.btnClear)
         btnEraser = findViewById(R.id.btnEraser)
         btnColor = findViewById(R.id.btnColor)
+        btnBrush = findViewById(R.id.btnBrush)
         bottomDock = findViewById(R.id.bottomDock)
         reactionPanel = findViewById(R.id.reactionPanel)
         btnReactionToggle = findViewById(R.id.btnReactionToggle)
@@ -234,7 +237,11 @@ class LockDrawActivity : ComponentActivity() {
         btnBack.setOnClickListener { finish() }
         btnColor.setOnClickListener {
             if (eraserOn) setEraserEnabled(false)
-            showColorPicker()
+            openBrushStudio(BrushStudioMode.COLOR)
+        }
+        btnBrush.setOnClickListener {
+            if (eraserOn) setEraserEnabled(false)
+            openBrushStudio(BrushStudioMode.THICKNESS)
         }
         btnEraser.setOnClickListener { setEraserEnabled(!eraserOn) }
         btnSave.setOnClickListener {
@@ -433,6 +440,11 @@ class LockDrawActivity : ComponentActivity() {
                     is PairEvent.StrokeUndone -> if (event.lobbyId == id) {
                         lastRemoteUndoAt = SystemClock.uptimeMillis()
                         drawingView.setStrokes(CanvasStore.snapshot(id), animateNew = false)
+                    }
+                    is PairEvent.EraseCommitReceived -> if (event.lobbyId == id) {
+                        lastRemoteUndoAt = SystemClock.uptimeMillis()
+                        drawingView.setStrokes(CanvasStore.snapshot(id), animateNew = false)
+                        refreshLegend()
                     }
                     is PairEvent.HistoryApplied -> if (event.lobbyId == id) {
                         // Nur umfärben falls nötig — kein zweites Full-Redraw
@@ -1643,17 +1655,13 @@ class LockDrawActivity : ComponentActivity() {
         refreshLegend()
     }
 
-    private fun showColorPicker() {
-        openBrushStudio()
-    }
-
-    private fun openBrushStudio() {
+    private fun openBrushStudio(mode: BrushStudioMode) {
         val root = rootView ?: return
         if (brushStudioHost != null) return
         val id = lobbyId ?: return
         val mine = CanvasStore.cachedColorIndex
         val myUserId = AccountSession.account.value?.id
-        val taken = if (eventLobbyActive) {
+        val taken = if (eventLobbyActive || mode == BrushStudioMode.THICKNESS) {
             emptySet()
         } else {
             PairSessionState.takenColorIndices(
@@ -1699,6 +1707,7 @@ class LockDrawActivity : ComponentActivity() {
         val compose = ComposeView(this).apply {
             setContent {
                 BrushStudioSheet(
+                    mode = mode,
                     selectedColor = mine,
                     takenColors = taken,
                     brushWidth = drawingView.myBrushWidth,

@@ -710,8 +710,8 @@ object CanvasStore {
     }
 
     /**
-     * Nach dem Wischt: einmal Undo der Original-Striche + finale Fragmente senden.
-     * Verhindert Flackern/Vibrations-Spam bei Peers.
+     * Nach dem Wischt: ein atomarer erase_commit (remove + Fragmente).
+     * Peers sehen nicht erst leeres Board und dann Stück-für-Stück-Rebuild.
      */
     fun endEraseSession(lobbyId: String? = null): Boolean {
         val session = eraseSession ?: return false
@@ -722,25 +722,43 @@ object CanvasStore {
         if (!::appContext.isInitialized) return true
         val nick = cachedNickname?.trim().orEmpty()
         val currentIds = c.strokes.map { it.id }.toSet()
-        for (oid in session.baselineIds) {
-            if (oid !in currentIds) {
-                PairConnectionService.sendUndo(appContext, oid, id)
-            }
-        }
-        for (stroke in c.strokes) {
+        val removeIds = session.baselineIds.filter { it !in currentIds }
+        val addStrokes = c.strokes.filter { stroke ->
             val mine =
                 stroke.isLocal ||
                     stroke.id in c.localStrokeIds ||
                     (nick.isNotBlank() && stroke.nickname.equals(nick, ignoreCase = true))
-            if (!mine) continue
-            if (stroke.id in session.baselineIds) continue
-            PairConnectionService.sendStroke(
-                appContext,
-                PairProtocol.encode(PairMessage.StrokeMsg(stroke)),
-                id
-            )
+            mine && stroke.id !in session.baselineIds
         }
+        if (removeIds.isEmpty() && addStrokes.isEmpty()) return true
+        PairConnectionService.sendEraseCommit(
+            appContext,
+            removeIds = removeIds,
+            add = addStrokes,
+            lobbyId = id
+        )
         return true
+    }
+
+    /** Atomar entfernen + Fragmente einfügen (Peer-Seite / History). */
+    fun applyEraseCommit(
+        removeIds: List<String>,
+        add: List<com.luv.couple.data.Stroke>,
+        lobbyId: String
+    ) {
+        val c = canvas(lobbyId)
+        val removeSet = removeIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        if (removeSet.isNotEmpty()) {
+            c.strokes.removeAll { it.id in removeSet }
+            c.localStrokeIds.removeAll(removeSet)
+            c.localUndo.removeAll { it is LocalUndo.Stroke && it.id in removeSet }
+        }
+        for (raw in add) {
+            if (raw.id.isBlank()) continue
+            if (c.strokes.any { it.id == raw.id }) continue
+            c.strokes.add(raw.copy(isLocal = false))
+        }
+        bump(lobbyId)
     }
 
     fun cancelEraseSession() {

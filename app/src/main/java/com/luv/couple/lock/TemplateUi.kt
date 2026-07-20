@@ -31,8 +31,6 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -308,6 +306,7 @@ fun TemplateEditorSheet(
     var colorIndex by remember { mutableIntStateOf(0) }
     var brushWidth by remember { mutableFloatStateOf(18f) }
     var eraserOn by remember { mutableStateOf(false) }
+    var studioMode by remember { mutableStateOf<com.luv.couple.ui.screens.BrushStudioMode?>(null) }
     var currentPoints by remember { mutableStateOf<List<StrokePoint>>(emptyList()) }
     var saving by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -328,10 +327,10 @@ fun TemplateEditorSheet(
     }
 
     // Vollbild — kein Tippen am Rand schließt (Stift/Tablet). Nur ✕ oder Speichern.
+    Box(modifier = Modifier.fillMaxSize().background(SheetBg)) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(SheetBg)
             .statusBarsPadding()
             .navigationBarsPadding()
             .padding(horizontal = 12.dp, vertical = 10.dp)
@@ -396,43 +395,11 @@ fun TemplateEditorSheet(
             )
         }
         Spacer(modifier = Modifier.height(8.dp))
-        // Gleiche Palette wie Leinwand (chunked Rows)
-        PeerPalette.allIndices().toList().chunked(9).forEach { row ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                row.forEach { i ->
-                    val c = Color(PeerPalette.strokeColor(i))
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .aspectRatio(1f)
-                            .clip(CircleShape)
-                            .background(c)
-                            .border(
-                                if (!eraserOn && colorIndex == i) 2.dp else 0.dp,
-                                Color.White,
-                                CircleShape
-                            )
-                            .clickable {
-                                colorIndex = i
-                                eraserOn = false
-                            }
-                    )
-                }
-                repeat((9 - row.size).coerceAtLeast(0)) {
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-            }
-        }
-        Spacer(modifier = Modifier.height(8.dp))
+        // Kompakte Werkzeugleiste — Farbe/Dicke als Overlay (wie Leinwand)
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Box(
                 modifier = Modifier
@@ -444,45 +411,40 @@ fun TemplateEditorSheet(
             ) {
                 Text("🧽", fontSize = 20.sp)
             }
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(0.08f))
+                    .clickable {
+                        eraserOn = false
+                        studioMode = com.luv.couple.ui.screens.BrushStudioMode.THICKNESS
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("🖌", fontSize = 20.sp)
+            }
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color(PeerPalette.strokeColor(colorIndex)))
+                    .border(2.dp, Color.White.copy(0.55f), CircleShape)
+                    .clickable {
+                        eraserOn = false
+                        studioMode = com.luv.couple.ui.screens.BrushStudioMode.COLOR
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("🎨", fontSize = 16.sp)
+            }
+            Spacer(modifier = Modifier.weight(1f))
             Text(
-                if (eraserOn) "Schwamm" else "Pinsel",
+                if (eraserOn) "Schwamm" else "Zeichnen",
                 color = TextMuted,
                 fontFamily = BodyFont,
                 fontSize = 13.sp
             )
-            Slider(
-                value = brushWidth,
-                onValueChange = { brushWidth = it.coerceIn(6f, 40f) },
-                valueRange = 6f..40f,
-                modifier = Modifier.weight(1f),
-                colors = SliderDefaults.colors(
-                    thumbColor = if (eraserOn) Color(0xFFFFD54F) else Accent,
-                    activeTrackColor = if (eraserOn) Color(0xFFFFD54F) else Accent,
-                    inactiveTrackColor = Color.White.copy(0.12f)
-                )
-            )
-            // Dicke wie beim Zeichnen (WIDTH_REF = 1000), nicht relativ zur Max-Stärke
-            val previewColor = if (eraserOn) {
-                Color(0xFFFFD54F)
-            } else {
-                Color(PeerPalette.strokeColor(colorIndex))
-            }
-            Canvas(
-                modifier = Modifier
-                    .width(36.dp)
-                    .height(28.dp)
-            ) {
-                val short = min(size.width, size.height)
-                val stroke = ((brushWidth / CanvasStore.WIDTH_REF) * short * 2.2f)
-                    .coerceIn(2f, size.height)
-                drawLine(
-                    color = previewColor,
-                    start = Offset(2f, size.height / 2f),
-                    end = Offset(size.width - 2f, size.height / 2f),
-                    strokeWidth = stroke,
-                    cap = StrokeCap.Round
-                )
-            }
         }
         Spacer(modifier = Modifier.height(6.dp))
         // Feste 9:16-Zeichenfläche (Letterbox) — gleiche AR wie Stempel/Preview auf allen Geräten.
@@ -609,6 +571,21 @@ fun TemplateEditorSheet(
                 }
             }
         }
+    }
+    studioMode?.let { mode ->
+        com.luv.couple.ui.screens.BrushStudioSheet(
+            mode = mode,
+            selectedColor = colorIndex,
+            takenColors = emptySet(),
+            brushWidth = brushWidth,
+            onColorPick = {
+                colorIndex = it
+                eraserOn = false
+            },
+            onBrushWidthChange = { brushWidth = it.coerceIn(6f, 40f) },
+            onDismiss = { studioMode = null }
+        )
+    }
     }
 }
 

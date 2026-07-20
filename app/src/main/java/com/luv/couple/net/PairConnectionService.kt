@@ -1077,6 +1077,18 @@ class PairConnectionService : Service() {
                 CanvasStore.removeStrokeById(message.strokeId, lobby.id)
                 scope.launch { _events.emit(PairEvent.StrokeUndone(lobby.id, message.strokeId)) }
             }
+            is PairMessage.EraseCommit -> {
+                CanvasStore.applyEraseCommit(message.removeIds, message.add, lobby.id)
+                scope.launch {
+                    _events.emit(
+                        PairEvent.EraseCommitReceived(
+                            lobbyId = lobby.id,
+                            removeIds = message.removeIds,
+                            added = message.add.size
+                        )
+                    )
+                }
+            }
             is PairMessage.Presence -> {
                 val key = message.userId
                     ?: message.peerKey
@@ -1599,6 +1611,18 @@ class PairConnectionService : Service() {
             }
         }
 
+        fun sendEraseCommit(
+            context: Context,
+            removeIds: List<String>,
+            add: List<com.luv.couple.data.Stroke>,
+            lobbyId: String? = null
+        ) {
+            val payload = PairProtocol.encode(
+                PairMessage.EraseCommit(removeIds = removeIds, add = add)
+            )
+            dispatchPayload(context, payload, lobbyId)
+        }
+
         fun sendPresence(context: Context, active: Boolean, lobbyId: String? = null) {
             val nickname = CanvasStore.cachedNickname
                 ?: AccountSession.account.value?.nickname
@@ -1784,6 +1808,11 @@ data class LobbyReconnectUi(
 sealed class PairEvent {
     data class StrokeReceived(val lobbyId: String, val stroke: com.luv.couple.data.Stroke) : PairEvent()
     data class StrokeUndone(val lobbyId: String, val strokeId: String) : PairEvent()
+    data class EraseCommitReceived(
+        val lobbyId: String,
+        val removeIds: List<String>,
+        val added: Int
+    ) : PairEvent()
     data class HistoryApplied(val lobbyId: String) : PairEvent()
     data class Cleared(val lobbyId: String) : PairEvent()
     data class LobbyGone(val lobbyId: String, val name: String) : PairEvent()

@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.mandatorySystemGestures
 import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
 import androidx.compose.foundation.layout.only
@@ -31,8 +32,10 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -75,12 +78,14 @@ import kotlin.math.roundToInt
 private const val BrushMin = 6f
 private const val BrushMax = 40f
 
-/** Referenzhöhe für Scale 1.0 — darunter wird alles proportional kleiner. */
-private val RefSheetHeight = 560.dp
+enum class BrushStudioMode {
+    COLOR,
+    THICKNESS
+}
 
 /**
- * Vollflächiges Overlay ohne Dialog — alles sichtbar ohne Scrollen,
- * skaliert nach Bildschirmhöhe, sitzt etwas höher als ganz unten.
+ * Overlay: entweder nur Farbe oder nur Pinseldicke — skaliert nach Bildschirmhöhe,
+ * nichts rutscht unter die Gesture-Leiste.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -90,7 +95,8 @@ fun BrushStudioSheet(
     brushWidth: Float,
     onColorPick: (Int) -> Unit,
     onBrushWidthChange: (Float) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    mode: BrushStudioMode = BrushStudioMode.COLOR
 ) {
     var color by remember(selectedColor) { mutableIntStateOf(selectedColor) }
     var width by remember(brushWidth) {
@@ -106,7 +112,6 @@ fun BrushStudioSheet(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            // Kein Scrim — Canvas dahinter bleibt klar sichtbar
             .clickable(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() },
@@ -114,7 +119,6 @@ fun BrushStudioSheet(
             )
             .windowInsetsPadding(bottomSafe)
             .padding(bottom = 20.dp),
-        // Etwas höher als ganz unten — mehr Luft unter dem Sheet
         contentAlignment = Alignment.Center
     ) {
         val sidePad = when {
@@ -122,27 +126,26 @@ fun BrushStudioSheet(
             maxWidth < 400.dp -> 14.dp
             else -> 18.dp
         }
-        // Verfügbarer Platz fürs Sheet (zentriert, etwas Luft oben/unten)
-        val budget = maxHeight * 0.82f
-        val scale = (budget / RefSheetHeight).coerceIn(0.58f, 1f)
+        val budget = maxHeight * 0.86f
+        val refH = if (mode == BrushStudioMode.COLOR) 420.dp else 320.dp
+        val scale = (budget / refH).coerceIn(0.62f, 1f)
         fun s(dp: Dp): Dp = dp * scale
         fun ts(sp: TextUnit): TextUnit = (sp.value * scale).sp
 
         val cols = when {
-            maxWidth < 340.dp -> 4
-            maxWidth < 400.dp -> 5
-            else -> 6
+            maxWidth < 340.dp -> 6
+            maxWidth < 400.dp -> 7
+            else -> 8
         }
-        val gap = s(10.dp)
-        val showSubtitle = scale >= 0.78f
+        val gap = s(8.dp)
 
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = 440.dp)
+                .heightIn(max = budget)
                 .padding(horizontal = sidePad)
-                // Leicht nach oben verschieben innerhalb der Center-Ausrichtung
-                .padding(bottom = maxHeight * 0.04f)
+                .padding(bottom = maxHeight * 0.03f)
                 .shadow(s(24.dp), RoundedCornerShape(s(26.dp)), clip = false)
                 .clip(RoundedCornerShape(s(26.dp)))
                 .background(
@@ -172,88 +175,83 @@ fun BrushStudioSheet(
                     .background(Color.White.copy(0.22f))
             )
             Text(
-                "Pinsel",
+                if (mode == BrushStudioMode.COLOR) "Farbe" else "Pinsel",
                 color = TextPrimary,
                 fontFamily = DisplayFont,
                 fontSize = ts(24.sp)
             )
-            if (showSubtitle) {
-                Text(
-                    "Farbe wählen · Dicke einstellen",
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = ts(12.sp),
-                    textAlign = TextAlign.Center
-                )
-            }
-
-            BrushPreviewCard(
-                color = strokeColor,
-                brushWidth = width,
-                height = s(72.dp)
+            Text(
+                if (mode == BrushStudioMode.COLOR) {
+                    "Tippen zum Auswählen"
+                } else {
+                    "Dicke einstellen"
+                },
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = ts(12.sp),
+                textAlign = TextAlign.Center
             )
 
-            SectionLabel("Farbe", fontSize = ts(11.sp))
-            ColorSwatchGrid(
-                selected = color,
-                taken = takenColors,
-                columns = cols,
-                gap = s(6.dp),
-                onPick = { idx ->
-                    color = idx
-                    onColorPick(idx)
-                    // Farbe übernehmen und schließen — Fertig nur für Pinselstärke
-                    onDismiss()
-                }
-            )
-
-            SectionLabel("Dicke", fontSize = ts(11.sp))
-            ThicknessControl(
-                width = width,
-                color = strokeColor,
-                scale = scale,
-                onChange = {
-                    width = it
-                    onBrushWidthChange(it)
-                }
-            )
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(s(46.dp))
-                    .clip(RoundedCornerShape(s(14.dp)))
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(AccentRose.copy(0.92f), Color(0xFFFF8FA3))
+            when (mode) {
+                BrushStudioMode.COLOR -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = budget * 0.62f)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        ColorSwatchGrid(
+                            selected = color,
+                            taken = takenColors,
+                            columns = cols,
+                            gap = s(6.dp),
+                            onPick = { idx ->
+                                color = idx
+                                onColorPick(idx)
+                                onDismiss()
+                            }
                         )
+                    }
+                }
+                BrushStudioMode.THICKNESS -> {
+                    BrushPreviewCard(
+                        color = strokeColor,
+                        brushWidth = width,
+                        height = s(72.dp)
                     )
-                    .clickable(onClick = onDismiss),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "Fertig",
-                    color = Color.White,
-                    fontFamily = DisplayFont,
-                    fontSize = ts(16.sp)
-                )
+                    ThicknessControl(
+                        width = width,
+                        color = strokeColor,
+                        scale = scale,
+                        onChange = {
+                            width = it
+                            onBrushWidthChange(it)
+                        }
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(s(46.dp))
+                            .clip(RoundedCornerShape(s(14.dp)))
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(AccentRose.copy(0.92f), Color(0xFFFF8FA3))
+                                )
+                            )
+                            .clickable(onClick = onDismiss),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "Fertig",
+                            color = Color.White,
+                            fontFamily = DisplayFont,
+                            fontSize = ts(16.sp)
+                        )
+                    }
+                }
             }
         }
     }
-}
-
-@Composable
-private fun SectionLabel(text: String, fontSize: TextUnit = 12.sp) {
-    Text(
-        text,
-        color = TextMuted,
-        fontFamily = BodyFont,
-        fontSize = fontSize,
-        letterSpacing = 0.6.sp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 2.dp)
-    )
 }
 
 @Composable

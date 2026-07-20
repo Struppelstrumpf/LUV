@@ -12,6 +12,14 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.29",
+            listOf(
+                "Farbe und Pinseldicke getrennt; Vorlagen wie Leinwand",
+                "Radierer synct atomar — kein Löschen und Nachzeichnen bei anderen",
+                "Galerie: Löschen oben neben Schließen; Auth-Code 40 Sekunden",
+            )
+        ),
+        Entry(
             "2.2.28",
             listOf(
                 "Radierer: Sync ohne Flackern, Dicke folgt dem Pinsel",

@@ -1046,7 +1046,7 @@ object LuvApiClient {
         )
     }
 
-    /** Web-Admin Authentifizierungs-Code (XX-XXX-XX, 20s). */
+    /** Web-Admin Authentifizierungs-Code (XX-XXX-XX, 40s). */
     suspend fun createWebAdminAuthCode(): Pair<String, Long> = withContext(Dispatchers.IO) {
         val json = authedPost("/v1/admin/web-auth/challenge", "{}")
         val code = json.optString("code").trim()

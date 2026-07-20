@@ -19,6 +19,14 @@ sealed class PairMessage {
     data class HelloOk(val ok: Boolean) : PairMessage()
     data class StrokeMsg(val stroke: Stroke) : PairMessage()
     data class UndoMsg(val strokeId: String) : PairMessage()
+    /**
+     * Atomarer Radierer-Commit: entfernte IDs + neue Fragmente in einer Nachricht.
+     * Verhindert bei Peers „alles weg → Stück für Stück wieder aufbauen“.
+     */
+    data class EraseCommit(
+        val removeIds: List<String>,
+        val add: List<Stroke>
+    ) : PairMessage()
     data class Presence(
         val active: Boolean,
         val nickname: String?,
@@ -47,6 +55,80 @@ sealed class PairMessage {
 }
 
 object PairProtocol {
+    fun strokeToJson(stroke: Stroke, type: String = "stroke"): JSONObject {
+        val points = JSONArray()
+        stroke.points.forEach { point ->
+            points.put(
+                JSONObject()
+                    .put("x", point.x.toDouble())
+                    .put("y", point.y.toDouble())
+            )
+        }
+        val json = JSONObject()
+            .put("type", type)
+            .put("id", stroke.id)
+            .put("width", stroke.width.toDouble())
+            .put("nickname", stroke.nickname ?: JSONObject.NULL)
+            .put("colorIndex", stroke.colorIndex)
+            .put("authorId", stroke.authorId ?: JSONObject.NULL)
+            .put("gender", stroke.gender ?: JSONObject.NULL)
+            .put("emoji", stroke.emoji ?: JSONObject.NULL)
+            .put("colorLocked", stroke.colorLocked)
+            .put("points", points)
+        val parts = stroke.templateParts
+        if (!parts.isNullOrEmpty()) {
+            json.put("templateParts", encodeTemplateParts(parts))
+            json.put("templateScale", stroke.templateScale.toDouble())
+            json.put("templateRotation", stroke.templateRotation.toDouble())
+            stroke.templateCoordSpace?.takeIf { it.isNotBlank() }?.let {
+                json.put("templateCoordSpace", it)
+            }
+        }
+        return json
+    }
+
+    fun strokeFromJson(json: JSONObject): Stroke? {
+        return runCatching {
+            val pointsJson = json.getJSONArray("points")
+            val points = buildList {
+                for (i in 0 until pointsJson.length()) {
+                    val p = pointsJson.getJSONObject(i)
+                    add(
+                        StrokePoint(
+                            x = p.getDouble("x").toFloat(),
+                            y = p.getDouble("y").toFloat()
+                        )
+                    )
+                }
+            }
+            val nickname = json.optString("nickname").takeIf { it.isNotBlank() && it != "null" }
+            val colorIndex = if (json.has("colorIndex")) {
+                json.optInt("colorIndex", 0)
+            } else {
+                nickname?.let { PeerPalette.indexFor(it.lowercase()) } ?: 0
+            }
+            Stroke(
+                id = json.getString("id"),
+                points = points,
+                width = json.optDouble("width", 18.0).toFloat(),
+                isLocal = false,
+                nickname = nickname,
+                colorIndex = colorIndex.coerceIn(0, PeerPalette.COLOR_COUNT - 1),
+                authorId = json.optString("authorId").takeIf { it.isNotBlank() && it != "null" },
+                gender = json.optString("gender").takeIf { it.isNotBlank() && it != "null" },
+                emoji = json.optString("emoji").takeIf { it.isNotBlank() && it != "null" }
+                    ?.let { clipCanvasEmojiId(it) },
+                colorLocked = json.optBoolean("colorLocked", false),
+                templateParts = parseTemplateParts(json.optJSONArray("templateParts")),
+                templateScale = json.optDouble("templateScale", 1.0).toFloat()
+                    .coerceIn(0.2f, 4f),
+                templateRotation = json.optDouble("templateRotation", 0.0).toFloat(),
+                templateCoordSpace = json.optString("templateCoordSpace")
+                    .takeIf { it.equals("canvas", true) || it.equals("square", true) }
+            )
+        }.getOrNull()
+    }
+
     fun encode(message: PairMessage): String {
         val json = when (message) {
             is PairMessage.Hello -> JSONObject()
@@ -55,40 +137,20 @@ object PairProtocol {
             is PairMessage.HelloOk -> JSONObject()
                 .put("type", "hello_ok")
                 .put("ok", message.ok)
-            is PairMessage.StrokeMsg -> {
-                val points = JSONArray()
-                message.stroke.points.forEach { point ->
-                    points.put(
-                        JSONObject()
-                            .put("x", point.x.toDouble())
-                            .put("y", point.y.toDouble())
-                    )
-                }
-                val json = JSONObject()
-                    .put("type", "stroke")
-                    .put("id", message.stroke.id)
-                    .put("width", message.stroke.width.toDouble())
-                    .put("nickname", message.stroke.nickname ?: JSONObject.NULL)
-                    .put("colorIndex", message.stroke.colorIndex)
-                    .put("authorId", message.stroke.authorId ?: JSONObject.NULL)
-                    .put("gender", message.stroke.gender ?: JSONObject.NULL)
-                    .put("emoji", message.stroke.emoji ?: JSONObject.NULL)
-                    .put("colorLocked", message.stroke.colorLocked)
-                    .put("points", points)
-                val parts = message.stroke.templateParts
-                if (!parts.isNullOrEmpty()) {
-                    json.put("templateParts", encodeTemplateParts(parts))
-                    json.put("templateScale", message.stroke.templateScale.toDouble())
-                    json.put("templateRotation", message.stroke.templateRotation.toDouble())
-                    message.stroke.templateCoordSpace?.takeIf { it.isNotBlank() }?.let {
-                        json.put("templateCoordSpace", it)
-                    }
-                }
-                json
-            }
+            is PairMessage.StrokeMsg -> strokeToJson(message.stroke, "stroke")
             is PairMessage.UndoMsg -> JSONObject()
                 .put("type", "undo")
                 .put("id", message.strokeId)
+            is PairMessage.EraseCommit -> {
+                val remove = JSONArray()
+                message.removeIds.forEach { remove.put(it) }
+                val add = JSONArray()
+                message.add.forEach { add.put(strokeToJson(it, "stroke")) }
+                JSONObject()
+                    .put("type", "erase_commit")
+                    .put("remove", remove)
+                    .put("add", add)
+            }
             is PairMessage.Presence -> JSONObject()
                 .put("type", "presence")
                 .put("active", message.active)
@@ -142,48 +204,29 @@ object PairProtocol {
             when (json.getString("type")) {
                 "hello" -> PairMessage.Hello(json.getString("token"))
                 "hello_ok" -> PairMessage.HelloOk(json.optBoolean("ok", true))
-                "stroke" -> {
-                    val pointsJson = json.getJSONArray("points")
-                    val points = buildList {
-                        for (i in 0 until pointsJson.length()) {
-                            val p = pointsJson.getJSONObject(i)
-                            add(
-                                StrokePoint(
-                                    x = p.getDouble("x").toFloat(),
-                                    y = p.getDouble("y").toFloat()
-                                )
-                            )
+                "stroke" -> strokeFromJson(json)?.let { PairMessage.StrokeMsg(it) }
+                "undo" -> PairMessage.UndoMsg(json.getString("id"))
+                "erase_commit" -> {
+                    val removeArr = json.optJSONArray("remove")
+                    val addArr = json.optJSONArray("add")
+                    val removeIds = buildList {
+                        if (removeArr != null) {
+                            for (i in 0 until removeArr.length()) {
+                                val id = removeArr.optString(i).trim()
+                                if (id.isNotEmpty()) add(id)
+                            }
                         }
                     }
-                    val nickname = json.optString("nickname").takeIf { it.isNotBlank() && it != "null" }
-                    val colorIndex = if (json.has("colorIndex")) {
-                        json.optInt("colorIndex", 0)
-                    } else {
-                        nickname?.let { com.luv.couple.data.PeerPalette.indexFor(it.lowercase()) } ?: 0
+                    val add = buildList {
+                        if (addArr != null) {
+                            for (i in 0 until addArr.length()) {
+                                val o = addArr.optJSONObject(i) ?: continue
+                                strokeFromJson(o)?.let { add(it) }
+                            }
+                        }
                     }
-                    PairMessage.StrokeMsg(
-                        Stroke(
-                            id = json.getString("id"),
-                            points = points,
-                            width = json.optDouble("width", 18.0).toFloat(),
-                            isLocal = false,
-                            nickname = nickname,
-                            colorIndex = colorIndex,
-                            authorId = json.optString("authorId").takeIf { it.isNotBlank() && it != "null" },
-                            gender = json.optString("gender").takeIf { it.isNotBlank() && it != "null" },
-                            emoji = json.optString("emoji").takeIf { it.isNotBlank() && it != "null" }
-                                ?.let { clipCanvasEmojiId(it) },
-                            colorLocked = json.optBoolean("colorLocked", false),
-                            templateParts = parseTemplateParts(json.optJSONArray("templateParts")),
-                            templateScale = json.optDouble("templateScale", 1.0).toFloat()
-                                .coerceIn(0.2f, 4f),
-                            templateRotation = json.optDouble("templateRotation", 0.0).toFloat(),
-                            templateCoordSpace = json.optString("templateCoordSpace")
-                                .takeIf { it.equals("canvas", true) || it.equals("square", true) }
-                        )
-                    )
+                    PairMessage.EraseCommit(removeIds = removeIds, add = add)
                 }
-                "undo" -> PairMessage.UndoMsg(json.getString("id"))
                 "presence" -> {
                     val nickname = json.optString("nickname").takeIf { it.isNotBlank() && it != "null" }
                     val colorIndex = if (json.has("colorIndex")) {
