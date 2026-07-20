@@ -482,6 +482,16 @@ function isActiveAt(ev, now = new Date()) {
 
 function nextOccurrence(ev, now = new Date()) {
   if (ev.enabled === false) return null;
+  const enriched = engine.enrichEvent(ev);
+  if (enriched.schedule?.mode === "absolute") {
+    const fromMs = Date.parse(enriched.schedule.absoluteFrom || "");
+    const untilMs = Date.parse(enriched.schedule.absoluteUntil || "");
+    if (!Number.isFinite(fromMs) && !Number.isFinite(untilMs)) return null;
+    const active = isActiveAtPatched(ev, now);
+    const start = Number.isFinite(fromMs) ? berlinYmd(new Date(fromMs)) : null;
+    const end = Number.isFinite(untilMs) ? berlinYmd(new Date(untilMs)) : start;
+    return { start, end, active };
+  }
   const r = ev.recurrence || {};
   const bp = berlinParts(now);
 
@@ -653,6 +663,14 @@ function putAdminEvents(db, body) {
     if (raw.milestoneBonusCoins != null) cur.milestoneBonusCoins = clampReward(raw.milestoneBonusCoins, 0);
     if (raw.sort != null) cur.sort = Math.floor(Number(raw.sort) || 0);
     if (raw.decor != null) cur.decor = normalizeDecor(raw.decor, cur.decor);
+    if (raw.rewardItem !== undefined) {
+      cur.rewardItem = publicRewardItem(raw.rewardItem);
+      if (cur.collect) cur.collect.rewardItem = cur.rewardItem;
+    }
+    if (raw.schedule != null) cur.schedule = engine.normalizeSchedule(raw.schedule, cur);
+    if (raw.quests != null) cur.quests = engine.normalizeQuests(raw.quests);
+    if (raw.lobby != null) cur.lobby = engine.normalizeLobby(raw.lobby);
+    if (raw.contest != null) cur.contest = engine.normalizeContest(raw.contest);
     // recurrence nur eingeschränkt überschreiben (struktur behalten)
     if (raw.recurrence && typeof raw.recurrence === "object") {
       cur.recurrence = raw.recurrence;
@@ -663,7 +681,20 @@ function putAdminEvents(db, body) {
   return { ok: true, events: listAdminEvents(db) };
 }
 
-/** Neues Custom-Event anlegen (Admin). */
+/** Berlin-Fenster ab heute für N Tage (absolut). */
+function absoluteWindowBerlin(durationDays = 2, fromDate = new Date()) {
+  const days = Math.max(1, Math.min(31, Math.floor(Number(durationDays) || 2)));
+  const bp = berlinParts(fromDate);
+  const fromMs = berlinDayStartMs(bp.year, bp.month, bp.day);
+  const untilExclusive = fromMs + days * 24 * 60 * 60 * 1000;
+  return {
+    mode: "absolute",
+    absoluteFrom: new Date(fromMs).toISOString(),
+    absoluteUntil: new Date(untilExclusive - 1).toISOString(),
+  };
+}
+
+/** Neues Custom-Event anlegen (Admin) — inkl. absoluter Fenster, Quests, Lobby, Contest. */
 function createAdminEvent(db, body = {}) {
   const cfg = ensureEventsConfig(db);
   let id = String(body.id || "")
@@ -685,36 +716,186 @@ function createAdminEvent(db, body = {}) {
   }
   const month = Math.max(1, Math.min(12, Math.floor(Number(body.month) || new Date().getMonth() + 1)));
   const day = Math.max(1, Math.min(31, Math.floor(Number(body.day) || 1)));
-  const ev = {
+  const durationDays = Math.max(1, Math.min(31, Math.floor(Number(body.durationDays) || 3)));
+  const wantAbsolute =
+    body.absolute === true ||
+    body.mode === "absolute" ||
+    (body.schedule && body.schedule.mode === "absolute") ||
+    Boolean(body.absoluteFrom);
+
+  let schedule = null;
+  if (wantAbsolute) {
+    schedule =
+      body.schedule?.mode === "absolute"
+        ? engine.normalizeSchedule(body.schedule, {})
+        : absoluteWindowBerlin(durationDays);
+    if (body.absoluteFrom) schedule.absoluteFrom = String(body.absoluteFrom);
+    if (body.absoluteUntil) schedule.absoluteUntil = String(body.absoluteUntil);
+  }
+
+  const rewardItem =
+    body.rewardItem && body.rewardItem.kind && body.rewardItem.itemId
+      ? {
+          kind: String(body.rewardItem.kind).trim(),
+          itemId: String(body.rewardItem.itemId).trim(),
+          emoji: String(body.rewardItem.emoji || body.rewardItem.itemId).trim(),
+          label: String(body.rewardItem.label || body.rewardItem.itemId).trim(),
+        }
+      : null;
+
+  const payload = {
     id,
     title: String(body.title || "Neues Event").trim().slice(0, 60) || "Neues Event",
     emoji: String(body.emoji || "🎉").trim().slice(0, 8) || "🎉",
     description: String(body.description || "").trim().slice(0, 240),
     hint: String(body.hint || "Während des Fensters einmal täglich sammeln.").trim().slice(0, 200),
-    recurrence: body.recurrence && typeof body.recurrence === "object"
-      ? body.recurrence
-      : { type: "annual", month, day },
-    durationDays: Math.max(1, Math.min(31, Math.floor(Number(body.durationDays) || 3))),
+    enabled: body.enabled !== false,
+    sort: Math.floor(Number(body.sort) || 200),
+    custom: true,
+    durationDays,
+    recurrence:
+      body.recurrence && typeof body.recurrence === "object"
+        ? body.recurrence
+        : { type: "annual", month, day },
+    schedule: schedule || undefined,
+    collect: body.collect || {
+      enabled: true,
+      rewardCoinsPerCollect: clampReward(body.rewardCoinsPerCollect ?? 2),
+      collectTarget: clampTarget(body.collectTarget ?? 3),
+      milestoneBonusCoins: clampReward(body.milestoneBonusCoins ?? 5, 0),
+      rewardItem,
+    },
+    rewardItem,
     rewardCoinsPerCollect: clampReward(body.rewardCoinsPerCollect ?? 2),
     collectTarget: clampTarget(body.collectTarget ?? 3),
     milestoneBonusCoins: clampReward(body.milestoneBonusCoins ?? 5, 0),
-    sort: Math.floor(Number(body.sort) || 200),
-    enabled: body.enabled !== false,
-    custom: true,
-    decor: normalizeDecor(body.decor, decor("sparkle", "#E94E77", String(body.title || "Event").slice(0, 24), 0.55, "none")),
+    quests: Array.isArray(body.quests) ? body.quests : undefined,
+    lobby: body.lobby && typeof body.lobby === "object" ? body.lobby : undefined,
+    contest: body.contest && typeof body.contest === "object" ? body.contest : undefined,
+    decor: body.decor || decor("sparkle", "#E94E77", String(body.title || "Event").slice(0, 24), 0.55, "none"),
   };
-  if (body.rewardItem && body.rewardItem.kind && body.rewardItem.itemId) {
-    ev.rewardItem = {
-      kind: String(body.rewardItem.kind).trim(),
-      itemId: String(body.rewardItem.itemId).trim(),
-      emoji: String(body.rewardItem.emoji || body.rewardItem.itemId).trim(),
-      label: String(body.rewardItem.label || body.rewardItem.itemId).trim(),
-    };
+
+  const result = engine.createOrUpdateEvent(db, payload, { isCreate: true });
+  if (!result.ok) return result;
+  const stored = cfg.events.find((e) => e.id === result.event?.id) || result.event;
+  if (stored) stored.custom = true;
+  return { ok: true, event: publicEvent(stored), events: listAdminEvents(db) };
+}
+
+const BUILTIN_IDS = new Set([
+  "new_year",
+  "valentine",
+  "carnival",
+  "easter",
+  "mothers_day",
+  "midsummer",
+  "autumn",
+  "halloween",
+  "full_moon",
+  "date_night",
+  "nikolaus",
+  "advent",
+  "christmas",
+  "silvester",
+]);
+
+/**
+ * Event löschen (Custom) oder deaktivieren (Builtin).
+ * Räumt Schmuck-Quelle, Progress, Contest und Event-Lobbys auf.
+ */
+function deleteAdminEvent(db, eventId, { liveRooms = null } = {}) {
+  const cfg = ensureEventsConfig(db);
+  const id = String(eventId || "").trim();
+  if (!id) return { ok: false, error: "bad_id", message: "Event-ID fehlt." };
+  const ev = cfg.events.find((e) => e.id === id);
+  if (!ev) return { ok: false, error: "not_found", message: "Event nicht gefunden." };
+
+  let deleted = false;
+  let disabled = false;
+  if (BUILTIN_IDS.has(id) && ev.custom !== true) {
+    ev.enabled = false;
+    disabled = true;
+  } else {
+    cfg.events = cfg.events.filter((e) => e.id !== id);
+    deleted = true;
   }
-  cfg.events.push(ev);
   cfg.updatedAt = new Date().toISOString();
-  cfg.events.sort((a, b) => (a.sort || 0) - (b.sort || 0));
-  return { ok: true, event: publicEvent(ev), events: listAdminEvents(db) };
+
+  if (db.eventContest && typeof db.eventContest === "object" && db.eventContest[id]) {
+    delete db.eventContest[id];
+  }
+  if (db.eventLobbies && typeof db.eventLobbies === "object" && db.eventLobbies[id]) {
+    delete db.eventLobbies[id];
+  }
+
+  let progressCleared = 0;
+  for (const u of Object.values(db.users || {})) {
+    if (!u?.eventProgress || typeof u.eventProgress !== "object") continue;
+    for (const key of Object.keys(u.eventProgress)) {
+      if (key === id || key.startsWith(`${id}:`)) {
+        delete u.eventProgress[key];
+        progressCleared += 1;
+      }
+    }
+  }
+
+  let roomsCleared = 0;
+  const roomCodes = new Set();
+  for (const [code, room] of Object.entries(db.rooms || {})) {
+    if (room && (room.eventId === id || room.eventLobbyId === id)) {
+      roomCodes.add(code);
+      delete db.rooms[code];
+      roomsCleared += 1;
+    }
+  }
+  if (liveRooms && typeof liveRooms.forEach === "function") {
+    for (const code of [...liveRooms.keys()]) {
+      const room = liveRooms.get(code);
+      if (room && (room.eventId === id || room.eventLobbyId === id || roomCodes.has(code))) {
+        try {
+          for (const sock of room.sockets || []) {
+            try {
+              sock.send(JSON.stringify({ type: "lobby_closed", reason: "event_deleted" }));
+              sock.close();
+            } catch (_) {
+              /* ignore */
+            }
+          }
+        } catch (_) {
+          /* ignore */
+        }
+        liveRooms.delete(code);
+        roomCodes.add(code);
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    deleted,
+    disabled,
+    progressCleared,
+    roomsCleared,
+    roomCodes: [...roomCodes],
+    events: listAdminEvents(db),
+  };
+}
+
+/** Aktive Event-Quests für eine Metrik erhöhen (Streiche, Sessions, …). */
+function bumpQuestsForUser(db, user, metric, amount, applyLedgerFn, giveItemFn) {
+  if (!user || !metric) return [];
+  const cfg = ensureEventsConfig(db);
+  const now = new Date();
+  const done = [];
+  for (const ev of cfg.events) {
+    if (!isActiveAtPatched(ev, now)) continue;
+    if (!Array.isArray(ev.quests) || !ev.quests.length) continue;
+    const r = engine.bumpEventQuest(db, user, ev, metric, amount, applyLedgerFn, giveItemFn);
+    if (r?.completed?.length) {
+      for (const c of r.completed) done.push({ eventId: ev.id, ...c });
+    }
+  }
+  return done;
 }
 
 function ensureUserProgress(user) {
@@ -725,6 +906,11 @@ function ensureUserProgress(user) {
 }
 
 function progressSeasonKey(ev, now = new Date()) {
+  const enriched = engine.enrichEvent(ev);
+  if (enriched.schedule?.mode === "absolute") {
+    const from = String(enriched.schedule.absoluteFrom || berlinYmd(now)).slice(0, 10);
+    return `${ev.id}:${from}`;
+  }
   const r = ev.recurrence || {};
   const bp = berlinParts(now);
   if (r.type === "weekly") return `${ev.id}:${bp.year}`;
@@ -767,8 +953,24 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
     const occ = nextOccurrence(e, now);
     const season = progressSeasonKey(e, now);
     const prog = progressFor(user, e.id, season);
+    let quests = [];
+    if (Array.isArray(pub.quests) && pub.quests.length) {
+      const engineProg = engine.ensureUserProgress(user, e.id);
+      quests = pub.quests.map((q) => {
+        const qp = engineProg.quests?.[q.id] || { progress: 0, done: false, claimed: false };
+        return {
+          ...q,
+          progress: Math.min(q.target, Number(qp.progress) || 0),
+          done: Boolean(qp.done),
+          claimed: Boolean(qp.claimed),
+        };
+      });
+    }
     const row = {
       ...pub,
+      quests,
+      lobby: pub.lobby || { enabled: false },
+      contest: pub.contest || { enabled: false },
       windowStart: occ?.start || null,
       windowEnd: occ?.end || null,
       progress: prog.progress,
@@ -912,6 +1114,9 @@ module.exports = {
   listAdminEvents,
   putAdminEvents,
   createAdminEvent,
+  deleteAdminEvent,
+  bumpQuestsForUser,
+  absoluteWindowBerlin,
   meEventsPayload,
   collectEvent,
   yearOverview,

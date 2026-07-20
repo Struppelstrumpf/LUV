@@ -276,6 +276,39 @@ private fun EventHeroCard(
             fontFamily = BodyFont,
             fontSize = 11.sp
         )
+        if (event.quests.isNotEmpty()) {
+            Text(
+                "Aufgaben",
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 14.sp
+            )
+            event.quests.forEach { q ->
+                val qProg = q.progress.coerceIn(0, q.target)
+                Text(
+                    "${if (q.done) "✓" else "○"} ${q.title} ($qProg/${q.target})" +
+                        if (q.rewardCoins > 0) " · +${q.rewardCoins}" else "",
+                    color = if (q.done) accent else TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 12.sp
+                )
+                if (q.hint.isNotBlank() && !q.done) {
+                    Text(q.hint, color = TextMuted.copy(0.85f), fontFamily = BodyFont, fontSize = 11.sp)
+                }
+            }
+        }
+        if (event.lobbyEnabled || event.contestEnabled) {
+            Text(
+                buildString {
+                    if (event.lobbyEnabled) append("Event-Lobby bereit")
+                    if (event.lobbyEnabled && event.contestEnabled) append(" · ")
+                    if (event.contestEnabled) append("Wettbewerb aktiv")
+                },
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 11.sp
+            )
+        }
         TextButton(
             onClick = onCollect,
             enabled = event.canCollect && !busy && !event.collectedToday,

@@ -1393,12 +1393,28 @@
         <div id="evDecorLive">${decorPreviewHtml(d)}</div>
         <div class="actions" style="margin-top:0.75rem">
           <button type="submit" class="btn">Speichern</button>
+          ${
+            ev.custom
+              ? `<button type="button" class="btn danger" id="evDeleteBtn">Event löschen</button>`
+              : `<button type="button" class="btn secondary" id="evDisableBtn">Deaktivieren</button>`
+          }
         </div>
         ${
+          (ev.quests && ev.quests.length) || ev.lobby?.enabled || ev.contest?.enabled
+            ? `<div class="ev-modules help" style="margin-top:0.75rem">
+                ${ev.quests?.length ? `<div>Quests: ${ev.quests.length}</div>` : ""}
+                ${ev.lobby?.enabled ? `<div>Event-Lobby: an (${esc(ev.lobby.access || "friends")})</div>` : ""}
+                ${ev.contest?.enabled ? `<div>Wettbewerb: an</div>` : ""}
+              </div>`
+            : ""
+        }
+        ${
           ev.next
-            ? `<p class="help" style="margin-top:0.6rem">Nächstes Fenster: ${esc(ev.next.start || "—")}${
+            ? `<p class="help" style="margin-top:0.6rem">Fenster: ${esc(ev.next.start || "—")}${
                 ev.next.end && ev.next.end !== ev.next.start ? ` – ${esc(ev.next.end)}` : ""
-              }${ev.active ? " · gerade aktiv" : ""}</p>`
+              }${ev.active ? " · gerade aktiv" : ""}${
+                ev.schedule?.mode === "absolute" ? " · absolut" : ""
+              }</p>`
             : ""
         }
       </form>`;
@@ -1443,12 +1459,15 @@
             <div>
               <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">📅 Eventkalender</h3>
               <p class="help" style="margin:0.4rem 0 0;max-width:52rem">
-                Wiederkehrende Jahres-Events mit täglichem Sammeln, Coin-Belohnungen und App-Schmuck.
-                Nutzer sehen aktive Events unter Sozial → Events.
-                <strong>Neues Event:</strong> Button unten links — dann rechts bearbeiten.
+                Jahres-Events mit Sammeln, Quests, Schmuck. Nutzer: Sozial → Events.
+                <strong>Löschen</strong> entfernt Custom-Events inkl. Schmuck-Quelle, Fortschritt und Event-Lobbys.
+                Builtin-Events werden nur deaktiviert.
               </p>
             </div>
-            <button type="button" class="btn" id="evCreateBtn">+ Neues Event</button>
+            <div class="actions" style="gap:0.45rem;flex-wrap:wrap">
+              <button type="button" class="btn secondary" id="evTestBtn">2-Tage-Testevent</button>
+              <button type="button" class="btn" id="evCreateBtn">+ Neues Event</button>
+            </div>
           </div>
         </div>
         <div class="ev-layout">
@@ -1495,6 +1514,92 @@
             paint();
           } catch (err) {
             alert(err?.message || "Anlegen fehlgeschlagen");
+          }
+        };
+      }
+
+      const testBtn = $("evTestBtn");
+      if (testBtn) {
+        testBtn.onclick = async () => {
+          if (!confirm("2-Tage-Testevent jetzt starten? (Sammeln, Quests, Schmuck, Lobby/Contest-Config)")) return;
+          try {
+            const res = await api("/admin/events", {
+              method: "POST",
+              body: JSON.stringify({
+                id: `test_2d_${Date.now().toString(36).slice(-4)}`,
+                title: "Testevent 2 Tage",
+                emoji: "🧪",
+                description:
+                  "Live-Test: täglich sammeln, Striche-Quest, App-Schmuck. Nach dem Test löschen.",
+                hint: "Heute und morgen unter Sozial → Events sammeln. Zeichnen zählt für die Quest.",
+                absolute: true,
+                durationDays: 2,
+                sort: 999,
+                enabled: true,
+                rewardCoinsPerCollect: 3,
+                collectTarget: 2,
+                milestoneBonusCoins: 5,
+                rewardItem: {
+                  kind: "emojis",
+                  itemId: "💘",
+                  emoji: "💘",
+                  label: "Test-Liebespfeil",
+                },
+                decor: {
+                  particles: "hearts",
+                  accentHex: "#E94E77",
+                  bannerText: "Testevent aktiv!",
+                  intensity: 0.8,
+                  ornaments: "hearts",
+                },
+                quests: [
+                  {
+                    id: "q_strokes",
+                    title: "10 Striche malen",
+                    hint: "Einfach in einer Lobby zeichnen.",
+                    metric: "strokes",
+                    target: 10,
+                    rewardCoins: 3,
+                  },
+                  {
+                    id: "q_session",
+                    title: "Eine Mal-Session starten",
+                    hint: "Einmal mit dem Zeichnen beginnen.",
+                    metric: "draw_sessions",
+                    target: 1,
+                    rewardCoins: 2,
+                  },
+                ],
+                lobby: {
+                  enabled: true,
+                  access: "friends",
+                  createMode: "manual",
+                  palette: "event",
+                  invitesAllowed: true,
+                  drawMode: "free",
+                  minStrokesToQualify: 5,
+                  sessionSeconds: 180,
+                },
+                contest: {
+                  enabled: true,
+                  places: [
+                    { place: 1, coins: 15 },
+                    { place: 2, coins: 8 },
+                    { place: 3, coins: 5 },
+                  ],
+                  voterRewardCoins: 1,
+                  voteRequire: { drewInEventLobby: true, minStrokes: 5 },
+                },
+              }),
+            });
+            const next = res.events || [];
+            events.length = 0;
+            events.push(...next);
+            selectedId = res.event?.id || selectedId;
+            alert("Testevent läuft 2 Tage — App neu öffnen / Sozial → Events.");
+            paint();
+          } catch (err) {
+            alert(err?.message || "Testevent fehlgeschlagen");
           }
         };
       }
@@ -1562,6 +1667,55 @@
             alert(err?.message || "Speichern fehlgeschlagen");
           }
         };
+        const delBtn = $("evDeleteBtn");
+        if (delBtn) {
+          delBtn.onclick = async () => {
+            const id = form.getAttribute("data-id");
+            if (
+              !confirm(
+                "Event wirklich löschen?\nSchmuck endet, Fortschritt und Event-Lobbys werden entfernt."
+              )
+            ) {
+              return;
+            }
+            try {
+              const res = await api(`/admin/events/${encodeURIComponent(id)}`, {
+                method: "DELETE",
+              });
+              const next = res.events || [];
+              events.length = 0;
+              events.push(...next);
+              selectedId = events[0]?.id || "";
+              alert(
+                res.deleted
+                  ? `Gelöscht (Lobbys: ${res.roomsCleared || 0}, Progress: ${res.progressCleared || 0})`
+                  : "Deaktiviert"
+              );
+              paint();
+            } catch (err) {
+              alert(err?.message || "Löschen fehlgeschlagen");
+            }
+          };
+        }
+        const disBtn = $("evDisableBtn");
+        if (disBtn) {
+          disBtn.onclick = async () => {
+            const id = form.getAttribute("data-id");
+            if (!confirm("Builtin-Event deaktivieren? (Schmuck endet, falls es das aktive war.)")) return;
+            try {
+              const res = await api(`/admin/events/${encodeURIComponent(id)}`, {
+                method: "DELETE",
+              });
+              const next = res.events || [];
+              events.length = 0;
+              events.push(...next);
+              alert("Deaktiviert");
+              paint();
+            } catch (err) {
+              alert(err?.message || "Deaktivieren fehlgeschlagen");
+            }
+          };
+        }
       }
     }
 

@@ -8763,6 +8763,32 @@ app.post("/v1/admin/events", (req, res) => {
   });
 });
 
+app.delete("/v1/admin/events/:id", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const db = getDb();
+  const id = String(req.params.id || "").trim();
+  const result = seasonEvents.deleteAdminEvent(db, id, { liveRooms: rooms });
+  if (!result.ok) {
+    return res.status(result.error === "not_found" ? 404 : 400).json({
+      error: result.error,
+      message: result.message,
+    });
+  }
+  flushSave();
+  staffAudit(ctx.user, "events_delete", {
+    id,
+    deleted: result.deleted,
+    disabled: result.disabled,
+    roomsCleared: result.roomsCleared,
+  });
+  return res.json({
+    ok: true,
+    ...result,
+    year: seasonEvents.yearOverview(db, new Date().getUTCFullYear()),
+  });
+});
+
 app.get("/v1/me/events", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
@@ -13411,10 +13437,26 @@ wss.on("connection", (socket, req) => {
       touchCanvasActivity(room, room.sockets.size, user?.id || socket.luvUserId);
       if (user) {
         trackAch(user, "strokes", 1);
+        seasonEvents.bumpQuestsForUser(
+          getDb(),
+          user,
+          "strokes",
+          1,
+          (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref),
+          (u, k, itemId) => safeGiveItem(u, k, itemId)
+        );
         if (stored.emoji) trackAch(user, "stickers_placed", 1);
         if (stored.templateParts) trackAch(user, "templates_placed", 1);
         if (drawResult && (drawResult.free || drawResult.charged) && !drawResult.already) {
           trackAch(user, "draw_sessions", 1);
+          seasonEvents.bumpQuestsForUser(
+            getDb(),
+            user,
+            "draw_sessions",
+            1,
+            (uid, coins, reason, ref) => applyLedger(uid, coins, reason, ref),
+            (u, k, itemId) => safeGiveItem(u, k, itemId)
+          );
         }
         const peers = uniqueConnectedCount(room);
         if (peers >= 2) trackAch(user, "draw_with_peers", 1);

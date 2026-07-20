@@ -48,6 +48,32 @@ data class EventRewardItem(
     }
 }
 
+data class EventQuest(
+    val id: String,
+    val title: String,
+    val hint: String,
+    val metric: String,
+    val target: Int,
+    val rewardCoins: Int,
+    val progress: Int,
+    val done: Boolean,
+    val claimed: Boolean,
+) {
+    companion object {
+        fun fromJson(o: JSONObject): EventQuest = EventQuest(
+            id = o.optString("id"),
+            title = o.optString("title", "Quest"),
+            hint = o.optString("hint"),
+            metric = o.optString("metric"),
+            target = o.optInt("target", 1).coerceAtLeast(1),
+            rewardCoins = o.optInt("rewardCoins", 0),
+            progress = o.optInt("progress", 0).coerceAtLeast(0),
+            done = o.optBoolean("done", false),
+            claimed = o.optBoolean("claimed", false),
+        )
+    }
+}
+
 data class SeasonEvent(
     val id: String,
     val title: String,
@@ -66,9 +92,22 @@ data class SeasonEvent(
     val windowEnd: String?,
     val decor: EventDecor,
     val rewardItem: EventRewardItem?,
+    val quests: List<EventQuest> = emptyList(),
+    val lobbyEnabled: Boolean = false,
+    val contestEnabled: Boolean = false,
 ) {
     companion object {
-        fun fromJson(o: JSONObject): SeasonEvent = SeasonEvent(
+        fun fromJson(o: JSONObject): SeasonEvent {
+            val questsArr = o.optJSONArray("quests")
+            val quests = buildList {
+                if (questsArr != null) {
+                    for (i in 0 until questsArr.length()) {
+                        val q = questsArr.optJSONObject(i) ?: continue
+                        add(EventQuest.fromJson(q))
+                    }
+                }
+            }
+            return SeasonEvent(
             id = o.optString("id"),
             title = o.optString("title"),
             emoji = o.optString("emoji", "🎉"),
@@ -86,7 +125,11 @@ data class SeasonEvent(
             windowEnd = o.optString("windowEnd").takeIf { it.isNotBlank() },
             decor = EventDecor.fromJson(o.optJSONObject("decor")),
             rewardItem = EventRewardItem.fromJson(o.optJSONObject("rewardItem")),
-        )
+            quests = quests,
+            lobbyEnabled = o.optJSONObject("lobby")?.optBoolean("enabled", false) == true,
+            contestEnabled = o.optJSONObject("contest")?.optBoolean("enabled", false) == true,
+            )
+        }
     }
 }
 
