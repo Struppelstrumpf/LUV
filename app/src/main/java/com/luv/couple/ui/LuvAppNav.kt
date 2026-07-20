@@ -49,6 +49,7 @@ import com.luv.couple.data.Lobby
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Role
 import com.luv.couple.data.RoomPreview
+import com.luv.couple.data.asCleanJsonString
 import com.luv.couple.lock.CanvasMemoryKeeper
 import com.luv.couple.lock.CanvasStore
 import com.luv.couple.lock.LockDrawActivity
@@ -403,9 +404,11 @@ fun LuvAppNav() {
                     hostNickname = room.hostNickname.ifBlank { nickname.orEmpty() },
                     hostColorSide = hostColorSide,
                     createdByMe = true,
-                    eventId = room.eventId ?: event.id,
-                    eventPrompt = room.eventPrompt ?: event.eventPrompt ?: event.contest?.promptHint,
-                    eventEndsAt = room.eventEndsAt,
+                    eventId = (room.eventId ?: event.id).asCleanJsonString(),
+                    eventPrompt = (
+                        room.eventPrompt ?: event.eventPrompt ?: event.contest?.promptHint
+                    ).asCleanJsonString(),
+                    eventEndsAt = room.eventEndsAt.asCleanJsonString(),
                 )
                 prefs.upsertLobby(lobby)
                 PairSessionState.setCapacity(lobby.id, room.capacity)

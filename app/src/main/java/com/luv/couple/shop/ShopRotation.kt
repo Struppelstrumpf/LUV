@@ -6,29 +6,24 @@ package com.luv.couple.shop
  * - ~40 % der Items im 3-Tage-Takt, ~60 % im 7-Tage-Takt
  * - Server-Timer-Items ([remainingMs] > 0) immer sichtbar
  * - Gratis/Starter nie ausblenden
- * - Kein Fake-Countdown — Restzeit nur vom Server
- * - Event-IDs sind bereits in [LiveShopCatalog] ausgefiltert
+ * - „Demnächst“: immer bis zu 2 Vorschau-Items (auch wenn alles Timer/Pinned ist)
  */
 object ShopRotation {
     const val CYCLE_DAYS_SHORT = 3
     const val CYCLE_DAYS_LONG = 7
     const val MIN_ACTIVE_RATIO = 0.5
     const val PRICE_CHEAP_MAX = 24
-    /** Featured-Badge nutzt den kurzen Zyklus. */
     const val CYCLE_DAYS = CYCLE_DAYS_SHORT
-    /** Horizont für „Demnächst“-Vorschau. */
     const val PREVIEW_HORIZON_DAYS = 21
 
     data class CycleInfo(
         val epoch: Long,
-        /** 1–3 Tage bis zum nächsten 3-Tage-Slot (Featured). */
         val daysUntilNext: Int,
     )
 
     data class RotateResult<T>(
         val grid: List<T>,
         val preview: List<T>,
-        /** Tage bis die Preview-Items kommen; null wenn keine Preview. */
         val daysUntilPreview: Int?,
     )
 
@@ -53,7 +48,6 @@ object ShopRotation {
         return h and 0x7fff_ffff
     }
 
-    /** 3-Tage-Pool wenn hash%5 < 2 (~40 %), sonst 7-Tage. */
     private fun cycleLenFor(id: String): Int =
         if (stableHash(id) % 5 < 2) CYCLE_DAYS_SHORT else CYCLE_DAYS_LONG
 
@@ -74,22 +68,18 @@ object ShopRotation {
     private fun isPinned(id: String, price: Int): Boolean =
         price <= 0 || id == "meadow" || id == "🐣"
 
-    /**
-     * @return grid (aktive Items) + preview (2 Items, die als Nächstes reinkommen)
-     * @param withRemaining optional: setzt Anzeige-Restzeit nur aus Server-[remainingOf]
-     * @param skipRotation bei Suche: alle Treffer zeigen
-     */
     fun <T> rotateCatalog(
         all: List<T>,
         epoch: Long,
         idOf: (T) -> String,
         priceOf: (T) -> Int,
         remainingOf: (T) -> Long?,
-        bucketSize: Int = 0, // unused — API-Kompatibilität
+        bucketSize: Int = 0,
         previewCount: Int = 2,
         nowMs: Long = System.currentTimeMillis(),
         withRemaining: ((T, Long?) -> T)? = null,
         skipRotation: Boolean = false,
+        previewPool: List<T>? = null,
     ): Pair<List<T>, List<T>> {
         val r = rotateCatalogDetailed(
             all = all,
@@ -102,6 +92,7 @@ object ShopRotation {
             nowMs = nowMs,
             withRemaining = withRemaining,
             skipRotation = skipRotation,
+            previewPool = previewPool,
         )
         return r.grid to r.preview
     }
@@ -117,20 +108,32 @@ object ShopRotation {
         nowMs: Long = System.currentTimeMillis(),
         withRemaining: ((T, Long?) -> T)? = null,
         skipRotation: Boolean = false,
+        /** Vollständiger Katalog für „Demnächst“, falls [all] nur aktive Server-Items enthält. */
+        previewPool: List<T>? = null,
     ): RotateResult<T> {
         @Suppress("UNUSED_PARAMETER")
         val _bucket = bucketSize
         @Suppress("UNUSED_PARAMETER")
         val _epoch = epoch
         val shopable = all
+        val day = nowMs / 86_400_000L
+
         if (skipRotation || shopable.isEmpty()) {
             val grid = if (withRemaining != null) {
                 shopable.map { item ->
-                    val rem = remainingOf(item)?.takeIf { it > 0L }
-                    withRemaining(item, rem)
+                    withRemaining(item, remainingOf(item)?.takeIf { it > 0L })
                 }
             } else shopable
-            return RotateResult(grid, emptyList(), null)
+            val gridIds = grid.map { idOf(it) }.toHashSet()
+            val (preview, days) = pickPreview(
+                pool = previewPool ?: shopable,
+                gridIds = gridIds,
+                day = day,
+                previewCount = previewCount,
+                idOf = idOf,
+                priceOf = priceOf,
+            )
+            return RotateResult(grid, preview, days)
         }
 
         val timed = shopable.filter { (remainingOf(it) ?: 0L) > 0L }
@@ -140,112 +143,37 @@ object ShopRotation {
         val rotating = shopable.filter {
             (remainingOf(it) ?: 0L) <= 0L && !isPinned(idOf(it), priceOf(it))
         }
-        if (rotating.isEmpty()) {
-            val gridRaw = timed + pinned
-            val grid = if (withRemaining != null) {
-                gridRaw.map { item ->
-                    withRemaining(item, remainingOf(item)?.takeIf { it > 0L })
-                }
-            } else gridRaw
-            return RotateResult(grid, emptyList(), null)
-        }
 
-        val day = nowMs / 86_400_000L
-        var activeRotating = rotating.filter { isActiveInRotation(idOf(it), day) }
-
-        val minActive = kotlin.math.ceil(rotating.size * MIN_ACTIVE_RATIO).toInt().coerceAtLeast(1)
-        if (activeRotating.size < minActive) {
-            val need = minActive - activeRotating.size
-            val inactive = rotating
-                .filter { it !in activeRotating }
-                .sortedBy { stableHash(idOf(it)) }
-            activeRotating = activeRotating + inactive.take(need)
-        }
-
-        val cheap = activeRotating.filter { priceOf(it) <= PRICE_CHEAP_MAX }
-            .sortedWith(compareBy({ priceOf(it) }, { idOf(it) }))
-        val expensive = activeRotating.filter { priceOf(it) > PRICE_CHEAP_MAX }
-            .sortedWith(compareBy({ priceOf(it) }, { idOf(it) }))
-        val mixed = ArrayList<T>(activeRotating.size)
-        var i = 0
-        var j = 0
-        var takeCheap = true
-        while (i < cheap.size || j < expensive.size) {
-            when {
-                takeCheap && i < cheap.size -> mixed.add(cheap[i++])
-                !takeCheap && j < expensive.size -> mixed.add(expensive[j++])
-                i < cheap.size -> mixed.add(cheap[i++])
-                j < expensive.size -> mixed.add(expensive[j++])
+        val mixed: List<T> = if (rotating.isEmpty()) {
+            emptyList()
+        } else {
+            var activeRotating = rotating.filter { isActiveInRotation(idOf(it), day) }
+            val minActive = kotlin.math.ceil(rotating.size * MIN_ACTIVE_RATIO).toInt().coerceAtLeast(1)
+            if (activeRotating.size < minActive) {
+                val need = minActive - activeRotating.size
+                val inactive = rotating
+                    .filter { it !in activeRotating }
+                    .sortedBy { stableHash(idOf(it)) }
+                activeRotating = activeRotating + inactive.take(need)
             }
-            takeCheap = !takeCheap
-        }
-
-        val gridIds = mixed.map { idOf(it) }.toHashSet()
-        val picked = ArrayList<T>(previewCount)
-        val pickedIds = LinkedHashSet<String>()
-        var farthestOffset = 0
-
-        fun tryAdd(item: T, offset: Int): Boolean {
-            if (picked.size >= previewCount) return false
-            val id = idOf(item)
-            if (id in gridIds || id in pickedIds) return false
-            picked.add(item)
-            pickedIds.add(id)
-            farthestOffset = maxOf(farthestOffset, offset)
-            return true
-        }
-
-        // Über den Horizont akkumulieren, bis previewCount erreicht
-        for (offset in 1..PREVIEW_HORIZON_DAYS) {
-            if (picked.size >= previewCount) break
-            val pool = rotating.filter {
-                val id = idOf(it)
-                id !in gridIds &&
-                    id !in pickedIds &&
-                    !isActiveInRotation(id, day) &&
-                    isActiveInRotation(id, day + offset)
-            }.sortedWith(compareBy({ priceOf(it) }, { idOf(it) }))
-            val cheapNext = pool.firstOrNull { priceOf(it) <= PRICE_CHEAP_MAX }
-            val expNext = pool.firstOrNull { priceOf(it) > PRICE_CHEAP_MAX }
-            cheapNext?.let { tryAdd(it, offset) }
-            expNext?.let { tryAdd(it, offset) }
-            for (item in pool) {
-                if (picked.size >= previewCount) break
-                tryAdd(item, offset)
-            }
-        }
-
-        // Fallback: alles nicht im Grid, bald aktiv
-        if (picked.size < previewCount) {
-            val rest = rotating
-                .filter { idOf(it) !in gridIds && idOf(it) !in pickedIds }
-                .sortedWith(
-                    compareBy(
-                        { daysUntilActive(idOf(it), day) },
-                        { priceOf(it) },
-                        { idOf(it) }
-                    )
-                )
-            for (item in rest) {
-                if (picked.size >= previewCount) break
-                tryAdd(item, daysUntilActive(idOf(item), day))
-            }
-        }
-
-        // Letzter Fallback bei winzigem Katalog: auch Grid-Items mit Offset zeigen
-        if (picked.size < previewCount && rotating.size >= 1) {
-            val rest = rotating
-                .filter { idOf(it) !in pickedIds }
+            val cheap = activeRotating.filter { priceOf(it) <= PRICE_CHEAP_MAX }
                 .sortedWith(compareBy({ priceOf(it) }, { idOf(it) }))
-            for (item in rest) {
-                if (picked.size >= previewCount) break
-                val off = if (isActiveInRotation(idOf(item), day)) {
-                    cycleLenFor(idOf(item))
-                } else {
-                    daysUntilActive(idOf(item), day)
+            val expensive = activeRotating.filter { priceOf(it) > PRICE_CHEAP_MAX }
+                .sortedWith(compareBy({ priceOf(it) }, { idOf(it) }))
+            val out = ArrayList<T>(activeRotating.size)
+            var i = 0
+            var j = 0
+            var takeCheap = true
+            while (i < cheap.size || j < expensive.size) {
+                when {
+                    takeCheap && i < cheap.size -> out.add(cheap[i++])
+                    !takeCheap && j < expensive.size -> out.add(expensive[j++])
+                    i < cheap.size -> out.add(cheap[i++])
+                    j < expensive.size -> out.add(expensive[j++])
                 }
-                tryAdd(item, off)
+                takeCheap = !takeCheap
             }
+            out
         }
 
         val seen = LinkedHashSet<String>()
@@ -262,11 +190,125 @@ object ShopRotation {
             gridRaw
         }
 
-        val days = if (picked.isEmpty()) {
-            null
-        } else {
-            farthestOffset.coerceIn(1, PREVIEW_HORIZON_DAYS)
+        val gridIds = grid.map { idOf(it) }.toHashSet()
+        val pool = when {
+            !previewPool.isNullOrEmpty() -> previewPool
+            rotating.isNotEmpty() -> rotating
+            else -> shopable
         }
-        return RotateResult(grid, picked.take(previewCount), days)
+        val (preview, days) = pickPreview(
+            pool = pool,
+            gridIds = gridIds,
+            day = day,
+            previewCount = previewCount,
+            idOf = idOf,
+            priceOf = priceOf,
+        )
+        return RotateResult(grid, preview, days)
+    }
+
+    /**
+     * Nächste Shop-Items, die gerade nicht im Grid sind.
+     * Unabhängig von Server-Timer vs. Client-Rotation — immer bis [previewCount] füllen.
+     */
+    private fun <T> pickPreview(
+        pool: List<T>,
+        gridIds: Set<String>,
+        day: Long,
+        previewCount: Int,
+        idOf: (T) -> String,
+        priceOf: (T) -> Int,
+    ): Pair<List<T>, Int?> {
+        if (previewCount <= 0 || pool.isEmpty()) return emptyList<T>() to null
+
+        val picked = ArrayList<T>(previewCount)
+        val pickedIds = LinkedHashSet<String>()
+        var farthestOffset = 0
+
+        fun tryAdd(item: T, offset: Int): Boolean {
+            if (picked.size >= previewCount) return false
+            val id = idOf(item)
+            if (id in gridIds || id in pickedIds) return false
+            picked.add(item)
+            pickedIds.add(id)
+            farthestOffset = maxOf(farthestOffset, offset.coerceAtLeast(1))
+            return true
+        }
+
+        // 1) Items die heute nicht aktiv sind, bald schon
+        for (offset in 1..PREVIEW_HORIZON_DAYS) {
+            if (picked.size >= previewCount) break
+            val batch = pool.filter {
+                val id = idOf(it)
+                id !in gridIds &&
+                    id !in pickedIds &&
+                    !isActiveInRotation(id, day) &&
+                    isActiveInRotation(id, day + offset)
+            }.sortedWith(compareBy({ priceOf(it) }, { idOf(it) }))
+            val cheap = batch.firstOrNull { priceOf(it) <= PRICE_CHEAP_MAX }
+            val exp = batch.firstOrNull { priceOf(it) > PRICE_CHEAP_MAX }
+            cheap?.let { tryAdd(it, offset) }
+            exp?.let { tryAdd(it, offset) }
+            for (item in batch) {
+                if (picked.size >= previewCount) break
+                tryAdd(item, offset)
+            }
+        }
+
+        // 2) Alles außer Grid, nach baldiger Aktivierung
+        if (picked.size < previewCount) {
+            val rest = pool
+                .filter { idOf(it) !in gridIds && idOf(it) !in pickedIds }
+                .sortedWith(
+                    compareBy(
+                        { daysUntilActive(idOf(it), day) },
+                        { priceOf(it) },
+                        { idOf(it) }
+                    )
+                )
+            for (item in rest) {
+                if (picked.size >= previewCount) break
+                tryAdd(item, daysUntilActive(idOf(item), day))
+            }
+        }
+
+        // 3) Katalog winzig / alles im Grid: nächster Zyklus der günstigsten Grid-fremden,
+        // sonst aus dem Pool mit Zyklus-Länge als Offset
+        if (picked.size < previewCount) {
+            val rest = pool
+                .filter { idOf(it) !in pickedIds }
+                .sortedWith(compareBy({ priceOf(it) }, { idOf(it) }))
+            for (item in rest) {
+                if (picked.size >= previewCount) break
+                val id = idOf(item)
+                val off = if (id in gridIds || isActiveInRotation(id, day)) {
+                    cycleLenFor(id)
+                } else {
+                    daysUntilActive(id, day)
+                }
+                // Grid-Items nur als letzter Ausweg
+                if (id in gridIds && picked.size + (rest.size - rest.indexOf(item)) > previewCount) {
+                    continue
+                }
+                if (id in gridIds) continue
+                tryAdd(item, off)
+            }
+        }
+
+        // 4) Wirklich nichts außerhalb? Zeige die nächsten aus dem Pool mit Zyklus-Offset
+        if (picked.isEmpty() && pool.isNotEmpty()) {
+            val sorted = pool.sortedWith(compareBy({ priceOf(it) }, { idOf(it) }))
+            for (item in sorted) {
+                if (picked.size >= previewCount) break
+                val id = idOf(item)
+                if (id in pickedIds) continue
+                picked.add(item)
+                pickedIds.add(id)
+                farthestOffset = maxOf(farthestOffset, cycleLenFor(id))
+            }
+        }
+
+        val days = if (picked.isEmpty()) null else farthestOffset.coerceIn(1, PREVIEW_HORIZON_DAYS)
+        return picked.take(previewCount) to days
     }
 }

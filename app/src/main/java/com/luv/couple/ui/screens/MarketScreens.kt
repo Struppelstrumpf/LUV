@@ -83,6 +83,7 @@ import com.luv.couple.shop.ItemLabels
 import com.luv.couple.shop.LiveShopCatalog
 import com.luv.couple.shop.ShopCatalog
 import com.luv.couple.shop.ShopEmoji
+import com.luv.couple.shop.ShopEventRewards
 import com.luv.couple.shop.ShopPet
 import com.luv.couple.shop.ShopTheme
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -1056,22 +1057,38 @@ private fun ItemShopContent(
                 }
             }
             Spacer(modifier = Modifier.height(s(10.dp)))
-            // Featured preview
+            // Featured preview — Demnächst immer, Pool = voller lokaler Katalog
             run {
                 val stickersAll = remember(catalogTick) { LiveShopCatalog.stickers() }
                 val themesAll = remember(catalogTick) { LiveShopCatalog.themes() }
                 val petsAll = remember(catalogTick) { LiveShopCatalog.pets() }
                 val emojisAll = remember(catalogTick) { LiveShopCatalog.emojis() }
+                val stickersPool = remember(catalogTick) {
+                    ShopEventRewards.filterShopList(ShopCatalog.STICKERS, "stickers") { it.emoji }
+                }
+                val themesPool = remember(catalogTick) {
+                    ShopEventRewards.filterShopList(
+                        ShopCatalog.THEMES.filter { it.priceCoins > 0 || it.id == "meadow" },
+                        "themes"
+                    ) { it.id }
+                }
+                val petsPool = remember(catalogTick) {
+                    ShopEventRewards.filterShopList(ShopCatalog.PETS, "pets") { it.emoji }
+                }
+                val emojisPool = remember(catalogTick) {
+                    ShopEventRewards.filterShopList(ShopCatalog.EMOJIS, "emojis") { it.emoji }
+                }
                 when (tab) {
                     0 -> {
-                        val rotated = remember(catalogTick, stickersAll, cycle.epoch) {
+                        val rotated = remember(catalogTick, stickersAll, stickersPool, cycle.epoch) {
                             ShopRotation.rotateCatalogDetailed(
                                 stickersAll,
                                 cycle.epoch,
                                 idOf = { it.emoji },
                                 priceOf = { it.priceCoins },
                                 remainingOf = { it.remainingMs },
-                                bucketSize = 12
+                                bucketSize = 12,
+                                previewPool = stickersPool,
                             )
                         }
                         val preview = rotated.preview
@@ -1096,14 +1113,15 @@ private fun ItemShopContent(
                         }
                     }
                     1 -> {
-                        val rotated = remember(catalogTick, themesAll, cycle.epoch) {
+                        val rotated = remember(catalogTick, themesAll, themesPool, cycle.epoch) {
                             ShopRotation.rotateCatalogDetailed(
                                 themesAll,
                                 cycle.epoch,
                                 idOf = { it.id },
                                 priceOf = { it.priceCoins },
                                 remainingOf = { it.remainingMs },
-                                bucketSize = 9
+                                bucketSize = 9,
+                                previewPool = themesPool,
                             )
                         }
                         val preview = rotated.preview
@@ -1124,14 +1142,15 @@ private fun ItemShopContent(
                         }
                     }
                     2 -> {
-                        val rotated = remember(catalogTick, petsAll, cycle.epoch) {
+                        val rotated = remember(catalogTick, petsAll, petsPool, cycle.epoch) {
                             ShopRotation.rotateCatalogDetailed(
                                 petsAll,
                                 cycle.epoch,
                                 idOf = { it.emoji },
                                 priceOf = { it.priceCoins },
                                 remainingOf = { it.remainingMs },
-                                bucketSize = 12
+                                bucketSize = 12,
+                                previewPool = petsPool,
                             )
                         }
                         val preview = rotated.preview
@@ -1156,14 +1175,15 @@ private fun ItemShopContent(
                         }
                     }
                     else -> {
-                        val rotated = remember(catalogTick, emojisAll, cycle.epoch) {
+                        val rotated = remember(catalogTick, emojisAll, emojisPool, cycle.epoch) {
                             ShopRotation.rotateCatalogDetailed(
                                 emojisAll,
                                 cycle.epoch,
                                 idOf = { it.emoji },
                                 priceOf = { it.priceCoins },
                                 remainingOf = { it.remainingMs },
-                                bucketSize = 15
+                                bucketSize = 15,
+                                previewPool = emojisPool,
                             )
                         }
                         val preview = rotated.preview
@@ -1188,8 +1208,8 @@ private fun ItemShopContent(
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(s(8.dp)))
             }
+            Spacer(modifier = Modifier.height(s(8.dp)))
             // Segment-Tabs: volle Labels (scrollbar auf schmalen Geräten)
             Row(
                 modifier = Modifier

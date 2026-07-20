@@ -354,9 +354,11 @@ class PrefsRepository(private val context: Context) {
                     lastCanvasActorId = r.lastCanvasActorId
                         ?: prev?.lastCanvasActorId,
                     createdByMe = r.createdByMe || (prev?.createdByMe == true),
-                    eventId = r.eventId ?: prev?.eventId,
-                    eventPrompt = r.eventPrompt ?: prev?.eventPrompt,
-                    eventEndsAt = r.eventEndsAt ?: prev?.eventEndsAt,
+                    eventId = r.eventId.asCleanJsonString() ?: prev?.eventId.asCleanJsonString(),
+                    eventPrompt = r.eventPrompt.asCleanJsonString()
+                        ?: prev?.eventPrompt.asCleanJsonString(),
+                    eventEndsAt = r.eventEndsAt.asCleanJsonString()
+                        ?: prev?.eventEndsAt.asCleanJsonString(),
                 )
             }
             val hostedCodes = hosted.map { it.code.uppercase() }.toSet()
@@ -389,15 +391,17 @@ class PrefsRepository(private val context: Context) {
                     }
                 }
             }
+            // Pro Event nur eine Lobby — Geister-/Sync-Duplikate entfernen
+            dedupeEventLobbiesInPlace(byCode, hostedCodes, joinedCodes)
             val seen = linkedSetOf<String>()
             val merged = buildList {
                 for (old in existing) {
                     val code = old.code.uppercase()
                     val next = byCode[code] ?: continue
-                    if (seen.add(code)) add(next)
+                    if (seen.add(code)) add(sanitizeEventLobbyFields(next))
                 }
                 for ((code, lobby) in byCode) {
-                    if (seen.add(code)) add(lobby)
+                    if (seen.add(code)) add(sanitizeEventLobbyFields(lobby))
                 }
             }
             prefs[lobbiesKey] = encodeLobbies(merged)
@@ -716,20 +720,37 @@ class PrefsRepository(private val context: Context) {
     suspend fun upsertLobby(lobby: Lobby) {
         context.dataStore.edit { prefs ->
             val list = parseLobbies(prefs[lobbiesKey]).toMutableList()
-            val idx = list.indexOfFirst { it.id == lobby.id }
+            val clean = sanitizeEventLobbyFields(lobby)
+            val eid = clean.eventId
+            if (!eid.isNullOrBlank()) {
+                list.removeAll {
+                    it.id != clean.id &&
+                        it.eventId.asCleanJsonString() == eid &&
+                        !it.code.equals(clean.code, ignoreCase = true)
+                }
+            }
+            val idx = list.indexOfFirst {
+                it.id == clean.id || it.code.equals(clean.code, ignoreCase = true)
+            }
             if (idx >= 0) {
                 val prev = list[idx]
-                list[idx] = lobby.copy(peakPeers = maxOf(prev.peakPeers, lobby.peakPeers, 1))
+                list[idx] = clean.copy(
+                    id = prev.id,
+                    peakPeers = maxOf(prev.peakPeers, clean.peakPeers, 1),
+                    eventPrompt = clean.eventPrompt ?: prev.eventPrompt.asCleanJsonString(),
+                    eventEndsAt = clean.eventEndsAt ?: prev.eventEndsAt.asCleanJsonString(),
+                    eventId = clean.eventId ?: prev.eventId.asCleanJsonString(),
+                )
             } else {
                 if (list.size >= PeerPalette.MAX_LOBBIES) {
                     throw IllegalStateException("max_lobbies")
                 }
-                list.add(lobby)
+                list.add(clean)
             }
             prefs[lobbiesKey] = encodeLobbies(list)
-            prefs[activeLobbyKey] = lobby.id
+            prefs[activeLobbyKey] = clean.id
             // Neu beigetreten / erstellt → Dismiss-Sperre für diesen Code aufheben
-            val code = lobby.code.uppercase()
+            val code = clean.code.uppercase()
             if (code.isNotBlank()) {
                 val dismissed = parseDismissedLobbyCodes(prefs[dismissedLobbiesKey]).toMutableSet()
                 if (dismissed.remove(code)) {
@@ -1213,9 +1234,9 @@ class PrefsRepository(private val context: Context) {
                                     "createdByMe",
                                     runCatching { Role.valueOf(o.getString("role")) }.getOrDefault(Role.HOST) == Role.HOST
                                 ),
-                                eventId = o.optString("eventId").takeIf { it.isNotBlank() },
-                                eventPrompt = o.optString("eventPrompt").takeIf { it.isNotBlank() },
-                                eventEndsAt = o.optString("eventEndsAt").takeIf { it.isNotBlank() },
+                                eventId = o.optCleanString("eventId"),
+                                eventPrompt = o.optCleanString("eventPrompt"),
+                                eventEndsAt = o.optCleanString("eventEndsAt"),
                             )
                         )
                     }
@@ -1245,9 +1266,9 @@ class PrefsRepository(private val context: Context) {
                         .put("lastCanvasAt", lobby.lastCanvasAt)
                         .put("lastCanvasActorId", lobby.lastCanvasActorId ?: "")
                         .put("createdByMe", lobby.createdByMe)
-                        .put("eventId", lobby.eventId ?: "")
-                        .put("eventPrompt", lobby.eventPrompt ?: "")
-                        .put("eventEndsAt", lobby.eventEndsAt ?: "")
+                        .put("eventId", lobby.eventId.asCleanJsonString() ?: "")
+                        .put("eventPrompt", lobby.eventPrompt.asCleanJsonString() ?: "")
+                        .put("eventEndsAt", lobby.eventEndsAt.asCleanJsonString() ?: "")
                 )
             }
             return arr.toString()
@@ -1569,6 +1590,49 @@ data class AccountInfo(
                 permissions = perms,
                 googleEmail = o.optString("googleEmail").takeIf { it.isNotBlank() && it != "null" }
             )
+        }
+    }
+}
+
+private fun sanitizeEventLobbyFields(lobby: Lobby): Lobby {
+    return lobby.copy(
+        eventId = lobby.eventId.asCleanJsonString(),
+        eventPrompt = lobby.eventPrompt.asCleanJsonString(),
+        eventEndsAt = lobby.eventEndsAt.asCleanJsonString(),
+    )
+}
+
+/**
+ * Pro [Lobby.eventId] nur eine Lobby behalten.
+ * Server-Codes (hosted/joined) gewinnen; sonst die mit Prompt/Ende.
+ */
+private fun dedupeEventLobbiesInPlace(
+    byCode: LinkedHashMap<String, Lobby>,
+    hostedCodes: Set<String>,
+    joinedCodes: Set<String>,
+) {
+    val bestByEvent = linkedMapOf<String, String>() // eventId -> code
+    fun score(code: String, lobby: Lobby): Int {
+        var s = 0
+        if (code in hostedCodes || code in joinedCodes) s += 100
+        if (!lobby.eventEndsAt.isNullOrBlank()) s += 10
+        if (!lobby.eventPrompt.isNullOrBlank()) s += 5
+        if (lobby.role == Role.HOST) s += 2
+        return s
+    }
+    for ((code, lobby) in byCode.toList()) {
+        val eid = lobby.eventId.asCleanJsonString() ?: continue
+        val prevCode = bestByEvent[eid]
+        if (prevCode == null) {
+            bestByEvent[eid] = code
+            continue
+        }
+        val prev = byCode[prevCode] ?: continue
+        if (score(code, lobby) > score(prevCode, prev)) {
+            byCode.remove(prevCode)
+            bestByEvent[eid] = code
+        } else {
+            byCode.remove(code)
         }
     }
 }

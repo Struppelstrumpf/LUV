@@ -1,5 +1,6 @@
 package com.luv.couple.net
 
+import com.luv.couple.data.optCleanString
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -169,7 +170,7 @@ data class EventContestInfo(
                 winners = winners,
                 claimablePrize = EventContestPrize.fromJson(o.optJSONObject("claimablePrize")),
                 prizeClaimed = o.optBoolean("prizeClaimed", false),
-                promptHint = o.optString("promptHint").takeIf { it.isNotBlank() },
+                promptHint = o.optCleanString("promptHint"),
                 lobbyCreated = o.optBoolean("lobbyCreated", false),
                 prizesReady = o.optBoolean("prizesReady", false),
             )
@@ -227,15 +228,15 @@ data class SeasonEvent(
             claimedMilestone = o.optBoolean("claimedMilestone", false),
             itemGranted = o.optBoolean("itemGranted", false),
             canCollect = o.optBoolean("canCollect", false),
-            windowStart = o.optString("windowStart").takeIf { it.isNotBlank() },
-            windowEnd = o.optString("windowEnd").takeIf { it.isNotBlank() },
+            windowStart = o.optCleanString("windowStart"),
+            windowEnd = o.optCleanString("windowEnd"),
             decor = EventDecor.fromJson(o.optJSONObject("decor")),
             rewardItem = EventRewardItem.fromJson(o.optJSONObject("rewardItem")),
             quests = quests,
             lobbyEnabled = o.optJSONObject("lobby")?.optBoolean("enabled", false) == true,
             contestEnabled = o.optJSONObject("contest")?.optBoolean("enabled", false) == true,
             canCreateLobby = o.optBoolean("canCreateLobby", false),
-            eventPrompt = o.optString("eventPrompt").takeIf { it.isNotBlank() },
+            eventPrompt = o.optCleanString("eventPrompt"),
             contest = EventContestInfo.fromJson(o.optJSONObject("contest")),
             )
         }

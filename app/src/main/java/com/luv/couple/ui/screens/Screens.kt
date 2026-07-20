@@ -95,6 +95,7 @@ import com.luv.couple.data.Lobby
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Role
 import com.luv.couple.data.RoomPreview
+import com.luv.couple.data.asCleanJsonString
 import com.luv.couple.lock.CanvasStore
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.EventSession
@@ -314,7 +315,7 @@ fun LobbiesScreen(
     LaunchedEffect(lobbies) {
         // Während Drag lokale Reihenfolge behalten; sonst mit Prefs-Liste mergen
         if (dragLobbyId != null) return@LaunchedEffect
-        orderedLobbies = mergeLobbyOrder(orderedLobbies, lobbies)
+        orderedLobbies = mergeLobbyOrder(orderedLobbies, lobbies).let(::dedupeEventLobbiesForUi)
     }
 
     fun persistOrder(next: List<Lobby>) {
@@ -712,6 +713,35 @@ private fun mergeLobbyOrder(current: List<Lobby>, incoming: List<Lobby>): List<L
     return kept + incoming.filter { it.id !in known }
 }
 
+/** UI-Schutz: höchstens eine Event-Lobby pro eventId. */
+private fun dedupeEventLobbiesForUi(list: List<Lobby>): List<Lobby> {
+    val bestByEvent = linkedMapOf<String, Lobby>()
+    val nonEvent = ArrayList<Lobby>()
+    for (lobby in list) {
+        val eid = lobby.eventId.asCleanJsonString()
+        if (eid == null) {
+            nonEvent.add(lobby)
+            continue
+        }
+        val prev = bestByEvent[eid]
+        if (prev == null) {
+            bestByEvent[eid] = lobby
+            continue
+        }
+        fun score(l: Lobby): Int {
+            var s = 0
+            if (!l.eventEndsAt.asCleanJsonString().isNullOrBlank()) s += 10
+            if (!l.eventPrompt.asCleanJsonString().isNullOrBlank()) s += 5
+            if (l.role == Role.HOST) s += 2
+            return s
+        }
+        if (score(lobby) > score(prev)) bestByEvent[eid] = lobby
+    }
+    if (bestByEvent.isEmpty()) return list
+    val keepIds = bestByEvent.values.map { it.id }.toSet() + nonEvent.map { it.id }.toSet()
+    return list.filter { it.id in keepIds }
+}
+
 @Composable
 private fun LobbyCard(
     lobby: Lobby,
@@ -960,7 +990,7 @@ private fun LobbyCard(
                         }
                     )
                     if (lobby.isEventLobby) {
-                        EventLobbyCountdownText(endsAtIso = lobby.eventEndsAt)
+                        EventLobbyCountdownText(endsAtIso = lobby.eventEndsAt.asCleanJsonString())
                     } else {
                         Text(
                             text = when {
@@ -1006,9 +1036,13 @@ private fun LobbyCard(
                 ReconnectBanner(reconnect = reconnect, accent = accent, onReconnect = onReconnect)
             }
             PrimaryButton("Leinwand öffnen", accent, onOpen)
-            if (lobby.isEventLobby && !lobby.eventPrompt.isNullOrBlank()) {
+            val eventPromptShown = lobby.eventPrompt.asCleanJsonString()
+                ?: EventSession.state.value?.active
+                    ?.firstOrNull { it.id == lobby.eventId }
+                    ?.let { it.eventPrompt.asCleanJsonString() ?: it.contest?.promptHint.asCleanJsonString() }
+            if (lobby.isEventLobby && !eventPromptShown.isNullOrBlank()) {
                 Text(
-                    "Begriff · ${lobby.eventPrompt}",
+                    "Begriff · $eventPromptShown",
                     color = TextPrimary,
                     fontFamily = BodyFont,
                     fontSize = 14.sp,
@@ -1084,7 +1118,7 @@ private fun parseEventEndsMs(iso: String?): Long? {
 }
 
 private fun formatEventCountdown(endsAtIso: String?): String {
-    val ends = parseEventEndsMs(endsAtIso) ?: return "Event aktiv"
+    val ends = parseEventEndsMs(endsAtIso.asCleanJsonString()) ?: return "Event aktiv"
     val diff = ends - System.currentTimeMillis()
     if (diff <= 0L) return "Event beendet"
     val totalSec = diff / 1000

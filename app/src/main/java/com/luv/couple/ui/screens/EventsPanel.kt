@@ -53,6 +53,7 @@ import com.luv.couple.net.EventSession
 import com.luv.couple.net.EventsState
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.SeasonEvent
+import com.luv.couple.data.asCleanJsonString
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -220,9 +221,8 @@ private fun EventHeroCard(
     var selectedWinner by remember { mutableStateOf<EventContestWinner?>(null) }
     var claimBusy by remember { mutableStateOf(false) }
 
-    val drawHint = event.eventPrompt?.trim().orEmpty()
-        .ifBlank { contest?.promptHint?.trim().orEmpty() }
-        .takeIf { it.isNotBlank() }
+    val drawHint = event.eventPrompt.asCleanJsonString()
+        ?: event.contest?.promptHint.asCleanJsonString()
 
     if (showVote && voteContest != null) {
         ContestVoteDialog(

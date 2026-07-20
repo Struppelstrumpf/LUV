@@ -4,9 +4,10 @@ import com.luv.couple.BuildConfig
 import com.luv.couple.data.AccountInfo
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.RoomPreview
+import com.luv.couple.data.RosterMember
+import com.luv.couple.data.optCleanString
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import com.luv.couple.data.RosterMember
 import okhttp3.Dispatcher
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -533,9 +534,9 @@ object LuvApiClient {
                 invite = o.optString("invite"),
                 hostNickname = o.optString("hostNickname", "Host"),
                 createdByMe = o.optBoolean("createdByMe", false),
-                eventId = o.optString("eventId").takeIf { it.isNotBlank() },
-                eventPrompt = o.optString("eventPrompt").takeIf { it.isNotBlank() },
-                eventEndsAt = o.optString("eventEndsAt").takeIf { it.isNotBlank() },
+                eventId = o.optCleanString("eventId"),
+                eventPrompt = o.optCleanString("eventPrompt"),
+                eventEndsAt = o.optCleanString("eventEndsAt"),
             )
         }
         return out
@@ -3595,9 +3596,9 @@ object LuvApiClient {
                 peers = parsed.optInt("peers", parsed.optInt("count", 0)),
                 memberList = parseMemberList(parsed),
                 role = parsed.optString("role").takeIf { it.isNotBlank() },
-                eventId = parsed.optString("eventId").takeIf { it.isNotBlank() },
-                eventPrompt = parsed.optString("eventPrompt").takeIf { it.isNotBlank() },
-                eventEndsAt = parsed.optString("eventEndsAt").takeIf { it.isNotBlank() },
+                eventId = parsed.optCleanString("eventId"),
+                eventPrompt = parsed.optCleanString("eventPrompt"),
+                eventEndsAt = parsed.optCleanString("eventEndsAt"),
             )
         }
     }

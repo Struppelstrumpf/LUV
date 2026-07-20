@@ -43,6 +43,7 @@ import com.luv.couple.data.LocalMoments
 import com.luv.couple.data.PeerInfo
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.TemplateStrokePart
+import com.luv.couple.data.asCleanJsonString
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.ClearVoteEvent
 import com.luv.couple.net.LuvApiClient
@@ -318,10 +319,10 @@ class LockDrawActivity : ComponentActivity() {
             CanvasStore.updateKnownLobbies(snap.lobbies.map { it.id })
             val lobby = snap.lobbies.firstOrNull { it.id == lobbyId }
             eventLobbyActive = lobby?.isEventLobby == true
-            eventEndsAtMs = lobby?.eventEndsAt?.let { iso ->
+            eventEndsAtMs = lobby?.eventEndsAt.asCleanJsonString()?.let { iso ->
                 runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrNull()
             }
-            eventPromptText = lobby?.eventPrompt
+            eventPromptText = lobby?.eventPrompt.asCleanJsonString()
             lobbyTitle.text = when {
                 eventLobbyActive -> "Event"
                 else -> lobby?.name.orEmpty()
