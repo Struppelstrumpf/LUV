@@ -84,10 +84,16 @@
   }
 
   function setWebTicket(ticket) {
-    state.webAuthTicket = ticket || "";
-    if (ticket) sessionStorage.setItem(TICKET_KEY, ticket);
-    else sessionStorage.removeItem(TICKET_KEY);
+  const t = String(ticket || "");
+  if (t && !/^[a-f0-9]{64}$/.test(t)) {
+    state.webAuthTicket = "";
+    sessionStorage.removeItem(TICKET_KEY);
+    return;
   }
+  state.webAuthTicket = t;
+  if (t) sessionStorage.setItem(TICKET_KEY, t);
+  else sessionStorage.removeItem(TICKET_KEY);
+}
 
   async function api(path, opts = {}) {
     const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
@@ -378,6 +384,7 @@
   }
 
   function formatAuthCodeInput(raw) {
+    // Nur A–Z / 0–9 — alles andere (JS, HTML, Unicode) wird verworfen
     const s = String(raw || "")
       .toUpperCase()
       .replace(/[^A-Z0-9]/g, "")
@@ -387,16 +394,41 @@
     return `${s.slice(0, 2)}-${s.slice(2, 5)}-${s.slice(5)}`;
   }
 
+  function isValidAuthCode(formatted) {
+    return /^[A-Z0-9]{2}-[A-Z0-9]{3}-[A-Z0-9]{2}$/.test(String(formatted || ""));
+  }
+
+  function isValidWebTicket(ticket) {
+    return /^[a-f0-9]{64}$/.test(String(ticket || ""));
+  }
+
   function wireAuthCodeUi() {
     const input = $("authCodeInput");
     const submit = $("authCodeSubmit");
     const reset = $("authCodeReset");
     if (input && !input._luvWired) {
       input._luvWired = true;
-      input.addEventListener("input", () => {
+      const sanitizeField = () => {
         const formatted = formatAuthCodeInput(input.value);
         if (input.value !== formatted) input.value = formatted;
+      };
+      input.addEventListener("beforeinput", (e) => {
+        if (e.inputType === "insertFromPaste" || e.inputType === "insertText") {
+          const data = String(e.data || "");
+          if (data && /[^A-Za-z0-9\-]/.test(data)) {
+            e.preventDefault();
+            const next = formatAuthCodeInput((input.value || "") + data);
+            input.value = next;
+          }
+        }
       });
+      input.addEventListener("paste", (e) => {
+        e.preventDefault();
+        const text = (e.clipboardData || window.clipboardData)?.getData("text") || "";
+        input.value = formatAuthCodeInput(text);
+      });
+      input.addEventListener("drop", (e) => e.preventDefault());
+      input.addEventListener("input", sanitizeField);
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
@@ -408,8 +440,8 @@
       submit._luvWired = true;
       submit.onclick = async () => {
         const code = formatAuthCodeInput(input?.value || "");
-        if (code.replace(/-/g, "").length !== 7) {
-          showLoginError("Code im Format XX-XXX-XX eingeben.");
+        if (!isValidAuthCode(code)) {
+          showLoginError("Ungültiger Code.");
           return;
         }
         submit.disabled = true;
@@ -418,12 +450,16 @@
             method: "POST",
             body: JSON.stringify({ code }),
           });
-          if (!res?.ticket) throw new Error("Kein Ticket erhalten");
-          setWebTicket(res.ticket);
+          const ticket = String(res?.ticket || "");
+          if (!isValidWebTicket(ticket)) throw new Error("Anmeldung fehlgeschlagen");
+          setWebTicket(ticket);
+          if (input) input.value = "";
           showGoogleGate();
           initGoogle();
         } catch (err) {
-          showLoginError(err?.message || "Code ungültig");
+          // Keine Rohdaten aus der Eingabe in die UI spiegeln
+          const msg = String(err?.message || "Code ungültig").slice(0, 120);
+          showLoginError(/[<>&]/.test(msg) ? "Code ungültig" : msg);
         } finally {
           submit.disabled = false;
         }

@@ -133,6 +133,14 @@ function createTicket(db, payload) {
   return { ticket, expiresAt: exp, expiresInSec: Math.round(TICKET_TTL_MS / 1000) };
 }
 
+function sanitizeIncomingCode(raw) {
+  // Kein JSON-Objekt/Array, keine langen Payloads — nur Kurzstring
+  if (raw == null) return "";
+  if (typeof raw !== "string") return "";
+  if (raw.length > 32) return "";
+  return normalizeCode(raw);
+}
+
 /**
  * Redeem: immer gleiche Response-Form (Anti-Enumeration).
  * Ungültig/abgelaufen → frisches Decoy-Ticket.
@@ -140,7 +148,7 @@ function createTicket(db, payload) {
 function redeemCode(db, codeRaw) {
   pruneExpired(db);
   const bucket = ensureBucket(db);
-  const raw = normalizeCode(codeRaw);
+  const raw = sanitizeIncomingCode(codeRaw);
   let entry = null;
   let hashKey = null;
   if (raw.length === 7) {
@@ -197,7 +205,10 @@ function publicRedeemResponse(result) {
 function consumeTicket(db, ticketRaw) {
   pruneExpired(db);
   const bucket = ensureBucket(db);
-  const th = hashTicket(db, String(ticketRaw || "").trim());
+  const ticket = String(ticketRaw || "").trim();
+  // Nur 64 Hex-Zeichen — verhindert Injection / übergroße Payloads
+  if (!/^[a-f0-9]{64}$/.test(ticket)) return null;
+  const th = hashTicket(db, ticket);
   const entry = bucket.tickets[th];
   if (!entry || entry.used || entry.exp < Date.now()) return null;
   entry.used = true;

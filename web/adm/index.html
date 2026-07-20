@@ -21,7 +21,19 @@
       <h1>Admin &amp; Moderation</h1>
 
       <div id="codeGate">
-        <input id="authCodeInput" type="text" inputmode="text" autocomplete="one-time-code" maxlength="9" placeholder="XX-XXX-XX" spellcheck="false" style="width:100%;margin-top:0.35rem" />
+        <input
+          id="authCodeInput"
+          type="text"
+          inputmode="text"
+          autocomplete="off"
+          autocapitalize="characters"
+          autocorrect="off"
+          spellcheck="false"
+          maxlength="9"
+          pattern="[A-Za-z0-9]{2}-[A-Za-z0-9]{3}-[A-Za-z0-9]{2}"
+          aria-label="Authentifizierungscode"
+          style="width:100%;margin-top:0.35rem"
+        />
         <button type="button" class="btn" id="authCodeSubmit" style="width:100%;margin-top:0.75rem">Code prüfen</button>
         <p id="loginError" class="error" hidden></p>
       </div>
