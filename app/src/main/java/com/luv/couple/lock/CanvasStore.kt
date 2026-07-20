@@ -690,9 +690,12 @@ object CanvasStore {
     /** Während Finger-down: nur lokal radiert, Sync erst bei [endEraseSession]. */
     private var eraseSession: EraseSession? = null
 
-    /** Eraser-Radius aus Pinseldicke (6–40) → normalisierte Hit-Größe. */
+    /**
+     * Eraser-Halbradius in normalisierten 0..1-Koordinaten —
+     * exakt die halbe sichtbare Pinselbreite (WIDTH_REF), kein Extra-Puffer.
+     */
     fun eraseRadiusForBrush(brushWidth: Float): Float =
-        (0.008f + brushWidth.coerceIn(6f, 40f) / 850f).coerceIn(0.01f, 0.065f)
+        brushWidth.coerceIn(6f, 40f) / WIDTH_REF / 2f
 
     fun beginEraseSession(lobbyId: String? = null) {
         val id = resolveLobbyId(lobbyId) ?: return
@@ -789,19 +792,15 @@ object CanvasStore {
         }
         if (mine.isEmpty()) return false
         var changed = false
-        val emojiR2 = (radius * 1.6f).coerceIn(0.03f, 0.08f).let { it * it }
+        // Emoji/Vorlage: nur Treffer innerhalb der Pinselbreite (kein 1.6×/3.5×-Aufschlag)
+        val stampR2 = (radius * 1.15f).let { it * it }
         for (stroke in mine) {
             if (stroke.isEmoji || stroke.isTemplate) {
                 val p = stroke.points.firstOrNull() ?: continue
-                val hitR2 = if (stroke.isTemplate) {
-                    (radius * 3.5f).coerceIn(0.08f, 0.16f).let { it * it }
-                } else {
-                    emojiR2
-                }
                 val hit = brush.any { b ->
                     val dx = p.x - b.x
                     val dy = p.y - b.y
-                    dx * dx + dy * dy <= hitR2
+                    dx * dx + dy * dy <= stampR2
                 }
                 if (!hit) continue
                 c.strokes.removeAll { it.id == stroke.id }
@@ -813,7 +812,9 @@ object CanvasStore {
                 changed = true
                 continue
             }
-            val strokeRadius = radius + (stroke.width / 1100f).coerceIn(0.006f, 0.035f)
+            // Pinsel-Halbradius + Strich-Halbradius = echte visuelle Überlappung
+            val strokeHalf = (stroke.width.coerceIn(3f, 48f) / WIDTH_REF / 2f)
+            val strokeRadius = radius + strokeHalf
             val fragments = splitStrokeAwayFromBrush(stroke.points, brush, strokeRadius)
             val unchanged = fragments.size == 1 && fragments[0].size == stroke.points.size &&
                 fragments[0].zip(stroke.points).all { (a, b) -> a.x == b.x && a.y == b.y }

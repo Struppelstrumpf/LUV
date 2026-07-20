@@ -241,13 +241,14 @@ class DrawingView @JvmOverloads constructor(
         }
         if (eraserEnabled) {
             if (!eraserPath.isEmpty) { // Path.isEmpty() API 19+
-                // Dicke = aktuelle Pinselstärke (fein/dick einstellbar)
-                val core = myBrushWidth
+                // Gleiche Skala wie gespeicherte Striche / Hit-Test (WIDTH_REF)
+                val short = min(width, height).toFloat().coerceAtLeast(1f)
+                val core = (myBrushWidth / CanvasStore.WIDTH_REF * short).coerceIn(1f, short * 0.25f)
                 paint.color = 0xCCFFD56A.toInt()
                 paint.strokeWidth = core
                 canvas.drawPath(eraserPath, paint)
                 paint.color = 0x55FFD56A.toInt()
-                paint.strokeWidth = core * 1.55f
+                paint.strokeWidth = core * 1.35f
                 canvas.drawPath(eraserPath, paint)
             }
         } else {

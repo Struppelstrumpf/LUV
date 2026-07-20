@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.30",
+            listOf(
+                "Radierer trifft nur noch die eingestellte Pinselbreite",
+            )
+        ),
+        Entry(
             "2.2.29",
             listOf(
                 "Farbe und Pinseldicke getrennt; Vorlagen wie Leinwand",

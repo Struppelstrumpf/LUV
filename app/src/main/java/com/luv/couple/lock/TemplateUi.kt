@@ -496,7 +496,7 @@ fun TemplateEditorSheet(
                             }
                             if (eraserOn) {
                                 val radius =
-                                    (0.008f + brushWidth / 850f).coerceIn(0.01f, 0.065f)
+                                    CanvasStore.eraseRadiusForBrush(brushWidth)
                                 val next = eraseTemplateParts(parts.toList(), saved, radius)
                                 if (next != parts.toList()) {
                                     pushUndo()
@@ -598,7 +598,8 @@ private fun eraseTemplateParts(
     if (brush.isEmpty()) return parts
     val out = mutableListOf<TemplateStrokePart>()
     for (part in parts) {
-        val strokeRadius = radius + (part.width / 1100f).coerceIn(0.008f, 0.03f)
+        val strokeHalf = part.width.coerceIn(3f, 48f) / CanvasStore.WIDTH_REF / 2f
+        val strokeRadius = radius + strokeHalf
         val fragments = splitTemplateStrokeAwayFromBrush(part.points, brush, strokeRadius)
         for (frag in fragments) {
             if (frag.size < 2) continue
