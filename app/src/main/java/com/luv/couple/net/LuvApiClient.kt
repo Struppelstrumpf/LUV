@@ -124,7 +124,9 @@ data class RemoteLobby(
     val lastCanvasActorId: String? = null,
     val hostColorSide: String,
     val invite: String,
-    val hostNickname: String
+    val hostNickname: String,
+    /** true = dieses Konto hat die Lobby ursprünglich erstellt (nicht nur Live-Host). */
+    val createdByMe: Boolean = false,
 )
 
 data class PendingMarketSale(
@@ -523,7 +525,8 @@ object LuvApiClient {
                 lastCanvasActorId = o.optString("lastCanvasActorId").takeIf { it.isNotBlank() },
                 hostColorSide = o.optString("hostColorSide", "blue"),
                 invite = o.optString("invite"),
-                hostNickname = o.optString("hostNickname", "Host")
+                hostNickname = o.optString("hostNickname", "Host"),
+                createdByMe = o.optBoolean("createdByMe", false),
             )
         }
         return out

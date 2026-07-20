@@ -139,7 +139,12 @@ data class Lobby(
     /** Server: letzte Zeichenaktivität in der Lobby. */
     val lastCanvasAt: Long = 0L,
     /** Wer zuletzt gezeichnet/platziert hat — Glow nur wenn ≠ eigenes Konto. */
-    val lastCanvasActorId: String? = null
+    val lastCanvasActorId: String? = null,
+    /**
+     * Unveränderlicher Ersteller (auch nach Host-Failover).
+     * Anzeige „Von dir erstellt“ hängt daran, nicht am aktuellen Live-Host.
+     */
+    val createdByMe: Boolean = false
 ) {
     val joinUrl: String
         get() = "https://reineke.pro/luv/j/$code"

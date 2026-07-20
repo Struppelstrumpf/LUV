@@ -325,7 +325,7 @@ class LockDrawActivity : ComponentActivity() {
             CanvasStore.recolorOwnStrokes(snap.colorIndex, lobbyId, broadcast = false)
             drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
             refreshLegend()
-            showLastStrokeMemory(lobbyId)
+            showLastStrokeMemory(lobbyId, lobby)
             lobby?.let { CanvasMemoryKeeper.touch(it) }
         }
 
@@ -2644,24 +2644,30 @@ class LockDrawActivity : ComponentActivity() {
         }, durationMs)
     }
 
-    private fun showLastStrokeMemory(id: String?) {
+    private fun showLastStrokeMemory(id: String?, lobby: com.luv.couple.data.Lobby? = null) {
         val root = rootView ?: return
-        val at = CanvasStore.lastStrokeAtValue(id)
-        if (at <= 0L) return
+        val who = CanvasStore.lastOtherStrokeByValue(id)?.takeIf { it.isNotBlank() } ?: return
+        val myId = AccountSession.account.value?.id
+        val lobbyAt = lobby?.takeIf {
+            it.lastCanvasAt > 0L &&
+                !it.lastCanvasActorId.isNullOrBlank() &&
+                (myId.isNullOrBlank() || it.lastCanvasActorId != myId)
+        }?.lastCanvasAt ?: 0L
+        val storeAt = CanvasStore.lastOtherStrokeAtValue(id)
+        val at = when {
+            lobbyAt > 0L -> lobbyAt
+            storeAt > 0L -> storeAt
+            else -> return
+        }
         val ageMs = System.currentTimeMillis() - at
-        if (ageMs > TimeUnit.DAYS.toMillis(7)) return
-        val who = CanvasStore.lastStrokeByValue(id)?.takeIf { it.isNotBlank() }
+        if (ageMs > TimeUnit.DAYS.toMillis(7) || ageMs < 0L) return
         val whenText = when {
             ageMs < TimeUnit.MINUTES.toMillis(2) -> "gerade eben"
             ageMs < TimeUnit.HOURS.toMillis(1) -> "vor ${ageMs / TimeUnit.MINUTES.toMillis(1)} Min."
             ageMs < TimeUnit.DAYS.toMillis(1) -> "vor ${ageMs / TimeUnit.HOURS.toMillis(1)} Std."
             else -> "vor ${ageMs / TimeUnit.DAYS.toMillis(1)} Tag(en)"
         }
-        val line = if (who != null) {
-            "$who war zuletzt hier · $whenText"
-        } else {
-            "Zuletzt gemalt · $whenText"
-        }
+        val line = "$who war zuletzt hier · $whenText"
         strokeMemoryView?.let { root.removeView(it) }
         val dp = resources.displayMetrics.density
         val tv = TextView(this).apply {

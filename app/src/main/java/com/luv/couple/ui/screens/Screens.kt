@@ -959,7 +959,7 @@ private fun LobbyCard(
                                 "Hochzeitsbild nachholen · beide mit ✓ bestätigen"
                             lobby.isWedding -> "Hochzeit · je 10 Striche, dann Timer oder Coins"
                             lobby.isRandom -> "Zufalls-Lobby · max. 5"
-                            lobby.role == Role.HOST -> "Von dir erstellt"
+                            lobby.createdByMe -> "Von dir erstellt"
                             else -> "Beigetreten"
                         },
                         color = TextMuted,

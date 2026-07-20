@@ -599,12 +599,15 @@ class PairConnectionService : Service() {
                                 )
                             }
                             val myId = AccountSession.account.value?.id
-                            val amHost = hostUserId != null && hostUserId == myId
+                                ?: json.optString("userId").trim().takeIf { it.isNotBlank() && it != "null" }
+                            val amHost = hostUserId != null && myId != null && hostUserId == myId
                             sessions[lobby.id]?.let { s ->
                                 s.lobby = s.lobby.copy(
                                     hostNickname = hostNick.ifBlank { s.lobby.hostNickname },
                                     role = when {
                                         amHost -> Role.HOST
+                                        // Ohne eigene User-Id nie HOST→JOIN (Race beim Start)
+                                        myId == null -> s.lobby.role
                                         s.lobby.role == Role.HOST && hostUserId != null && hostUserId != myId ->
                                             Role.JOIN
                                         else -> s.lobby.role
@@ -667,11 +670,12 @@ class PairConnectionService : Service() {
                     val myId = AccountSession.account.value?.id
                     val session = sessions[lobby.id]
                     if (session != null) {
-                        val amHost = hostUserId != null && hostUserId == myId
+                        val amHost = hostUserId != null && myId != null && hostUserId == myId
                         session.lobby = session.lobby.copy(
                             hostNickname = hostNick.ifBlank { session.lobby.hostNickname },
                             role = when {
                                 amHost -> Role.HOST
+                                myId == null -> session.lobby.role
                                 session.lobby.role == Role.HOST && hostUserId != null && hostUserId != myId ->
                                     Role.JOIN
                                 else -> session.lobby.role

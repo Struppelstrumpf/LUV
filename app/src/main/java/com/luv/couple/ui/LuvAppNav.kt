@@ -248,8 +248,9 @@ fun LuvAppNav() {
             capacity = room.capacity,
             isFree = room.isFree,
             hostNickname = room.hostNickname.ifBlank { nick },
-            hostColorSide = hostColorSide
-        )
+            hostColorSide = hostColorSide,
+                                            createdByMe = true
+                                        )
         prefs.upsertLobby(lobby)
         PairSessionState.setCapacity(lobby.id, room.capacity)
         CanvasStore.setActiveLobby(lobby.id)
@@ -392,8 +393,9 @@ fun LuvAppNav() {
                     capacity = room.capacity,
                     isFree = room.isFree,
                     hostNickname = room.hostNickname.ifBlank { nickname.orEmpty() },
-                    hostColorSide = hostColorSide
-                )
+                    hostColorSide = hostColorSide,
+                                            createdByMe = true
+                                        )
                 prefs.upsertLobby(lobby)
                 PairSessionState.setCapacity(lobby.id, room.capacity)
                 CanvasStore.setActiveLobby(lobby.id)
@@ -740,8 +742,9 @@ fun LuvAppNav() {
                     isWedding = room.isWedding,
                     isWeddingRetake = room.isWeddingRetake,
                     hostNickname = room.hostNickname,
-                    hostColorSide = room.hostColorSide
-                )
+                    hostColorSide = room.hostColorSide,
+                                            createdByMe = false
+                                        )
                 prefs.upsertLobby(lobby)
                 PairSessionState.setCapacity(lobby.id, room.capacity)
                 CanvasStore.setActiveLobby(lobby.id)
@@ -1286,7 +1289,8 @@ fun LuvAppNav() {
                                             isFree = room.isFree,
                                             isRandom = true,
                                             hostNickname = room.hostNickname,
-                                            hostColorSide = room.hostColorSide
+                                            hostColorSide = room.hostColorSide,
+                                            createdByMe = role == Role.HOST
                                         )
                                         prefs.upsertLobby(lobby)
                                         PairSessionState.setCapacity(lobby.id, room.capacity)
@@ -1630,8 +1634,9 @@ fun LuvAppNav() {
                                 capacity = room.capacity,
                                 isFree = room.isFree,
                                 hostNickname = room.hostNickname.ifBlank { nickname.orEmpty() },
-                                hostColorSide = hostColorSide
-                            )
+                                hostColorSide = hostColorSide,
+                                            createdByMe = true
+                                        )
                             prefs.upsertLobby(lobby)
                             PairSessionState.setCapacity(lobby.id, room.capacity)
                             CanvasStore.setActiveLobby(lobby.id)

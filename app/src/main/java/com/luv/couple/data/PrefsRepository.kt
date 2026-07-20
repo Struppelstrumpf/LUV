@@ -332,7 +332,8 @@ class PrefsRepository(private val context: Context) {
                     peakPeers = prev?.peakPeers ?: 1,
                     lastCanvasAt = r.lastCanvasAt.takeIf { it > 0 } ?: (prev?.lastCanvasAt ?: 0L),
                     lastCanvasActorId = r.lastCanvasActorId
-                        ?: prev?.lastCanvasActorId
+                        ?: prev?.lastCanvasActorId,
+                    createdByMe = r.createdByMe || (prev?.createdByMe == true),
                 )
             }
             for (r in hosted) upsert(r, Role.HOST)
@@ -1160,7 +1161,11 @@ class PrefsRepository(private val context: Context) {
                                 peakPeers = o.optInt("peakPeers", 1).coerceAtLeast(1),
                                 lastCanvasAt = o.optLong("lastCanvasAt", 0L),
                                 lastCanvasActorId = o.optString("lastCanvasActorId")
-                                    .takeIf { it.isNotBlank() }
+                                    .takeIf { it.isNotBlank() },
+                                createdByMe = o.optBoolean(
+                                    "createdByMe",
+                                    runCatching { Role.valueOf(o.getString("role")) }.getOrDefault(Role.HOST) == Role.HOST
+                                ),
                             )
                         )
                     }
@@ -1189,6 +1194,7 @@ class PrefsRepository(private val context: Context) {
                         .put("peakPeers", lobby.peakPeers.coerceAtLeast(1))
                         .put("lastCanvasAt", lobby.lastCanvasAt)
                         .put("lastCanvasActorId", lobby.lastCanvasActorId ?: "")
+                        .put("createdByMe", lobby.createdByMe)
                 )
             }
             return arr.toString()

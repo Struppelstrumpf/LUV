@@ -124,6 +124,8 @@ object CanvasStore {
     private val canvases = ConcurrentHashMap<String, LobbyCanvas>()
     private val lastStrokeAt = ConcurrentHashMap<String, MutableStateFlow<Long>>()
     private val lastStrokeBy = ConcurrentHashMap<String, MutableStateFlow<String?>>()
+    private val lastOtherStrokeAt = ConcurrentHashMap<String, MutableStateFlow<Long>>()
+    private val lastOtherStrokeBy = ConcurrentHashMap<String, MutableStateFlow<String?>>()
     private val historyBackup = ConcurrentHashMap<String, List<Stroke>>()
     /** Chunks bis done zusammenfügen — kein Zwischen-Clear/Flash. */
     private val pendingHistory = ConcurrentHashMap<String, MutableList<Stroke>>()
@@ -297,7 +299,7 @@ object CanvasStore {
             )
             c.strokes.add(stroke)
             c.localStrokeIds.add(stroke.id)
-            touchStroke(lobbyId, stroke.nickname)
+            touchStroke(lobbyId, stroke.nickname, authorId = stroke.authorId, isLocal = stroke.isLocal)
         }
         bump(lobbyId)
     }
@@ -363,7 +365,21 @@ object CanvasStore {
         for (stroke in assembled) {
             c.strokes.add(stroke)
             if (stroke.isLocal) c.localStrokeIds.add(stroke.id)
-            touchStroke(lobbyId, stroke.nickname)
+            touchStroke(
+                lobbyId,
+                stroke.nickname,
+                authorId = stroke.authorId,
+                isLocal = stroke.isLocal,
+            )
+        }
+        val other = assembled.asReversed().firstOrNull { stroke ->
+            !stroke.isLocal && !isSelfStrokeAuthor(stroke.nickname, stroke.authorId)
+        }
+        if (other != null && !other.nickname.isNullOrBlank()) {
+            lastOtherStrokeAt.getOrPut(lobbyId) { MutableStateFlow(0L) }.value =
+                System.currentTimeMillis()
+            lastOtherStrokeBy.getOrPut(lobbyId) { MutableStateFlow(null) }.value =
+                other.nickname!!.trim()
         }
         bump(lobbyId)
     }
@@ -407,10 +423,43 @@ object CanvasStore {
         return lastStrokeBy[id]?.value
     }
 
-    private fun touchStroke(lobbyId: String, nickname: String?) {
+    fun lastOtherStrokeAtValue(lobbyId: String?): Long {
+        val id = resolveLobbyId(lobbyId) ?: return 0L
+        return lastOtherStrokeAt[id]?.value ?: 0L
+    }
+
+    fun lastOtherStrokeByValue(lobbyId: String?): String? {
+        val id = resolveLobbyId(lobbyId) ?: return null
+        return lastOtherStrokeBy[id]?.value
+    }
+
+    private fun isSelfStrokeAuthor(nickname: String?, authorId: String?): Boolean {
+        val myId = AccountSession.account.value?.id?.takeIf { it.isNotBlank() }
+        if (!authorId.isNullOrBlank() && myId != null && authorId == myId) return true
+        val myNick = cachedNickname?.trim().orEmpty()
+        if (myNick.isNotBlank() && !nickname.isNullOrBlank() &&
+            nickname.trim().equals(myNick, ignoreCase = true)
+        ) {
+            return true
+        }
+        return false
+    }
+
+    private fun touchStroke(
+        lobbyId: String,
+        nickname: String?,
+        authorId: String? = null,
+        isLocal: Boolean = false,
+    ) {
         lastStrokeAt.getOrPut(lobbyId) { MutableStateFlow(0L) }.value = System.currentTimeMillis()
         if (!nickname.isNullOrBlank()) {
             lastStrokeBy.getOrPut(lobbyId) { MutableStateFlow(null) }.value = nickname.trim()
+        }
+        val self = isLocal || isSelfStrokeAuthor(nickname, authorId)
+        if (!self && !nickname.isNullOrBlank()) {
+            lastOtherStrokeAt.getOrPut(lobbyId) { MutableStateFlow(0L) }.value =
+                System.currentTimeMillis()
+            lastOtherStrokeBy.getOrPut(lobbyId) { MutableStateFlow(null) }.value = nickname.trim()
         }
     }
 
@@ -442,7 +491,7 @@ object CanvasStore {
         c.strokes.add(stroke)
         c.localStrokeIds.add(stroke.id)
         pushUndo(c, LocalUndo.Stroke(stroke.id))
-        touchStroke(id, cachedNickname)
+        touchStroke(id, cachedNickname, isLocal = true)
         bump(id)
         if (::appContext.isInitialized) {
             PairConnectionService.sendStroke(
@@ -491,7 +540,7 @@ object CanvasStore {
         c.strokes.add(stroke)
         c.localStrokeIds.add(stroke.id)
         pushUndo(c, LocalUndo.Stroke(stroke.id))
-        touchStroke(lobby, cachedNickname)
+        touchStroke(lobby, cachedNickname, isLocal = true)
         bump(lobby)
         if (::appContext.isInitialized) {
             PairConnectionService.sendStroke(
@@ -535,7 +584,7 @@ object CanvasStore {
         c.strokes.add(stroke)
         c.localStrokeIds.add(stroke.id)
         pushUndo(c, LocalUndo.Stroke(stroke.id))
-        touchStroke(lobby, cachedNickname)
+        touchStroke(lobby, cachedNickname, isLocal = true)
         bump(lobby)
         if (::appContext.isInitialized) {
             PairConnectionService.sendStroke(
@@ -600,7 +649,12 @@ object CanvasStore {
         val c = canvas(lobbyId)
         if (c.strokes.any { it.id == stroke.id }) return
         c.strokes.add(stroke.copy(isLocal = false))
-        touchStroke(lobbyId, stroke.nickname)
+        touchStroke(
+            lobbyId,
+            stroke.nickname,
+            authorId = stroke.authorId,
+            isLocal = false,
+        )
         bump(lobbyId)
     }
 

@@ -1522,6 +1522,7 @@ function createWeddingLobby(userA, userB, marriageRec) {
     game: null,
     gameTimer: null,
     hostUserId: userA.id,
+    createdByUserId: userA.id,
     name: "Hochzeit",
     hostNickname: userA.nickname || "Host",
     isFree: true,
@@ -1591,6 +1592,7 @@ function createWeddingImageRetakeLobby(userA, userB, marriageRec) {
     game: null,
     gameTimer: null,
     hostUserId: userA.id,
+    createdByUserId: userA.id,
     name: "Hochzeitsbild",
     hostNickname: userA.nickname || "Host",
     isFree: true,
@@ -2013,6 +2015,7 @@ function serializeRoom(code, room) {
     createdAt: room.createdAt || Date.now(),
     lastActiveAt: room.lastActiveAt || room.createdAt || Date.now(),
     hostUserId: room.hostUserId || null,
+    createdByUserId: room.createdByUserId || null,
     name: room.name || "Lobby",
     hostNickname: room.hostNickname || "Host",
     isFree: Boolean(room.isFree),
@@ -2091,6 +2094,7 @@ function restoreRoomsFromDisk() {
       game: null,
       gameTimer: null,
       hostUserId: data.hostUserId || null,
+      createdByUserId: data.createdByUserId || data.hostUserId || null,
       name: String(data.name || "Lobby").slice(0, MAX_LOBBY_NAME_LENGTH),
       hostNickname: String(data.hostNickname || "Host").slice(0, 18),
       isFree: Boolean(data.isFree),
@@ -2760,6 +2764,7 @@ function hydrateRoom(code, data, tokenOverride) {
     game: null,
     gameTimer: null,
     hostUserId: data.hostUserId || null,
+    createdByUserId: data.createdByUserId || data.hostUserId || null,
     name: String(data.name || "Lobby").slice(0, MAX_LOBBY_NAME_LENGTH),
     hostNickname: String(data.hostNickname || "Host").slice(0, 18),
     isFree: Boolean(data.isFree),
@@ -2885,9 +2890,27 @@ function healJoinedRoomsFromMembership(user) {
   }
 }
 
+function ensureRoomCreator(room) {
+  if (!room) return null;
+  if (room.createdByUserId) return room.createdByUserId;
+  const members = Array.isArray(room.memberUserIds) ? room.memberUserIds : [];
+  // Beim Erstellen ist der Ersteller immer erstes Mitglied
+  const guess = members.find((id) => id && typeof id === "string") || room.hostUserId || null;
+  if (guess) room.createdByUserId = guess;
+  return room.createdByUserId || null;
+}
+
+function isRoomCreator(userId, room) {
+  if (!userId || !room) return false;
+  const creator = ensureRoomCreator(room);
+  return Boolean(creator && creator === userId);
+}
+
 function publicJoinedLobbies(user) {
   healJoinedRoomsFromMembership(user);
-  return Object.entries(user.joinedRooms || {}).map(([code, meta]) => ({
+  return Object.entries(user.joinedRooms || {}).map(([code, meta]) => {
+    const room = rooms.get(code) || getDb().rooms?.[code] || null;
+    return {
     code,
     name: String(meta?.name || "Lobby").slice(0, MAX_LOBBY_NAME_LENGTH),
     token: meta?.token || null,
@@ -2911,7 +2934,9 @@ function publicJoinedLobbies(user) {
     invite: `${PUBLIC_JOIN_BASE}/${code}`,
     hostNickname: String(meta?.hostNickname || "Host").slice(0, 18),
     role: "join",
-  }));
+    createdByMe: isRoomCreator(user.id, room),
+  };
+  });
 }
 
 function rememberMember(room, userId) {
@@ -4301,7 +4326,9 @@ async function verifyGoogleIdToken(idToken) {
 function publicHostedLobbies(user) {
   reconcileAbandonedLobbyOwnership(user);
   ensureHostedRooms(user);
-  return Object.entries(user.hostedRooms).map(([code, meta]) => ({
+  return Object.entries(user.hostedRooms).map(([code, meta]) => {
+    const room = rooms.get(code) || getDb().rooms?.[code] || null;
+    return {
     code,
     name: String(meta?.name || "Lobby").slice(0, MAX_LOBBY_NAME_LENGTH),
     token: meta?.token || null,
@@ -4332,7 +4359,9 @@ function publicHostedLobbies(user) {
     hostColorSide: normalizeHostColorSide(meta?.hostColorSide),
     invite: `${PUBLIC_JOIN_BASE}/${code}`,
     hostNickname: user.nickname || "Host",
-  }));
+    createdByMe: room ? isRoomCreator(user.id, room) : true,
+  };
+  });
 }
 
 /** userId → lastSeen (App im Vordergrund / API-Aktivität) */
@@ -5189,7 +5218,11 @@ function promoteNextHostFromMembers(room, code) {
   const nextId = members.find((id) => id && id !== room.hostUserId) || null;
   if (!nextId) return false;
   const prevHost = room.hostUserId;
-  if (prevHost) releaseHostedRoom(code, prevHost);
+  if (prevHost) {
+    ensureRoomCreator(room);
+    if (!room.createdByUserId) room.createdByUserId = prevHost;
+    releaseHostedRoom(code, prevHost);
+  }
   room.hostUserId = nextId;
   const newHost = getDb().users[nextId];
   if (newHost) {
@@ -5243,7 +5276,11 @@ function promoteNextHost(room, code) {
   if (!next) return false;
 
   const prevHost = room.hostUserId;
-  if (prevHost) releaseHostedRoom(code, prevHost);
+  if (prevHost) {
+    ensureRoomCreator(room);
+    if (!room.createdByUserId) room.createdByUserId = prevHost;
+    releaseHostedRoom(code, prevHost);
+  }
   room.hostUserId = next.luvUserId;
   if (next.luvNickname) room.hostNickname = next.luvNickname;
   const newHost = getDb().users[next.luvUserId];
@@ -10994,6 +11031,7 @@ app.post("/v1/rooms/random-match", (req, res) => {
       sockets: new Map(),
       clearProposal: null,
       hostUserId: ctx.user.id,
+      createdByUserId: ctx.user.id,
       name: "Random",
       hostNickname: ctx.user.nickname || "Host",
       isFree: true,
@@ -11274,6 +11312,7 @@ app.post("/v1/rooms", (req, res) => {
     sockets: new Map(),
     clearProposal: null,
     hostUserId: ctx.user.id,
+    createdByUserId: ctx.user.id,
     name,
     hostNickname: ctx.user.nickname || "Host",
     isFree,

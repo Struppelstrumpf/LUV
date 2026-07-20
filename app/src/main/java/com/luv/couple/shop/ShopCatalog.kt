@@ -264,10 +264,13 @@ object ShopCatalog {
         ShopEmoji("🪐", 4200), ShopEmoji("🌌", 5000), ShopEmoji("🦄", 5500), ShopEmoji("⚜️", 11000)
     ).distinctBy { it.emoji }
 
-    /** Tab-Labels — Inventar (Menü) und Itemshop müssen übereinstimmen. */
-    val SHOP_TAB_LABELS: List<String> = listOf(
-        "Sticker", "Hintergründe", "Begleiter", "Emojis", "Lootbox"
+    /** Tab-Labels Itemshop (ohne Lootbox — Button oben rechts). */
+    val ITEM_SHOP_TAB_LABELS: List<String> = listOf(
+        "Sticker", "Hintergründe", "Begleiter", "Emojis"
     )
+
+    /** Inventar-Tabs inkl. optionaler Lootbox-Historie — bleibt kompatibel. */
+    val SHOP_TAB_LABELS: List<String> = ITEM_SHOP_TAB_LABELS
 
     const val LOOTBOX_PRICE_COINS = 10
     const val LOOTBOX_TAP_COUNT = 6
