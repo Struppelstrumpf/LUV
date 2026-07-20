@@ -12,6 +12,15 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.0",
+            listOf(
+                "Lobby-Einladung ohne Fehlermeldung, Mitspieler können einladen",
+                "Bild-Begleiter korrekt in Freundesliste und beim Kraulen",
+                "Münzglas zeigt Coins auch auf Fremdprofilen",
+                "Eigene Hintergründe wieder im Inventar",
+            )
+        ),
+        Entry(
             "2.1.9",
             listOf(
                 "Marktplatz: Itemname und „DEINS“ bleiben in einer Zeile",

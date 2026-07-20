@@ -622,37 +622,21 @@ private fun FriendsPanel(
                     onAccept = {
                         busyId = "l-${inv.id}"
                         scope.launch {
-                            runCatching { LuvApiClient.acceptLobbyInvite(inv.id) }
-                                .onSuccess { code ->
-                                    com.luv.couple.net.PendingJoin.offer(code)
-                                    Toast.makeText(
-                                        context,
-                                        "Einladung angenommen",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                    reload()
-                                }
-                                .onFailure {
-                                    Toast.makeText(
-                                        context,
-                                        it.message ?: "Annehmen fehlgeschlagen",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            busyId = null
+                            val code = runCatching { LuvApiClient.acceptLobbyInvite(inv.id) }
+                                .getOrNull()
+                            if (code != null) {
+                                // Sofort joinen — kein reload/Toast (Composition verlässt Sozial)
+                                com.luv.couple.net.PendingJoin.offer(code)
+                            }
+                            // busyId ggf. schon unmounted — absichtlich nicht setzen
                         }
                     },
                     onDecline = {
                         busyId = "l-${inv.id}"
                         scope.launch {
                             runCatching { LuvApiClient.declineLobbyInvite(inv.id) }
-                                .onSuccess { reload() }
-                                .onFailure {
-                                    Toast.makeText(
-                                        context,
-                                        it.message ?: "Ablehnen fehlgeschlagen",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
+                                .onSuccess {
+                                    lobbyInvites = lobbyInvites.filter { it.id != inv.id }
                                 }
                             busyId = null
                         }
@@ -1173,7 +1157,7 @@ private fun FriendRow(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Text(card.petEmoji, fontSize = 22.sp)
+            com.luv.couple.ui.CompanionGlyph(petId = card.petEmoji, fontSize = 22.sp)
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(

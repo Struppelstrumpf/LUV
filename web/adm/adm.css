@@ -421,20 +421,21 @@ body {
 }
 .emoji-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
-  gap: 0.3rem;
-  max-height: 50vh;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 0.4rem;
+  max-height: 55vh;
   overflow: auto;
   padding: 0.25rem;
 }
 .emoji-cell {
   border: 1px solid transparent;
   background: var(--panel2);
-  border-radius: 10px;
-  font-size: 1.45rem;
-  padding: 0.35rem;
+  border-radius: 12px;
+  font-size: 1.85rem;
+  padding: 0.45rem;
   cursor: pointer;
   line-height: 1;
+  min-height: 52px;
 }
 .emoji-cell:hover {
   border-color: rgba(233, 78, 119, 0.45);
@@ -860,6 +861,57 @@ th { color: var(--muted); font-weight: 500; }
   grid-template-columns: 1fr 1fr;
   gap: 0.75rem;
 }
+
+/* Itemshop-Kalender */
+.cal-list { display: flex; flex-direction: column; gap: 0.55rem; margin-top: 0.75rem; }
+.cal-row {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.cal-row.is-open { border-color: rgba(233, 78, 119, 0.4); }
+.cal-row-head {
+  display: grid;
+  grid-template-columns: 48px 1fr auto;
+  gap: 0.75rem;
+  padding: 0.75rem 0.9rem;
+  cursor: pointer;
+  align-items: center;
+}
+.cal-row-head:hover { background: rgba(255,255,255,0.03); }
+.cal-emoji { font-size: 1.6rem; text-align: center; }
+.cal-badges { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
+.cal-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.82rem;
+  text-align: right;
+  min-width: 6.5rem;
+}
+.cal-detail { padding: 0 0.9rem 0.9rem; border-top: 1px solid var(--line); }
+.cal-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+@media (max-width: 720px) {
+  .cal-meta-grid { grid-template-columns: 1fr; }
+  .cal-row-head { grid-template-columns: 40px 1fr; }
+  .cal-stats { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; text-align: left; }
+}
+.cal-ul { margin: 0; padding-left: 1.1rem; color: var(--muted); font-size: 0.88rem; line-height: 1.45; }
+.cal-ul strong { color: var(--text); }
+.cal-log { margin: 0.35rem 0 0; padding-left: 1.1rem; color: var(--muted); font-size: 0.82rem; max-height: 220px; overflow: auto; }
+.badge.cal-hot { background: rgba(255, 120, 60, 0.2); color: #ffb07a; }
+.badge.cal-premium { background: rgba(180, 140, 255, 0.2); color: #d2b8ff; }
+.badge.cal-multi { background: rgba(80, 180, 220, 0.18); color: #9ad8ef; }
+.badge.cal-st-window { background: rgba(80, 200, 140, 0.18); }
+.badge.cal-st-always { background: rgba(80, 160, 220, 0.18); }
+.badge.cal-st-scheduled { background: rgba(220, 180, 80, 0.2); }
+.badge.cal-st-off, .badge.cal-st-expired { background: rgba(120,120,120,0.25); }
 
 /* Tagesaufgaben-Planer */
 .daily-plan-grid {

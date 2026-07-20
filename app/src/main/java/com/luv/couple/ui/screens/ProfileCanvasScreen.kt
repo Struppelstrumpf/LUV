@@ -1076,13 +1076,22 @@ fun ProfileCanvasScreen(
                             .clickable(enabled = canPetKraul && !petKraulBusy) { startPetKraul() },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            if (canPetKraul) "$peerPetEmoji  Begleiter kraulen"
-                            else "$peerPetEmoji  Heute schon gekrault",
-                            color = if (canPetKraul) Color(0xFF5A3040) else TextMuted,
-                            fontFamily = DisplayFont,
-                            fontSize = 16.sp
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            com.luv.couple.ui.CompanionGlyph(
+                                petId = peerPetEmoji,
+                                fontSize = 20.sp
+                            )
+                            Text(
+                                if (canPetKraul) "Begleiter kraulen"
+                                else "Heute schon gekrault",
+                                color = if (canPetKraul) Color(0xFF5A3040) else TextMuted,
+                                fontFamily = DisplayFont,
+                                fontSize = 16.sp
+                            )
+                        }
                     }
                     if (friendStatus == "friends") {
                         Spacer(modifier = Modifier.height(8.dp))
@@ -1751,14 +1760,14 @@ private fun PetKraulOverlay(
                                 alpha = 0.75f
                             }
                     )
-                    Text(
-                        petEmoji,
-                        fontSize = 72.sp,
+                    Box(
                         modifier = Modifier.graphicsLayer {
                             scaleX = petBounce
                             scaleY = petBounce
                         }
-                    )
+                    ) {
+                        com.luv.couple.ui.CompanionGlyph(petId = petEmoji, fontSize = 72.sp)
+                    }
                     if (showHand || isStroking) {
                         val density = LocalDensity.current
                         Text(

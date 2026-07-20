@@ -169,9 +169,12 @@ fun ProfileInventoryPanel(
     val freeEmojis = remember(ownedEmojis, emojiBar) {
         InventoryAvailability.freeEmojis(ownedEmojis, emojiBar)
     }
-    val themeItems = remember(ownedThemes, searchQuery, labelsEpoch) {
-        val owned = ownedThemes.map { it.trim() }.filter { it.isNotEmpty() }.distinct().toSet()
-        ProfileCatalog.THEMES.filter { it.id in owned }
+    val themeItems = remember(ownedThemes, searchQuery, labelsEpoch, LiveShopCatalog.remoteThemes) {
+        ownedThemes
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .map { ProfileCatalog.theme(it) }
             .filter {
                 LiveShopCatalog.matchesQuery(
                     searchQuery,

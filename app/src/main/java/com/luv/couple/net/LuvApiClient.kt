@@ -1419,29 +1419,6 @@ object LuvApiClient {
                         )
                     )
                     "themes" -> {
-                        val vcObj = o.optJSONObject("visualConfig")
-                        val visual = if (vcObj != null) {
-                            val emArr = vcObj.optJSONArray("emojis")
-                            val emojis = buildList {
-                                if (emArr != null) {
-                                    for (ei in 0 until emArr.length()) {
-                                        emArr.optString(ei).trim().takeIf { it.isNotBlank() }?.let { add(it) }
-                                    }
-                                }
-                            }.ifEmpty { listOf("✨") }
-                            com.luv.couple.shop.ThemeVisualConfig(
-                                skyTop = vcObj.optString("skyTop", "#7EB8D8"),
-                                skyBottom = vcObj.optString("skyBottom", "#B8D4E8"),
-                                groundTop = vcObj.optString("groundTop", "#2F5D2E"),
-                                groundBottom = vcObj.optString("groundBottom", "#1E3D1E"),
-                                emojis = emojis,
-                                motion = vcObj.optString("motion", "fall"),
-                                coverage = vcObj.optString("coverage", "full"),
-                                speed = vcObj.optDouble("speed", 1.0).toFloat(),
-                                density = vcObj.optDouble("density", 0.7).toFloat(),
-                                size = vcObj.optDouble("size", 1.0).toFloat()
-                            )
-                        } else null
                         themes.add(
                             com.luv.couple.shop.ShopTheme(
                                 id = itemId,
@@ -1451,7 +1428,7 @@ object LuvApiClient {
                                 compareAtPrice = compare,
                                 remainingMs = rem,
                                 searchText = search,
-                                visualConfig = visual
+                                visualConfig = parseThemeVisualConfig(o.optJSONObject("visualConfig"))
                             )
                         )
                     }
@@ -1520,6 +1497,30 @@ object LuvApiClient {
         }
     }
 
+    private fun parseThemeVisualConfig(vcObj: org.json.JSONObject?): com.luv.couple.shop.ThemeVisualConfig? {
+        if (vcObj == null) return null
+        val emArr = vcObj.optJSONArray("emojis")
+        val emojis = buildList {
+            if (emArr != null) {
+                for (ei in 0 until emArr.length()) {
+                    emArr.optString(ei).trim().takeIf { it.isNotBlank() }?.let { add(it) }
+                }
+            }
+        }.ifEmpty { listOf("✨") }
+        return com.luv.couple.shop.ThemeVisualConfig(
+            skyTop = vcObj.optString("skyTop", "#7EB8D8"),
+            skyBottom = vcObj.optString("skyBottom", "#B8D4E8"),
+            groundTop = vcObj.optString("groundTop", "#2F5D2E"),
+            groundBottom = vcObj.optString("groundBottom", "#1E3D1E"),
+            emojis = emojis,
+            motion = vcObj.optString("motion", "fall"),
+            coverage = vcObj.optString("coverage", "full"),
+            speed = vcObj.optDouble("speed", 1.0).toFloat(),
+            density = vcObj.optDouble("density", 0.7).toFloat(),
+            size = vcObj.optDouble("size", 1.0).toFloat()
+        )
+    }
+
     suspend fun fetchInventory(): InventoryBag = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/me/inventory")
         val emojis = buildMap {
@@ -1537,6 +1538,26 @@ object LuvApiClient {
                 }
             }
         }.distinct()
+        // Besitzte Custom-Themes inkl. visualConfig in den Live-Katalog mergen
+        val detailArr = json.optJSONArray("themeDetails")
+        if (detailArr != null && detailArr.length() > 0) {
+            val byId = LinkedHashMap<String, com.luv.couple.shop.ShopTheme>()
+            com.luv.couple.shop.LiveShopCatalog.remoteThemes?.forEach { byId[it.id] = it }
+            for (i in 0 until detailArr.length()) {
+                val o = detailArr.optJSONObject(i) ?: continue
+                val id = o.optString("itemId").trim().ifBlank { o.optString("id").trim() }
+                if (id.isBlank()) continue
+                byId[id] = com.luv.couple.shop.ShopTheme(
+                    id = id,
+                    label = o.optString("label", id),
+                    emoji = o.optString("emoji", "🖼️").ifBlank { "🖼️" },
+                    priceCoins = o.optInt("priceCoins", 0),
+                    searchText = o.optString("searchText", ""),
+                    visualConfig = parseThemeVisualConfig(o.optJSONObject("visualConfig"))
+                )
+            }
+            com.luv.couple.shop.LiveShopCatalog.remoteThemes = byId.values.toList()
+        }
         val stickers = buildMap {
             val o = json.optJSONObject("stickers") ?: return@buildMap
             o.keys().forEach { key ->

@@ -972,7 +972,9 @@ private fun LobbyCard(
                     occupied = occupied,
                     nicknames = nicknames,
                     accent = accent,
-                    canManage = true,
+                    // Mitglieder dürfen einladen; Plätze kaufen nur Host
+                    canInvite = true,
+                    canBuySlots = lobby.role == Role.HOST,
                     onInvite = onInviteSeat,
                     onBuy = onBuySeat
                 )
@@ -1083,7 +1085,8 @@ private fun SeatGrid(
     occupied: Int,
     nicknames: List<String>,
     accent: Color,
-    canManage: Boolean,
+    canInvite: Boolean,
+    canBuySlots: Boolean = canInvite,
     onInvite: () -> Unit,
     onBuy: () -> Unit
 ) {
@@ -1132,7 +1135,7 @@ private fun SeatGrid(
 
     // Nur freigeschaltete Plätze + optional ein „+ Platz kaufen“ — keine grauen Geister-Kästen
     val openSeats = capacity.coerceIn(1, maxPeers.coerceIn(2, PeerPalette.MAX_PEERS))
-    val showBuySlot = canManage && openSeats < maxPeers.coerceIn(2, PeerPalette.MAX_PEERS)
+    val showBuySlot = canBuySlots && openSeats < maxPeers.coerceIn(2, PeerPalette.MAX_PEERS)
     val seats = openSeats + if (showBuySlot) 1 else 0
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         for (rowStart in 0 until seats step 5) {
@@ -1155,7 +1158,8 @@ private fun SeatGrid(
                         unlocked = unlocked,
                         buySlot = isBuyTile,
                         accent = accent,
-                        enabled = canManage && (isBuyTile || (!filled && unlocked)),
+                        enabled = (isBuyTile && canBuySlots) ||
+                            (!isBuyTile && !filled && unlocked && canInvite),
                         modifier = Modifier.weight(1f),
                         onClick = {
                             when {
@@ -1465,7 +1469,10 @@ fun InviteLobbyDialog(
                                             .background(color),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Text(card.petEmoji, fontSize = 20.sp)
+                                        com.luv.couple.ui.CompanionGlyph(
+                                            petId = card.petEmoji,
+                                            fontSize = 20.sp
+                                        )
                                     }
                                     Text(
                                         card.nickname,
@@ -1619,7 +1626,8 @@ fun HostShareScreen(
                     occupied = occupied,
                     nicknames = listOf("Du"),
                     accent = AccentRose,
-                    canManage = true,
+                    canInvite = true,
+                    canBuySlots = true,
                     onInvite = onInviteSeat,
                     onBuy = onBuySeat
                 )

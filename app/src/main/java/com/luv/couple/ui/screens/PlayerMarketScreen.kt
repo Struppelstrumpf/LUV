@@ -1536,7 +1536,10 @@ private fun CreateListingDialog(
                                     .padding(6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(friend.petEmoji, fontSize = 18.sp)
+                                com.luv.couple.ui.CompanionGlyph(
+                                    petId = friend.petEmoji,
+                                    fontSize = 18.sp
+                                )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(friend.nickname, color = MarketBrown, fontFamily = BodyFont)
                             }

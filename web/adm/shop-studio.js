@@ -650,23 +650,59 @@
     };
   }
 
-  function openEmojiPicker(onPick) {
+  function expandEmojiPool(extra) {
+    return uniqueEmojis([...(extra || []), ...EMOJI_LIST]);
+  }
+
+  async function loadShopEmojisIntoPool() {
+    try {
+      const host = window.LuvAdmHost;
+      if (!host || typeof host.api !== "function") return [];
+      const [em, st] = await Promise.all([
+        host.api("/admin/shop/items?kind=emojis").catch(() => null),
+        host.api("/admin/shop/items?kind=stickers").catch(() => null),
+      ]);
+      const out = [];
+      for (const pack of [em, st]) {
+        for (const it of pack?.items || []) {
+          const id = String(it.itemId || it.emoji || "").trim();
+          if (id && !/^img_/i.test(id) && !/^theme_/i.test(id)) out.push(id);
+        }
+      }
+      return out;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  async function openEmojiPicker(onPick) {
     const prev = document.getElementById("emojiPickerLayer");
     if (prev) prev.remove();
     const layer = document.createElement("div");
     layer.id = "emojiPickerLayer";
     layer.className = "pet-paste-layer";
     let q = "";
-    let filtered = EMOJI_LIST;
+    let pool = EMOJI_LIST.slice();
+    let filtered = pool;
     function paint() {
-      filtered = q
-        ? EMOJI_LIST.filter((e) => e.includes(q) || e.codePointAt(0).toString(16).includes(q.toLowerCase()))
-        : EMOJI_LIST;
-      const shown = filtered.slice(0, 800);
+      const qq = q.toLowerCase();
+      filtered = qq
+        ? pool.filter(
+            (e) =>
+              e.includes(q) ||
+              (e.codePointAt(0) && e.codePointAt(0).toString(16).includes(qq))
+          )
+        : pool;
+      const shown = filtered; // alle Treffer — kein Truncate
       layer.innerHTML = `
         <div class="pet-paste-card wide-card">
           <h3 style="font-family:var(--display);margin:0 0 0.5rem">Emoji wählen</h3>
+          <p class="help" style="margin:0 0 0.5rem">${shown.length} Emojis · auch einfügen/tippen möglich</p>
           <input id="emojiQ" class="emoji-search" placeholder="Suchen…" value="${q.replace(/"/g, "&quot;")}" />
+          <div style="display:flex;gap:0.5rem;margin-bottom:0.65rem">
+            <input id="emojiPaste" class="emoji-search" style="margin:0;flex:1" placeholder="Emoji einfügen oder tippen…" maxlength="16" />
+            <button type="button" class="btn teal" id="emojiPasteGo">OK</button>
+          </div>
           <div class="emoji-grid" id="emojiGrid">
             ${shown
               .map(
@@ -684,6 +720,25 @@
         e.stopPropagation();
         dismissOverlay(layer);
       };
+      const usePaste = () => {
+        const raw = String(layer.querySelector("#emojiPaste")?.value || "").trim();
+        // Erstes Graphem (Emoji inkl. ZWJ)
+        const m = raw.match(/\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/u);
+        const emoji = (m && m[0]) || raw.slice(0, 8);
+        if (!emoji) return;
+        completeOverlay(layer, () => onPick(emoji));
+      };
+      layer.querySelector("#emojiPasteGo").onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        usePaste();
+      };
+      layer.querySelector("#emojiPaste").onkeydown = (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          usePaste();
+        }
+      };
       const input = layer.querySelector("#emojiQ");
       input.focus();
       input.oninput = () => {
@@ -695,7 +750,6 @@
           again.setSelectionRange(q.length, q.length);
         }
       };
-      // Index statt data-e — ZWJ/Varianten bleiben stabil (kein Attribut-Korrupt)
       layer.querySelectorAll(".emoji-cell").forEach((btn) => {
         btn.onclick = (ev) => {
           ev.preventDefault();
@@ -710,6 +764,12 @@
     document.body.appendChild(layer);
     wireOverlayShield(layer);
     paint();
+    // Shop-Katalog nachladen und Pool erweitern (keine img_/theme_ IDs)
+    loadShopEmojisIntoPool().then((extra) => {
+      if (!extra.length) return;
+      pool = expandEmojiPool(extra);
+      paint();
+    });
   }
 
   /**

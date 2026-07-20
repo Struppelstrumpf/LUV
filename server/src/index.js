@@ -26,6 +26,7 @@ const itemTrade = require("./item_trade");
 const itemLabels = require("./item_labels");
 const notifyPhrases = require("./notify_phrases");
 const dailyTasks = require("./daily_tasks");
+const shopCalendar = require("./shop_calendar");
 ach.bindGetDb(getDb);
 const {
   STICKER_SHOP_PRICES,
@@ -6272,11 +6273,14 @@ app.get("/v1/users/:userId/profile", (req, res) => {
         : el
     );
   }
+  const hasGlass =
+    Array.isArray(profile.layout) &&
+    profile.layout.some((el) => el && el.type === "glass");
   return res.json({
     nickname: user.nickname || "Jemand",
     userId: user.id,
-    // Coins nur fürs eigene Profil — sonst Wealth-Scouting / Cheats
-    ...(isSelf ? { coins: user.coins || 0 } : {}),
+    // Coins: eigenes Profil immer; Fremde nur wenn Münzglas platziert ist
+    ...(isSelf || hasGlass ? { coins: user.coins || 0 } : {}),
     dayStreak,
     profile,
     petEmoji,
@@ -6446,15 +6450,34 @@ app.post("/v1/me/lobby-invites", (req, res) => {
   if (!mine.list.includes(friendUserId)) {
     return res.status(403).json({ error: "not_friends", message: "Nur Freunde einladen." });
   }
+  // Host ODER beigetretenes Mitglied darf Freunde einladen
+  healJoinedRoomsFromMembership(ctx.user);
   const hosted = ensureHostedRooms(ctx.user);
-  const meta = hosted[roomCode];
-  if (!meta) {
+  const joined = ensureJoinedRooms(ctx.user);
+  const live = rooms.get(roomCode);
+  const stored = getDb().rooms?.[roomCode];
+  const meta = hosted[roomCode] || joined[roomCode] || null;
+  const isMember =
+    Boolean(meta) ||
+    (live &&
+      ((live.hostUserId === ctx.user.id) ||
+        (Array.isArray(live.memberUserIds) && live.memberUserIds.includes(ctx.user.id)))) ||
+    (stored &&
+      ((stored.hostUserId === ctx.user.id) ||
+        (Array.isArray(stored.memberUserIds) &&
+          stored.memberUserIds.includes(ctx.user.id))));
+  if (!isMember) {
     return res.status(403).json({
-      error: "not_host",
-      message: "Nur eigene Lobbys können Freunde einladen.",
+      error: "not_member",
+      message: "Nur Mitglieder dieser Lobby können Freunde einladen.",
     });
   }
-  if (meta.isRandom || meta.isWedding) {
+  const lobbyName = String(
+    meta?.name || live?.name || stored?.name || "Lobby"
+  ).slice(0, 40);
+  const isRandom = Boolean(meta?.isRandom || live?.isRandom || stored?.isRandom);
+  const isWedding = Boolean(meta?.isWedding || live?.isWedding || stored?.isWedding);
+  if (isRandom || isWedding) {
     return res.status(400).json({
       error: "lobby_type",
       message: "In diese Lobby kann nicht eingeladen werden.",
@@ -6473,7 +6496,7 @@ app.post("/v1/me/lobby-invites", (req, res) => {
     fromUserId: ctx.user.id,
     toUserId: friendUserId,
     roomCode,
-    lobbyName: String(meta.name || "Lobby").slice(0, 40),
+    lobbyName,
     createdAt: Date.now(),
     expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
   };
@@ -8767,11 +8790,33 @@ app.get("/v1/me/inventory", (req, res) => {
   }
   repairAchievementItemRewards(ctx.user);
   const inv = ensureInventory(ctx.user);
+  seedShopCatalogIfNeeded();
+  const db = getDb();
+  // Custom-/Shop-Hintergründe inkl. visualConfig — auch wenn nicht mehr im Public-Shop
+  const themeDetails = (Array.isArray(inv.themes) ? inv.themes : [])
+    .map((id) => {
+      const tid = String(id || "").trim();
+      if (!tid) return null;
+      const item = shopCatalog.getItem(db, "themes", tid);
+      if (item) {
+        return shopCatalog.publicItem(item, Date.now(), { admin: true, db });
+      }
+      return {
+        kind: "themes",
+        itemId: tid,
+        label: itemLabels.resolveDisplayLabel(db, "themes", tid, null, tid),
+        emoji: "🖼️",
+        priceCoins: 0,
+        visualConfig: null,
+      };
+    })
+    .filter(Boolean);
   scheduleSave();
   return res.json({
     ok: true,
     emojis: inv.emojis,
     themes: inv.themes,
+    themeDetails,
     stickers: inv.stickers,
     pets: inv.pets,
     equippedPet: inv.equippedPet || DEFAULT_PET,
@@ -9265,6 +9310,38 @@ app.get("/v1/admin/shop/items", (req, res) => {
   return res.json({ ok: true, items, count: items.length });
 });
 
+/** Itemshop-Kalender: Fenster, Historie, Kauf- & Markt-Stats */
+app.get("/v1/admin/shop/calendar", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  const data = shopCalendar.listCalendar(getDb(), {
+    kind: String(req.query?.kind || "").trim() || null,
+    q: String(req.query?.q || "").trim().slice(0, 40),
+    status: String(req.query?.status || "").trim(),
+    mark: String(req.query?.mark || "").trim(),
+  });
+  scheduleSave();
+  return res.json({ ok: true, ...data });
+});
+
+app.put("/v1/admin/shop/calendar/:kind/:itemId", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  const kind = String(req.params.kind || "").trim();
+  const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
+  const result = shopCalendar.updateAvailability(getDb(), kind, itemId, req.body || {}, {
+    byUserId: ctx.user?.id || null,
+  });
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  flushSave();
+  staffAudit(ctx.user, "shop_calendar", { kind, itemId });
+  return res.json({ ok: true, item: result.item });
+});
+
 function applyPetImageFromBody(body, itemId) {
   const img = body?.imageBase64 || body?.imageDataUrl || null;
   if (!img) {
@@ -9318,7 +9395,7 @@ app.post("/v1/admin/shop/items", (req, res) => {
     }
     body.itemId = itemId;
   }
-  const result = shopCatalog.upsertItem(getDb(), body);
+  const result = shopCatalog.upsertItem(getDb(), body, { byUserId: ctx.user?.id || null });
   if (!result.ok) {
     return res.status(400).json({ error: result.error, message: result.message });
   }
@@ -9348,7 +9425,7 @@ app.put("/v1/admin/shop/items/:kind/:itemId", (req, res) => {
   } else if (imageKindsPut.has(kind) && petImages.hasImage(itemId)) {
     body.hasImage = true;
   }
-  const result = shopCatalog.upsertItem(getDb(), body);
+  const result = shopCatalog.upsertItem(getDb(), body, { byUserId: ctx.user?.id || null });
   if (!result.ok) {
     return res.status(400).json({ error: result.error, message: result.message });
   }
@@ -9381,7 +9458,9 @@ app.post("/v1/admin/shop/items/:kind/:itemId/disable", (req, res) => {
   if (!ctx) return;
   const kind = String(req.params.kind || "").trim();
   const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
-  const result = shopCatalog.setEnabled(getDb(), kind, itemId, false);
+  const result = shopCatalog.setEnabled(getDb(), kind, itemId, false, {
+    byUserId: ctx.user?.id || null,
+  });
   if (!result.ok) return res.status(404).json({ error: "not_found" });
   scheduleSave();
   return res.json({ ok: true, item: result.item });
@@ -9392,7 +9471,9 @@ app.post("/v1/admin/shop/items/:kind/:itemId/enable", (req, res) => {
   if (!ctx) return;
   const kind = String(req.params.kind || "").trim();
   const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
-  const result = shopCatalog.setEnabled(getDb(), kind, itemId, true);
+  const result = shopCatalog.setEnabled(getDb(), kind, itemId, true, {
+    byUserId: ctx.user?.id || null,
+  });
   if (!result.ok) return res.status(404).json({ error: "not_found" });
   scheduleSave();
   return res.json({ ok: true, item: result.item });

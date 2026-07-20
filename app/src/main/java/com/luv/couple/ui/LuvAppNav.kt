@@ -1010,19 +1010,9 @@ fun LuvAppNav() {
                     runCatching {
                         LuvApiClient.inviteFriendToLobby(friend.userId, lobby.code)
                     }.onSuccess {
-                        Toast.makeText(
-                            context,
-                            "${friend.nickname} wurde eingeladen",
-                            Toast.LENGTH_SHORT
-                        ).show()
                         inviteLobby = null
-                    }.onFailure {
-                        Toast.makeText(
-                            context,
-                            it.message ?: "Einladen fehlgeschlagen",
-                            Toast.LENGTH_LONG
-                        ).show()
                     }
+                    // Keine Toast-Einblendungen (verwirren beim Beitritt/Einladen)
                 }
             },
             onOpen = {

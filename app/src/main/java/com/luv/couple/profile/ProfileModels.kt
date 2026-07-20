@@ -311,7 +311,23 @@ object ProfileCatalog {
                 particleSize = vc.size
             )
         }
-        return THEMES.firstOrNull { it.id == id } ?: THEMES.first()
+        THEMES.firstOrNull { it.id == id }?.let { return it }
+        // Custom-Hintergrund ohne Remote-Config: trotzdem sichtbar (kein stiller Fallback auf Wiese)
+        if (id.startsWith("theme_", ignoreCase = true)) {
+            return ProfileTheme(
+                id = id,
+                label = remote?.label?.takeIf { it.isNotBlank() }
+                    ?: com.luv.couple.shop.ItemLabels.themeLabel(id),
+                emoji = remote?.emoji?.takeIf { it.isNotBlank() } ?: "🖼️",
+                skyTop = 0xFF7EB8D8,
+                skyBottom = 0xFFB8D4E8,
+                groundTop = 0xFF2F5D2E,
+                groundBottom = 0xFF1E3D1E,
+                effect = "emoji_fx",
+                particleEmojis = listOf("✨"),
+            )
+        }
+        return THEMES.first()
     }
 
     private fun parseThemeHex(raw: String?, fallback: Long): Long {
