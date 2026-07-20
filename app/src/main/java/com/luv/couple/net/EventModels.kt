@@ -321,6 +321,13 @@ object EventSession {
         return emoji?.takeIf { it.isNotBlank() }
     }
 
+    /** Aktives Primär-Event (für Infos zum Glyph neben +). */
+    fun primaryActiveEvent(): SeasonEvent? {
+        val s = _state.value ?: return null
+        return s.active.firstOrNull { it.id == s.primaryEventId }
+            ?: s.active.firstOrNull()
+    }
+
     fun primaryEventForLobby(): SeasonEvent? {
         val s = _state.value ?: return null
         return s.active.firstOrNull { it.canCreateLobby }

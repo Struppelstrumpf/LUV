@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.25",
+            listOf(
+                "Event-Animation fullscreen auf Home, Sozial, Markt und Zahnrad",
+                "Event-Symbol neben +: Infos und Direktlink zu Events",
+            )
+        ),
+        Entry(
             "2.2.24",
             listOf(
                 "Event-Abstimmung: max. 100 Bilder, faire Verteilung, Restanzeige",

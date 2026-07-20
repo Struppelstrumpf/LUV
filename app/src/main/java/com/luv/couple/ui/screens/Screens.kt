@@ -292,6 +292,7 @@ fun LobbiesScreen(
     onLeaveLobby: (Lobby) -> Unit,
     onReconnect: (Lobby) -> Unit,
     onOpenProfile: () -> Unit,
+    onOpenEvents: () -> Unit = {},
     updateState: UpdateUiState = UpdateUiState.Idle,
     onUpdateApp: () -> Unit = {},
     requireGoogleLogin: Boolean = false,
@@ -300,6 +301,7 @@ fun LobbiesScreen(
 ) {
     val accent = EventSession.menuAccentOrNull() ?: PeerPalette.menuAccent()
     val eventGlyph = EventSession.menuGlyphOrNull()
+    val primaryEvent = EventSession.primaryActiveEvent()
     val eventLobby = EventSession.primaryEventForLobby()?.takeIf { it.canCreateLobby }
     // eventsUi: hält Compose reaktiv auf EventSession
     @Suppress("UNUSED_VARIABLE")
@@ -313,6 +315,7 @@ fun LobbiesScreen(
     var showReportDialog by remember { mutableStateOf(false) }
     var reportBusy by remember { mutableStateOf(false) }
     var showLobbyPlusDialog by remember { mutableStateOf(false) }
+    var showEventInfoDialog by remember { mutableStateOf(false) }
     var orderedLobbies by remember { mutableStateOf(lobbies) }
     var dragLobbyId by remember { mutableStateOf<String?>(null) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
@@ -457,6 +460,66 @@ fun LobbiesScreen(
         )
     }
 
+    if (showEventInfoDialog && primaryEvent != null) {
+        val ev = primaryEvent
+        val body = when {
+            ev.description.isNotBlank() -> ev.description
+            ev.hint.isNotBlank() -> ev.hint
+            else -> "Aktuell läuft ein Event. Unter Sozial → Events kannst du sammeln, Quests machen und mitmachen."
+        }
+        val banner = ev.decor.bannerText.takeIf { it.isNotBlank() }
+        AlertDialog(
+            onDismissRequest = { showEventInfoDialog = false },
+            containerColor = BgSoft,
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(ev.emoji, fontSize = 28.sp)
+                    Text(
+                        ev.title,
+                        fontFamily = DisplayFont,
+                        color = TextPrimary,
+                        fontSize = 22.sp
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (banner != null) {
+                        Text(
+                            banner,
+                            color = accent,
+                            fontFamily = DisplayFont,
+                            fontSize = 15.sp
+                        )
+                    }
+                    Text(
+                        body,
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp
+                    )
+                    PrimaryButton(
+                        label = "Zu den Events",
+                        color = accent,
+                        onClick = {
+                            showEventInfoDialog = false
+                            onOpenEvents()
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showEventInfoDialog = false }) {
+                    Text("Schließen", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
+    }
+
     if (showLobbyPlusDialog) {
         AlertDialog(
             onDismissRequest = { showLobbyPlusDialog = false },
@@ -521,7 +584,7 @@ fun LobbiesScreen(
         )
     }
 
-    ScreenBackdrop(includeNavigationBars = false) {
+    MenuBackdrop(includeNavigationBars = false) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -581,7 +644,19 @@ fun LobbiesScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        if (!eventGlyph.isNullOrBlank()) {
+                        if (!eventGlyph.isNullOrBlank() && primaryEvent != null) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(accent.copy(alpha = 0.22f))
+                                    .border(1.dp, accent.copy(alpha = 0.45f), CircleShape)
+                                    .clickable { showEventInfoDialog = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(eventGlyph, fontSize = 20.sp)
+                            }
+                        } else if (!eventGlyph.isNullOrBlank()) {
                             Text(eventGlyph, fontSize = 22.sp)
                         }
                         Box(

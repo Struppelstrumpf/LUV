@@ -23,8 +23,8 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /**
- * Seichte Hintergrund-Animation nur für Haupt-Tabs (Home/Sozial/Markt/Zahnrad).
- * Bei aktivem Event: dezente Event-Partikel; sonst sanfte Lichtflecken.
+ * Hintergrund-Animation für Haupt-Tabs (Home/Sozial/Markt/Zahnrad).
+ * Bei aktivem Event: Event-Partikel über den ganzen Bildschirm.
  */
 @Composable
 fun MenuAmbientBackground(
@@ -36,7 +36,7 @@ fun MenuAmbientBackground(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 18_000, easing = LinearEasing),
+            animation = tween(durationMillis = 14_000, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "ambientPhase"
@@ -48,9 +48,15 @@ fun MenuAmbientBackground(
         else runCatching { Color(android.graphics.Color.parseColor(hex)) }
             .getOrDefault(AccentRose)
     }
-    val intensity = (eventDecor?.intensity ?: 0.35f).coerceIn(0.12f, 0.55f) * 0.45f
+    val intensity = if (useEvent) {
+        (eventDecor?.intensity ?: 0.55f).coerceIn(0.28f, 0.9f)
+    } else {
+        0.35f
+    }
     val seeds = remember(eventDecor?.particles, useEvent) {
-        List(18) { Random(it * 41 + (eventDecor?.particles?.hashCode() ?: 7)).nextFloat() }
+        List(if (useEvent) 36 else 18) {
+            Random(it * 41 + (eventDecor?.particles?.hashCode() ?: 7)).nextFloat()
+        }
     }
     Canvas(modifier = modifier.fillMaxSize()) {
         if (useEvent) {
@@ -70,7 +76,6 @@ fun MenuAmbientBackground(
 private fun DrawScope.drawSoftIdleAmbient(phase: Float, seeds: List<Float>) {
     val w = size.width
     val h = size.height
-    // Langsame, sehr dezente Lichtflecken
     seeds.take(6).forEachIndexed { i, s ->
         val cx = ((s + phase * (0.08f + i * 0.01f)) % 1f) * w
         val cy = ((0.2f + s * 0.55f + sin(phase * 6.28f + i) * 0.04f) % 1f) * h
@@ -88,7 +93,6 @@ private fun DrawScope.drawSoftIdleAmbient(phase: Float, seeds: List<Float>) {
             center = Offset(cx, cy)
         )
     }
-    // Sanfte Glitzerpunkte
     seeds.drop(6).take(10).forEachIndexed { i, s ->
         val x = ((s * 1.7f + phase * 0.06f * ((i % 3) + 1)) % 1f) * w
         val y = ((s * 0.9f + phase * 0.05f) % 1f) * h
@@ -107,26 +111,26 @@ private fun DrawScope.drawSoftEventParticles(
     val w = size.width
     val h = size.height
     seeds.forEachIndexed { i, s ->
-        val x = ((s * 1.37f + phase * 0.12f * ((i % 5) + 1)) % 1f) * w
-        val fall = ((s * 0.7f + phase * 0.55f) % 1f)
-        val y = fall * (h + 30f) - 15f
-        val sway = sin((phase * 6.28f) + i) * 8f
-        val r = 1.6f + (s * 2.0f)
-        val alpha = (0.12f + s * 0.22f) * intensity.coerceAtLeast(0.15f)
+        val x = ((s * 1.37f + phase * 0.14f * ((i % 5) + 1)) % 1f) * w
+        val fall = ((s * 0.7f + phase * 0.65f) % 1f)
+        val y = fall * (h + 40f) - 20f
+        val sway = sin((phase * 6.28f) + i) * 12f
+        val r = 2.0f + (s * 2.6f)
+        val alpha = (0.22f + s * 0.38f) * intensity.coerceAtLeast(0.25f)
         when (kind) {
             "snow" -> drawCircle(Color.White.copy(alpha), r, Offset(x + sway, y))
-            "hearts" -> drawCircle(accent.copy(alpha), r * 1.1f, Offset(x + sway * 0.5f, y))
+            "hearts" -> drawCircle(accent.copy(alpha), r * 1.2f, Offset(x + sway * 0.5f, y))
             "leaves" -> drawCircle(
                 Color(0xFFD4A574).copy(alpha),
-                r * 1.15f,
+                r * 1.2f,
                 Offset(x + sway, y)
             )
             "sparkle" -> {
                 val twinkle = (0.5f + 0.5f * cos(phase * 12f + i)).coerceIn(0.3f, 1f)
-                drawCircle(accent.copy(alpha * twinkle), r * 0.65f, Offset(x, y))
-                drawCircle(Color.White.copy(alpha * 0.55f * twinkle), r * 0.3f, Offset(x + 1f, y - 1f))
+                drawCircle(accent.copy(alpha * twinkle), r * 0.75f, Offset(x, y))
+                drawCircle(Color.White.copy(alpha * 0.6f * twinkle), r * 0.35f, Offset(x + 1f, y - 1f))
             }
-            else -> drawCircle(accent.copy(alpha * 0.7f), r * 0.8f, Offset(x + sway * 0.3f, y))
+            else -> drawCircle(accent.copy(alpha * 0.85f), r * 0.9f, Offset(x + sway * 0.3f, y))
         }
     }
 }

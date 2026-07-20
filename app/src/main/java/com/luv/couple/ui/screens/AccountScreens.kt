@@ -737,31 +737,14 @@ fun MenuBackdrop(
     includeNavigationBars: Boolean = true,
     content: @Composable () -> Unit
 ) {
+    // Transparent: Event-/Menü-Ambient aus LuvAppNav bleibt fullscreen sichtbar
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0xFF121821), BgDeep, Color(0xFF151A22))))
             .statusBarsPadding()
-            .then(if (includeNavigationBars) Modifier.navigationBarsPadding() else Modifier)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .drawBehind {
-                    drawRect(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                AccentRose.copy(alpha = 0.10f),
-                                Color.Transparent
-                            ),
-                            center = Offset(size.width * 0.5f, size.height * 0.1f),
-                            radius = size.minDimension * 0.8f
-                        )
-                    )
-                }
-        )
-        content()
-    }
+            .then(if (includeNavigationBars) Modifier.navigationBarsPadding() else Modifier),
+        content = { content() }
+    )
 }
 
 @Composable

@@ -1427,6 +1427,10 @@ fun LuvAppNav() {
                                 PairConnectionService.reconnectNow(context, lobby.id)
                             },
                             onOpenProfile = { navController.navigate(Routes.PROFILE) },
+                            onOpenEvents = {
+                                sozialSubTab = 1
+                                tab = 1
+                            },
                             updateState = updateState,
                             onUpdateApp = { startAppUpdate() }
                         )
