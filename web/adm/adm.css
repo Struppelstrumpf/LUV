@@ -703,6 +703,26 @@ th { color: var(--muted); font-weight: 500; }
   gap: 0.75rem;
   flex-wrap: wrap;
 }
+.ud-gift-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.ud-gift-list .ud-gift-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.45rem 0.65rem;
+}
+.ud-gift-emoji {
+  font-size: 1.45rem;
+  width: 2rem;
+  text-align: center;
+  flex-shrink: 0;
+}
 .muted { color: var(--muted); }
 .actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.55rem; }
 

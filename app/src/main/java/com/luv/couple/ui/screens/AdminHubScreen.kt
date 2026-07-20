@@ -1416,12 +1416,21 @@ fun StaffWarningPopup() {
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(18.dp))
                 .background(Color(0xF21A2030))
-                .border(1.dp, Color(0xFFFF6B7A).copy(0.55f), RoundedCornerShape(18.dp))
+                .border(
+                    1.dp,
+                    if (current.severity == "gift") Color(0xFF81C784).copy(0.55f)
+                    else Color(0xFFFF6B7A).copy(0.55f),
+                    RoundedCornerShape(18.dp)
+                )
                 .padding(14.dp)
         ) {
             Text(
-                if (current.severity == "final") "Letzte Verwarnung" else "Verwarnung vom Team",
-                color = Color(0xFFFF6B7A),
+                when (current.severity) {
+                    "gift" -> "Geschenk vom Team"
+                    "final" -> "Letzte Verwarnung"
+                    else -> "Verwarnung vom Team"
+                },
+                color = if (current.severity == "gift") Color(0xFF81C784) else Color(0xFFFF6B7A),
                 fontFamily = DisplayFont,
                 fontSize = 14.sp
             )

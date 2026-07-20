@@ -543,6 +543,25 @@
           </div>
 
           <div class="panel">
+            <h3>Item schenken</h3>
+            <p class="help">Beliebiges Item ins Inventar legen. Der Nutzer sieht eine Benachrichtigung unter Sozial → Freunde.</p>
+            <div class="toolbar wrap">
+              <select id="udGiftKind">
+                <option value="">Alle</option>
+                <option value="emojis">Emojis</option>
+                <option value="stickers">Sticker</option>
+                <option value="pets">Begleiter</option>
+                <option value="themes">Hintergründe</option>
+              </select>
+              <input id="udGiftQ" placeholder="Suchen…" style="flex:1;min-width:140px" />
+              <button type="button" class="btn secondary" id="udGiftSearch">Suchen</button>
+              <input id="udGiftQty" type="number" min="1" max="50" value="1" style="width:70px" title="Anzahl (Emoji/Sticker)" />
+            </div>
+            <input id="udGiftMsg" placeholder="Optionale Nachricht…" maxlength="160" style="width:100%;margin-top:0.45rem" />
+            <div id="udGiftList" class="ud-gift-list" style="margin-top:0.55rem;max-height:240px;overflow:auto"></div>
+          </div>
+
+          <div class="panel">
             <div class="shop-top">
               <h3 style="margin:0">Erfolge des Nutzers</h3>
               <button class="btn ghost" id="udAchReset">Fortschritt zurücksetzen</button>
@@ -697,6 +716,85 @@
         $("udWarn").value = "";
         openUserDetail(userId);
       };
+
+      async function loadGiftItems() {
+        const list = $("udGiftList");
+        if (!list) return;
+        list.innerHTML = `<p class="muted">Lade Items…</p>`;
+        const qs = new URLSearchParams();
+        const kind = $("udGiftKind")?.value || "";
+        const q = $("udGiftQ")?.value?.trim() || "";
+        if (kind) qs.set("kind", kind);
+        if (q) qs.set("q", q);
+        try {
+          const data = await api("/admin/items/universe?" + qs.toString());
+          const items = (data.items || []).slice(0, 120);
+          if (!items.length) {
+            list.innerHTML = `<p class="muted">Keine Items gefunden.</p>`;
+            return;
+          }
+          list.innerHTML = items
+            .map((it) => {
+              const key = `${it.kind}:${it.itemId}`;
+              return `<div class="list-item ud-gift-row">
+                <div class="ud-gift-emoji">${esc(it.emoji || it.itemId)}</div>
+                <div style="flex:1;min-width:0">
+                  <strong>${esc(it.label || it.itemId)}</strong>
+                  <div class="muted mono" style="font-size:0.72rem">${esc(key)}</div>
+                </div>
+                <button type="button" class="btn" data-gift="${esc(it.kind)}|${esc(it.itemId)}|${esc(it.label || "")}|${esc(it.emoji || "")}">Schenken</button>
+              </div>`;
+            })
+            .join("");
+          list.querySelectorAll("[data-gift]").forEach((btn) => {
+            btn.onclick = async () => {
+              const raw = btn.getAttribute("data-gift") || "";
+              const parts = raw.split("|");
+              const gKind = parts[0];
+              const gId = parts[1];
+              const gLabel = parts[2] || gId;
+              const gEmoji = parts[3] || "";
+              if (!gKind || !gId) return;
+              const qty = Number($("udGiftQty")?.value || 1);
+              const message = $("udGiftMsg")?.value?.trim() || "";
+              if (!confirm(`„${gLabel}“ (${gKind}) an ${u.nickname || userId} schenken?`)) return;
+              try {
+                btn.disabled = true;
+                const res = await api(`/admin/users/${encodeURIComponent(userId)}/gift`, {
+                  method: "POST",
+                  body: JSON.stringify({
+                    kind: gKind,
+                    itemId: gId,
+                    qty,
+                    label: gLabel,
+                    emoji: gEmoji,
+                    message,
+                  }),
+                });
+                alert(`Geschenkt: ${res.given?.emoji || ""} ${res.given?.label || gLabel}${res.given?.qty > 1 ? " ×" + res.given.qty : ""}`);
+                openUserDetail(userId);
+              } catch (err) {
+                alert(err?.message || "Schenken fehlgeschlagen");
+                btn.disabled = false;
+              }
+            };
+          });
+        } catch (err) {
+          list.innerHTML = `<p class="muted">${esc(err?.message || "Laden fehlgeschlagen")}</p>`;
+        }
+      }
+      if ($("udGiftSearch")) $("udGiftSearch").onclick = () => loadGiftItems();
+      if ($("udGiftKind")) $("udGiftKind").onchange = () => loadGiftItems();
+      if ($("udGiftQ")) {
+        $("udGiftQ").onkeydown = (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            loadGiftItems();
+          }
+        };
+      }
+      loadGiftItems();
+
       $("udAchReset").onclick = async () => {
         if (!confirm("Wirklich alle Erfolge/Fortschritt dieses Nutzers zurücksetzen?")) return;
         await api(`/admin/users/${encodeURIComponent(userId)}/achievements`, {

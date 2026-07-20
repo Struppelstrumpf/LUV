@@ -8430,6 +8430,103 @@ app.post("/v1/admin/users/:userId/warn", (req, res) => {
   return res.json({ ok: true, warning, user: staffUserCard(target) });
 });
 
+/** Admin schenkt Item → Inventar + Hinweis unter Sozial · Freunde */
+app.post("/v1/admin/users/:userId/gift", (req, res) => {
+  const ctx = requireStaff(req, res, "gm.editCoins");
+  if (!ctx) return;
+  const uid = String(req.params.userId || "").trim();
+  const target = getDb().users?.[uid];
+  if (!assertCanModerateTarget(ctx.user, target, res)) return;
+  const kind = String(req.body?.kind || "").trim().toLowerCase();
+  const itemId = clipMarketItemId(req.body?.itemId ?? req.body?.id);
+  if (!["emojis", "stickers", "themes", "pets"].includes(kind) || !itemId) {
+    return res.status(400).json({
+      error: "bad_item",
+      message: "kind (emojis|stickers|themes|pets) und itemId nötig.",
+    });
+  }
+  let qty = Math.floor(Number(req.body?.qty ?? req.body?.quantity ?? 1) || 1);
+  if (kind === "pets" || kind === "themes") qty = 1;
+  qty = Math.max(1, Math.min(50, qty));
+
+  ensureInventory(target);
+  let given = 0;
+  for (let i = 0; i < qty; i++) {
+    if (safeGiveItem(target, kind, itemId)) given += 1;
+  }
+  if (!given) {
+    return res.status(400).json({ error: "give_failed", message: "Item konnte nicht gutgeschrieben werden." });
+  }
+
+  const db = getDb();
+  const label = friendlyMarketLabel(
+    kind,
+    itemId,
+    String(req.body?.label || "").trim() || itemId
+  );
+  const emojiGlyph =
+    kind === "themes"
+      ? "🖼️"
+      : String(req.body?.emoji || itemId).trim().slice(0, 16) || "🎁";
+  const noteExtra = String(req.body?.message || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 160);
+  const qtyLabel = given > 1 ? ` ×${given}` : "";
+  const message =
+    `🎁 Geschenk: ${emojiGlyph} ${label}${qtyLabel}` +
+    (noteExtra ? ` — ${noteExtra}` : "") +
+    " · liegt jetzt in deinem Inventar.";
+
+  if (!Array.isArray(target.staffWarnings)) target.staffWarnings = [];
+  const notice = {
+    id: newId("gift"),
+    message: message.slice(0, 280),
+    severity: "gift",
+    kind: "gift",
+    gift: { kind, itemId, qty: given, label, emoji: emojiGlyph },
+    at: Date.now(),
+    by: ctx.user.id,
+    byNick: staffDisplayName(ctx.user),
+    seen: false,
+  };
+  target.staffWarnings.push(notice);
+  if (target.staffWarnings.length > 80) {
+    target.staffWarnings = target.staffWarnings.slice(-60);
+  }
+  target.pendingStaffNotice = {
+    id: notice.id,
+    message: notice.message,
+    severity: "gift",
+    at: notice.at,
+    authorNickname: notice.byNick,
+    gift: notice.gift,
+  };
+
+  scheduleSave();
+  staffAudit(ctx.user, "user_gift", {
+    targetId: uid,
+    kind,
+    itemId,
+    qty: given,
+    noticeId: notice.id,
+  });
+  const inv = target.inventory || {};
+  return res.json({
+    ok: true,
+    notice,
+    given: { kind, itemId, qty: given, label, emoji: emojiGlyph },
+    inventory: {
+      pets: inv.pets || [],
+      themes: inv.themes || [],
+      stickerCount: Object.keys(inv.stickers || {}).length,
+      emojiCount: Object.keys(inv.emojis || {}).length,
+      equippedPet: inv.equippedPet || null,
+    },
+    user: staffUserCard(target),
+  });
+});
+
 app.get("/v1/me/staff-notices", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;

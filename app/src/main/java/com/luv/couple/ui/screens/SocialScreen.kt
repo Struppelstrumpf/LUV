@@ -299,18 +299,27 @@ private fun FriendsPanel(
                     fontSize = 18.sp
                 )
                 staffInbox.take(5).forEach { w ->
+                    val isGift = w.severity == "gift"
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(16.dp))
                             .background(
-                                if (w.severity == "final") Color(0x33FF6B7A) else Color(0x22E94E77)
+                                when {
+                                    isGift -> Color(0x224CAF50)
+                                    w.severity == "final" -> Color(0x33FF6B7A)
+                                    else -> Color(0x22E94E77)
+                                }
                             )
                             .padding(12.dp)
                     ) {
                         Text(
-                            if (w.severity == "final") "Letzte Verwarnung" else "Verwarnung",
-                            color = AccentRose,
+                            when {
+                                isGift -> "Geschenk vom Team"
+                                w.severity == "final" -> "Letzte Verwarnung"
+                                else -> "Verwarnung"
+                            },
+                            color = if (isGift) Color(0xFF81C784) else AccentRose,
                             fontFamily = DisplayFont,
                             fontSize = 13.sp
                         )
