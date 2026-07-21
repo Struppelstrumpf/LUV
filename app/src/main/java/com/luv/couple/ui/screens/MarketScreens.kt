@@ -104,6 +104,7 @@ import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
+import com.luv.couple.ui.theme.FemalePurple
 import com.luv.couple.ui.theme.MaleBlue
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
@@ -383,6 +384,7 @@ private fun MarketHub(
                         brush = Brush.linearGradient(listOf(Color(0xFF3A3020), Color(0xFF241C12))),
                         previews = listOfNotNull(coinPreview),
                         emptyHint = "Bald verfügbar",
+                        expandSinglePreview = true,
                         onClick = onOpenCoinShop
                     )
                     MarketLootboxTile(
@@ -465,7 +467,9 @@ private fun MarketTile(
     previews: List<LuvApiClient.MarketHubPreview>,
     emptyHint: String,
     onClick: () -> Unit,
-    alertDot: Boolean = false
+    alertDot: Boolean = false,
+    /** Eine Vorschau füllt die ganze Kachel (z. B. Coinshop-Hälfte) */
+    expandSinglePreview: Boolean = false
 ) {
     Box(
         modifier = modifier
@@ -536,7 +540,7 @@ private fun MarketTile(
                                 .fillMaxSize()
                         )
                     }
-                    if (previews.size == 1) {
+                    if (previews.size == 1 && !expandSinglePreview) {
                         Spacer(modifier = Modifier.weight(1f))
                     }
                 }
@@ -696,13 +700,8 @@ private fun CoinShopContent(
 ) {
     val account by AccountSession.account.collectAsStateWithLifecycle()
     var pendingPack by remember { mutableStateOf<ShopPack?>(null) }
-    // Nur das 0,99-€-Angebot — keine weiteren Pakete / kein „Angebote“-Titel
-    val offerPack = remember(packs) {
-        packs.firstOrNull { it.isOffer || it.onceOnly }
-            ?: packs.firstOrNull {
-                it.amountEur.replace(',', '.').trim().startsWith("0.99")
-            }
-    }
+    val offers = remember(packs) { packs.filter { it.isOffer || it.onceOnly } }
+    val normals = remember(packs) { packs.filterNot { it.isOffer || it.onceOnly } }
     fun requestBuy(pack: ShopPack) {
         if (!economyUnlocked) {
             onRequireGoogle()
@@ -780,22 +779,46 @@ private fun CoinShopContent(
             )
             return
         }
+        if (offers.isEmpty() && normals.isEmpty()) {
+            EmptyMarketCard(
+                title = "Kein Angebot",
+                body = "Aktuell ist kein Coin-Angebot verfügbar."
+            )
+            return
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            val pack = offerPack
-            if (pack != null) {
+            if (offers.isNotEmpty()) {
+                Text(
+                    "Angebote",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 16.sp
+                )
+                offers.forEach { pack ->
+                    CoinPackCard(
+                        pack = pack,
+                        onBuy = { requestBuy(pack) }
+                    )
+                }
+                if (normals.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        "Coin-Pakete",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 16.sp
+                    )
+                }
+            }
+            normals.forEach { pack ->
                 CoinPackCard(
                     pack = pack,
                     onBuy = { requestBuy(pack) }
-                )
-            } else {
-                EmptyMarketCard(
-                    title = "Kein Angebot",
-                    body = "Aktuell ist kein Coin-Angebot verfügbar."
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -1704,6 +1727,8 @@ private fun LootboxTab(
             onRequireGoogle()
             return
         }
+        // Kein Doppelkauf während Öffnen/Reveal oder laufendem Request
+        if (busy || phase != "idle") return
         val qty = quantity.coerceAtLeast(1)
         val total = price * qty
         if (coins < total) {
@@ -1804,6 +1829,7 @@ private fun LootboxTab(
         if (next != null) {
             beginOpening(next, queue.drop(1))
         } else {
+            // Sofort idle — Geschenk wieder tippbar für nächsten Kauf (Confirm aus)
             phase = "idle"
             tapsLeft = 0
             activePendingId = null
@@ -1811,7 +1837,9 @@ private fun LootboxTab(
             scope.launch {
                 runCatching { LuvApiClient.pendingLootboxes() }
                     .onSuccess { list ->
+                        if (phase != "idle" || revealedReward != null) return@onSuccess
                         displayPending = list.size
+                        // Restbestände öffnen; wenn leer → idle bleibt tippbar zum Kaufen
                         if (list.isNotEmpty()) {
                             beginOpening(list.first(), list.drop(1))
                         }
@@ -1907,7 +1935,9 @@ private fun LootboxTab(
             }
         )
     }
-    Box(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val giftSize = (maxWidth * 0.42f).coerceIn(132.dp, 176.dp)
+        val reveal = revealedReward?.takeIf { phase == "reveal" }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -1918,7 +1948,7 @@ private fun LootboxTab(
             Spacer(modifier = Modifier.height(8.dp))
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier
                     .graphicsLayer {
                         translationX = shakeAnim * 10f
@@ -1941,7 +1971,7 @@ private fun LootboxTab(
                     displayPending,
                     queue.size + if (phase == "tapping" || phase == "reveal") 1 else 0
                 )
-                if (waiting > 0) {
+                if (waiting > 0 && reveal == null) {
                     Text(
                         when {
                             phase == "idle" && busy ->
@@ -1956,9 +1986,10 @@ private fun LootboxTab(
                         fontSize = 13.sp
                     )
                 }
+                // Geschenk bleibt an fester Relativposition — auf allen Displays tippbar
                 Box(
                     modifier = Modifier
-                        .size(168.dp)
+                        .size(giftSize)
                         .clip(RoundedCornerShape(28.dp))
                         .background(
                             Brush.verticalGradient(
@@ -1966,8 +1997,15 @@ private fun LootboxTab(
                             )
                         )
                         .border(1.5.dp, MaleBlue.copy(0.55f), RoundedCornerShape(28.dp))
-                        .clickable(enabled = !busy && phase != "reveal") {
+                        .clickable(
+                            enabled = when (phase) {
+                                "reveal" -> true
+                                "idle", "tapping" -> !busy
+                                else -> false
+                            }
+                        ) {
                             when (phase) {
+                                "reveal" -> afterRevealDismiss()
                                 "idle" -> {
                                     if (!economyUnlocked) {
                                         onRequireGoogle()
@@ -1997,73 +2035,162 @@ private fun LootboxTab(
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("🎁", fontSize = 72.sp)
+                    Text("🎁", fontSize = (giftSize.value * 0.43f).sp)
                 }
-                Text(
-                    when (phase) {
-                        "tapping" -> "Noch $tapsLeft× tippen"
-                        "reveal" -> "Geöffnet!"
-                        else -> "Tippen zum Öffnen · $price Coins"
-                    },
-                    color = TextPrimary,
-                    fontFamily = DisplayFont,
-                    fontSize = 16.sp,
-                    textAlign = TextAlign.Center
-                )
-            }
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.padding(bottom = 10.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                if (reveal != null) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(BgSoft)
+                            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(18.dp))
+                            .padding(horizontal = 16.dp, vertical = 14.dp)
+                    ) {
                         Text(
-                            "Kauf bestätigen",
+                            "Lootbox geöffnet",
                             color = TextPrimary,
                             fontFamily = DisplayFont,
-                            fontSize = 14.sp
+                            fontSize = 18.sp
+                        )
+                        ItemGlyph(id = reveal.emoji.ifBlank { "✨" }, fontSize = 48.sp)
+                        Text(
+                            "${kindLabel(reveal.kind)} · ${resolveLabel(reveal)}",
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 16.sp,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2
                         )
                         Text(
-                            if (confirmBuy) {
-                                "Vor dem Kauf nachfragen · Menge wählbar"
+                            "Shop-Preis: ${reveal.shopPrice} Coins · " +
+                                "Chance: ${"%.2f".format(reveal.chancePercent)} %",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center
+                        )
+                        if (reveal.duplicate && reveal.coinsRefund > 0) {
+                            Text(
+                                "Schon vorhanden · +${reveal.coinsRefund} Coins",
+                                color = AccentRose,
+                                fontFamily = DisplayFont,
+                                fontSize = 13.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                        if (queue.isNotEmpty()) {
+                            Text(
+                                "Noch ${queue.size} ungeöffnet",
+                                color = MaleBlue,
+                                fontFamily = BodyFont,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .clip(RoundedCornerShape(24.dp))
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(AccentRose, FemalePurple.copy(0.85f))
+                                    )
+                                )
+                                .clickable(onClick = { afterRevealDismiss() }),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                if (queue.isNotEmpty()) "Weiter" else "Ins Inventar",
+                                color = Color.White,
+                                fontFamily = DisplayFont,
+                                fontSize = 16.sp
+                            )
+                        }
+                        Text(
+                            if (!confirmBuy && queue.isEmpty()) {
+                                "Oder wieder aufs Geschenk tippen"
                             } else {
-                                "Direkt mit Tippen kaufen"
+                                "Geschenk tippen = weiter"
                             },
                             color = TextMuted,
                             fontFamily = BodyFont,
-                            fontSize = 12.sp
+                            fontSize = 11.sp,
+                            textAlign = TextAlign.Center
                         )
                     }
-                    Switch(
-                        checked = confirmBuy,
-                        onCheckedChange = { on ->
-                            scope.launch { prefs.setLootboxConfirmBuy(on) }
+                } else {
+                    Text(
+                        when (phase) {
+                            "tapping" -> "Noch $tapsLeft× tippen"
+                            else -> "Tippen zum Öffnen · $price Coins"
                         },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = MaleBlue,
-                            uncheckedThumbColor = Color.White.copy(alpha = 0.85f),
-                            uncheckedTrackColor = Color.White.copy(alpha = 0.18f)
-                        )
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 16.sp,
+                        textAlign = TextAlign.Center
                     )
                 }
-                Text(
-                    "Meist etwas um $price Coins Wert; teure und sehr günstige Items sind seltener. " +
-                        "Gleiche Items können mehrfach kommen (Emojis/Sticker stapeln; " +
-                        "bereits besessene Hintergründe/Begleiter werden in Coins umgewandelt). " +
-                        "Gekaufte Lootboxen bleiben gespeichert, bis du sie öffnest. " +
-                        "Nicht erstattungsfähig — Details in den AGB.",
-                    color = TextMuted.copy(alpha = 0.85f),
-                    fontFamily = BodyFont,
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp,
-                    textAlign = TextAlign.Center
-                )
+            }
+            if (reveal == null) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.padding(bottom = 10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Kauf bestätigen",
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                if (confirmBuy) {
+                                    "Vor dem Kauf nachfragen · Menge wählbar"
+                                } else {
+                                    "Direkt mit Tippen kaufen"
+                                },
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Switch(
+                            checked = confirmBuy,
+                            onCheckedChange = { on ->
+                                scope.launch { prefs.setLootboxConfirmBuy(on) }
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = MaleBlue,
+                                uncheckedThumbColor = Color.White.copy(alpha = 0.85f),
+                                uncheckedTrackColor = Color.White.copy(alpha = 0.18f)
+                            )
+                        )
+                    }
+                    Text(
+                        "Meist etwas um $price Coins Wert; teure und sehr günstige Items sind seltener. " +
+                            "Gleiche Items können mehrfach kommen (Emojis/Sticker stapeln; " +
+                            "bereits besessene Hintergründe/Begleiter werden in Coins umgewandelt). " +
+                            "Gekaufte Lootboxen bleiben gespeichert, bis du sie öffnest. " +
+                            "Nicht erstattungsfähig — Details in den AGB.",
+                        color = TextMuted.copy(alpha = 0.85f),
+                        fontFamily = BodyFont,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.height(8.dp))
             }
         }
         if (flashAnim > 0.05f) {
@@ -2073,69 +2200,6 @@ private fun LootboxTab(
                     .background(Color.White.copy(alpha = flashAnim * 0.85f))
             )
         }
-    }
-    revealedReward?.takeIf { phase == "reveal" }?.let { reward ->
-        AlertDialog(
-            onDismissRequest = { afterRevealDismiss() },
-            containerColor = BgSoft,
-            title = {
-                Text("Lootbox geöffnet", fontFamily = DisplayFont, color = TextPrimary)
-            },
-            text = {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    ItemGlyph(id = reward.emoji.ifBlank { "✨" }, fontSize = 56.sp)
-                    Text(
-                        "${kindLabel(reward.kind)} · ${resolveLabel(reward)}",
-                        color = TextPrimary,
-                        fontFamily = DisplayFont,
-                        fontSize = 18.sp,
-                        textAlign = TextAlign.Center
-                    )
-                    Text(
-                        "Shop-Preis: ${reward.shopPrice} Coins",
-                        color = TextMuted,
-                        fontFamily = BodyFont,
-                        fontSize = 14.sp
-                    )
-                    if (reward.duplicate && reward.coinsRefund > 0) {
-                        Text(
-                            "Schon vorhanden · +${reward.coinsRefund} Coins",
-                            color = AccentRose,
-                            fontFamily = DisplayFont,
-                            fontSize = 14.sp,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    Text(
-                        "Chance: ${"%.2f".format(reward.chancePercent)} %",
-                        color = TextMuted,
-                        fontFamily = BodyFont,
-                        fontSize = 13.sp
-                    )
-                    if (queue.isNotEmpty()) {
-                        Text(
-                            "Noch ${queue.size} ungeöffnet",
-                            color = MaleBlue,
-                            fontFamily = BodyFont,
-                            fontSize = 13.sp
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { afterRevealDismiss() }) {
-                    Text(
-                        if (queue.isNotEmpty()) "Weiter" else "Ins Inventar",
-                        color = AccentRose,
-                        fontFamily = DisplayFont
-                    )
-                }
-            }
-        )
     }
 }
 
