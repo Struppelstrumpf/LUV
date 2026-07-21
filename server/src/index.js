@@ -1035,7 +1035,12 @@ function petFreeStock(user, id) {
 }
 
 function isEventShopPetId(id) {
-  return /^img_event_[a-z0-9_]+_\d{4}$/i.test(String(id || "").trim());
+  const s = String(id || "").trim();
+  return (
+    /^img_event_[a-z0-9_]+_\d{4}$/i.test(s) ||
+    /^img_ev_[a-z0-9_]+_[pse]\d{4}$/i.test(s) ||
+    /^theme_[a-z0-9_]+_t\d{4}$/i.test(s)
+  );
 }
 
 /** Durch slice(0,8) gekürzte img_*-IDs anhand Katalog wiederherstellen. */
@@ -10626,7 +10631,7 @@ app.get("/v1/me/inventory", (req, res) => {
         label: itemLabels.resolveDisplayLabel(db, "themes", tid, null, tid),
         emoji: "🖼️",
         priceCoins: 0,
-        visualConfig: null,
+        // visualConfig weglassen — Client behält vorhandenen Cache
       };
     })
     .filter(Boolean);
@@ -11342,8 +11347,9 @@ app.post("/v1/admin/shop/items", (req, res) => {
     .slice(0, 40);
   let eventYear = Math.floor(Number(body.eventYear) || 0);
 
-  // Event-Begleiter: an Event-Jahr + Fenster binden
-  if (kind === "pets" && eventId) {
+  // Event-Shop-Item (Begleiter/Sticker/Emoji/Hintergrund): 1× pro Kategorie+Jahr
+  const eventKinds = new Set(["pets", "stickers", "emojis", "themes"]);
+  if (eventKinds.has(kind) && eventId) {
     const db = getDb();
     const cfg = seasonEvents.ensureEventsConfig(db);
     const ev = (cfg.events || []).find((e) => String(e.id) === eventId);
@@ -11354,20 +11360,42 @@ app.post("/v1/admin/shop/items", (req, res) => {
       });
     }
     if (!eventYear || eventYear < 2020) {
-      eventYear = seasonEvents.shopPetYearForEvent
-        ? seasonEvents.shopPetYearForEvent(ev)
-        : new Date().getFullYear();
+      eventYear = seasonEvents.shopPetYearForEvent(ev);
     }
-    // Prefer stabile Jahres-ID, falls frei
-    const preferred = seasonEvents.eventShopPetId(eventId, eventYear);
-    if (!shopCatalog.getItem(db, "pets", preferred)) {
-      itemId = preferred;
+    const conflict = seasonEvents.findEventKindConflict(db, eventId, kind, eventYear, itemId);
+    if (conflict) {
+      return res.status(400).json({
+        error: "event_kind_taken",
+        message: `Für dieses Event gibt es in ${eventYear} schon ein ${kind}-Item (${conflict.itemId}).`,
+      });
+    }
+    const preferred = seasonEvents.eventShopItemId(eventId, eventYear, kind);
+    const hasImgPayload =
+      body.petSource === "image" || body.imageBase64 || body.imageDataUrl;
+    // Bild-/Theme-Items: feste Event-ID; Unicode-Emoji/Sticker: Client-ID behalten
+    if (kind === "themes") {
+      if (
+        !itemId ||
+        itemId === "💖" ||
+        (!/^theme_[a-z0-9_]+_t\d{4}$/i.test(itemId) &&
+          !/^theme_[a-z0-9]{4,24}$/i.test(itemId))
+      ) {
+        if (!shopCatalog.getItem(db, kind, preferred)) itemId = preferred;
+      }
+    } else if (hasImgPayload || /^img_/i.test(itemId)) {
+      if (!shopCatalog.getItem(db, kind, preferred)) {
+        itemId = preferred;
+      }
+    } else if (!itemId) {
+      if (!shopCatalog.getItem(db, kind, preferred)) itemId = preferred;
     }
     body.itemId = itemId;
     body.eventId = eventId;
     body.eventYear = eventYear;
     body.rotationLocked = true;
-    if (body.priceCoins == null || Number(body.priceCoins) < 1) body.priceCoins = 200;
+    if (body.priceCoins == null || Number(body.priceCoins) < 1) {
+      body.priceCoins = kind === "themes" ? 80 : 200;
+    }
     const win = seasonEvents.windowMsForEventYear(ev, eventYear);
     if (win) {
       body.availableFrom = win.from;
@@ -11375,8 +11403,27 @@ app.post("/v1/admin/shop/items", (req, res) => {
     }
     const pub = seasonEvents.publicEvent(ev);
     if (!body.previewEmoji) body.previewEmoji = pub?.emoji || "🎁";
+    const kindDe =
+      kind === "pets"
+        ? "begleiter"
+        : kind === "stickers"
+          ? "sticker"
+          : kind === "emojis"
+            ? "emoji"
+            : "hintergrund";
     if (!String(body.searchText || "").trim()) {
-      body.searchText = `${body.previewEmoji} ${pub?.title || eventId} begleiter event ${eventYear}`;
+      body.searchText = `${body.previewEmoji} ${pub?.title || eventId} ${kindDe} event ${eventYear}`;
+    }
+    if (!String(body.label || "").trim()) {
+      const suffix =
+        kind === "pets"
+          ? "Begleiter"
+          : kind === "stickers"
+            ? "Sticker"
+            : kind === "emojis"
+              ? "Emoji"
+              : "Hintergrund";
+      body.label = `${pub?.title || "Event"}-${suffix}`.slice(0, 40);
     }
   }
 
@@ -11387,11 +11434,10 @@ app.post("/v1/admin/shop/items", (req, res) => {
     (body.petSource === "image" || body.imageBase64 || body.imageDataUrl)
   ) {
     const db = getDb();
-    // Event-Pet: preferred ID behalten wenn gesetzt und frei/eigen
+    // Event-Item: preferred ID behalten wenn gesetzt und frei/eigen
     const keepEventId =
-      kind === "pets" &&
       eventId &&
-      /^img_event_/i.test(itemId) &&
+      (isEventShopPetId(itemId) || /^img_ev_/i.test(itemId) || /^img_event_/i.test(itemId)) &&
       (!shopCatalog.getItem(db, kind, itemId) ||
         String(shopCatalog.getItem(db, kind, itemId)?.eventId || "") === eventId);
     // img_new / Emoji / Kollision → immer neue ID (sonst falsches Bild für alle)
@@ -11408,11 +11454,16 @@ app.post("/v1/admin/shop/items", (req, res) => {
     }
     body.hasImage = Boolean(imgResult.hasImage);
   }
-  // Hintergründe: ID immer automatisch (theme_xxxxxxxx), nie manuell
+  // Hintergründe: ID — Event behält preferred theme_*_tYEAR, sonst auto
   if (kind === "themes") {
     const db = getDb();
-    const stable = /^theme_[a-z0-9]{4,24}$/i.test(itemId);
-    if (!stable || shopCatalog.getItem(db, kind, itemId) || itemId === "💖") {
+    const keepEventTheme =
+      eventId &&
+      /^theme_[a-z0-9_]+_t\d{4}$/i.test(itemId) &&
+      (!shopCatalog.getItem(db, kind, itemId) ||
+        String(shopCatalog.getItem(db, kind, itemId)?.eventId || "") === eventId);
+    const stable = /^theme_[a-z0-9]{4,24}$/i.test(itemId) || keepEventTheme;
+    if (!keepEventTheme && (!stable || shopCatalog.getItem(db, kind, itemId) || itemId === "💖")) {
       for (let i = 0; i < 40; i++) {
         const id = `theme_${crypto.randomBytes(4).toString("hex")}`;
         if (!shopCatalog.getItem(db, kind, id)) {
@@ -11453,7 +11504,8 @@ app.put("/v1/admin/shop/items/:kind/:itemId", (req, res) => {
     .toLowerCase()
     .replace(/[^a-z0-9_]/g, "_")
     .slice(0, 40);
-  if (kind === "pets" && eventId) {
+  const eventKindsPut = new Set(["pets", "stickers", "emojis", "themes"]);
+  if (eventKindsPut.has(kind) && eventId) {
     const db = getDb();
     const cfg = seasonEvents.ensureEventsConfig(db);
     const ev = (cfg.events || []).find((e) => String(e.id) === eventId);
@@ -11467,6 +11519,13 @@ app.put("/v1/admin/shop/items/:kind/:itemId", (req, res) => {
     if (!eventYear || eventYear < 2020) {
       eventYear = seasonEvents.shopPetYearForEvent(ev);
     }
+    const conflict = seasonEvents.findEventKindConflict(db, eventId, kind, eventYear, itemId);
+    if (conflict) {
+      return res.status(400).json({
+        error: "event_kind_taken",
+        message: `Für dieses Event gibt es in ${eventYear} schon ein ${kind}-Item (${conflict.itemId}).`,
+      });
+    }
     body.eventId = eventId;
     body.eventYear = eventYear;
     body.rotationLocked = true;
@@ -11477,7 +11536,7 @@ app.put("/v1/admin/shop/items/:kind/:itemId", (req, res) => {
     }
     const pub = seasonEvents.publicEvent(ev);
     if (!body.previewEmoji) body.previewEmoji = pub?.emoji || "🎁";
-  } else if (kind === "pets" && body.eventId === "") {
+  } else if (eventKindsPut.has(kind) && body.eventId === "") {
     body.eventId = null;
     body.eventYear = null;
   }

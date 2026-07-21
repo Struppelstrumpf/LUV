@@ -289,35 +289,56 @@ object ProfileCatalog {
         "", "😊", "🥰", "😎", "😍", "🤗", "😇", "🤠", "😺", "🐶", "🎨", "✏️"
     )
 
+    private val rememberedThemes =
+        java.util.concurrent.ConcurrentHashMap<String, ProfileTheme>()
+
+    /** Beim Ausrüsten merken — falls Katalog visualConfig später verliert. */
+    fun rememberTheme(theme: ProfileTheme) {
+        val key = theme.id.trim()
+        if (key.isNotEmpty()) rememberedThemes[key] = theme
+    }
+
     fun theme(id: String): ProfileTheme {
+        val key = id.trim()
         val remote = com.luv.couple.shop.LiveShopCatalog.remoteThemes
-            ?.firstOrNull { it.id == id }
+            ?.firstOrNull { it.id == key }
         val vc = remote?.visualConfig
+            ?: com.luv.couple.shop.LiveShopCatalog.ThemeVisualCache.get(key)
         if (vc != null) {
-            return ProfileTheme(
-                id = id,
-                label = remote.label.ifBlank { id },
-                emoji = remote.emoji.ifBlank { vc.emojis.firstOrNull() ?: "🖼️" },
+            val built = ProfileTheme(
+                id = key,
+                label = remote?.label?.takeIf { it.isNotBlank() }
+                    ?: rememberedThemes[key]?.label?.takeIf { it.isNotBlank() }
+                    ?: key,
+                emoji = remote?.emoji?.takeIf { it.isNotBlank() }
+                    ?: vc.emojis.firstOrNull()
+                    ?: "🖼️",
                 skyTop = parseThemeHex(vc.skyTop, 0xFF7EB8D8),
                 skyBottom = parseThemeHex(vc.skyBottom, 0xFFB8D4E8),
                 groundTop = parseThemeHex(vc.groundTop, 0xFF2F5D2E),
                 groundBottom = parseThemeHex(vc.groundBottom, 0xFF1E3D1E),
                 effect = "emoji_fx",
                 particleEmojis = vc.emojis.ifEmpty { listOf("✨") },
-                particleMotion = vc.motion,
-                particleCoverage = vc.coverage,
-                particleSpeed = vc.speed,
-                particleDensity = vc.density,
-                particleSize = vc.size
+                particleMotion = vc.motion.ifBlank { "fall" },
+                particleCoverage = vc.coverage.ifBlank { "full" },
+                particleSpeed = vc.speed.coerceIn(0.2f, 3f),
+                particleDensity = vc.density.coerceIn(0.1f, 2f),
+                particleSize = vc.size.coerceIn(0.4f, 2.5f)
             )
+            rememberedThemes[key] = built
+            com.luv.couple.shop.LiveShopCatalog.ThemeVisualCache.put(key, vc)
+            return built
         }
-        THEMES.firstOrNull { it.id == id }?.let { return it }
+        rememberedThemes[key]?.takeIf {
+            it.effect == "emoji_fx" && it.particleEmojis.isNotEmpty()
+        }?.let { return it }
+        THEMES.firstOrNull { it.id == key }?.let { return it }
         // Custom-Hintergrund ohne Remote-Config: trotzdem sichtbar (kein stiller Fallback auf Wiese)
-        if (id.startsWith("theme_", ignoreCase = true)) {
+        if (key.startsWith("theme_", ignoreCase = true)) {
             return ProfileTheme(
-                id = id,
+                id = key,
                 label = remote?.label?.takeIf { it.isNotBlank() }
-                    ?: com.luv.couple.shop.ItemLabels.themeLabel(id),
+                    ?: com.luv.couple.shop.ItemLabels.themeLabel(key),
                 emoji = remote?.emoji?.takeIf { it.isNotBlank() } ?: "🖼️",
                 skyTop = 0xFF7EB8D8,
                 skyBottom = 0xFFB8D4E8,

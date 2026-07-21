@@ -416,8 +416,16 @@ function normalizeItem(raw) {
       ? null
       : Math.max(0, Math.floor(Number(raw.maxPerUser) || 0));
   let visualConfig = null;
-  if (raw.visualConfig && typeof raw.visualConfig === "object") {
-    const vc = raw.visualConfig;
+  let vcRaw = raw.visualConfig;
+  if (typeof vcRaw === "string") {
+    try {
+      vcRaw = JSON.parse(vcRaw);
+    } catch {
+      vcRaw = null;
+    }
+  }
+  if (vcRaw && typeof vcRaw === "object") {
+    const vc = vcRaw;
     const emojis = Array.isArray(vc.emojis)
       ? vc.emojis.map((e) => String(e || "").trim()).filter(Boolean).slice(0, 24)
       : [];

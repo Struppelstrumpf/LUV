@@ -477,9 +477,19 @@ object LiveShopCatalog {
     @Volatile var remoteEmojis: List<ShopEmoji>? = null
     @Volatile var remoteStickers: List<ShopEmoji>? = null
     @Volatile var remoteThemes: List<ShopTheme>? = null
+        set(value) {
+            field = value
+            catalogEpoch++
+            value?.forEach { t ->
+                t.visualConfig?.let { ThemeVisualCache.put(t.id, it) }
+            }
+        }
     @Volatile var remotePets: List<ShopPet>? = null
     /** True nach erfolgreichem Catalog-Fetch — dann Remote als Wahrheit (auch leere Listen). */
     @Volatile var remoteCatalogLoaded: Boolean = false
+    /** Steigt bei Theme-/Katalog-Updates — Compose recomposed Backdrop. */
+    @Volatile var catalogEpoch: Int = 0
+        private set
     /** Admin-Anzeigenamen: "pets:🐯" → "Tiger" (gewinnt über lokale Fallbacks). */
     @Volatile var displayLabels: Map<String, String> = emptyMap()
         private set
@@ -490,6 +500,16 @@ object LiveShopCatalog {
     fun setDisplayLabels(map: Map<String, String>) {
         displayLabels = map
         displayLabelsEpoch++
+    }
+
+    /** Merkt visualConfig, falls Public-Catalog das Feld später weglässt. */
+    object ThemeVisualCache {
+        private val map = java.util.concurrent.ConcurrentHashMap<String, ThemeVisualConfig>()
+        fun put(id: String, vc: ThemeVisualConfig) {
+            val key = id.trim()
+            if (key.isNotEmpty()) map[key] = vc
+        }
+        fun get(id: String): ThemeVisualConfig? = map[id.trim()]
     }
 
     fun displayLabel(kind: String, itemId: String): String? {

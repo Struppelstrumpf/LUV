@@ -1522,10 +1522,33 @@ object LuvApiClient {
             if (emojis.isNotEmpty() || stickers.isNotEmpty() || themes.isNotEmpty() || pets.isNotEmpty() ||
                 json.has("items")
             ) {
-                com.luv.couple.shop.LiveShopCatalog.remoteEmojis = emojis.sortedBy { it.priceCoins }
-                com.luv.couple.shop.LiveShopCatalog.remoteStickers = stickers.sortedBy { it.priceCoins }
-                com.luv.couple.shop.LiveShopCatalog.remoteThemes = themes.sortedBy { it.priceCoins }
-                com.luv.couple.shop.LiveShopCatalog.remotePets = pets.sortedBy { it.priceCoins }
+                fun <T> mergeById(
+                    prev: List<T>?,
+                    incoming: List<T>,
+                    idOf: (T) -> String,
+                    merge: (T, T?) -> T,
+                ): List<T> {
+                    val byId = LinkedHashMap<String, T>()
+                    prev?.forEach { byId[idOf(it)] = it }
+                    incoming.forEach { n ->
+                        val id = idOf(n)
+                        byId[id] = merge(n, byId[id])
+                    }
+                    return byId.values.toList()
+                }
+                com.luv.couple.shop.LiveShopCatalog.remoteEmojis =
+                    mergeById(com.luv.couple.shop.LiveShopCatalog.remoteEmojis, emojis, { it.emoji }) { n, _ -> n }
+                        .sortedBy { it.priceCoins }
+                com.luv.couple.shop.LiveShopCatalog.remoteStickers =
+                    mergeById(com.luv.couple.shop.LiveShopCatalog.remoteStickers, stickers, { it.emoji }) { n, _ -> n }
+                        .sortedBy { it.priceCoins }
+                com.luv.couple.shop.LiveShopCatalog.remoteThemes =
+                    mergeById(com.luv.couple.shop.LiveShopCatalog.remoteThemes, themes, { it.id }) { n, prev ->
+                        n.copy(visualConfig = n.visualConfig ?: prev?.visualConfig)
+                    }.sortedBy { it.priceCoins }
+                com.luv.couple.shop.LiveShopCatalog.remotePets =
+                    mergeById(com.luv.couple.shop.LiveShopCatalog.remotePets, pets, { it.emoji }) { n, _ -> n }
+                        .sortedBy { it.priceCoins }
                 com.luv.couple.shop.LiveShopCatalog.remoteCatalogLoaded = true
             }
             val labelsObj = json.optJSONObject("displayLabels")
@@ -1614,11 +1637,14 @@ object LuvApiClient {
                 if (id.isBlank()) continue
                 byId[id] = com.luv.couple.shop.ShopTheme(
                     id = id,
-                    label = o.optString("label", id),
-                    emoji = o.optString("emoji", "🖼️").ifBlank { "🖼️" },
-                    priceCoins = o.optInt("priceCoins", 0),
-                    searchText = o.optString("searchText", ""),
+                    label = o.optString("label", byId[id]?.label ?: id),
+                    emoji = o.optString("emoji", byId[id]?.emoji ?: "🖼️").ifBlank {
+                        byId[id]?.emoji ?: "🖼️"
+                    },
+                    priceCoins = o.optInt("priceCoins", byId[id]?.priceCoins ?: 0),
+                    searchText = o.optString("searchText", byId[id]?.searchText ?: ""),
                     visualConfig = parseThemeVisualConfig(o.optJSONObject("visualConfig"))
+                        ?: byId[id]?.visualConfig
                 )
             }
             com.luv.couple.shop.LiveShopCatalog.remoteThemes = byId.values.toList()

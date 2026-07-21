@@ -945,14 +945,22 @@ function progressFor(user, eventId, seasonKey = null) {
   return p;
 }
 
-function eventShopPetId(eventId, year) {
+function eventShopItemId(eventId, year, kind) {
   const id = String(eventId || "")
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9_]/g, "_")
-    .slice(0, 18);
+    .slice(0, 14);
   const y = Math.floor(Number(year) || new Date().getFullYear());
-  return `img_event_${id}_${y}`.slice(0, 32);
+  const k = String(kind || "pets").trim();
+  if (k === "themes") return `theme_${id}_t${y}`.slice(0, 32);
+  const tag = k === "stickers" ? "s" : k === "emojis" ? "e" : "p";
+  return `img_ev_${id}_${tag}${y}`.slice(0, 32);
+}
+
+/** @deprecated alias */
+function eventShopPetId(eventId, year) {
+  return eventShopItemId(eventId, year, "pets");
 }
 
 function shopPetYearForEvent(ev, now = new Date()) {
@@ -1020,7 +1028,7 @@ function windowMsForEventYear(ev, year) {
   return { from: w.start.getTime(), until: w.end.getTime(), year: y };
 }
 
-function findCatalogEventPet(db, eventId, year) {
+function findCatalogEventItem(db, eventId, year, kind) {
   if (!db) return null;
   let shopCatalog;
   try {
@@ -1030,25 +1038,50 @@ function findCatalogEventPet(db, eventId, year) {
   }
   const cat = shopCatalog.ensureShopCatalog(db);
   const eid = String(eventId || "").trim();
-  if (!eid) return null;
+  const k = String(kind || "").trim();
+  if (!eid || !k) return null;
   const y = Math.floor(Number(year) || 0);
-  const pets = Object.values(cat.items || {}).filter(
-    (i) => i && i.kind === "pets" && String(i.eventId || "") === eid
+  const hits = Object.values(cat.items || {}).filter(
+    (i) =>
+      i &&
+      i.kind === k &&
+      String(i.eventId || "") === eid &&
+      (!y || Number(i.eventYear) === y || String(i.itemId || "").includes(String(y)))
   );
-  if (!pets.length) return null;
-  let hit = y ? pets.find((i) => Number(i.eventYear) === y) : null;
-  if (!hit && y) hit = pets.find((i) => String(i.itemId || "").endsWith(`_${y}`));
-  if (!hit) {
-    hit = pets.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
-  }
+  if (!hits.length) return null;
+  let hit = y ? hits.find((i) => Number(i.eventYear) === y) : null;
+  if (!hit) hit = hits.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
   return hit || null;
 }
 
-function shopPetPublic(db, ev, now = new Date()) {
-  if (!ev) return null;
-  const year = shopPetYearForEvent(ev, now);
-  const pub = publicEvent(ev);
-  const item = findCatalogEventPet(db, ev.id, year);
+function findCatalogEventPet(db, eventId, year) {
+  return findCatalogEventItem(db, eventId, year, "pets");
+}
+
+/** Konflikt: schon ein Item derselben Kategorie für Event+Jahr. */
+function findEventKindConflict(db, eventId, kind, eventYear, excludeItemId = null) {
+  let shopCatalog;
+  try {
+    shopCatalog = require("./shop_catalog");
+  } catch {
+    return null;
+  }
+  const cat = shopCatalog.ensureShopCatalog(db);
+  const eid = String(eventId || "").trim();
+  const k = String(kind || "").trim();
+  const y = Math.floor(Number(eventYear) || 0);
+  const ex = String(excludeItemId || "").trim();
+  for (const item of Object.values(cat.items || {})) {
+    if (!item || item.kind !== k) continue;
+    if (String(item.eventId || "") !== eid) continue;
+    if (y && Number(item.eventYear) !== y) continue;
+    if (ex && String(item.itemId) === ex) continue;
+    return item;
+  }
+  return null;
+}
+
+function catalogItemToShopPublic(item, ev, year) {
   if (!item) return null;
   let shopCatalog;
   try {
@@ -1056,28 +1089,54 @@ function shopPetPublic(db, ev, now = new Date()) {
   } catch {
     shopCatalog = null;
   }
+  const pub = publicEvent(ev);
   const price =
     shopCatalog && typeof shopCatalog.effectivePrice === "function"
       ? shopCatalog.effectivePrice(item)
-      : Math.max(0, Number(item.priceCoins) || 200);
+      : Math.max(0, Number(item.priceCoins) || 0);
   const hasImage = Boolean(item.hasImage);
+  const kind = String(item.kind || "");
+  const emoji =
+    item.previewEmoji ||
+    (kind === "themes" ? item.visualConfig?.emojis?.[0] : null) ||
+    pub.emoji ||
+    "🎁";
   return {
+    kind,
     itemId: item.itemId,
-    kind: "pets",
-    emoji: item.previewEmoji || pub.emoji || "🎁",
-    label: String(item.label || `${pub.title}-Begleiter`).slice(0, 40),
-    priceCoins: price > 0 ? price : 200,
-    year,
+    emoji,
+    label: String(item.label || item.itemId).slice(0, 40),
+    priceCoins: price > 0 ? price : kind === "themes" ? 0 : 200,
+    year: year || Number(item.eventYear) || 0,
     hasImage,
     imageUrl: hasImage
       ? `/luv/v1/shop/pet-image/${encodeURIComponent(item.itemId)}`
       : null,
+    visualConfig: kind === "themes" && item.visualConfig ? item.visualConfig : null,
   };
 }
 
+function shopItemsPublic(db, ev, now = new Date()) {
+  if (!ev) return [];
+  const year = shopPetYearForEvent(ev, now);
+  const kinds = ["pets", "stickers", "emojis", "themes"];
+  const out = [];
+  for (const kind of kinds) {
+    const item = findCatalogEventItem(db, ev.id, year, kind);
+    if (!item) continue;
+    const pub = catalogItemToShopPublic(item, ev, year);
+    if (pub) out.push(pub);
+  }
+  return out;
+}
+
+function shopPetPublic(db, ev, now = new Date()) {
+  const items = shopItemsPublic(db, ev, now);
+  return items.find((i) => i.kind === "pets") || null;
+}
+
 /**
- * Event-Begleiter aus dem Admin-Katalog: Fenster an Event-Jahr anpassen.
- * Keine Auto-Platzhalter mehr — Anlage nur über Itemshop (eventId).
+ * Event-Shop-Items: Fenster an Event-Jahr anpassen (alle Kategorien mit eventId).
  */
 function syncEventShopPets(db, now = new Date()) {
   if (!db) return;
@@ -1091,7 +1150,8 @@ function syncEventShopPets(db, now = new Date()) {
   const cat = shopCatalog.ensureShopCatalog(db);
   const byId = new Map((cfg.events || []).map((e) => [String(e.id), e]));
   for (const item of Object.values(cat.items || {})) {
-    if (!item || item.kind !== "pets" || !item.eventId) continue;
+    if (!item || !item.eventId) continue;
+    if (!["pets", "stickers", "emojis", "themes"].includes(item.kind)) continue;
     const ev = byId.get(String(item.eventId));
     if (!ev || ev.enabled === false) continue;
     const year =
@@ -1108,7 +1168,7 @@ function syncEventShopPets(db, now = new Date()) {
     if (same) continue;
     shopCatalog.upsertItem(db, {
       ...item,
-      kind: "pets",
+      kind: item.kind,
       itemId: item.itemId,
       availableFrom: win.from,
       availableUntil: win.until,
@@ -1120,7 +1180,7 @@ function syncEventShopPets(db, now = new Date()) {
   }
 }
 
-/** Admin: Event-Liste inkl. nächstes Fenster für Shop-Wizard. */
+/** Admin: Event-Liste inkl. belegte Kategorien für Shop-Wizard. */
 function shopEventOptions(db, now = new Date()) {
   const cfg = ensureEventsConfig(db);
   return (cfg.events || [])
@@ -1130,7 +1190,15 @@ function shopEventOptions(db, now = new Date()) {
       const occ = nextOccurrence(e, now);
       const year = shopPetYearForEvent(e, now);
       const win = windowMsForEventYear(e, year);
-      const existing = findCatalogEventPet(db, e.id, year);
+      const occupied = {};
+      const existingByKind = {};
+      for (const kind of ["pets", "stickers", "emojis", "themes"]) {
+        const hit = findCatalogEventItem(db, e.id, year, kind);
+        if (hit) {
+          occupied[kind] = true;
+          existingByKind[kind] = hit.itemId;
+        }
+      }
       return {
         id: pub.id,
         title: pub.title,
@@ -1140,10 +1208,30 @@ function shopEventOptions(db, now = new Date()) {
         windowEnd: occ?.end || null,
         availableFrom: win?.from || null,
         availableUntil: win?.until || null,
-        suggestedItemId: eventShopPetId(e.id, year),
+        suggestedItemId: eventShopItemId(e.id, year, "pets"),
         suggestedLabel: `${pub.title}-Begleiter`.slice(0, 40),
-        hasPetForYear: Boolean(existing),
-        existingItemId: existing?.itemId || null,
+        suggestedByKind: {
+          pets: {
+            itemId: eventShopItemId(e.id, year, "pets"),
+            label: `${pub.title}-Begleiter`.slice(0, 40),
+          },
+          stickers: {
+            itemId: eventShopItemId(e.id, year, "stickers"),
+            label: `${pub.title}-Sticker`.slice(0, 40),
+          },
+          emojis: {
+            itemId: eventShopItemId(e.id, year, "emojis"),
+            label: `${pub.title}-Emoji`.slice(0, 40),
+          },
+          themes: {
+            itemId: eventShopItemId(e.id, year, "themes"),
+            label: `${pub.title}-Hintergrund`.slice(0, 40),
+          },
+        },
+        hasPetForYear: Boolean(occupied.pets),
+        existingItemId: existingByKind.pets || null,
+        occupiedKinds: occupied,
+        existingByKind,
         active: isActiveAtPatched(e, now),
       };
     })
@@ -1178,6 +1266,7 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
         };
       });
     }
+    const shopItems = shopItemsPublic(db, e, now);
     const row = {
       ...pub,
       quests,
@@ -1191,7 +1280,8 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
       claimedMilestone: prog.claimedMilestone,
       itemGranted: prog.itemGranted,
       canCollect: false,
-      shopPet: shopPetPublic(db, e, now),
+      shopItems,
+      shopPet: shopItems.find((i) => i.kind === "pets") || null,
     };
     const activeNow = isActiveAtPatched(e, now);
     if (user && pub.contest?.enabled) {
@@ -1393,9 +1483,13 @@ module.exports = {
   nextOccurrence,
   syncEventShopPets,
   shopPetPublic,
+  shopItemsPublic,
   eventShopPetId,
+  eventShopItemId,
   shopPetYearForEvent,
   shopEventOptions,
   windowMsForEventYear,
   findCatalogEventPet,
+  findCatalogEventItem,
+  findEventKindConflict,
 };

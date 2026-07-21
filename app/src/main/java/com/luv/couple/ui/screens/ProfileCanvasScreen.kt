@@ -471,6 +471,7 @@ fun ProfileCanvasScreen(
 
     fun setTheme(theme: ProfileTheme, fromChest: Boolean = false) {
         if (!editable) return
+        ProfileCatalog.rememberTheme(theme)
         state = state.copy(themeId = theme.id)
         closeChestAfterPlace(fromChest)
     }

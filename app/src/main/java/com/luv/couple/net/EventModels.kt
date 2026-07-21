@@ -191,7 +191,8 @@ data class EventContestInfo(
     }
 }
 
-data class EventShopPet(
+data class EventShopItem(
+    val kind: String,
     val itemId: String,
     val emoji: String,
     val label: String,
@@ -200,15 +201,26 @@ data class EventShopPet(
     val hasImage: Boolean = false,
     val imageUrl: String? = null,
 ) {
+    val kindLabel: String
+        get() = when (kind) {
+            "pets" -> "Begleiter"
+            "stickers" -> "Sticker"
+            "emojis" -> "Emoji"
+            "themes" -> "Hintergrund"
+            else -> "Item"
+        }
+
     companion object {
-        fun fromJson(o: JSONObject?): EventShopPet? {
+        fun fromJson(o: JSONObject?): EventShopItem? {
             if (o == null) return null
             val itemId = o.optString("itemId").trim()
+            val kind = o.optString("kind").trim().ifEmpty { "pets" }
             if (itemId.isEmpty()) return null
-            return EventShopPet(
+            return EventShopItem(
+                kind = kind,
                 itemId = itemId,
                 emoji = o.optString("emoji", "🎁"),
-                label = o.optString("label", "Event-Begleiter"),
+                label = o.optString("label", "Event-Item"),
                 priceCoins = o.optInt("priceCoins", 200).coerceAtLeast(0),
                 year = o.optInt("year", 0),
                 hasImage = o.optBoolean("hasImage", false),
@@ -217,6 +229,9 @@ data class EventShopPet(
         }
     }
 }
+
+/** Compat: ältere Call-Sites / JSON mit nur shopPet. */
+typealias EventShopPet = EventShopItem
 
 data class SeasonEvent(
     val id: String,
@@ -244,8 +259,11 @@ data class SeasonEvent(
     val lobbyCode: String? = null,
     val eventPrompt: String? = null,
     val contest: EventContestInfo? = null,
-    val shopPet: EventShopPet? = null,
+    val shopItems: List<EventShopItem> = emptyList(),
 ) {
+    val shopPet: EventShopItem?
+        get() = shopItems.firstOrNull { it.kind == "pets" }
+
     companion object {
         fun fromJson(o: JSONObject): SeasonEvent {
             val questsArr = o.optJSONArray("quests")
@@ -255,6 +273,17 @@ data class SeasonEvent(
                         val q = questsArr.optJSONObject(i) ?: continue
                         add(EventQuest.fromJson(q))
                     }
+                }
+            }
+            val shopArr = o.optJSONArray("shopItems")
+            val shopItems = buildList {
+                if (shopArr != null) {
+                    for (i in 0 until shopArr.length()) {
+                        EventShopItem.fromJson(shopArr.optJSONObject(i))?.let { add(it) }
+                    }
+                }
+                if (isEmpty()) {
+                    EventShopItem.fromJson(o.optJSONObject("shopPet"))?.let { add(it) }
                 }
             }
             return SeasonEvent(
@@ -284,7 +313,7 @@ data class SeasonEvent(
                 ?: o.optJSONObject("contest")?.optCleanString("lobbyCode"),
             eventPrompt = o.optCleanString("eventPrompt"),
             contest = EventContestInfo.fromJson(o.optJSONObject("contest")),
-            shopPet = EventShopPet.fromJson(o.optJSONObject("shopPet")),
+            shopItems = shopItems,
             )
         }
     }

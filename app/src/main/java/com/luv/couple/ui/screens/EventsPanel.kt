@@ -52,6 +52,8 @@ import com.luv.couple.net.EventContestWinner
 import com.luv.couple.net.EventSession
 import com.luv.couple.net.EventsState
 import com.luv.couple.net.LuvApiClient
+import com.luv.couple.data.AccountInfo
+import com.luv.couple.net.EventShopItem
 import com.luv.couple.net.SeasonEvent
 import com.luv.couple.data.asCleanJsonString
 import com.luv.couple.ui.theme.AccentRose
@@ -67,6 +69,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
+import androidx.compose.foundation.layout.heightIn
 
 @Composable
 fun EventsPanel(
@@ -531,6 +534,11 @@ private fun EventHeroCard(
                 )
             }
         }
+        EventShopTile(
+            event = event,
+            accent = accent,
+            onCoinsGranted = onCoinsGranted,
+        )
         TextButton(
             onClick = onCollect,
             enabled = event.canCollect && !busy && !event.collectedToday,
@@ -940,7 +948,7 @@ private fun UpcomingEventPreviewDialog(
         else -> "Bald startet dieses Event — Farben und Atmosphäre siehst du hier schon."
     }
     val reward = event.rewardItem
-    val shopPet = event.shopPet
+    val shopItems = event.shopItems
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -1032,47 +1040,12 @@ private fun UpcomingEventPreviewDialog(
                         }
                     }
                 }
-                if (shopPet != null) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(accent.copy(0.18f))
-                            .border(1.dp, accent.copy(0.35f), RoundedCornerShape(12.dp))
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        if (shopPet.hasImage || shopPet.itemId.startsWith("img_")) {
-                            com.luv.couple.ui.ItemGlyph(
-                                id = shopPet.itemId,
-                                fontSize = 28.sp
-                            )
-                        } else {
-                            Text(shopPet.emoji.ifBlank { event.emoji }, fontSize = 26.sp)
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Event-Begleiter",
-                                color = TextMuted,
-                                fontFamily = BodyFont,
-                                fontSize = 11.sp
-                            )
-                            Text(
-                                shopPet.label,
-                                color = TextPrimary,
-                                fontFamily = DisplayFont,
-                                fontSize = 14.sp
-                            )
-                            Text(
-                                "Nur während dem Event · ${shopPet.priceCoins} Coins · danach weg aus dem Shop",
-                                color = TextMuted,
-                                fontFamily = BodyFont,
-                                fontSize = 11.sp,
-                                lineHeight = 15.sp
-                            )
-                        }
-                    }
+                if (shopItems.isNotEmpty()) {
+                    EventShopTile(
+                        event = event,
+                        accent = accent,
+                        previewOnly = true,
+                    )
                 }
                 TextButton(
                     onClick = onDismiss,
@@ -1080,6 +1053,273 @@ private fun UpcomingEventPreviewDialog(
                 ) {
                     Text("Schließen", color = accent, fontFamily = DisplayFont)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EventShopTile(
+    event: SeasonEvent,
+    accent: Color,
+    onCoinsGranted: (Int) -> Unit = {},
+    previewOnly: Boolean = false,
+) {
+    val items = event.shopItems
+    if (items.isEmpty()) return
+
+    var showShop by remember { mutableStateOf(false) }
+    val preview = items.take(2)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(accent.copy(0.18f))
+            .border(1.dp, accent.copy(0.35f), RoundedCornerShape(14.dp))
+            .clickable(enabled = !previewOnly) { showShop = true }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy((-6).dp)) {
+            preview.forEach { item ->
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(BgDeep.copy(0.55f))
+                        .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(10.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    EventShopItemGlyph(item, eventEmoji = event.emoji, fontSize = 22.sp)
+                }
+            }
+            if (items.size > 2) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(BgDeep.copy(0.4f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("+${items.size - 2}", color = TextMuted, fontFamily = DisplayFont, fontSize = 12.sp)
+                }
+            }
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "Event-Shop",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 11.sp
+            )
+            Text(
+                if (items.size == 1) items.first().label
+                else "${items.size} Items · tippen",
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                if (previewOnly) "Nur während dem Event im Shop"
+                else "Kaufen hier oder im Itemshop",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 11.sp
+            )
+        }
+        if (!previewOnly) {
+            Text("›", color = accent, fontFamily = DisplayFont, fontSize = 20.sp)
+        }
+    }
+
+    if (showShop && !previewOnly) {
+        EventShopBuyDialog(
+            event = event,
+            accent = accent,
+            onDismiss = { showShop = false },
+            onCoinsGranted = onCoinsGranted,
+        )
+    }
+}
+
+@Composable
+private fun EventShopItemGlyph(
+    item: EventShopItem,
+    eventEmoji: String,
+    fontSize: androidx.compose.ui.unit.TextUnit,
+) {
+    if (item.hasImage || item.itemId.startsWith("img_") || item.kind == "pets" && item.itemId.startsWith("img")) {
+        com.luv.couple.ui.ItemGlyph(id = item.itemId, fontSize = fontSize)
+    } else if (item.kind == "themes") {
+        Text(item.emoji.ifBlank { "🖼️" }, fontSize = fontSize)
+    } else {
+        Text(item.emoji.ifBlank { eventEmoji }.ifBlank { "🎁" }, fontSize = fontSize)
+    }
+}
+
+@Composable
+private fun EventShopBuyDialog(
+    event: SeasonEvent,
+    accent: Color,
+    onDismiss: () -> Unit,
+    onCoinsGranted: (Int) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val account by AccountSession.account.collectAsStateWithLifecycle()
+    var busyId by remember { mutableStateOf<String?>(null) }
+    val items = event.shopItems
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp)
+                .heightIn(max = 560.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(
+                    Brush.verticalGradient(listOf(accent.copy(0.35f), BgSoft, BgDeep.copy(0.5f)))
+                )
+                .border(1.dp, accent.copy(0.4f), RoundedCornerShape(22.dp))
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(event.emoji, fontSize = 28.sp)
+                Spacer(modifier = Modifier.size(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Event-Shop",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 20.sp
+                    )
+                    Text(
+                        event.title,
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Text(
+                    "${account?.coins ?: 0} 💰",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 14.sp
+                )
+            }
+            Text(
+                "Nur während dem Event · danach weg aus dem Shop (Besitz bleibt).",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 12.sp
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items.forEach { item ->
+                    val busy = busyId == item.itemId
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(BgDeep.copy(0.45f))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(0.06f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            EventShopItemGlyph(item, event.emoji, 26.sp)
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                item.kindLabel,
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 11.sp
+                            )
+                            Text(
+                                item.label,
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                "${item.priceCoins} Coins",
+                                color = accent,
+                                fontFamily = BodyFont,
+                                fontSize = 12.sp
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                if (busyId != null) return@TextButton
+                                busyId = item.itemId
+                                scope.launch {
+                                    runCatching {
+                                        when (item.kind) {
+                                            "pets" -> LuvApiClient.buyPet(item.itemId).first
+                                            "stickers" -> LuvApiClient.buySticker(item.itemId).first
+                                            "emojis" -> LuvApiClient.buyEmoji(item.itemId).first
+                                            "themes" -> LuvApiClient.buyTheme(item.itemId)
+                                            else -> error("Unbekannte Kategorie")
+                                        }
+                                    }.onSuccess { acc: AccountInfo ->
+                                        AccountSession.setAccount(acc)
+                                        Toast.makeText(
+                                            context,
+                                            "${item.label} gekauft",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }.onFailure { err ->
+                                        Toast.makeText(
+                                            context,
+                                            err.message ?: "Kauf fehlgeschlagen",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                    busyId = null
+                                }
+                            },
+                            enabled = busyId == null,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (busy) Color.White.copy(0.08f) else accent.copy(0.35f)
+                                )
+                        ) {
+                            Text(
+                                if (busy) "…" else "Kaufen",
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+            }
+            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                Text("Schließen", color = accent, fontFamily = DisplayFont)
             }
         }
     }

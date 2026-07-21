@@ -36,8 +36,10 @@ fun ProfileThemeBackdrop(
     modifier: Modifier = Modifier,
     marriageCelebration: Boolean = false
 ) {
+    // Jedes Mal neu auflösen — ThemeVisualCache / rememberTheme halten visualConfig.
+    val theme = ProfileCatalog.theme(themeId)
     ProfileThemeBackdrop(
-        theme = ProfileCatalog.theme(themeId),
+        theme = theme,
         modifier = modifier,
         marriageCelebration = marriageCelebration
     )

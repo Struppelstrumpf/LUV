@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.51",
+            listOf(
+                "Event-Shop-Kachel mit allen Event-Items; Admin: Event-Sticker/Emoji/Hintergrund; Hintergrund-Animationen bleiben beim Ausrüsten",
+            )
+        ),
+        Entry(
             "2.2.50",
             listOf(
                 "Update-Hinweis erst, wenn die Version wirklich im Play Store verfügbar ist",
