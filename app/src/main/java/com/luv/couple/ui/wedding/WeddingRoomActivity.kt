@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -94,26 +93,28 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     val myId = AccountSession.account.value?.id.orEmpty()
     var ceremony by remember { mutableStateOf<LuvApiClient.CeremonyInfo?>(null) }
     var entered by remember { mutableStateOf(false) }
-    var myX by remember { mutableFloatStateOf(0.5f) }
-    var myY by remember { mutableFloatStateOf(0.82f) }
+    // Start nahe der Eingangstür (unten im Kapellenbild)
+    var myX by remember { mutableFloatStateOf(0.50f) }
+    var myY by remember { mutableFloatStateOf(0.86f) }
     var seated by remember { mutableStateOf(false) }
     var rejectName by remember { mutableStateOf<String?>(null) }
     var married by remember { mutableStateOf(false) }
     var confetti by remember { mutableStateOf(false) }
     var myReaction by remember { mutableStateOf<String?>(null) }
 
+    // Sitze am Kapellen-Layout (Vogelperspektive): Altar vorne, 4 Bankreihen je Seite
     val seats = remember {
         listOf(
-            SeatDef("altar_a", 0.38f, 0.28f, true),
-            SeatDef("altar_b", 0.62f, 0.28f, true),
-            SeatDef("bench_0", 0.18f, 0.62f, false),
-            SeatDef("bench_1", 0.32f, 0.62f, false),
-            SeatDef("bench_2", 0.68f, 0.62f, false),
-            SeatDef("bench_3", 0.82f, 0.62f, false),
-            SeatDef("bench_4", 0.18f, 0.74f, false),
-            SeatDef("bench_5", 0.32f, 0.74f, false),
-            SeatDef("bench_6", 0.68f, 0.74f, false),
-            SeatDef("bench_7", 0.82f, 0.74f, false),
+            SeatDef("altar_a", 0.40f, 0.30f, true),
+            SeatDef("altar_b", 0.60f, 0.30f, true),
+            SeatDef("bench_0", 0.30f, 0.44f, false),
+            SeatDef("bench_1", 0.30f, 0.54f, false),
+            SeatDef("bench_2", 0.30f, 0.63f, false),
+            SeatDef("bench_3", 0.30f, 0.72f, false),
+            SeatDef("bench_4", 0.70f, 0.44f, false),
+            SeatDef("bench_5", 0.70f, 0.54f, false),
+            SeatDef("bench_6", 0.70f, 0.63f, false),
+            SeatDef("bench_7", 0.70f, 0.72f, false),
         )
     }
 
@@ -162,58 +163,48 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF1A1410))
+            .background(Color(0xFFF5F0E6))
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
-        val roomW = maxWidth
-        val roomH = maxHeight
-        // Raum: Mauern + Altar + Bänke
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val w = size.width
-            val h = size.height
-            // Floor
-            drawRect(Color(0xFF3E2A1F))
-            // Walls
-            drawRect(Color(0xFF2A1C14), size = androidx.compose.ui.geometry.Size(w, h * 0.06f))
-            drawRect(Color(0xFF2A1C14), topLeft = Offset(0f, h * 0.94f), size = androidx.compose.ui.geometry.Size(w, h * 0.06f))
-            drawRect(Color(0xFF2A1C14), size = androidx.compose.ui.geometry.Size(w * 0.05f, h))
-            drawRect(Color(0xFF2A1C14), topLeft = Offset(w * 0.95f, 0f), size = androidx.compose.ui.geometry.Size(w * 0.05f, h))
-            // Altar
-            drawRoundRect(
-                color = Color(0xFFE8D5A3),
-                topLeft = Offset(w * 0.28f, h * 0.10f),
-                size = androidx.compose.ui.geometry.Size(w * 0.44f, h * 0.10f),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(12f, 12f)
-            )
-            // Benches
-            for (row in listOf(0.58f, 0.70f)) {
-                drawRoundRect(
-                    color = Color(0xFF5D4037),
-                    topLeft = Offset(w * 0.10f, h * row),
-                    size = androidx.compose.ui.geometry.Size(w * 0.30f, h * 0.04f),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f, 8f)
-                )
-                drawRoundRect(
-                    color = Color(0xFF5D4037),
-                    topLeft = Offset(w * 0.60f, h * row),
-                    size = androidx.compose.ui.geometry.Size(w * 0.30f, h * 0.04f),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f, 8f)
-                )
-            }
+        val chapelPainter = painterResource(R.drawable.wedding_chapel_room)
+        val aspect = run {
+            val s = chapelPainter.intrinsicSize
+            if (s.height > 0f) (s.width / s.height) else 0.72f
         }
+        val roomH = if (maxWidth / maxHeight > aspect) maxHeight else maxWidth / aspect
+        val roomW = roomH * aspect
+
+        // Kapellenbild + Spiel-Layer in exakter Bildgröße (Sitze liegen auf den Bänken)
+        Box(
+            modifier = Modifier
+                .size(roomW, roomH)
+                .align(Alignment.Center)
+        ) {
+            Image(
+                painter = chapelPainter,
+                contentDescription = "Hochzeitskapelle",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.FillBounds
+            )
 
         if (!entered) {
             Column(
-                modifier = Modifier.align(Alignment.Center),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 20.dp)
+                    .fillMaxWidth(0.88f)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(Color(0xEE2A1F28))
+                    .padding(18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("💒", fontSize = 48.sp)
                 Text(
                     "Ihr steht vor dem Trausaal",
                     color = TextPrimary,
                     fontFamily = DisplayFont,
-                    fontSize = 20.sp
+                    fontSize = 20.sp,
+                    textAlign = TextAlign.Center
                 )
                 SpacerH()
                 Box(
@@ -325,29 +316,36 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 }
             }
 
-            // Priest
+            // Priester am Altar (Bild-Koordinate ~ Mitte oben)
             if (c?.phase == "vows" || (c?.gathering?.all { it.seatedSeatId != null } == true)) {
                 Column(
                     modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = roomH * 0.18f),
+                        .align(Alignment.TopStart)
+                        .padding(
+                            start = roomW * 0.50f - 28.dp,
+                            top = roomH * 0.14f
+                        ),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Image(
                         painter = painterResource(R.drawable.wedding_priest),
                         contentDescription = "Priester",
                         modifier = Modifier
-                            .size(56.dp)
+                            .size(52.dp)
                             .clip(CircleShape)
-                            .border(2.dp, Color.White.copy(0.5f), CircleShape),
+                            .border(2.dp, Color.White.copy(0.7f), CircleShape),
                         contentScale = ContentScale.Crop
                     )
                     Text(
                         "Möchtet ihr?",
-                        color = TextPrimary,
+                        color = Color(0xFF3E2723),
                         fontFamily = DisplayFont,
-                        fontSize = 18.sp,
-                        modifier = Modifier.padding(top = 6.dp)
+                        fontSize = 16.sp,
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color.White.copy(0.85f))
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
             }
@@ -408,7 +406,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 12.dp),
+                    .padding(bottom = 12.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color.White.copy(0.75f))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 listOf("❤️", "😍", "🎉", "👏").forEach { emo ->
@@ -427,6 +428,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 }
             }
         }
+        } // Kapellen-Box
 
         if (confetti) {
             ConfettiOverlay()
