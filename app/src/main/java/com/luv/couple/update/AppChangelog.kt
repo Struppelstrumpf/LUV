@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.84",
+            listOf(
+                "Kochen: Herdplatte lädt wieder, Tippen auf Küche öffnet Popup",
+            )
+        ),
+        Entry(
             "2.2.83",
             listOf(
                 "Haus/Portal: kein API-Fehler-Spam mehr beim Betreten",

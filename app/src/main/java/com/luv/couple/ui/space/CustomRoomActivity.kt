@@ -642,6 +642,30 @@ fun CustomRoomScreen(
                             return@detectTapGestures
                         }
 
+                        // Kochen / Aktionen: Tippen in/nahe der Zone → hinlaufen + öffnen
+                        val hitAction = actionsRef.value.firstOrNull { a ->
+                            actionContains(a, rawX, rawY) ||
+                                (
+                                    rawX >= a.x - 0.06f && rawX <= a.x + a.w + 0.06f &&
+                                        rawY >= a.y - 0.06f && rawY <= a.y + a.h + 0.06f
+                                    )
+                        }
+                        if (hitAction != null) {
+                            scope.launch {
+                                walking = true
+                                val ax = hitAction.x + hitAction.w / 2f
+                                val ay = hitAction.y + hitAction.h / 2f
+                                val approach = nearestWalkablePoint(zns, ax, ay, aR)
+                                    ?: (ax to ay)
+                                walkTo(approach.first, approach.second, zns, aR)
+                                if (hitAction.actionType.equals("cook", ignoreCase = true)) {
+                                    cookOpen = true
+                                }
+                                walking = false
+                            }
+                            return@detectTapGestures
+                        }
+
                         scope.launch {
                             walking = true
                             walkTo(rawX, rawY, zns, aR)

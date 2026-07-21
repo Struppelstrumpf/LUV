@@ -490,11 +490,16 @@ function findPortalAt(layout, x, y) {
   );
 }
 
-function findActionAt(layout, x, y) {
+function findActionAt(layout, x, y, pad = 0.045) {
   if (!layout?.actions?.length) return null;
+  const p = Number(pad) || 0;
   return (
-    layout.actions.find((a) =>
-      x >= a.x && x <= a.x + a.w && y >= a.y && y <= a.y + a.h
+    layout.actions.find(
+      (a) =>
+        x >= a.x - p &&
+        x <= a.x + a.w + p &&
+        y >= a.y - p &&
+        y <= a.y + a.h + p
     ) || null
   );
 }
