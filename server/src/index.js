@@ -11407,6 +11407,60 @@ app.post("/v1/admin/shop/rotation-plans/:id/apply", (req, res) => {
   return res.json({ ok: true, ...result });
 });
 
+/**
+ * Nach create/upsert: Lootbox, Marktplatz, optional Rotation+Fenster.
+ * body: marketSellable, lootboxEligible, joinRotation, cycleFrom, cycleUntil, rotationPlanId, rotationLocked
+ */
+function finalizeNewShopItemFlags(body, result, { byUserId = null, kind, eventId } = {}) {
+  const itemId = result?.item?.itemId;
+  if (!itemId || !kind) return { lootboxEligible: !eventId };
+  let lootboxEligible = !eventId;
+  if (eventId) {
+    itemTrade.setLootboxEligible(getDb(), kind, itemId, false, {
+      defaultPet: DEFAULT_PET,
+      starterEmojis: STARTER_EMOJIS,
+    });
+    lootboxEligible = false;
+  } else if (body.lootboxEligible !== undefined) {
+    const want = Boolean(body.lootboxEligible);
+    const lb = itemTrade.setLootboxEligible(getDb(), kind, itemId, want, {
+      defaultPet: DEFAULT_PET,
+      starterEmojis: STARTER_EMOJIS,
+    });
+    if (lb.ok) lootboxEligible = want;
+  }
+  if (!eventId && body.marketSellable !== undefined) {
+    itemTrade.setMarketSellable(getDb(), kind, itemId, Boolean(body.marketSellable), {
+      defaultPet: DEFAULT_PET,
+      starterEmojis: STARTER_EMOJIS,
+    });
+  }
+  if (!eventId && body.joinRotation === true && body.rotationLocked !== true) {
+    try {
+      shopCalendar.rejoinRotationPool(getDb(), kind, itemId, { byUserId });
+      if (body.cycleFrom != null || body.cycleUntil != null) {
+        shopCalendar.updateAvailability(
+          getDb(),
+          kind,
+          itemId,
+          {
+            availableFrom: body.cycleFrom ?? undefined,
+            availableUntil: body.cycleUntil ?? undefined,
+            rotationPlanId:
+              body.rotationPlanId || result.item.rotationPlanId || "expensive_3m_week",
+            rotationLocked: false,
+            enabled: true,
+          },
+          { byUserId }
+        );
+      }
+    } catch (e) {
+      console.error("[shop] finalize joinRotation", e);
+    }
+  }
+  return { lootboxEligible };
+}
+
 /** Shop-Änderungs-Warteschlange (bis ≈03:00 Berlin). */
 function buildShopQueueHandlers() {
   return {
@@ -11480,12 +11534,11 @@ function buildShopQueueHandlers() {
         } catch (_) {
           /* ignore */
         }
-        if (eventId && result.item?.itemId) {
-          itemTrade.setLootboxEligible(getDb(), kind, result.item.itemId, false, {
-            defaultPet: DEFAULT_PET,
-            starterEmojis: STARTER_EMOJIS,
-          });
-        }
+        finalizeNewShopItemFlags(body, result, {
+          byUserId: ctx.byUserId,
+          kind,
+          eventId,
+        });
         invalidateLootboxPoolCache();
       }
       return result;
@@ -11860,19 +11913,21 @@ app.post("/v1/admin/shop/items", (req, res) => {
   } catch (_) {
     /* ignore */
   }
-  // Event-Items: fest von Lootbox ausschließen
-  if (eventId && result.item?.itemId) {
-    itemTrade.setLootboxEligible(getDb(), kind, result.item.itemId, false, {
-      defaultPet: DEFAULT_PET,
-      starterEmojis: STARTER_EMOJIS,
-    });
-  }
+  const { lootboxEligible } = finalizeNewShopItemFlags(body, result, {
+    byUserId: ctx.user?.id || null,
+    kind,
+    eventId,
+  });
   invalidateLootboxPoolCache();
   scheduleSave();
+  const fresh = shopCatalog.getItem(getDb(), kind, result.item.itemId);
   return res.json({
     ok: true,
-    item: result.item,
-    lootbox: !eventId,
+    item: fresh
+      ? shopCatalog.publicItem(fresh, Date.now(), { admin: true, db: getDb() })
+      : result.item,
+    lootbox: lootboxEligible,
+    marketSellable: Boolean(body.marketSellable),
     chromaKey: petImages.CHROMA_KEY_HEX,
     ...(hasImgPayload && shopChangeQueue.parseSchedule(req.body, req.query) === "maintenance"
       ? {

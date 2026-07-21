@@ -2572,12 +2572,23 @@
   async function openWizard(preKind) {
     let step = 0;
     let eventOptions = [];
+    let rotationPlans = [];
     try {
       const evData = await api("/admin/shop/event-options");
       eventOptions = evData.events || [];
     } catch (_) {
       eventOptions = [];
     }
+    try {
+      const planData = await api("/admin/shop/rotation-plans");
+      rotationPlans = (planData.plans || []).filter((p) => p && p.enabled !== false);
+    } catch (_) {
+      rotationPlans = [];
+    }
+    const defaultPlanId =
+      rotationPlans.find((p) => p.id === "expensive_3m_week")?.id ||
+      rotationPlans[0]?.id ||
+      "expensive_3m_week";
     const draft = {
       kind: String(preKind || "emojis").startsWith("event_")
         ? String(preKind).slice("event_".length)
@@ -2604,6 +2615,14 @@
       imageDataUrl: null,
       visualConfig: null,
       previewEmoji: "",
+      /** fixed = dauerhaft im Shop · cycle = Rotationsplan */
+      shopPresence: "fixed",
+      cycleMode: "random",
+      rotationPlanId: defaultPlanId,
+      cycleFrom: null,
+      cycleUntil: null,
+      marketSellable: false,
+      lootboxEligible: true,
     };
     if (draft.isEventItem) {
       const kindDe =
@@ -2618,8 +2637,29 @@
       draft.searchText = "event " + kindDe.toLowerCase();
       draft.itemId = "";
       if (draft.kind === "themes") draft.source = "custom";
+      draft.shopPresence = "fixed";
+      draft.lootboxEligible = false;
+      draft.marketSellable = false;
     }
-    const steps = ["Kategorie", "Gestalten", "Preis", "Angebot & Timer", "Limits", "Fertig"];
+    function wizardSteps() {
+      return draft.isEventItem
+        ? ["Kategorie", "Gestalten", "Preis", "Angebot & Timer", "Limits", "Fertig"]
+        : [
+            "Kategorie",
+            "Gestalten",
+            "Preis",
+            "Angebot & Timer",
+            "Limits",
+            "Shop & Sichtbarkeit",
+            "Fertig",
+          ];
+    }
+    function isVisibilityStep() {
+      return !draft.isEventItem && step === 5;
+    }
+    function isFinishStep() {
+      return draft.isEventItem ? step === 5 : step === 6;
+    }
 
     function eventKindDe(kind) {
       return kind === "pets"
@@ -2710,6 +2750,8 @@
     }
 
     function paint() {
+      const steps = wizardSteps();
+      if (step >= steps.length) step = steps.length - 1;
       openModal(`
         <h3 style="font-family:var(--display);margin:0 0 0.5rem">${
           draft.isEventItem ? "Neues Event-Item" : "Neues Shop-Item"
@@ -2722,7 +2764,7 @@
           <div class="actions" style="margin-top:1rem">
             ${step > 0 ? `<button type="button" class="btn ghost" id="wizBack">Zurück</button>` : ""}
             ${
-              step < steps.length - 1
+              !isFinishStep()
                 ? `<button type="button" class="btn" id="wizNext">Weiter</button>`
                 : `<button type="submit" class="btn teal">Im Shop anlegen</button>`
             }
@@ -2732,7 +2774,8 @@
       if (modalCard) {
         modalCard.classList.toggle(
           "wide",
-          step === 1 && (draft.source === "custom" || draft.kind === "themes" || draft.isEventItem)
+          (step === 1 && (draft.source === "custom" || draft.kind === "themes" || draft.isEventItem)) ||
+            isVisibilityStep()
         );
       }
       $("cancelModal").onclick = closeModal;
@@ -2751,6 +2794,7 @@
           paint();
         };
       wireDesignStep();
+      wireVisibilityStep();
       const eventSel = $("eventPetSelect");
       if (eventSel) {
         eventSel.onchange = () => {
@@ -2765,7 +2809,7 @@
         const tag = (e.target && e.target.tagName) || "";
         if (tag !== "INPUT" && tag !== "SELECT") return;
         e.preventDefault();
-        if (step < steps.length - 1) {
+        if (!isFinishStep()) {
           if (!saveStep()) return;
           step++;
           paint();
@@ -2773,7 +2817,7 @@
       });
       form.onsubmit = async (e) => {
         e.preventDefault();
-        if (step < steps.length - 1) {
+        if (!isFinishStep()) {
           if (!saveStep()) return;
           step++;
           paint();
@@ -2806,6 +2850,29 @@
           body.rotationLocked = true;
           if (!body.priceCoins || body.priceCoins < 1) {
             body.priceCoins = draft.kind === "themes" ? 80 : 200;
+          }
+        } else {
+          const fixed = draft.shopPresence === "fixed";
+          body.rotationLocked = fixed;
+          body.marketSellable = Boolean(draft.marketSellable);
+          body.lootboxEligible = Boolean(draft.lootboxEligible);
+          if (!fixed) {
+            body.rotationPlanId = draft.rotationPlanId || defaultPlanId;
+            body.joinRotation = true;
+            if (draft.cycleMode === "manual") {
+              if (!draft.cycleFrom || !draft.cycleUntil) {
+                alert("Bitte Von/Bis für das Zyklus-Fenster setzen oder „Zufall“ wählen.");
+                return;
+              }
+              if (draft.cycleUntil <= draft.cycleFrom) {
+                alert("Bis-Datum muss nach Von-Datum liegen.");
+                return;
+              }
+              body.cycleFrom = draft.cycleFrom;
+              body.cycleUntil = draft.cycleUntil;
+              // Manuelles Zyklusfenster steuert die Sichtbarkeit — Sale-Ende aus Step 3 nicht mischen
+              body.availableUntil = null;
+            }
           }
         }
         if (draft.kind === "themes" && draft.visualConfig) {
@@ -2849,6 +2916,42 @@
           alert(err?.message || "Anlegen fehlgeschlagen");
         }
       };
+    }
+
+    function wireVisibilityStep() {
+      if (!isVisibilityStep()) return;
+      const syncCycleUi = () => {
+        const presence = String($("wizShopPresence")?.value || draft.shopPresence || "fixed");
+        const cycleBox = $("wizCycleBox");
+        if (cycleBox) cycleBox.style.display = presence === "cycle" ? "" : "none";
+        const mode =
+          document.querySelector('#wizForm input[name="cycleMode"]:checked')?.value ||
+          draft.cycleMode ||
+          "random";
+        const manual = $("wizCycleManual");
+        if (manual) manual.style.display = mode === "manual" ? "" : "none";
+      };
+      const presence = $("wizShopPresence");
+      if (presence) presence.onchange = syncCycleUi;
+      document.querySelectorAll('#wizForm input[name="cycleMode"]').forEach((el) => {
+        el.onchange = syncCycleUi;
+      });
+      const rnd = $("wizCycleRandom");
+      if (rnd) {
+        rnd.onclick = () => {
+          const radio = document.querySelector('#wizForm input[name="cycleMode"][value="random"]');
+          if (radio) radio.checked = true;
+          draft.cycleMode = "random";
+          draft.cycleFrom = null;
+          draft.cycleUntil = null;
+          const from = document.querySelector('#wizForm input[name="cycleFrom"]');
+          const until = document.querySelector('#wizForm input[name="cycleUntil"]');
+          if (from) from.value = "";
+          if (until) until.value = "";
+          syncCycleUi();
+        };
+      }
+      syncCycleUi();
     }
 
     function ensureCustomImageId() {
@@ -3081,6 +3184,29 @@
         const mp = String(fd.get("maxPerUser") || "").trim();
         draft.maxTotalSales = mt === "" ? null : Number(mt);
         draft.maxPerUser = mp === "" ? null : Number(mp);
+      }
+      if (isVisibilityStep()) {
+        draft.shopPresence =
+          String(fd.get("shopPresence") || "fixed") === "cycle" ? "cycle" : "fixed";
+        draft.cycleMode =
+          String(fd.get("cycleMode") || "random") === "manual" ? "manual" : "random";
+        draft.rotationPlanId = String(fd.get("rotationPlanId") || defaultPlanId).trim() || defaultPlanId;
+        const fromRaw = String(fd.get("cycleFrom") || "").trim();
+        const untilRaw = String(fd.get("cycleUntil") || "").trim();
+        draft.cycleFrom = fromRaw ? new Date(fromRaw).getTime() : null;
+        draft.cycleUntil = untilRaw ? new Date(untilRaw).getTime() : null;
+        draft.marketSellable = fd.get("marketSellable") === "on" || fd.get("marketSellable") === "true";
+        draft.lootboxEligible = fd.get("lootboxEligible") === "on" || fd.get("lootboxEligible") === "true";
+        if (draft.shopPresence === "cycle" && draft.cycleMode === "manual") {
+          if (!draft.cycleFrom || !draft.cycleUntil) {
+            alert("Zyklus-Fenster: Von und Bis ausfüllen, oder „Zufall“ wählen.");
+            return false;
+          }
+          if (draft.cycleUntil <= draft.cycleFrom) {
+            alert("Bis-Datum muss nach Von-Datum liegen.");
+            return false;
+          }
+        }
       }
       return true;
     }
@@ -3330,6 +3456,79 @@
           <label class="field">Max. Verkäufe gesamt<input name="maxTotalSales" type="number" value="${draft.maxTotalSales ?? ""}" placeholder="∞" /></label>
           <label class="field">Max. pro Nutzer<input name="maxPerUser" type="number" value="${draft.maxPerUser ?? ""}" placeholder="∞" /></label>
         </div>`;
+      if (isVisibilityStep()) {
+        const planOpts = rotationPlans.length
+          ? rotationPlans
+              .map(
+                (p) =>
+                  `<option value="${esc(p.id)}" ${
+                    draft.rotationPlanId === p.id ? "selected" : ""
+                  }>${esc(p.label || p.id)}</option>`
+              )
+              .join("")
+          : `<option value="${esc(defaultPlanId)}">Standard-Rotation</option>`;
+        const toLocal = (ms) =>
+          ms ? new Date(ms).toISOString().slice(0, 16) : "";
+        return `
+          <label class="field">Im Shop
+            <select name="shopPresence" id="wizShopPresence">
+              <option value="fixed" ${draft.shopPresence === "fixed" ? "selected" : ""}>Dauerhaft (Fix — kein Zyklus)</option>
+              <option value="cycle" ${draft.shopPresence === "cycle" ? "selected" : ""}>Im Rotationszyklus</option>
+            </select>
+            <span class="tip">Fix = immer sichtbar. Zyklus = kommt und geht laut Plan (Wechsel ≈03:00 Berlin).</span>
+          </label>
+          <div id="wizCycleBox" class="panel" style="margin-top:0.75rem;${
+            draft.shopPresence === "cycle" ? "" : "display:none"
+          }">
+            <label class="field">Rotationsplan
+              <select name="rotationPlanId">${planOpts}</select>
+            </label>
+            <div style="display:flex;flex-wrap:wrap;gap:0.75rem;margin-top:0.65rem;align-items:center">
+              <label style="display:flex;gap:0.35rem;align-items:center;cursor:pointer">
+                <input type="radio" name="cycleMode" value="random" ${
+                  draft.cycleMode !== "manual" ? "checked" : ""
+                } /> Zufälliges Fenster (Plan)
+              </label>
+              <label style="display:flex;gap:0.35rem;align-items:center;cursor:pointer">
+                <input type="radio" name="cycleMode" value="manual" ${
+                  draft.cycleMode === "manual" ? "checked" : ""
+                } /> Fenster genau einstellen
+              </label>
+              <button type="button" class="btn secondary" id="wizCycleRandom">Zufall</button>
+            </div>
+            <div id="wizCycleManual" class="grid-2" style="margin-top:0.65rem;${
+              draft.cycleMode === "manual" ? "" : "display:none"
+            }">
+              <label class="field">Von<input name="cycleFrom" type="datetime-local" value="${toLocal(
+                draft.cycleFrom
+              )}" /></label>
+              <label class="field">Bis<input name="cycleUntil" type="datetime-local" value="${toLocal(
+                draft.cycleUntil
+              )}" /></label>
+            </div>
+            <p class="help" style="margin:0.55rem 0 0">
+              Zufall würfelt das erste Fenster nach Plan-Regeln. „Genau“ setzt Von/Bis; danach läuft die Rotation weiter.
+            </p>
+          </div>
+          <div style="margin-top:0.85rem;display:flex;flex-direction:column;gap:0.55rem">
+            <label style="display:flex;gap:0.5rem;align-items:center;cursor:pointer">
+              <input type="checkbox" name="marketSellable" ${
+                draft.marketSellable ? "checked" : ""
+              } /> Handelbar auf dem Spieler-Marktplatz
+            </label>
+            <label style="display:flex;gap:0.5rem;align-items:center;cursor:pointer">
+              <input type="checkbox" name="lootboxEligible" ${
+                draft.lootboxEligible ? "checked" : ""
+              } /> Kann in der Lootbox erscheinen
+            </label>
+          </div>`;
+      }
+      const presenceLabel =
+        draft.shopPresence === "cycle"
+          ? draft.cycleMode === "manual"
+            ? "Zyklus (Fenster manuell)"
+            : "Zyklus (Zufallsfenster)"
+          : "Dauerhaft im Shop";
       return `<div class="panel">
         <p><strong>${
           draft.source === "custom" && draft.imageDataUrl
@@ -3355,8 +3554,14 @@
         <p class="muted">Suche: ${esc(draft.searchText || "—")}</p>
         <p class="muted">${
           draft.isEventItem
-            ? "→ Event-Shop + Itemshop im Zeitfenster · nicht in der Lootbox"
-            : "→ landet in der Lootbox"
+            ? "→ Event-Shop + Itemshop im Zeitfenster · nicht in der Lootbox · nicht handelbar"
+            : `→ ${presenceLabel}${
+                draft.shopPresence === "cycle" && draft.rotationPlanId
+                  ? ` · Plan ${esc(draft.rotationPlanId)}`
+                  : ""
+              } · ${draft.marketSellable ? "handelbar" : "nicht handelbar"} · ${
+                draft.lootboxEligible ? "Lootbox ja" : "Lootbox nein"
+              }`
         }</p>
       </div>`;
     }
