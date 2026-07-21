@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.75",
+            listOf(
+                "Play-Anforderungen: Android 16 (API 36) und Billing Library 8",
+            )
+        ),
+        Entry(
             "2.2.74",
             listOf(
                 "Neuer Raum: Kamera-Fenster (schwarz) mit Scroll am Rand, weicheres Laufen",

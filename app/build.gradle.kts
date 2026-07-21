@@ -15,14 +15,14 @@ val keystoreProperties = Properties().apply {
 
 android {
     namespace = "com.luv.couple"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.luv.couple"
         minSdk = 28
-        targetSdk = 35
-        versionCode = 397
-        versionName = "2.2.74"
+        targetSdk = 36
+        versionCode = 398
+        versionName = "2.2.75"
 
         // Hetzner/API-URL hier oder in gradle.properties setzen:
         // luv.api.baseUrl=https://luv.deinedomain.de
@@ -97,7 +97,8 @@ dependencies {
     implementation("com.google.android.gms:play-services-auth:21.3.0")
     implementation("com.google.zxing:core:3.5.3")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
-    implementation("com.android.billingclient:billing-ktx:7.1.1")
+    // 8.0.0 erfüllt Play-Pflicht; 9.x braucht Kotlin-Metadata ≥2.2 (Projekt: 2.0)
+    implementation("com.android.billingclient:billing-ktx:8.0.0")
     implementation("com.google.android.play:app-update-ktx:2.1.0")
     implementation("com.google.android.play:integrity:1.4.0")
     implementation("com.android.installreferrer:installreferrer:2.2")

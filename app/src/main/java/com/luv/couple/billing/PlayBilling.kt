@@ -53,6 +53,7 @@ class PlayBilling(context: Context) : PurchasesUpdatedListener {
         .enablePendingPurchases(
             PendingPurchasesParams.newBuilder().enableOneTimeProducts().build()
         )
+        .enableAutoServiceReconnection()
         .build()
 
     val formattedPrices: Map<String, String>
@@ -129,9 +130,10 @@ class PlayBilling(context: Context) : PurchasesUpdatedListener {
                 )
                 .build()
             suspendCancellableCoroutine { cont ->
-                client.queryProductDetailsAsync(params) { result, detailsList ->
-                    if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                        val list = detailsList.orEmpty()
+                // PBL 8+: Listener liefert QueryProductDetailsResult statt List
+                client.queryProductDetailsAsync(params) { billingResult, productDetailsResult ->
+                    if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+                        val list = productDetailsResult.productDetailsList
                         list.forEach { productCache[it.productId] = it }
                         if (cont.isActive) {
                             cont.resume(list.associateBy { it.productId })
