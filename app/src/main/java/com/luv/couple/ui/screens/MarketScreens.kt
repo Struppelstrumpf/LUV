@@ -70,6 +70,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.LuvApp
+import com.luv.couple.data.AccountInfo
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.PendingProfilePlace
@@ -837,9 +838,11 @@ private fun ItemShopContent(
         }
         pendingBuy = pending
     }
-    suspend fun reloadShopAndInventory() {
-        runCatching { LuvApiClient.fetchShopCatalog() }
-        catalogTick++
+    suspend fun reloadShopAndInventory(includeCatalog: Boolean = true) {
+        if (includeCatalog) {
+            runCatching { LuvApiClient.fetchShopCatalog() }
+            catalogTick++
+        }
         runCatching {
             val remote = LuvApiClient.fetchInventory()
             prefs.applyInventorySnap(
@@ -850,7 +853,14 @@ private fun ItemShopContent(
                 equippedPet = remote.equippedPet
             )
         }
-        onRefreshInventory()
+        // Kein zweites onRefreshInventory — Inventar ist schon gepatcht
+    }
+
+    fun optimisticSpend(price: Int): AccountInfo? {
+        val prev = account ?: return null
+        if (price <= 0) return prev
+        AccountSession.setAccount(prev.copy(coins = (prev.coins - price).coerceAtLeast(0)))
+        return prev
     }
     LaunchedEffect(Unit) { reloadShopAndInventory() }
     @Suppress("UNUSED_VARIABLE")
@@ -963,61 +973,80 @@ private fun ItemShopContent(
                 } else TextButton(
                     enabled = busyKey == null,
                     onClick = {
-                        busyKey = previewId
+                        val prevAccount = optimisticSpend(price)
+                        val prevEmojis = ownedEmojis
+                        val prevThemes = ownedThemes
+                        val prevStickers = ownedStickers
+                        val prevPets = ownedPets
+                        // Sofort lokale Inventar-Anzeige
+                        scope.launch {
+                            when (pending) {
+                                is ShopPendingBuy.Emoji -> {
+                                    val next = prevEmojis.toMutableMap()
+                                    next[pending.item.emoji] = (next[pending.item.emoji] ?: 0) + 1
+                                    prefs.setOwnedEmojis(next)
+                                }
+                                is ShopPendingBuy.Theme -> {
+                                    prefs.applyInventorySnap(
+                                        emojis = prevEmojis,
+                                        themes = (prevThemes + pending.item.id).distinct(),
+                                        stickers = prevStickers,
+                                        pets = prevPets,
+                                        equippedPet = equippedPet
+                                    )
+                                }
+                                is ShopPendingBuy.Sticker -> {
+                                    val next = prevStickers.toMutableMap()
+                                    next[pending.item.emoji] = (next[pending.item.emoji] ?: 0) + 1
+                                    prefs.applyInventorySnap(
+                                        emojis = prevEmojis,
+                                        themes = prevThemes,
+                                        stickers = next,
+                                        pets = prevPets,
+                                        equippedPet = equippedPet
+                                    )
+                                }
+                                is ShopPendingBuy.Pet -> {
+                                    prefs.applyInventorySnap(
+                                        emojis = prevEmojis,
+                                        themes = prevThemes,
+                                        stickers = prevStickers,
+                                        pets = (prevPets + pending.item.emoji).distinct(),
+                                        equippedPet = equippedPet
+                                    )
+                                }
+                            }
+                        }
+                        purchaseFlash = titleLabel to price
+                        pendingBuy = null
+                        busyKey = null
                         scope.launch {
                             runCatching {
                                 when (pending) {
-                                    is ShopPendingBuy.Emoji -> {
-                                        val (_, ownedCount) = LuvApiClient.buyEmoji(pending.item.emoji)
-                                        val next = ownedEmojis.toMutableMap()
-                                        next[pending.item.emoji] = ownedCount
-                                        prefs.setOwnedEmojis(next)
-                                    }
-                                    is ShopPendingBuy.Theme -> {
-                                        LuvApiClient.buyTheme(pending.item.id)
-                                        prefs.applyInventorySnap(
-                                            emojis = ownedEmojis,
-                                            themes = (ownedThemes + pending.item.id).distinct(),
-                                            stickers = ownedStickers,
-                                            pets = ownedPets,
-                                            equippedPet = equippedPet
-                                        )
-                                    }
-                                    is ShopPendingBuy.Sticker -> {
-                                        val (_, ownedCount) = LuvApiClient.buySticker(pending.item.emoji)
-                                        val next = ownedStickers.toMutableMap()
-                                        next[pending.item.emoji] = ownedCount
-                                        prefs.applyInventorySnap(
-                                            emojis = ownedEmojis,
-                                            themes = ownedThemes,
-                                            stickers = next,
-                                            pets = ownedPets,
-                                            equippedPet = equippedPet
-                                        )
-                                    }
-                                    is ShopPendingBuy.Pet -> {
-                                        LuvApiClient.buyPet(pending.item.emoji)
-                                        prefs.applyInventorySnap(
-                                            emojis = ownedEmojis,
-                                            themes = ownedThemes,
-                                            stickers = ownedStickers,
-                                            pets = (ownedPets + pending.item.emoji).distinct(),
-                                            equippedPet = equippedPet
-                                        )
-                                    }
+                                    is ShopPendingBuy.Emoji -> LuvApiClient.buyEmoji(pending.item.emoji)
+                                    is ShopPendingBuy.Theme -> LuvApiClient.buyTheme(pending.item.id)
+                                    is ShopPendingBuy.Sticker -> LuvApiClient.buySticker(pending.item.emoji)
+                                    is ShopPendingBuy.Pet -> LuvApiClient.buyPet(pending.item.emoji)
                                 }
-                                purchaseFlash = titleLabel to price
-                                pendingBuy = null
-                                // Katalog/Inventar im Hintergrund — UI sofort frei
-                                scope.launch { runCatching { reloadShopAndInventory() } }
+                                // Nur Inventar nachziehen — kein voller Katalog
+                                reloadShopAndInventory(includeCatalog = false)
                             }.onFailure {
+                                prevAccount?.let { AccountSession.setAccount(it) }
+                                scope.launch {
+                                    prefs.applyInventorySnap(
+                                        emojis = prevEmojis,
+                                        themes = prevThemes,
+                                        stickers = prevStickers,
+                                        pets = prevPets,
+                                        equippedPet = equippedPet
+                                    )
+                                }
                                 Toast.makeText(
                                     context,
                                     it.message ?: "Kauf fehlgeschlagen",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
-                            busyKey = null
                         }
                     }
                 ) {
@@ -1593,15 +1622,21 @@ private fun LootboxTab(
             return
         }
         val qty = quantity.coerceAtLeast(1)
-        if (coins < price * qty) {
+        val total = price * qty
+        if (coins < total) {
             Toast.makeText(context, "Nicht genug Coins", Toast.LENGTH_SHORT).show()
             return
+        }
+        val prevAccount = AccountSession.account.value
+        if (prevAccount != null && total > 0) {
+            AccountSession.setAccount(
+                prevAccount.copy(coins = (prevAccount.coins - total).coerceAtLeast(0))
+            )
         }
         onBusy("lootbox")
         scope.launch {
             runCatching { LuvApiClient.buyLootbox(qty) }
                 .onSuccess { result ->
-                    // Sofort Opening starten — kein Warten auf vollen Shop-Reload
                     val all = result.pending.ifEmpty { result.purchased }
                     val first = all.firstOrNull()
                     if (first == null) {
@@ -1615,17 +1650,17 @@ private fun LootboxTab(
                             Toast.LENGTH_SHORT
                         ).show()
                     }
-                    // Inventar/Coins im Hintergrund nachziehen
-                    scope.launch { runCatching { onRefresh() } }
+                    onBusy(null)
                 }
                 .onFailure {
+                    prevAccount?.let { AccountSession.setAccount(it) }
+                    onBusy(null)
                     Toast.makeText(
                         context,
                         it.message ?: "Kauf fehlgeschlagen",
                         Toast.LENGTH_SHORT
                     ).show()
                 }
-            onBusy(null)
         }
     }
     fun finishTapsAndOpen() {

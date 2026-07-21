@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.38",
+            listOf(
+                "Lobby-Reihenfolge mit Google-Konto speichern; Käufe und Freunde reagieren sofort",
+            )
+        ),
+        Entry(
             "2.2.37",
             listOf(
                 "Einladungs-Link zeigt wieder Beitreten-Popup statt nur Home",

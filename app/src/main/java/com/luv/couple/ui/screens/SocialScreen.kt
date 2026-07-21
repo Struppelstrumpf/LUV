@@ -226,35 +226,46 @@ private fun FriendsPanel(
         }
     }
 
-    fun reload() {
+    fun applyFriendsSnap(it: LuvApiClient.FriendsBag) {
+        friends = it.friends
+        incoming = it.incoming
+        outgoing = it.outgoing
+        marriageProposals = it.marriageProposals
+        lobbyInvites = it.lobbyInvites
+        myMarriage = it.myMarriage
+        pendingFriendshipCoins = it.pendingFriendshipCoins
+        com.luv.couple.net.NotificationBadges.setFriendIncoming(
+            it.incoming.size + it.marriageProposals.size + it.lobbyInvites.size
+        )
+        com.luv.couple.net.NotificationBadges.syncAppBadge(context)
+    }
+
+    fun reload(force: Boolean = false) {
         scope.launch {
-            loading = true
-            runCatching { LuvApiClient.fetchFriends() }
-                .onSuccess {
-                    friends = it.friends
-                    incoming = it.incoming
-                    outgoing = it.outgoing
-                    marriageProposals = it.marriageProposals
-                    lobbyInvites = it.lobbyInvites
-                    myMarriage = it.myMarriage
-                    pendingFriendshipCoins = it.pendingFriendshipCoins
-                    com.luv.couple.net.NotificationBadges.setFriendIncoming(
-                        it.incoming.size + it.marriageProposals.size + it.lobbyInvites.size
-                    )
-                    com.luv.couple.net.NotificationBadges.syncAppBadge(context)
-                }
+            // Cache-First: sofort anzeigen, Loading nur ohne Cache
+            val cached = LuvApiClient.peekFriendsCache()
+            if (cached != null) {
+                applyFriendsSnap(cached)
+                loading = false
+            } else {
+                loading = true
+            }
+            runCatching { LuvApiClient.fetchFriends(force = force) }
+                .onSuccess { applyFriendsSnap(it) }
                 .onFailure {
-                    Toast.makeText(
-                        context,
-                        it.message ?: "Freunde laden fehlgeschlagen",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    if (cached == null) {
+                        Toast.makeText(
+                            context,
+                            it.message ?: "Freunde laden fehlgeschlagen",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                 }
             loading = false
         }
     }
 
-    LaunchedEffect(Unit) { reload() }
+    LaunchedEffect(Unit) { reload(force = false) }
 
     fun persistOrder(next: List<LuvApiClient.FriendCard>) {
         friends = next

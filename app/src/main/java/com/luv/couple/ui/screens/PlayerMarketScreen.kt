@@ -748,32 +748,43 @@ fun PlayerMarketScreen(
                 if (!economyUnlocked) {
                     onRequireGoogle()
                 } else {
-                    busyId = listing.id
+                    val bought = listing
+                    val prevAccount = account
+                    if (prevAccount != null && bought.priceCoins > 0) {
+                        AccountSession.setAccount(
+                            prevAccount.copy(
+                                coins = (prevAccount.coins - bought.priceCoins).coerceAtLeast(0)
+                            )
+                        )
+                    }
+                    val prevOffers = offersList
+                    offersList = offersList.filter { it.id != bought.id }
+                    purchaseFlash = marketDisplayLabel(
+                        bought.kind,
+                        bought.itemId,
+                        bought.label
+                    ) to bought.priceCoins
+                    previewListing = null
+                    busyId = null
                     scope.launch {
                         runCatching {
-                            LuvApiClient.buyMarketListing(listing.id)
+                            LuvApiClient.buyMarketListing(bought.id)
                         }.onSuccess {
-                            purchaseFlash = marketDisplayLabel(
-                                listing.kind,
-                                listing.itemId,
-                                listing.label
-                            ) to listing.priceCoins
-                            previewListing = null
-                            busyId = null
-                            // Inventar/Listen im Hintergrund — Kauf-UI sofort frei
-                            scope.launch {
-                                runCatching { syncInventory() }
-                                refreshOffersIfOpen()
-                                reloadMarket()
-                                reloadMine()
+                            // Listen parallel im Hintergrund
+                            kotlinx.coroutines.coroutineScope {
+                                launch { runCatching { syncInventory() } }
+                                launch { refreshOffersIfOpen() }
+                                launch { reloadMarket() }
+                                launch { reloadMine() }
                             }
                         }.onFailure {
+                            prevAccount?.let { AccountSession.setAccount(it) }
+                            offersList = prevOffers
                             Toast.makeText(
                                 context,
                                 it.message ?: "Kauf fehlgeschlagen",
                                 Toast.LENGTH_SHORT
                             ).show()
-                            busyId = null
                         }
                     }
                 }

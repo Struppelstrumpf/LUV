@@ -1300,6 +1300,27 @@ function sanitizeSettings(raw) {
   }
   const brush = Number(src.brushWidth);
   const updatedAt = Number(src.updatedAt);
+  const lobbyOrder = [];
+  if (Array.isArray(src.lobbyOrder)) {
+    const seen = new Set();
+    for (const raw of src.lobbyOrder) {
+      const code = String(raw || "")
+        .trim()
+        .toUpperCase()
+        .replace(/^LUV-/, "")
+        .slice(0, 16);
+      if (
+        code.length >= 3 &&
+        code.length <= 16 &&
+        /^[A-Z0-9]+$/.test(code) &&
+        !seen.has(code)
+      ) {
+        seen.add(code);
+        lobbyOrder.push(code);
+      }
+      if (lobbyOrder.length >= 50) break;
+    }
+  }
   return {
     quietHours: quietOut,
     emojiBar,
@@ -1308,6 +1329,7 @@ function sanitizeSettings(raw) {
     liveProximityRich: src.liveProximityRich !== false,
     liveProximityWake: Boolean(src.liveProximityWake),
     lobbyProximity,
+    lobbyOrder,
     brushWidth: Number.isFinite(brush)
       ? Math.min(40, Math.max(6, brush))
       : 18,
@@ -9959,13 +9981,16 @@ app.get("/v1/item-labels", (req, res) => {
   });
 });
 
+let shopCatalogSeeded = false;
 function seedShopCatalogIfNeeded() {
+  if (shopCatalogSeeded) return;
   shopCatalog.seedFromStatic(getDb(), {
     emojiPrices: EMOJI_SHOP_PRICES,
     themePrices: THEME_SHOP_PRICES,
     petPrices: PET_SHOP_PRICES,
     stickerPrices: STICKER_SHOP_PRICES,
   });
+  shopCatalogSeeded = true;
 }
 
 function resolveShopPrice(kind, itemId) {
@@ -10013,7 +10038,8 @@ app.post("/v1/shop/buy-emoji", (req, res) => {
   shopCatalog.recordSale(getDb(), ctx.user, "emojis", emoji);
   trackAch(ctx.user, "emojis_bought", 1);
   trackAch(ctx.user, "coins_spent", price);
-  flushSave();
+  // Antwort zuerst — Persistenz verzögert (kein 3s-Warten auf stringify)
+  scheduleSave();
   return res.json({
     ok: true,
     emoji,
@@ -10090,7 +10116,7 @@ app.post("/v1/shop/buy-theme", (req, res) => {
   shopCatalog.recordSale(getDb(), ctx.user, "themes", themeId);
   if (price > 0) trackAch(ctx.user, "coins_spent", price);
   trackAch(ctx.user, "themes_bought", 1);
-  flushSave();
+  scheduleSave();
   return res.json({ ok: true, themeId, price, user: publicUser(ctx.user) });
 });
 
@@ -10133,7 +10159,7 @@ app.post("/v1/shop/buy-sticker", (req, res) => {
   shopCatalog.recordSale(getDb(), ctx.user, "stickers", emoji);
   trackAch(ctx.user, "stickers_bought", 1);
   trackAch(ctx.user, "coins_spent", price);
-  flushSave();
+  scheduleSave();
   return res.json({
     ok: true,
     emoji,
@@ -10205,7 +10231,7 @@ app.post("/v1/shop/buy-pet", (req, res) => {
   shopCatalog.recordSale(getDb(), ctx.user, "pets", emoji);
   trackAch(ctx.user, "pets_bought", 1);
   syncAchInventoryMetrics(ctx.user);
-  flushSave();
+  scheduleSave();
   return res.json({ ok: true, emoji, price, user: publicUser(ctx.user) });
 });
 
@@ -11361,7 +11387,7 @@ app.post("/v1/market/:id/buy", (req, res) => {
   trackAch(seller, "market_sold", 1);
   syncAchInventoryMetrics(ctx.user);
   syncAchInventoryMetrics(seller);
-  flushSave();
+  scheduleSave();
   return res.json({
     ok: true,
     user: publicUser(ctx.user),
@@ -11982,7 +12008,7 @@ app.post("/v1/shop/lootbox", (req, res) => {
     return res.status(402).json({ error: "no_coins", message: "Nicht genug Coins." });
   }
   trackAch(ctx.user, "coins_spent", charged);
-  flushSave();
+  scheduleSave();
   return res.json({
     ok: true,
     price: LOOTBOX_PRICE,
@@ -12034,7 +12060,7 @@ app.post("/v1/shop/lootbox/open", (req, res) => {
   const entry = pending[idx];
   pending.splice(idx, 1);
   const grant = grantLootboxReward(ctx.user, entry);
-  flushSave();
+  scheduleSave();
   return res.json({
     ok: true,
     item: {

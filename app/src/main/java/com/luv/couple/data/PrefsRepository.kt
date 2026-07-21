@@ -461,6 +461,9 @@ class PrefsRepository(private val context: Context) {
             parseLobbyProximity(prefs[lobbyProximityKey]),
             lobbies
         )
+        val order = lobbies.map { lobby ->
+            lobby.code.trim().uppercase().removePrefix("LUV-")
+        }.filter { it.length in 3..16 && it.all(Char::isLetterOrDigit) }
         return com.luv.couple.net.CloudSettings(
             quietHours = parseQuietHours(prefs[quietHoursKey]),
             emojiBar = parseEmojiBar(prefs[emojiBarKey]),
@@ -469,6 +472,7 @@ class PrefsRepository(private val context: Context) {
             liveProximityRich = prefs[liveProximityRichKey] ?: true,
             liveProximityWake = prefs[liveProximityWakeKey] ?: false,
             lobbyProximity = prox,
+            lobbyOrder = order,
             brushWidth = (prefs[brushWidthKey] ?: 18f).coerceIn(6f, 40f),
             updatedAt = System.currentTimeMillis()
         )
@@ -505,6 +509,20 @@ class PrefsRepository(private val context: Context) {
             prefs[liveProximityWakeKey] = settings.liveProximityWake
             prefs[lobbyProximityKey] = encodeLobbyProximity(finalProx)
             prefs[brushWidthKey] = settings.brushWidth.coerceIn(6f, 40f)
+            if (settings.lobbyOrder.isNotEmpty() && lobbies.size > 1) {
+                val byCode = lobbies.associateBy {
+                    it.code.trim().uppercase().removePrefix("LUV-")
+                }
+                val next = buildList {
+                    for (code in settings.lobbyOrder) {
+                        byCode[code]?.let { add(it) }
+                    }
+                    for (lobby in lobbies) {
+                        if (none { it.id == lobby.id }) add(lobby)
+                    }
+                }
+                prefs[lobbiesKey] = encodeLobbies(next)
+            }
         }
         if (!skipMirror) mirrorSettingsToCloud()
     }
@@ -942,9 +960,10 @@ class PrefsRepository(private val context: Context) {
         }
     }
 
-    /** Reihenfolge der Lobby-Kacheln im Hauptmenü speichern. */
+    /** Reihenfolge der Lobby-Kacheln im Hauptmenü speichern (+ Cloud für Google). */
     suspend fun reorderLobbies(orderedIds: List<String>) {
         if (orderedIds.isEmpty()) return
+        var changed = false
         context.dataStore.edit { prefs ->
             val list = parseLobbies(prefs[lobbiesKey])
             if (list.size <= 1) return@edit
@@ -959,7 +978,9 @@ class PrefsRepository(private val context: Context) {
             }
             if (next.map { it.id } == list.map { it.id }) return@edit
             prefs[lobbiesKey] = encodeLobbies(next)
+            changed = true
         }
+        if (changed) mirrorSettingsToCloud()
     }
 
     suspend fun updateLobbyHost(lobbyId: String, hostNickname: String, hostUserId: String?) {

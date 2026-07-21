@@ -82,6 +82,8 @@ data class CloudSettings(
     val liveProximityRich: Boolean = true,
     val liveProximityWake: Boolean = false,
     val lobbyProximity: Map<String, Boolean> = emptyMap(),
+    /** Invite-Codes in Home-Reihenfolge (Multi-Gerät). */
+    val lobbyOrder: List<String> = emptyList(),
     val brushWidth: Float = 18f,
     val updatedAt: Long = 0L
 )
@@ -571,6 +573,17 @@ object LuvApiClient {
             }
         }
         val brush = o.optDouble("brushWidth", 18.0).toFloat().coerceIn(6f, 40f)
+        val lobbyOrder = buildList {
+            val arr = o.optJSONArray("lobbyOrder")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val code = arr.optString(i).trim().uppercase().removePrefix("LUV-")
+                    if (code.length in 3..16 && code.all { it.isLetterOrDigit() } && code !in this) {
+                        add(code)
+                    }
+                }
+            }
+        }.take(50)
         return CloudSettings(
             quietHours = quiet,
             emojiBar = emojiBar,
@@ -579,6 +592,7 @@ object LuvApiClient {
             liveProximityRich = o.optBoolean("liveProximityRich", true),
             liveProximityWake = o.optBoolean("liveProximityWake", false),
             lobbyProximity = prox,
+            lobbyOrder = lobbyOrder,
             brushWidth = brush,
             updatedAt = o.optLong("updatedAt", 0L)
         )
@@ -598,6 +612,13 @@ object LuvApiClient {
                 prox.put(code, true)
             }
         }
+        val order = org.json.JSONArray()
+        settings.lobbyOrder.forEach { raw ->
+            val code = raw.trim().uppercase().removePrefix("LUV-")
+            if (code.length in 3..16 && code.all { it.isLetterOrDigit() }) {
+                order.put(code)
+            }
+        }
         return JSONObject()
             .put("quietHours", quiet)
             .put("emojiBar", bar)
@@ -606,6 +627,7 @@ object LuvApiClient {
             .put("liveProximityRich", settings.liveProximityRich)
             .put("liveProximityWake", settings.liveProximityWake)
             .put("lobbyProximity", prox)
+            .put("lobbyOrder", order)
             .put("brushWidth", settings.brushWidth.toDouble())
             .put("updatedAt", settings.updatedAt)
     }
@@ -2002,12 +2024,15 @@ object LuvApiClient {
     private var friendsCacheAt = 0L
     @Volatile
     private var friendsCache: FriendsBag? = null
-    private const val FRIENDS_CACHE_MS = 8_000L
+    private const val FRIENDS_CACHE_MS = 45_000L
 
     fun invalidateFriendsCache() {
         friendsCache = null
         friendsCacheAt = 0L
     }
+
+    /** Sofort anzeigbarer Cache (auch abgelaufen) — für Cache-First-UI. */
+    fun peekFriendsCache(): FriendsBag? = friendsCache
 
     suspend fun fetchFriends(force: Boolean = false): FriendsBag = withContext(Dispatchers.IO) {
         val cached = friendsCache
