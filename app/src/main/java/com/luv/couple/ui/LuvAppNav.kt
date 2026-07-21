@@ -262,7 +262,8 @@ fun LuvAppNav() {
             try {
                 joinPreview = LuvApiClient.roomPreview(clean)
             } catch (e: Exception) {
-                joinError = e.message ?: "Lobby nicht gefunden."
+                // Kurz und klar — UI zeigt bei fehlender Lobby nur diesen Text + Zurück
+                joinError = "Lobby nicht gefunden."
                 joinPreview = null
             } finally {
                 joinPreviewLoading = false
@@ -276,6 +277,33 @@ fun LuvAppNav() {
         joinPreviewCode = null
         joinError = null
         PendingJoin.consume()
+        // Nach toter/abgelehnter Einladung: Home wenn Google-Konto, sonst Name/Start
+        scope.launch {
+            val snap = prefs.snapshot()
+            val angemeldet = !snap.sessionToken.isNullOrBlank() &&
+                snap.account?.googleLinked == true &&
+                snap.account?.isTrial != true
+            if (angemeldet) {
+                if (startDestination != Routes.MAIN) startDestination = Routes.MAIN
+                val route = navController.currentDestination?.route
+                if (route != null && route != Routes.MAIN) {
+                    runCatching {
+                        navController.navigate(Routes.MAIN) {
+                            popUpTo(0) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
+                }
+            } else {
+                startDestination = Routes.TUTORIAL
+                runCatching {
+                    navController.navigate(Routes.TUTORIAL) {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
+            }
+        }
     }
 
     /** Erstes Tutorial: Skizze als normale Host-Lobby anlegen (nicht bei Replay). */
@@ -1081,12 +1109,9 @@ fun LuvAppNav() {
         scope.launch {
             googleEnabled = runCatching { LuvApiClient.authConfig().googleEnabled }.getOrDefault(false)
         }
-        val inviteCode = PendingJoin.peek()
-        val inviteBoot = !inviteCode.isNullOrBlank() &&
-            (snapshot.sessionToken.isNullOrBlank() || snapshot.account?.isTrial == true)
-        startDestination = if (inviteBoot) {
-            Routes.MAIN
-        } else if (!snapshot.tutorialDone || !snapshot.hasNickname || snapshot.sessionToken.isNullOrBlank()) {
+        // Kein inviteBoot → MAIN: sonst landet man ohne echte Einladung auf Home.
+        // Einladungs-Overlay liegt ggf. darüber; ohne Session bleibt Start = Name/Tutorial.
+        startDestination = if (!snapshot.tutorialDone || !snapshot.hasNickname || snapshot.sessionToken.isNullOrBlank()) {
             Routes.TUTORIAL
         } else {
             if (snapshot.hasLobbies) {
@@ -1111,15 +1136,12 @@ fun LuvAppNav() {
         }
     }
 
-    // Invite-Deep-Link / Install-Referrer → Overlay (unabhängig vom NavHost)
+    // Invite-Deep-Link / Install-Referrer → Overlay (über Tutorial oder Home)
     LaunchedEffect(pendingJoin, startDestination) {
         val code = PendingJoin.peek() ?: return@LaunchedEffect
-        // Auch vor startDestination zeigen — sonst landet man nur im Home
+        if (startDestination == null) return@LaunchedEffect
         PendingJoin.consume()
         showPublicSplash = false
-        if (startDestination == null || startDestination == Routes.TUTORIAL) {
-            startDestination = Routes.MAIN
-        }
         openJoinPreview(code, asOverlay = true)
     }
 
@@ -2061,12 +2083,8 @@ fun LuvAppNav() {
                     scope.launch { confirmInviteJoin() }
                 },
                 onDecline = {
+                    // dismiss navigiert selbst (Home oder Name/Start)
                     dismissInviteConfirm()
-                    if (!navController.popBackStack()) {
-                        navController.navigate(Routes.MAIN) {
-                            popUpTo(Routes.MAIN) { inclusive = true }
-                        }
-                    }
                 }
             )
         }

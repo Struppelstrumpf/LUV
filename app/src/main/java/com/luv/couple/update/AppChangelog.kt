@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.40",
+            listOf(
+                "Nach Speicher löschen wieder Name-Start statt toter Einladung; Lobby nicht gefunden nur mit Zurück",
+            )
+        ),
+        Entry(
             "2.2.39",
             listOf(
                 "Ohne Google: keine untere Leiste; Abmelden leert Inventar; Trial-Zurück startet Onboarding",

@@ -2025,6 +2025,7 @@ fun JoinPreviewScreen(
 ) {
     var canvasBmp by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     val imageUrl = preview?.inviteImageUrl
+    val notFound = !loading && preview == null && !error.isNullOrBlank()
 
     LaunchedEffect(imageUrl) {
         canvasBmp = null
@@ -2042,7 +2043,7 @@ fun JoinPreviewScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Leinwand-Hintergrund
-        if (canvasBmp != null) {
+        if (canvasBmp != null && !notFound) {
             Image(
                 bitmap = canvasBmp!!.asImageBitmap(),
                 contentDescription = null,
@@ -2080,75 +2081,85 @@ fun JoinPreviewScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(
-                "Einladung",
-                fontFamily = DisplayFont,
-                fontSize = 26.sp,
-                color = TextPrimary,
-                textAlign = TextAlign.Center
-            )
-            when {
-                loading -> Text(
-                    "Lobby wird geladen…",
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 14.sp,
+            if (notFound) {
+                Text(
+                    "Lobby nicht gefunden.",
+                    fontFamily = DisplayFont,
+                    fontSize = 22.sp,
+                    color = TextPrimary,
                     textAlign = TextAlign.Center
                 )
-                preview != null -> {
-                    Text(
-                        preview.hostNickname,
-                        fontFamily = DisplayFont,
-                        fontSize = 20.sp,
-                        color = AccentRose,
-                        textAlign = TextAlign.Center
-                    )
-                    Text(
-                        "lädt dich ein mitzuzeichnen",
+                Spacer(modifier = Modifier.height(6.dp))
+                PrimaryButton(
+                    "Zurück",
+                    AccentRose,
+                    onDecline,
+                    enabled = !busy
+                )
+            } else {
+                Text(
+                    "Einladung",
+                    fontFamily = DisplayFont,
+                    fontSize = 26.sp,
+                    color = TextPrimary,
+                    textAlign = TextAlign.Center
+                )
+                when {
+                    loading -> Text(
+                        "Lobby wird geladen…",
                         color = TextMuted,
                         fontFamily = BodyFont,
                         fontSize = 14.sp,
                         textAlign = TextAlign.Center
                     )
+                    preview != null -> {
+                        Text(
+                            preview.hostNickname,
+                            fontFamily = DisplayFont,
+                            fontSize = 20.sp,
+                            color = AccentRose,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            "lädt dich ein mitzuzeichnen",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 14.sp,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            "${preview.peers}/${preview.capacity} online",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+                if (!error.isNullOrBlank() && preview != null) {
                     Text(
-                        "${preview.peers}/${preview.capacity} online",
-                        color = TextMuted,
+                        error,
+                        color = AccentRose,
                         fontFamily = BodyFont,
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center
                     )
                 }
-                else -> Text(
-                    error ?: "Lobby nicht gefunden.",
+                Spacer(modifier = Modifier.height(6.dp))
+                PrimaryButton(
+                    label = if (busy) "…" else "Beitreten",
                     color = AccentRose,
-                    fontFamily = BodyFont,
-                    fontSize = 14.sp,
-                    textAlign = TextAlign.Center
+                    onClick = onJoin,
+                    enabled = preview != null && !loading && !busy
+                )
+                PrimaryButton(
+                    "Nicht jetzt",
+                    BgSoft,
+                    onDecline,
+                    bordered = true,
+                    enabled = !busy
                 )
             }
-            if (!error.isNullOrBlank() && preview != null) {
-                Text(
-                    error,
-                    color = AccentRose,
-                    fontFamily = BodyFont,
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center
-                )
-            }
-            Spacer(modifier = Modifier.height(6.dp))
-            PrimaryButton(
-                label = if (busy) "…" else "Beitreten",
-                color = AccentRose,
-                onClick = onJoin,
-                enabled = preview != null && !loading && !busy
-            )
-            PrimaryButton(
-                "Nicht jetzt",
-                BgSoft,
-                onDecline,
-                bordered = true,
-                enabled = !busy
-            )
         }
     }
 }
