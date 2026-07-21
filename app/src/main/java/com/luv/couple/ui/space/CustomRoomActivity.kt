@@ -23,6 +23,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -30,6 +33,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -37,6 +41,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,16 +51,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -63,6 +74,7 @@ import androidx.compose.foundation.layout.offset
 import kotlin.math.min
 import kotlin.math.roundToInt
 import com.luv.couple.LuvApp
+import com.luv.couple.data.PeerPalette
 import com.luv.couple.lock.CanvasMemoryKeeper
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
@@ -70,6 +82,7 @@ import com.luv.couple.shop.ShopCatalog
 import com.luv.couple.ui.ItemGlyph
 import com.luv.couple.ui.clipItemId
 import com.luv.couple.ui.isImagePetId
+import com.luv.couple.ui.screens.ProfileCanvasScreen
 import com.luv.couple.ui.theme.LuvTheme
 import kotlin.math.hypot
 import kotlinx.coroutines.Dispatchers
@@ -109,6 +122,7 @@ class CustomRoomActivity : ComponentActivity() {
 }
 
 private const val DEFAULT_AVATAR_R = 0.022f
+private const val STOVE_IMAGE_URL = "https://reineke.pro/luv/kochen-herdplatte.png"
 
 private fun vibrateShort(context: Context, ms: Long = 80L) {
     runCatching {
@@ -125,6 +139,68 @@ private fun vibrateShort(context: Context, ms: Long = 80L) {
             vibrator.vibrate(ms)
         }
     }
+}
+
+private fun rectContains(px: Float, py: Float, x: Float, y: Float, w: Float, h: Float): Boolean =
+    px >= x && px <= x + w && py >= y && py <= y + h
+
+private fun portalContains(p: LuvApiClient.RoomPortal, x: Float, y: Float): Boolean =
+    rectContains(x, y, p.x, p.y, p.w, p.h)
+
+private fun actionContains(a: LuvApiClient.RoomAction, x: Float, y: Float): Boolean =
+    rectContains(x, y, a.x, a.y, a.w, a.h)
+
+/** Ziel von anderen Avataren wegschieben; null = zu nah, Abbruch. */
+private fun resolveCrowdTarget(
+    tx: Float,
+    ty: Float,
+    others: List<LuvApiClient.RoomSpacePerson>,
+    avatarR: Float,
+): Pair<Float, Float>? {
+    val minDist = avatarR * 2.2f
+    var x = tx.coerceIn(0f, 1f)
+    var y = ty.coerceIn(0f, 1f)
+    repeat(3) {
+        for (p in others) {
+            val d = hypot(x - p.x, y - p.y)
+            if (d < minDist) {
+                if (d < 1e-4f) {
+                    x = (p.x + minDist).coerceIn(0f, 1f)
+                    y = p.y.coerceIn(0f, 1f)
+                } else {
+                    val scale = minDist / d
+                    x = (p.x + (x - p.x) * scale).coerceIn(0f, 1f)
+                    y = (p.y + (y - p.y) * scale).coerceIn(0f, 1f)
+                }
+            }
+        }
+    }
+    if (others.any { hypot(x - it.x, y - it.y) < minDist * 0.97f }) return null
+    return x to y
+}
+
+private fun nudgeAwayFromOthers(
+    x0: Float,
+    y0: Float,
+    others: List<LuvApiClient.RoomSpacePerson>,
+    avatarR: Float,
+): Pair<Float, Float> {
+    val minDist = avatarR * 2.2f
+    var x = x0
+    var y = y0
+    for (p in others) {
+        val d = hypot(x - p.x, y - p.y)
+        if (d < minDist) {
+            if (d < 1e-4f) {
+                x = (p.x + minDist).coerceIn(0f, 1f)
+            } else {
+                val scale = minDist / d
+                x = (p.x + (x - p.x) * scale).coerceIn(0f, 1f)
+                y = (p.y + (y - p.y) * scale).coerceIn(0f, 1f)
+            }
+        }
+    }
+    return x to y
 }
 
 /**
@@ -179,6 +255,7 @@ fun CustomRoomScreen(
     var layout by remember { mutableStateOf<LuvApiClient.RoomLayout?>(null) }
     var space by remember { mutableStateOf<LuvApiClient.RoomSpaceInfo?>(null) }
     var roomBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var stoveBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var myX by remember { mutableFloatStateOf(0.5f) }
     var myY by remember { mutableFloatStateOf(0.85f) }
     var seated by remember { mutableStateOf(false) }
@@ -189,8 +266,15 @@ fun CustomRoomScreen(
     var reactionExpanded by remember { mutableStateOf(false) }
     var emojiBar by remember { mutableStateOf(ShopCatalog.DEFAULT_BAR) }
     var showZones by remember { mutableStateOf(true) }
+    var cookOpen by remember { mutableStateOf(false) }
+    var showInventory by remember { mutableStateOf(false) }
+    var peerPopup by remember { mutableStateOf<LuvApiClient.RoomSpacePerson?>(null) }
+    var peerProfileUserId by remember { mutableStateOf<String?>(null) }
+    var peerProfileNick by remember { mutableStateOf("") }
 
     val zones = layout?.zones.orEmpty()
+    val portals = layout?.portals.orEmpty()
+    val actions = layout?.actions.orEmpty()
     val avatarR = layout?.avatarR?.takeIf { it > 0f } ?: DEFAULT_AVATAR_R
     val sitZones = remember(zones) { zones.filter { it.isGuestSeat } }
 
@@ -198,6 +282,21 @@ fun CustomRoomScreen(
         emojiBar = withContext(Dispatchers.IO) {
             runCatching { LuvApp.instance.prefs.emojiBar() }
                 .getOrDefault(ShopCatalog.DEFAULT_BAR)
+        }
+    }
+
+    LaunchedEffect(cookOpen) {
+        if (!cookOpen) return@LaunchedEffect
+        if (stoveBitmap != null) return@LaunchedEffect
+        stoveBitmap = withContext(Dispatchers.IO) {
+            runCatching {
+                val abs = CanvasMemoryKeeper.absoluteImageUrl(STOVE_IMAGE_URL)
+                val req = Request.Builder().url(abs).get().build()
+                LuvApiClient.httpClient().newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@runCatching null
+                    resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
+                }
+            }.getOrNull()
         }
     }
 
@@ -300,9 +399,17 @@ fun CustomRoomScreen(
             )
         }
 
-        if (showZones && zones.isNotEmpty()) {
+        if (showZones && (zones.isNotEmpty() || portals.isNotEmpty() || actions.isNotEmpty())) {
             ZoneOverlay(
                 zones = zones,
+                portals = portals,
+                actions = actions,
+                viewport = viewport,
+                modifier = Modifier.fillMaxSize(),
+            )
+            ZoneLabels(
+                portals = portals,
+                actions = actions,
                 viewport = viewport,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -328,6 +435,7 @@ fun CustomRoomScreen(
                 petId = petId,
                 reaction = p.reaction?.takeIf { p.reactionUntil > System.currentTimeMillis() },
                 avatarDp = avatarDp,
+                seated = p.seatedSeatId != null,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .offset {
@@ -348,6 +456,7 @@ fun CustomRoomScreen(
                 petId = petId,
                 reaction = myReaction,
                 avatarDp = avatarDp,
+                seated = seated,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .offset {
@@ -361,13 +470,60 @@ fun CustomRoomScreen(
 
         val viewportRef = rememberUpdatedState(viewport)
         val zonesRef = rememberUpdatedState(zones)
+        val portalsRef = rememberUpdatedState(portals)
+        val actionsRef = rememberUpdatedState(actions)
         val avatarRRef = rememberUpdatedState(avatarR)
         val sitRef = rememberUpdatedState(sitZones)
         val seatedRef = rememberUpdatedState(seated)
         val spaceRef = rememberUpdatedState(space)
+        val overlayBusyRef = rememberUpdatedState(
+            cookOpen || showInventory || peerPopup != null || peerProfileUserId != null
+        )
+
+        suspend fun applyEnteredSpace(s: LuvApiClient.RoomSpaceInfo) {
+            if (s.layout != null) layout = s.layout
+            val me = s.people.find { it.userId == myId || it.isMe }
+            if (me != null) {
+                myX = me.x
+                myY = me.y
+                seated = me.seatedSeatId != null
+            } else {
+                val lay = s.layout
+                if (lay != null) {
+                    myX = lay.spawnX
+                    myY = lay.spawnY
+                }
+                seated = false
+            }
+            space = s.copy(
+                people = s.people.map { p ->
+                    if (p.userId == myId || p.isMe) p.copy(x = myX, y = myY) else p
+                },
+            )
+        }
+
+        suspend fun enterPortal(portalId: String) {
+            runCatching { LuvApiClient.spaceEnterPortal(code, portalId) }
+                .onSuccess { applyEnteredSpace(it) }
+                .onFailure {
+                    Toast.makeText(
+                        context,
+                        it.message ?: "Portal fehlgeschlagen",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+        }
 
         suspend fun walkTo(tx: Float, ty: Float, zns: List<LuvApiClient.RoomZone>, aR: Float): Boolean {
-            val path = findPath(zns, myX, myY, tx, ty, aR)
+            val crowd = spaceRef.value?.people.orEmpty()
+                .filter { it.userId != myId && !it.isMe }
+            val resolved = resolveCrowdTarget(tx, ty, crowd, aR)
+            if (resolved == null) {
+                Toast.makeText(context, "Zu nah", Toast.LENGTH_SHORT).show()
+                return false
+            }
+            val (goalX, goalY) = resolved
+            val path = findPath(zns, myX, myY, goalX, goalY, aR)
             if (path.isEmpty()) return false
             walkAlongPath(
                 path,
@@ -375,14 +531,35 @@ fun CustomRoomScreen(
                 { myX },
                 { myY },
             )
-            // Server nur informieren — Position lokal behalten
+            val nudged = nudgeAwayFromOthers(myX, myY, crowd, aR)
+            myX = nudged.first
+            myY = nudged.second
+            // Server nur informieren — Position lokal behalten (außer Portal-Wechsel)
             runCatching { LuvApiClient.spaceMove(code, myX, myY) }
-                .onSuccess { s ->
+                .onSuccess { result ->
+                    val s = result.space
                     space = s.copy(
                         people = s.people.map { p ->
                             if (p.userId == myId || p.isMe) p.copy(x = myX, y = myY) else p
                         },
                     )
+                    val portalId = result.portalId
+                    if (!portalId.isNullOrBlank()) {
+                        enterPortal(portalId)
+                    } else if (result.actionType == "cook") {
+                        cookOpen = true
+                    } else {
+                        val hitPortal = portalsRef.value.firstOrNull { portalContains(it, myX, myY) }
+                        if (hitPortal != null) {
+                            enterPortal(hitPortal.id)
+                        } else {
+                            val hitCook = actionsRef.value.firstOrNull {
+                                it.actionType.equals("cook", ignoreCase = true) &&
+                                    actionContains(it, myX, myY)
+                            }
+                            if (hitCook != null) cookOpen = true
+                        }
+                    }
                 }
             return true
         }
@@ -392,7 +569,7 @@ fun CustomRoomScreen(
                 .fillMaxSize()
                 .pointerInput(code) {
                     detectTapGestures { offset ->
-                        if (walking) return@detectTapGestures
+                        if (walking || overlayBusyRef.value) return@detectTapGestures
                         val vp = viewportRef.value
                         if (!vp.containsScreen(offset.x, offset.y)) return@detectTapGestures
                         val rawX = vp.fromScreenX(offset.x)
@@ -400,6 +577,15 @@ fun CustomRoomScreen(
                         val zns = zonesRef.value
                         val aR = avatarRRef.value
                         val hitR = (aR * 3.5f).coerceAtLeast(0.06f)
+
+                        val hitPeer = spaceRef.value?.people.orEmpty().firstOrNull { p ->
+                            (p.userId != myId && !p.isMe) &&
+                                hypot(rawX - p.x, rawY - p.y) < hitR
+                        }
+                        if (hitPeer != null) {
+                            peerPopup = hitPeer
+                            return@detectTapGestures
+                        }
 
                         if (zns.none { it.isWalk }) {
                             scope.launch {
@@ -501,7 +687,6 @@ fun CustomRoomScreen(
                                 .background(Color.White.copy(0.08f))
                                 .clickable {
                                     scope.launch {
-                                        reactionExpanded = false
                                         runCatching { LuvApiClient.spaceReact(code, emo) }
                                             .onSuccess { space = it }
                                         myReaction = emo
@@ -560,16 +745,212 @@ fun CustomRoomScreen(
                         .clickable { showZones = !showZones }
                         .padding(vertical = 10.dp),
                 )
-                repeat(2) {
-                    Box(
+                Text(
+                    "Inventar",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 4.dp)
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (showInventory) Color(0x88AB47BC) else Color.White.copy(0.10f)
+                        )
+                        .clickable { showInventory = !showInventory }
+                        .padding(vertical = 10.dp),
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 4.dp)
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.White.copy(0.06f)),
+                )
+            }
+        }
+
+        if (showInventory) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(0.45f))
+                    .clickable { showInventory = false },
+            )
+            EmptyRoomInventoryPanel(
+                compact = false,
+                onClose = { showInventory = false },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.62f)
+                    .padding(horizontal = 10.dp, vertical = 56.dp)
+                    .clickable { },
+            )
+        }
+
+        peerPopup?.let { peer ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(0.40f))
+                    .clickable { peerPopup = null },
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth(0.78f)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color(0xF21E2430))
+                        .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(18.dp))
+                        .clickable { }
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        peer.nickname.ifBlank { "Spieler" },
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            "Profil",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF42A5F5))
+                                .clickable {
+                                    peerProfileNick = peer.nickname.ifBlank { "Spieler" }
+                                    peerProfileUserId = peer.userId
+                                    peerPopup = null
+                                }
+                                .padding(vertical = 12.dp),
+                        )
+                        Text(
+                            "Handel",
+                            color = Color.White.copy(0.35f),
+                            fontSize = 14.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(0.08f))
+                                .padding(vertical = 12.dp),
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        "Zurück",
+                        color = Color.White.copy(0.85f),
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 4.dp)
-                            .height(40.dp)
+                            .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color.White.copy(0.06f)),
+                            .background(Color.White.copy(0.10f))
+                            .clickable { peerPopup = null }
+                            .padding(vertical = 11.dp),
                     )
                 }
+            }
+        }
+
+        if (cookOpen) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(0.55f))
+                    .clickable { cookOpen = false },
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth(0.92f)
+                        .fillMaxHeight(0.88f)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color(0xF21E2430))
+                        .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(20.dp))
+                        .clickable { }
+                        .padding(12.dp),
+                ) {
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            "Kochen",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.align(Alignment.CenterStart),
+                        )
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(0.12f))
+                                .clickable { cookOpen = false },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("✕", color = Color.White.copy(0.8f), fontSize = 14.sp)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    val stove = stoveBitmap
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color.Black.copy(0.25f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (stove != null) {
+                            Image(
+                                bitmap = stove.asImageBitmap(),
+                                contentDescription = "Herdplatte",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                contentScale = ContentScale.Fit,
+                            )
+                        } else {
+                            Text("Lädt…", color = Color.White.copy(0.5f), fontSize = 13.sp)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    EmptyRoomInventoryPanel(
+                        compact = true,
+                        onClose = null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(168.dp),
+                    )
+                }
+            }
+        }
+
+        peerProfileUserId?.let { uid ->
+            Box(modifier = Modifier.fillMaxSize()) {
+                ProfileCanvasScreen(
+                    nickname = peerProfileNick.ifBlank { "Spieler" },
+                    colorIndex = PeerPalette.indexFor(peerProfileNick.ifBlank { uid }),
+                    editable = false,
+                    userId = uid,
+                    onClose = { peerProfileUserId = null },
+                )
             }
         }
     }
@@ -578,11 +959,12 @@ fun CustomRoomScreen(
 @Composable
 private fun ZoneOverlay(
     zones: List<LuvApiClient.RoomZone>,
+    portals: List<LuvApiClient.RoomPortal>,
+    actions: List<LuvApiClient.RoomAction>,
     viewport: MapViewport,
     modifier: Modifier = Modifier,
 ) {
     Canvas(modifier = modifier) {
-        // Grün zuerst (unten), dann Rot/Blau usw.
         val ordered = zones.sortedBy { z ->
             when (z.color) {
                 "green" -> 0
@@ -632,19 +1014,245 @@ private fun ZoneOverlay(
                 )
             }
         }
+        for (p in portals) {
+            val left = viewport.toScreenX(p.x)
+            val top = viewport.toScreenY(p.y)
+            val w = p.w * viewport.width
+            val h = p.h * viewport.height
+            drawRect(
+                color = Color(0x66AB47BC),
+                topLeft = Offset(left, top),
+                size = Size(w, h),
+            )
+            drawRect(
+                color = Color(0xFFAB47BC),
+                topLeft = Offset(left, top),
+                size = Size(w, h),
+                style = Stroke(width = 3f),
+            )
+        }
+        for (a in actions) {
+            val left = viewport.toScreenX(a.x)
+            val top = viewport.toScreenY(a.y)
+            val w = a.w * viewport.width
+            val h = a.h * viewport.height
+            drawRect(
+                color = Color(0x6626A69A),
+                topLeft = Offset(left, top),
+                size = Size(w, h),
+            )
+            drawRect(
+                color = Color(0xFF26A69A),
+                topLeft = Offset(left, top),
+                size = Size(w, h),
+                style = Stroke(width = 3f),
+            )
+        }
     }
+}
+
+@Composable
+private fun ZoneLabels(
+    portals: List<LuvApiClient.RoomPortal>,
+    actions: List<LuvApiClient.RoomAction>,
+    viewport: MapViewport,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier) {
+        portals.forEach { p ->
+            val label = p.label.trim().ifBlank { "Portal" }
+            val cx = viewport.toScreenX(p.x + p.w * 0.5f)
+            val cy = viewport.toScreenY(p.y + p.h * 0.5f)
+            Text(
+                label,
+                color = Color.White,
+                fontSize = 10.sp,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset {
+                        IntOffset((cx - 36.dp.toPx()).roundToInt(), (cy - 8.dp.toPx()).roundToInt())
+                    }
+                    .width(72.dp)
+                    .background(Color(0x99000000), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+            )
+        }
+        actions.forEach { a ->
+            val label = a.label.trim().ifBlank {
+                when {
+                    a.actionType.equals("cook", ignoreCase = true) -> "Kochen"
+                    else -> a.actionType.ifBlank { "Aktion" }
+                }
+            }
+            val cx = viewport.toScreenX(a.x + a.w * 0.5f)
+            val cy = viewport.toScreenY(a.y + a.h * 0.5f)
+            Text(
+                label,
+                color = Color.White,
+                fontSize = 10.sp,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset {
+                        IntOffset((cx - 36.dp.toPx()).roundToInt(), (cy - 8.dp.toPx()).roundToInt())
+                    }
+                    .width(72.dp)
+                    .background(Color(0x99000000), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmptyRoomInventoryPanel(
+    compact: Boolean,
+    onClose: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    var tab by remember { mutableIntStateOf(0) }
+    val tabs = listOf("Sticker", "Hintergründe", "Begleiter", "Emojis")
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(if (compact) 14.dp else 20.dp))
+            .background(Color(0xF21E2430))
+            .border(1.dp, Color.White.copy(0.10f), RoundedCornerShape(if (compact) 14.dp else 20.dp))
+            .padding(if (compact) 10.dp else 14.dp),
+    ) {
+        if (!compact) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("🎒", fontSize = 20.sp)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    "Dein Inventar",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                if (onClose != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(0.12f))
+                            .clickable(onClick = onClose),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("✕", color = Color.White.copy(0.7f), fontSize = 14.sp)
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            tabs.forEachIndexed { i, label ->
+                val on = tab == i
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(
+                            if (on) Color(0x55E91E8C) else Color.White.copy(0.06f)
+                        )
+                        .clickable { tab = i }
+                        .padding(vertical = if (compact) 6.dp else 9.dp, horizontal = 2.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        label,
+                        color = Color.White,
+                        fontSize = if (compact) 9.sp else 10.sp,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(if (compact) 8.dp else 10.dp))
+        val rows = if (compact) 2 else 3
+        val cols = 4
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (compact) Modifier else Modifier.weight(1f)),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            repeat(rows) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    repeat(cols) {
+                        DashedEmptyCell(
+                            modifier = Modifier
+                                .weight(1f)
+                                .aspectRatio(1f),
+                        )
+                    }
+                }
+            }
+            if (!compact) {
+                Text(
+                    "Noch leer",
+                    color = Color.White.copy(0.45f),
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashedEmptyCell(modifier: Modifier = Modifier) {
+    val dash = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f)
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(0.04f))
+            .drawBehind {
+                drawRoundRect(
+                    color = Color.White.copy(0.22f),
+                    style = Stroke(width = 2f, pathEffect = dash),
+                    cornerRadius = CornerRadius(12.dp.toPx()),
+                )
+            },
+    )
 }
 
 @Composable
 private fun AvatarBubble(
     petId: String,
     reaction: String?,
-    avatarDp: androidx.compose.ui.unit.Dp,
+    avatarDp: Dp,
+    seated: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Box(
         modifier = modifier
             .size(avatarDp)
+            .then(
+                if (seated) {
+                    Modifier
+                        .border(2.dp, Color(0xFF42A5F5), CircleShape)
+                        .padding(2.dp)
+                } else {
+                    Modifier
+                }
+            )
             .clip(CircleShape)
             .background(
                 if (isImagePetId(petId)) Color.White.copy(0.92f)

@@ -2594,6 +2594,26 @@ object LuvApiClient {
         val h: Float = 1f,
     )
 
+    data class RoomPortal(
+        val id: String,
+        val x: Float,
+        val y: Float,
+        val w: Float,
+        val h: Float,
+        val targetRoomId: String,
+        val label: String = "",
+    )
+
+    data class RoomAction(
+        val id: String,
+        val x: Float,
+        val y: Float,
+        val w: Float,
+        val h: Float,
+        val actionType: String,
+        val label: String = "",
+    )
+
     data class RoomLayout(
         val id: String,
         val name: String,
@@ -2605,6 +2625,9 @@ object LuvApiClient {
         val imageUrl: String = "",
         val viewRect: RoomViewRect = RoomViewRect(),
         val cameraRect: RoomCameraRect = RoomCameraRect(),
+        val portals: List<RoomPortal> = emptyList(),
+        val actions: List<RoomAction> = emptyList(),
+        val pickable: Boolean = true,
     )
 
     data class RoomSpacePerson(
@@ -2613,6 +2636,7 @@ object LuvApiClient {
         val petEmoji: String,
         val x: Float,
         val y: Float,
+        val layoutId: String? = null,
         val seatedSeatId: String? = null,
         val reaction: String? = null,
         val reactionUntil: Long = 0L,
@@ -2621,11 +2645,15 @@ object LuvApiClient {
 
     data class RoomSpaceInfo(
         val customRoomId: String? = null,
+        val activeLayoutId: String? = null,
         val roomName: String = "",
         val layout: RoomLayout? = null,
         val people: List<RoomSpacePerson> = emptyList(),
         val lastMoveAt: Long = 0L,
         val lastMoveBy: String? = null,
+        val portalId: String? = null,
+        val actionId: String? = null,
+        val actionType: String? = null,
     )
 
     private fun parseRoomLayout(o: JSONObject?, fallbackId: String = "wedding"): RoomLayout? {
@@ -2664,6 +2692,44 @@ object LuvApiClient {
             .coerceIn(0.12f, view.w)
         val camH = (cr?.optDouble("h", view.h.toDouble())?.toFloat() ?: view.h)
             .coerceIn(0.12f, view.h)
+        val portals = buildList {
+            val arrP = o.optJSONArray("portals") ?: return@buildList
+            for (i in 0 until arrP.length()) {
+                val p = arrP.optJSONObject(i) ?: continue
+                val tid = p.optString("targetRoomId").trim()
+                if (tid.isBlank()) continue
+                add(
+                    RoomPortal(
+                        id = p.optString("id"),
+                        x = p.optDouble("x", 0.0).toFloat(),
+                        y = p.optDouble("y", 0.0).toFloat(),
+                        w = p.optDouble("w", 0.0).toFloat(),
+                        h = p.optDouble("h", 0.0).toFloat(),
+                        targetRoomId = tid,
+                        label = p.optString("label"),
+                    )
+                )
+            }
+        }
+        val actions = buildList {
+            val arrA = o.optJSONArray("actions") ?: return@buildList
+            for (i in 0 until arrA.length()) {
+                val a = arrA.optJSONObject(i) ?: continue
+                val t = a.optString("actionType").trim()
+                if (t.isBlank()) continue
+                add(
+                    RoomAction(
+                        id = a.optString("id"),
+                        x = a.optDouble("x", 0.0).toFloat(),
+                        y = a.optDouble("y", 0.0).toFloat(),
+                        w = a.optDouble("w", 0.0).toFloat(),
+                        h = a.optDouble("h", 0.0).toFloat(),
+                        actionType = t,
+                        label = a.optString("label"),
+                    )
+                )
+            }
+        }
         return RoomLayout(
             id = o.optString("id", fallbackId),
             name = o.optString("name", fallbackId),
@@ -2683,6 +2749,9 @@ object LuvApiClient {
             imageUrl = o.optString("imageUrl", ""),
             viewRect = view,
             cameraRect = RoomCameraRect(w = camW, h = camH),
+            portals = portals,
+            actions = actions,
+            pickable = o.optBoolean("pickable", true),
         )
     }
 
@@ -2700,6 +2769,7 @@ object LuvApiClient {
                             petEmoji = p.optString("petEmoji", "🐣"),
                             x = p.optDouble("x", 0.5).toFloat(),
                             y = p.optDouble("y", 0.85).toFloat(),
+                            layoutId = p.optString("layoutId").takeIf { it.isNotBlank() },
                             seatedSeatId = p.optString("seatedSeatId").takeIf { it.isNotBlank() },
                             reaction = p.optString("reaction").takeIf { it.isNotBlank() },
                             reactionUntil = p.optLong("reactionUntil", 0L),
@@ -2712,6 +2782,7 @@ object LuvApiClient {
         val customId = o.optString("customRoomId").takeIf { it.isNotBlank() }
         return RoomSpaceInfo(
             customRoomId = customId,
+            activeLayoutId = o.optString("activeLayoutId").takeIf { it.isNotBlank() } ?: customId,
             roomName = o.optString("roomName", ""),
             layout = parseRoomLayout(o.optJSONObject("layout"), customId ?: "room"),
             people = people,
@@ -2733,11 +2804,31 @@ object LuvApiClient {
             ?: RoomSpaceInfo(roomName = c)
     }
 
-    suspend fun spaceMove(code: String, x: Float, y: Float): RoomSpaceInfo =
+    data class SpaceMoveResult(
+        val space: RoomSpaceInfo,
+        val portalId: String? = null,
+        val actionId: String? = null,
+        val actionType: String? = null,
+    )
+
+    suspend fun spaceMove(code: String, x: Float, y: Float): SpaceMoveResult =
         withContext(Dispatchers.IO) {
             val c = code.trim().uppercase().removePrefix("LUV-")
             val body = JSONObject().put("x", x.toDouble()).put("y", y.toDouble()).toString()
             val json = authedPost("/v1/rooms/$c/space/move", body)
+            SpaceMoveResult(
+                space = parseRoomSpace(json.optJSONObject("space")) ?: RoomSpaceInfo(),
+                portalId = json.optString("portalId").takeIf { it.isNotBlank() },
+                actionId = json.optString("actionId").takeIf { it.isNotBlank() },
+                actionType = json.optString("actionType").takeIf { it.isNotBlank() },
+            )
+        }
+
+    suspend fun spaceEnterPortal(code: String, portalId: String): RoomSpaceInfo =
+        withContext(Dispatchers.IO) {
+            val c = code.trim().uppercase().removePrefix("LUV-")
+            val body = JSONObject().put("portalId", portalId).toString()
+            val json = authedPost("/v1/rooms/$c/space/enter-portal", body)
             parseRoomSpace(json.optJSONObject("space")) ?: RoomSpaceInfo()
         }
 

@@ -877,7 +877,32 @@ fun LuvAppNav() {
         }
     }
 
+    fun openLobbySpaceOrCanvas(lobby: Lobby) {
+        if (lobby.isCustomRoom) {
+            context.startActivity(
+                Intent(context, com.luv.couple.ui.space.CustomRoomActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    putExtra(com.luv.couple.ui.space.CustomRoomActivity.EXTRA_CODE, lobby.code)
+                    putExtra(com.luv.couple.ui.space.CustomRoomActivity.EXTRA_TOKEN, lobby.token)
+                    putExtra(com.luv.couple.ui.space.CustomRoomActivity.EXTRA_BELL, lobby.spaceBell)
+                }
+            )
+            return
+        }
+        context.startActivity(
+            Intent(context, LockDrawActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
+            }
+        )
+    }
+
     fun openLobbyCanvas(lobbyId: String, trialUntil: Long? = null) {
+        val lobby = lobbies.firstOrNull { it.id == lobbyId }
+        if (lobby?.isCustomRoom == true) {
+            openLobbySpaceOrCanvas(lobby)
+            return
+        }
         context.startActivity(
             Intent(context, LockDrawActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -1772,12 +1797,7 @@ fun LuvAppNav() {
                 inviteLobby = null
                 CanvasStore.setActiveLobby(lobby.id)
                 CanvasStore.updateKnownLobbies(lobbies.map { it.id })
-                context.startActivity(
-                    Intent(context, LockDrawActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
-                    }
-                )
+                openLobbySpaceOrCanvas(lobby)
                 scope.launch {
                     prefs.setActiveLobby(lobby.id)
                     runCatching { LuvApiClient.pingAchievement("lobby_opens") }
@@ -2515,12 +2535,7 @@ fun LuvAppNav() {
                 onOpen = {
                     CanvasStore.setActiveLobby(lobby.id)
                     CanvasStore.updateKnownLobbies(lobbies.map { it.id })
-                    context.startActivity(
-                        Intent(context, LockDrawActivity::class.java).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
-                        }
-                    )
+                    openLobbySpaceOrCanvas(lobby)
                     scope.launch {
                         prefs.setActiveLobby(lobby.id)
                         refreshAccount()

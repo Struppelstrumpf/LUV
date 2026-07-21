@@ -63,6 +63,53 @@ function sanitizeCameraRect(raw, viewRect) {
   return { w, h };
 }
 
+const ACTION_TYPES = {
+  cook: { label: "Kochen", icon: "🍳" },
+};
+
+function sanitizePortal(raw, index) {
+  if (!raw || typeof raw !== "object") return null;
+  const targetRoomId = String(raw.targetRoomId || "").trim().slice(0, 64);
+  if (!targetRoomId) return null;
+  const x = clamp01(raw.x, 0);
+  const y = clamp01(raw.y, 0);
+  const w = Math.min(1 - x, Math.max(0.02, Number(raw.w) || 0.08));
+  const h = Math.min(1 - y, Math.max(0.02, Number(raw.h) || 0.08));
+  let id = String(raw.id || "").trim().slice(0, 48);
+  if (!id) id = `portal_${index}_${Date.now().toString(36)}`;
+  return {
+    id,
+    x,
+    y,
+    w,
+    h,
+    targetRoomId,
+    label: String(raw.label || "").trim().slice(0, 40),
+  };
+}
+
+function sanitizeAction(raw, index) {
+  if (!raw || typeof raw !== "object") return null;
+  const actionType = String(raw.actionType || "").trim().slice(0, 32);
+  if (!ACTION_TYPES[actionType]) return null;
+  const x = clamp01(raw.x, 0);
+  const y = clamp01(raw.y, 0);
+  const w = Math.min(1 - x, Math.max(0.02, Number(raw.w) || 0.08));
+  const h = Math.min(1 - y, Math.max(0.02, Number(raw.h) || 0.08));
+  let id = String(raw.id || "").trim().slice(0, 48);
+  if (!id) id = `action_${actionType}_${index}`;
+  const def = ACTION_TYPES[actionType];
+  return {
+    id,
+    x,
+    y,
+    w,
+    h,
+    actionType,
+    label: String(raw.label || def.label).trim().slice(0, 40) || def.label,
+  };
+}
+
 function sanitizeZone(raw, index) {
   if (!raw || typeof raw !== "object") return null;
   const color = String(raw.color || "").toLowerCase();
@@ -237,9 +284,27 @@ function listRooms(db, { forApp = false } = {}) {
     out.push(summarize(db, id));
   }
   if (forApp) {
-    return out.filter((r) => r && r.id !== "wedding" && r.hasImage);
+    // Plus-Kachel: nur pickable Räume mit Bild
+    return out.filter(
+      (r) => r && r.id !== "wedding" && r.hasImage && r.pickable !== false
+    );
   }
   return out.filter(Boolean);
+}
+
+/** Räume, die als Portal-Ziel gewählt werden können (nicht via Plus-Kachel). */
+function listLinkTargets(db, excludeId) {
+  ensureStore(db);
+  return Object.keys(db.roomLayouts)
+    .map((id) => summarize(db, id))
+    .filter(
+      (r) =>
+        r &&
+        !r.builtin &&
+        r.hasImage &&
+        r.pickable === false &&
+        r.id !== excludeId
+    );
 }
 
 function summarize(db, roomId) {
@@ -250,9 +315,12 @@ function summarize(db, roomId) {
     name: layout.name,
     imageUrl: layout.imageUrl,
     zoneCount: layout.zones.length,
+    portalCount: (layout.portals || []).length,
+    actionCount: (layout.actions || []).length,
     updatedAt: layout.updatedAt,
     builtin: layout.builtin,
     hasImage: layout.hasImage,
+    pickable: layout.pickable !== false,
     viewRect: layout.viewRect,
   };
 }
@@ -281,6 +349,13 @@ function getLayout(db, roomId) {
   const name =
     (saved && String(saved.name || "").trim().slice(0, 40)) ||
     (builtin ? WEDDING.name : id);
+  const portals = Array.isArray(saved?.portals)
+    ? saved.portals.map((p, i) => sanitizePortal(p, i)).filter(Boolean).slice(0, 40)
+    : [];
+  const actions = Array.isArray(saved?.actions)
+    ? saved.actions.map((a, i) => sanitizeAction(a, i)).filter(Boolean).slice(0, 40)
+    : [];
+  const pickable = builtin ? false : saved?.pickable !== false;
 
   return {
     id,
@@ -288,6 +363,9 @@ function getLayout(db, roomId) {
     imageUrl,
     updatedAt,
     zones,
+    portals,
+    actions,
+    pickable,
     viewRect,
     cameraRect,
     builtin,
@@ -309,6 +387,9 @@ function createRoom(db, { name, imageBase64, mime } = {}) {
     imageExt: img.ext,
     viewRect: { x: 0, y: 0, w: 1, h: 1 },
     zones: [],
+    portals: [],
+    actions: [],
+    pickable: true,
     updatedAt: Date.now(),
     createdAt: Date.now(),
   };
@@ -352,6 +433,21 @@ function saveLayout(db, roomId, body = {}) {
         .filter(Boolean)
     );
   }
+  if (Array.isArray(body.portals)) {
+    prev.portals = body.portals
+      .slice(0, 40)
+      .map((p, i) => sanitizePortal(p, i))
+      .filter(Boolean);
+  }
+  if (Array.isArray(body.actions)) {
+    prev.actions = body.actions
+      .slice(0, 40)
+      .map((a, i) => sanitizeAction(a, i))
+      .filter(Boolean);
+  }
+  if (body.pickable != null && !builtin) {
+    prev.pickable = Boolean(body.pickable);
+  }
   prev.id = id;
   prev.updatedAt = Date.now();
   // Kamera nicht größer als Karte
@@ -383,6 +479,49 @@ function findSitZone(db, roomId, seatId) {
   const z = findZone(db, roomId, seatId);
   if (!z || (z.color !== "yellow" && z.color !== "blue")) return null;
   return z;
+}
+
+function findPortalAt(layout, x, y) {
+  if (!layout?.portals?.length) return null;
+  return (
+    layout.portals.find((p) =>
+      x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h
+    ) || null
+  );
+}
+
+function findActionAt(layout, x, y) {
+  if (!layout?.actions?.length) return null;
+  return (
+    layout.actions.find((a) =>
+      x >= a.x && x <= a.x + a.w && y >= a.y && y <= a.y + a.h
+    ) || null
+  );
+}
+
+/** Andere Spieler nicht überlappen (gleicher Layout). */
+function separateFromOthers(x, y, others, minDist) {
+  let nx = x;
+  let ny = y;
+  const dMin = Math.max(0.02, Number(minDist) || 0.04);
+  for (let pass = 0; pass < 4; pass++) {
+    for (const o of others || []) {
+      const ox = Number(o.x);
+      const oy = Number(o.y);
+      if (!Number.isFinite(ox) || !Number.isFinite(oy)) continue;
+      const dx = nx - ox;
+      const dy = ny - oy;
+      const dist = Math.hypot(dx, dy);
+      if (dist >= dMin || dist < 1e-6) continue;
+      const push = (dMin - dist) / dist;
+      nx += dx * push;
+      ny += dy * push;
+    }
+  }
+  return {
+    x: Math.min(1, Math.max(0, nx)),
+    y: Math.min(1, Math.max(0, ny)),
+  };
 }
 
 function isCoupleSeat(zoneOrId) {
@@ -540,19 +679,26 @@ function findPath(layout, fromX, fromY, toX, toY) {
 }
 
 function ensureSpawnPosition(layout, positions, userId) {
-  if (!positions || !userId || positions[userId]) return positions?.[userId] || null;
+  if (!positions || !userId) return null;
+  if (positions[userId]) {
+    if (!positions[userId].layoutId && layout?.id) {
+      positions[userId].layoutId = layout.id;
+    }
+    return positions[userId];
+  }
   const sp = layout?.spawn || spawnPoint(layout?.zones || [], layout?.viewRect);
+  const layoutId = layout?.id || undefined;
   if (isWalkable(layout, sp.x, sp.y)) {
-    positions[userId] = { x: sp.x, y: sp.y };
+    positions[userId] = { x: sp.x, y: sp.y, layoutId };
     return positions[userId];
   }
   const walk = buildWalkGrid(layout);
   const near = nearestWalkableCell(layout, walk, sp.x, sp.y);
   if (near) {
     const c = cellCenter(near.ix, near.iy);
-    positions[userId] = { x: c.x, y: c.y };
+    positions[userId] = { x: c.x, y: c.y, layoutId };
   } else {
-    positions[userId] = { x: sp.x, y: sp.y };
+    positions[userId] = { x: sp.x, y: sp.y, layoutId };
   }
   return positions[userId];
 }
@@ -583,7 +729,9 @@ function clampMove(layout, fromX, fromY, toX, toY) {
 module.exports = {
   WEDDING,
   IMAGE_DIR,
+  ACTION_TYPES,
   listRooms,
+  listLinkTargets,
   sanitizeCameraRect,
   getLayout,
   createRoom,
@@ -592,6 +740,9 @@ module.exports = {
   findImageFile,
   findZone,
   findSitZone,
+  findPortalAt,
+  findActionAt,
+  separateFromOthers,
   isCoupleSeat,
   isGuestSeat,
   isBlocked,

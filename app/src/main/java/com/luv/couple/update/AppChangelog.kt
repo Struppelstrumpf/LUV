@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.81",
+            listOf(
+                "Neuer Raum: Häuser betreten, Portale, Kochen, Inventar, Sit-Ring",
+                "Einladung öffnet wieder das Dorf statt der Mal-Wand",
+            )
+        ),
+        Entry(
             "2.2.80",
             listOf(
                 "Neuer Raum: Zonen deckungsgleich mit Karte (wie im Admin)",

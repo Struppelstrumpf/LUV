@@ -35,6 +35,8 @@
     blue: "rgba(66,165,245,0.45)",
     brown: "rgba(141,110,99,0.45)",
     orange: "rgba(255,152,0,0.4)",
+    purple: "rgba(156,39,176,0.4)",
+    teal: "rgba(0,150,136,0.4)",
   };
   const STROKE = {
     white: "#ffffff",
@@ -45,6 +47,8 @@
     blue: "#42a5f5",
     brown: "#8d6e63",
     orange: "#ff9800",
+    purple: "#9c27b0",
+    teal: "#009688",
   };
 
   let editor = null;
@@ -157,7 +161,7 @@
               <span class="room-card-title">${r.builtin ? "Raum: " : ""}${esc(r.name)}</span>
               <span class="muted">${r.zoneCount || 0} Bereiche${
                 r.updatedAt ? " · " + new Date(r.updatedAt).toLocaleString("de-DE") : ""
-              }${r.builtin ? " · Hochzeit" : ""}</span>
+              }${r.builtin ? " · Hochzeit" : r.pickable !== false ? " · Plus-Kachel" : " · nur Portal"}</span>
             </button>`
             )
             .join("") || `<p class="muted">Noch keine Räume — + Raum tippen.</p>`}
@@ -228,6 +232,9 @@
     }
 
     let zones = mergeGreens((layout.zones || []).map((z) => ({ ...z })));
+    let portals = (layout.portals || []).map((p) => ({ ...p }));
+    let actions = (layout.actions || []).map((a) => ({ ...a }));
+    let pickable = layout.pickable !== false;
     let viewRect = { ...(layout.viewRect || { x: 0, y: 0, w: 1, h: 1 }) };
     let cameraRect = {
       w: layout.cameraRect?.w ?? viewRect.w,
@@ -244,6 +251,13 @@
         <div class="room-editor-bar">
           <button type="button" class="btn ghost" id="roomBack">← Räume</button>
           <input id="roomName" value="${esc(layout.name)}" style="flex:1;min-width:8rem" />
+          ${
+            layout.builtin
+              ? ""
+              : `<label style="display:flex;align-items:center;gap:0.35rem;white-space:nowrap;font-size:0.85rem">
+                  <input type="checkbox" id="roomPickable" ${pickable ? "checked" : ""} /> Über Plus-Kachel wählbar
+                </label>`
+          }
           <button type="button" class="btn" id="roomSave">Speichern</button>
           ${
             layout.builtin
@@ -260,7 +274,7 @@
           <p class="muted" id="roomStatus"></p>
           <ul class="room-zone-list" id="roomZoneList"></ul>
           <button type="button" class="btn ghost danger" id="roomDelete" disabled>Auswahl löschen</button>
-          <button type="button" class="btn ghost danger" id="roomClearAll" style="margin-top:0.4rem">Alle Zonen löschen</button>
+          <button type="button" class="btn ghost danger" id="roomClearAll" style="margin-top:0.4rem">Alles löschen</button>
           <button type="button" class="btn ghost" id="roomReimg" style="margin-top:0.4rem">Bild ersetzen</button>
           <input type="file" id="roomReFile" accept="image/*" hidden />
         </div>
@@ -282,14 +296,27 @@
       const box = root.querySelector("#roomTools");
       const tools =
         roomId === "wedding" ? TOOLS : TOOLS.filter((t) => t.color !== "yellow");
-      box.innerHTML = tools
-        .map(
-          (t) => `
+      const special = [
+        { id: "link-portal", label: "Raum verknüpfen", color: "purple" },
+        { id: "add-action", label: "+Aktion", color: "teal" },
+      ];
+      box.innerHTML =
+        tools
+          .map(
+            (t) => `
         <button type="button" class="room-tool ${tool === t.id ? "active" : ""}" data-tool="${t.id}">
           <span class="swatch" style="background:${STROKE[t.color]}"></span>${esc(t.label)}
         </button>`
-        )
-        .join("");
+          )
+          .join("") +
+        special
+          .map(
+            (t) => `
+        <button type="button" class="room-tool ${tool === t.id ? "active" : ""}" data-tool="${t.id}">
+          <span class="swatch" style="background:${STROKE[t.color]}"></span>${esc(t.label)}
+        </button>`
+          )
+          .join("");
       box.querySelectorAll("[data-tool]").forEach((b) => {
         b.addEventListener("click", () => {
           tool = b.getAttribute("data-tool");
@@ -318,6 +345,16 @@
           id: z.id,
           label: `${i + 1}. ${z.color} ${z.shape}`,
           color: z.color,
+        })),
+        ...portals.map((p, i) => ({
+          id: p.id,
+          label: `Portal ${i + 1}: ${p.label || p.targetRoomId || "?"}`,
+          color: "purple",
+        })),
+        ...actions.map((a, i) => ({
+          id: a.id,
+          label: `Aktion ${i + 1}: ${a.label || a.actionType || "?"}`,
+          color: "teal",
         })),
       ];
       ul.innerHTML = items
@@ -374,6 +411,25 @@
       ctx.restore();
     }
 
+    function drawLabeledRect(item, colorKey, highlight) {
+      drawZoneShape({ shape: "rect", x: item.x, y: item.y, w: item.w, h: item.h }, highlight, colorKey);
+      const label = String(item.label || "").trim();
+      if (!label) return;
+      ctx.save();
+      ctx.fillStyle = "#ffffff";
+      ctx.strokeStyle = "rgba(0,0,0,0.55)";
+      ctx.lineWidth = 3;
+      ctx.font = `600 ${Math.max(11, Math.round(canvas.width * 0.026))}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const cx = (item.x + item.w / 2) * canvas.width;
+      const cy = (item.y + item.h / 2) * canvas.height;
+      const maxW = item.w * canvas.width * 0.9;
+      ctx.strokeText(label, cx, cy, maxW);
+      ctx.fillText(label, cx, cy, maxW);
+      ctx.restore();
+    }
+
     function draw() {
       layoutCanvas();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -402,7 +458,15 @@
         "black"
       );
       zones.forEach((z) => drawZoneShape(z, z.id === selectedId));
-      if (draft) drawZoneShape(draft, true, draft.color);
+      portals.forEach((p) => drawLabeledRect(p, "purple", p.id === selectedId));
+      actions.forEach((a) => drawLabeledRect(a, "teal", a.id === selectedId));
+      if (draft) {
+        if (draft.color === "purple" || draft.color === "teal") {
+          drawLabeledRect(draft, draft.color, true);
+        } else {
+          drawZoneShape(draft, true, draft.color);
+        }
+      }
     }
 
     function currentTool() {
@@ -419,8 +483,93 @@
               ? "avatar_"
               : color === "yellow"
                 ? "altar_"
-                : `${color}_`;
+                : color === "purple"
+                  ? "portal_"
+                  : color === "teal"
+                    ? "action_"
+                    : `${color}_`;
       return `${prefix}${Math.random().toString(36).slice(2, 8)}`;
+    }
+
+    async function pickPortalTarget(rect) {
+      let data;
+      try {
+        data = await api(
+          `/admin/room-layouts-link-targets?exclude=${encodeURIComponent(roomId)}`
+        );
+      } catch (e) {
+        alert(e.message || "Ziele konnten nicht geladen werden");
+        return;
+      }
+      const rooms = data.rooms || [];
+      if (!rooms.length) {
+        alert(
+          "Keine Zielräume. Lege zuerst Räume an, die nicht über Plus-Kachel wählbar sind (nur Portal)."
+        );
+        return;
+      }
+      const lines = rooms.map((r, i) => `${i + 1}. ${r.name}`).join("\n");
+      const ans = window.prompt(`Zielraum wählen (Nummer):\n${lines}`);
+      if (ans == null || !String(ans).trim()) return;
+      const idx = Number(String(ans).trim()) - 1;
+      const room = rooms[idx];
+      if (!room) {
+        alert("Ungültige Nummer");
+        return;
+      }
+      portals.push({
+        id: newId("purple"),
+        x: rect.x,
+        y: rect.y,
+        w: rect.w,
+        h: rect.h,
+        targetRoomId: room.id,
+        label: room.name,
+      });
+      selectedId = portals[portals.length - 1].id;
+      dirty = true;
+    }
+
+    async function pickActionType(rect) {
+      let actionTypes = { cook: { label: "Kochen" } };
+      try {
+        const data = await api(
+          `/admin/room-layouts-link-targets?exclude=${encodeURIComponent(roomId)}`
+        );
+        if (data.actionTypes && typeof data.actionTypes === "object") {
+          actionTypes = data.actionTypes;
+        }
+      } catch (_) {
+        /* Fallback cook */
+      }
+      const keys = Object.keys(actionTypes);
+      if (!keys.length) {
+        alert("Keine Aktionstypen verfügbar");
+        return;
+      }
+      const lines = keys
+        .map((k, i) => `${i + 1}. ${actionTypes[k].label || k}`)
+        .join("\n");
+      const ans = window.prompt(`Aktion wählen (Nummer):\n${lines}`);
+      if (ans == null || !String(ans).trim()) return;
+      const idx = Number(String(ans).trim()) - 1;
+      const actionType = keys[idx];
+      if (!actionType) {
+        alert("Ungültige Nummer");
+        return;
+      }
+      const def = actionTypes[actionType] || {};
+      actions.push({
+        id: newId("teal"),
+        x: rect.x,
+        y: rect.y,
+        w: rect.w,
+        h: rect.h,
+        actionType,
+        label: def.label || actionType,
+      });
+      selectedId = actions[actions.length - 1].id;
+      dirty = true;
     }
 
     function norm(ev) {
@@ -437,24 +586,48 @@
     canvas.addEventListener("mousedown", (ev) => {
       drawing = true;
       start = norm(ev);
-      const t = currentTool();
-      draft = {
-        id:
-          t.id === "view-rect"
-            ? "__view__"
-            : t.id === "camera-rect"
-              ? "__camera__"
-              : newId(t.color),
-        color: t.color,
-        shape: t.shape,
-        x: start.x,
-        y: start.y,
-        w: 0.01,
-        h: 0.01,
-        cx: start.x,
-        cy: start.y,
-        r: 0.01,
-      };
+      if (tool === "link-portal") {
+        draft = {
+          id: newId("purple"),
+          color: "purple",
+          shape: "rect",
+          x: start.x,
+          y: start.y,
+          w: 0.01,
+          h: 0.01,
+          label: "",
+        };
+      } else if (tool === "add-action") {
+        draft = {
+          id: newId("teal"),
+          color: "teal",
+          shape: "rect",
+          x: start.x,
+          y: start.y,
+          w: 0.01,
+          h: 0.01,
+          label: "",
+        };
+      } else {
+        const t = currentTool();
+        draft = {
+          id:
+            t.id === "view-rect"
+              ? "__view__"
+              : t.id === "camera-rect"
+                ? "__camera__"
+                : newId(t.color),
+          color: t.color,
+          shape: t.shape,
+          x: start.x,
+          y: start.y,
+          w: 0.01,
+          h: 0.01,
+          cx: start.x,
+          cy: start.y,
+          r: 0.01,
+        };
+      }
       draw();
     });
     canvas.addEventListener("mousemove", (ev) => {
@@ -472,53 +645,66 @@
       }
       draw();
     });
-    function finish() {
+    async function finish() {
       if (!drawing) return;
       drawing = false;
-      if (draft) {
-        if (draft.id === "__view__" || draft.color === "white") {
-          viewRect = { x: draft.x, y: draft.y, w: draft.w, h: draft.h };
+      const d = draft;
+      draft = null;
+      start = null;
+      if (d) {
+        if (d.color === "purple" && d.w >= 0.02) {
+          await pickPortalTarget({ x: d.x, y: d.y, w: d.w, h: d.h });
+        } else if (d.color === "teal" && d.w >= 0.02) {
+          await pickActionType({ x: d.x, y: d.y, w: d.w, h: d.h });
+        } else if (d.id === "__view__" || d.color === "white") {
+          viewRect = { x: d.x, y: d.y, w: d.w, h: d.h };
           selectedId = "__view__";
           dirty = true;
-        } else if (draft.id === "__camera__" || draft.color === "black") {
+        } else if (d.id === "__camera__" || d.color === "black") {
           cameraRect = {
-            w: Math.min(viewRect.w, Math.max(0.12, draft.w)),
-            h: Math.min(viewRect.h, Math.max(0.12, draft.h)),
+            w: Math.min(viewRect.w, Math.max(0.12, d.w)),
+            h: Math.min(viewRect.h, Math.max(0.12, d.h)),
           };
           selectedId = "__camera__";
           dirty = true;
-        } else if (draft.shape === "circle" && draft.r >= 0.008) {
+        } else if (d.shape === "circle" && d.r >= 0.008) {
           zones.push({
-            id: draft.id,
-            color: draft.color,
+            id: d.id,
+            color: d.color,
             shape: "circle",
-            cx: draft.cx,
-            cy: draft.cy,
-            r: draft.r,
+            cx: d.cx,
+            cy: d.cy,
+            r: d.r,
           });
           dirty = true;
-        } else if (draft.shape === "rect" && draft.w >= 0.02) {
+        } else if (d.shape === "rect" && d.w >= 0.02) {
           zones.push({
-            id: draft.id,
-            color: draft.color,
+            id: d.id,
+            color: d.color,
             shape: "rect",
-            x: draft.x,
-            y: draft.y,
-            w: draft.w,
-            h: draft.h,
+            x: d.x,
+            y: d.y,
+            w: d.w,
+            h: d.h,
           });
           dirty = true;
         }
-        if (dirty) zones = mergeGreens(zones);
+        if (dirty && d.color !== "purple" && d.color !== "teal") {
+          zones = mergeGreens(zones);
+        }
       }
-      draft = null;
-      start = null;
       paintList();
-      setStatus(`${zones.length} Zonen`);
+      setStatus(
+        `${zones.length} Zonen · ${portals.length} Portale · ${actions.length} Aktionen`
+      );
       draw();
     }
-    canvas.addEventListener("mouseup", finish);
-    canvas.addEventListener("mouseleave", finish);
+    canvas.addEventListener("mouseup", () => {
+      finish();
+    });
+    canvas.addEventListener("mouseleave", () => {
+      finish();
+    });
 
     root.querySelector("#roomBack").addEventListener("click", () => {
       if (dirty && !confirm("Verwerfen?")) return;
@@ -527,21 +713,48 @@
     });
     root.querySelector("#roomDelete").addEventListener("click", () => {
       if (!selectedId || selectedId === "__view__" || selectedId === "__camera__") return;
+      const beforeZ = zones.length;
+      const beforeP = portals.length;
+      const beforeA = actions.length;
       zones = zones.filter((z) => z.id !== selectedId);
+      portals = portals.filter((p) => p.id !== selectedId);
+      actions = actions.filter((a) => a.id !== selectedId);
+      if (
+        zones.length === beforeZ &&
+        portals.length === beforeP &&
+        actions.length === beforeA
+      ) {
+        return;
+      }
       selectedId = null;
       dirty = true;
       paintList();
-      setStatus(`${zones.length} Zonen`);
+      setStatus(
+        `${zones.length} Zonen · ${portals.length} Portale · ${actions.length} Aktionen`
+      );
       draw();
     });
     root.querySelector("#roomClearAll").addEventListener("click", () => {
-      if (!confirm("Alle Zonen löschen?")) return;
+      if (!confirm("Alle Zonen, Portale und Aktionen löschen?")) return;
       zones = [];
+      portals = [];
+      actions = [];
+      selectedId = null;
       dirty = true;
       paintList();
       setStatus("Leer");
       draw();
     });
+    const pickableEl = root.querySelector("#roomPickable");
+    if (pickableEl) {
+      pickableEl.addEventListener("change", () => {
+        pickable = pickableEl.checked;
+        dirty = true;
+        setStatus(
+          `${zones.length} Zonen · ${portals.length} Portale · ${actions.length} Aktionen`
+        );
+      });
+    }
     const reFile = root.querySelector("#roomReFile");
     root.querySelector("#roomReimg").addEventListener("click", () => reFile.click());
     reFile.addEventListener("change", async () => {
@@ -564,9 +777,13 @@
     root.querySelector("#roomSave").addEventListener("click", async () => {
       try {
         zones = mergeGreens(zones);
+        if (pickableEl) pickable = pickableEl.checked;
         const body = {
           name: root.querySelector("#roomName").value.trim() || layout.name,
           zones,
+          portals,
+          actions,
+          pickable,
           viewRect,
           cameraRect,
         };
@@ -576,6 +793,10 @@
           body: JSON.stringify(body),
         });
         zones = mergeGreens((res.layout?.zones || zones).map((z) => ({ ...z })));
+        portals = (res.layout?.portals || portals).map((p) => ({ ...p }));
+        actions = (res.layout?.actions || actions).map((a) => ({ ...a }));
+        if (res.layout?.pickable != null) pickable = res.layout.pickable !== false;
+        if (pickableEl) pickableEl.checked = pickable;
         viewRect = res.layout?.viewRect || viewRect;
         if (res.layout?.cameraRect) {
           cameraRect = {
@@ -595,7 +816,11 @@
 
     paintTools();
     paintList();
-    setStatus(zones.length ? `${zones.length} Zonen` : "Zonen einzeichnen");
+    setStatus(
+      zones.length || portals.length || actions.length
+        ? `${zones.length} Zonen · ${portals.length} Portale · ${actions.length} Aktionen`
+        : "Zonen / Portale / Aktionen einzeichnen"
+    );
     window.addEventListener("resize", draw);
     img.onload = () => {
       imgReady = true;

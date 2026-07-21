@@ -9653,7 +9653,11 @@ app.put("/v1/admin/room-layouts/:roomId", (req, res) => {
   const db = getDb();
   const result = roomLayouts.saveLayout(db, req.params.roomId, {
     zones: req.body?.zones,
+    portals: req.body?.portals,
+    actions: req.body?.actions,
     viewRect: req.body?.viewRect,
+    cameraRect: req.body?.cameraRect,
+    pickable: req.body?.pickable,
     name: req.body?.name,
     imageBase64: req.body?.imageBase64 || req.body?.image,
     mime: req.body?.mime,
@@ -9667,6 +9671,17 @@ app.put("/v1/admin/room-layouts/:roomId", (req, res) => {
     layout: result.layout,
     live: true,
     message: "Gespeichert — gilt sofort in der App.",
+  });
+});
+
+app.get("/v1/admin/room-layouts-link-targets", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const exclude = String(req.query.exclude || "").trim();
+  return res.json({
+    ok: true,
+    rooms: roomLayouts.listLinkTargets(getDb(), exclude),
+    actionTypes: roomLayouts.ACTION_TYPES,
   });
 });
 
@@ -14356,35 +14371,65 @@ function ensureRoomSpace(room) {
   return room.space;
 }
 
+function hubLayoutId(room) {
+  return String(room.customRoomId || "").trim();
+}
+
+function playerLayoutId(space, uid, hubId) {
+  const pos = space.positions?.[uid];
+  const lid = String(pos?.layoutId || hubId || "").trim();
+  return lid || hubId;
+}
+
+function normalizeSpacePos(pos, hubId, spawn) {
+  return {
+    x: Number(pos?.x ?? spawn?.x) || 0.5,
+    y: Number(pos?.y ?? spawn?.y) || 0.85,
+    layoutId: String(pos?.layoutId || hubId || "").trim() || hubId,
+  };
+}
+
 function publicRoomSpace(room, db, viewerId) {
   const space = ensureRoomSpace(room);
-  const layout = room.customRoomId
-    ? roomLayouts.getLayout(db, room.customRoomId)
+  const hubId = hubLayoutId(room);
+  const viewerLayoutId = playerLayoutId(space, viewerId, hubId);
+  const layout = viewerLayoutId
+    ? roomLayouts.getLayout(db, viewerLayoutId)
     : null;
   const memberIds = Array.isArray(room.memberUserIds) ? room.memberUserIds : [];
-  const people = memberIds.map((uid) => {
-    const u = db.users?.[uid];
-    const pos = space.positions[uid] || layout?.spawn || { x: 0.5, y: 0.85 };
-    const react = space.reactions[uid];
-    const petRaw = String(u?.inventory?.equippedPet || "🐣").trim();
-    const petEmoji = petRaw.startsWith("img_")
-      ? petRaw.slice(0, 32)
-      : petRaw.slice(0, 16) || "🐣";
-    return {
-      userId: uid,
-      nickname: u ? String(u.nickname || "").trim().slice(0, 18) || "Jemand" : "Jemand",
-      petEmoji,
-      x: Number(pos.x) || 0.5,
-      y: Number(pos.y) || 0.85,
-      seatedSeatId: space.seated[uid] || null,
-      reaction: react && react.until > Date.now() ? react.emoji : null,
-      reactionUntil: react ? Number(react.until) || 0 : 0,
-      isMe: uid === viewerId,
-    };
-  });
+  const people = memberIds
+    .filter((uid) => playerLayoutId(space, uid, hubId) === viewerLayoutId)
+    .map((uid) => {
+      const u = db.users?.[uid];
+      const pos = normalizeSpacePos(
+        space.positions[uid],
+        hubId,
+        layout?.spawn
+      );
+      const react = space.reactions[uid];
+      const petRaw = String(u?.inventory?.equippedPet || "🐣").trim();
+      const petEmoji = petRaw.startsWith("img_")
+        ? petRaw.slice(0, 32)
+        : petRaw.slice(0, 16) || "🐣";
+      return {
+        userId: uid,
+        nickname: u
+          ? String(u.nickname || "").trim().slice(0, 18) || "Jemand"
+          : "Jemand",
+        petEmoji,
+        x: pos.x,
+        y: pos.y,
+        layoutId: pos.layoutId,
+        seatedSeatId: space.seated[uid] || null,
+        reaction: react && react.until > Date.now() ? react.emoji : null,
+        reactionUntil: react ? Number(react.until) || 0 : 0,
+        isMe: uid === viewerId,
+      };
+    });
   return {
-    customRoomId: room.customRoomId || null,
-    roomName: room.name || "Raum",
+    customRoomId: hubId || null,
+    activeLayoutId: viewerLayoutId || null,
+    roomName: layout?.name || room.name || "Raum",
     layout,
     people,
     lastMoveAt: Number(space.lastMoveAt) || 0,
@@ -14423,11 +14468,12 @@ app.get("/v1/rooms/:code/space", (req, res) => {
   if (!pack) return;
   const db = getDb();
   const space = ensureRoomSpace(pack.room);
-  roomLayouts.ensureSpawnPosition(
-    roomLayouts.getLayout(db, pack.room.customRoomId),
-    space.positions,
-    pack.ctx.user.id
-  );
+  const hubId = hubLayoutId(pack.room);
+  const layoutId = playerLayoutId(space, pack.ctx.user.id, hubId);
+  const layout = roomLayouts.getLayout(db, layoutId);
+  roomLayouts.ensureSpawnPosition(layout, space.positions, pack.ctx.user.id);
+  const pos = space.positions[pack.ctx.user.id];
+  if (pos && !pos.layoutId) pos.layoutId = layoutId;
   return res.json({ ok: true, space: publicRoomSpace(pack.room, db, pack.ctx.user.id) });
 });
 
@@ -14435,12 +14481,19 @@ app.post("/v1/rooms/:code/space/move", (req, res) => {
   const pack = requireCustomRoomMember(req, res);
   if (!pack) return;
   const db = getDb();
-  const layout = roomLayouts.getLayout(db, pack.room.customRoomId);
   const space = ensureRoomSpace(pack.room);
-  if (space.seated[pack.ctx.user.id]) {
-    delete space.seated[pack.ctx.user.id];
+  const hubId = hubLayoutId(pack.room);
+  const uid = pack.ctx.user.id;
+  const layoutId = playerLayoutId(space, uid, hubId);
+  const layout = roomLayouts.getLayout(db, layoutId);
+  if (space.seated[uid]) {
+    delete space.seated[uid];
   }
-  const prev = space.positions[pack.ctx.user.id] || layout?.spawn || { x: 0.5, y: 0.85 };
+  const prev = normalizeSpacePos(
+    space.positions[uid],
+    hubId,
+    layout?.spawn
+  );
   const clamped = roomLayouts.clampMove(
     layout,
     prev.x,
@@ -14448,15 +14501,75 @@ app.post("/v1/rooms/:code/space/move", (req, res) => {
     Number(req.body?.x),
     Number(req.body?.y)
   );
-  space.positions[pack.ctx.user.id] = { x: clamped.x, y: clamped.y };
+  const others = Object.entries(space.positions)
+    .filter(([id, p]) => id !== uid && playerLayoutId(space, id, hubId) === layoutId)
+    .map(([, p]) => ({ x: p.x, y: p.y }));
+  const sep = roomLayouts.separateFromOthers(
+    clamped.x,
+    clamped.y,
+    others,
+    (layout?.avatarR || 0.022) * 2.2
+  );
+  const finalPos = roomLayouts.isWalkable(layout, sep.x, sep.y)
+    ? sep
+    : { x: clamped.x, y: clamped.y };
+  space.positions[uid] = {
+    x: finalPos.x,
+    y: finalPos.y,
+    layoutId,
+  };
   space.lastMoveAt = Date.now();
-  space.lastMoveBy = pack.ctx.user.id;
+  space.lastMoveBy = uid;
   pack.room.lastActiveAt = Date.now();
+  const portal = roomLayouts.findPortalAt(layout, finalPos.x, finalPos.y);
+  const action = roomLayouts.findActionAt(layout, finalPos.x, finalPos.y);
   persistRooms();
   return res.json({
     ok: true,
     blocked: Boolean(clamped.blocked),
-    space: publicRoomSpace(pack.room, db, pack.ctx.user.id),
+    portalId: portal?.id || null,
+    actionId: action?.id || null,
+    actionType: action?.actionType || null,
+    space: publicRoomSpace(pack.room, db, uid),
+  });
+});
+
+app.post("/v1/rooms/:code/space/enter-portal", (req, res) => {
+  const pack = requireCustomRoomMember(req, res);
+  if (!pack) return;
+  const db = getDb();
+  const space = ensureRoomSpace(pack.room);
+  const hubId = hubLayoutId(pack.room);
+  const uid = pack.ctx.user.id;
+  const layoutId = playerLayoutId(space, uid, hubId);
+  const layout = roomLayouts.getLayout(db, layoutId);
+  const portalId = String(req.body?.portalId || "").trim().slice(0, 48);
+  let portal = (layout?.portals || []).find((p) => p.id === portalId) || null;
+  if (!portal) {
+    const pos = normalizeSpacePos(space.positions[uid], hubId, layout?.spawn);
+    portal = roomLayouts.findPortalAt(layout, pos.x, pos.y);
+  }
+  if (!portal) return res.status(400).json({ error: "no_portal" });
+  const target = roomLayouts.getLayout(db, portal.targetRoomId);
+  if (!target || !target.hasImage) {
+    return res.status(400).json({ error: "bad_target" });
+  }
+  delete space.seated[uid];
+  const spawn = target.spawn || { x: 0.5, y: 0.85 };
+  space.positions[uid] = {
+    x: spawn.x,
+    y: spawn.y,
+    layoutId: target.id,
+  };
+  roomLayouts.ensureSpawnPosition(target, space.positions, uid);
+  if (space.positions[uid]) space.positions[uid].layoutId = target.id;
+  space.lastMoveAt = Date.now();
+  space.lastMoveBy = uid;
+  pack.room.lastActiveAt = Date.now();
+  persistRooms();
+  return res.json({
+    ok: true,
+    space: publicRoomSpace(pack.room, db, uid),
   });
 });
 
@@ -14464,23 +14577,29 @@ app.post("/v1/rooms/:code/space/sit", (req, res) => {
   const pack = requireCustomRoomMember(req, res);
   if (!pack) return;
   const db = getDb();
+  const space = ensureRoomSpace(pack.room);
+  const hubId = hubLayoutId(pack.room);
+  const uid = pack.ctx.user.id;
+  const layoutId = playerLayoutId(space, uid, hubId);
   const seatId = String(req.body?.seatId || "").trim().slice(0, 48);
-  const zone = roomLayouts.findSitZone(db, pack.room.customRoomId, seatId);
+  const zone = roomLayouts.findSitZone(db, layoutId, seatId);
   if (!zone || zone.color !== "blue") {
     return res.status(400).json({ error: "bad_seat" });
   }
-  const space = ensureRoomSpace(pack.room);
-  if (Object.values(space.seated).includes(seatId)) {
-    return res.status(400).json({ error: "seat_taken" });
+  // Sitz nur blockieren, wenn jemand im selben Layout sitzt
+  for (const [otherId, sid] of Object.entries(space.seated || {})) {
+    if (sid === seatId && playerLayoutId(space, otherId, hubId) === layoutId) {
+      return res.status(400).json({ error: "seat_taken" });
+    }
   }
-  space.seated[pack.ctx.user.id] = seatId;
+  space.seated[uid] = seatId;
   const sx = zone.shape === "circle" ? zone.cx : zone.x + zone.w / 2;
   const sy = zone.shape === "circle" ? zone.cy : zone.y + zone.h / 2;
-  space.positions[pack.ctx.user.id] = { x: sx, y: sy };
+  space.positions[uid] = { x: sx, y: sy, layoutId };
   space.lastMoveAt = Date.now();
-  space.lastMoveBy = pack.ctx.user.id;
+  space.lastMoveBy = uid;
   persistRooms();
-  return res.json({ ok: true, space: publicRoomSpace(pack.room, db, pack.ctx.user.id) });
+  return res.json({ ok: true, space: publicRoomSpace(pack.room, db, uid) });
 });
 
 app.post("/v1/rooms/:code/space/stand", (req, res) => {
