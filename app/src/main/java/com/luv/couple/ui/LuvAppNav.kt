@@ -209,6 +209,18 @@ fun LuvAppNav() {
     var sozialSubTab by remember { mutableIntStateOf(0) }
     var pendingCeremonyGathering by remember { mutableStateOf(false) }
     var coldFeetLobby by remember { mutableStateOf<Lobby?>(null) }
+    var showCustomRoomPicker by remember { mutableStateOf(false) }
+    var customRoomChoices by remember {
+        mutableStateOf<List<LuvApiClient.CustomRoomCard>>(emptyList())
+    }
+    var customRoomPickerBusy by remember { mutableStateOf(false) }
+
+    LaunchedEffect(showCustomRoomPicker) {
+        if (!showCustomRoomPicker) return@LaunchedEffect
+        customRoomPickerBusy = true
+        customRoomChoices = runCatching { LuvApiClient.listCustomRooms() }.getOrElse { emptyList() }
+        customRoomPickerBusy = false
+    }
     var reopenProfileChest by remember { mutableStateOf(false) }
     var profileChestTab by remember { mutableIntStateOf(0) }
     var showEmojiBarEditor by remember { mutableStateOf(false) }
@@ -914,6 +926,9 @@ fun LuvAppNav() {
             isWedding = room.isWedding,
             isWeddingRetake = room.isWeddingRetake,
             isWeddingCeremony = room.isWeddingCeremony,
+            isCustomRoom = room.isCustomRoom,
+            customRoomId = room.customRoomId,
+            customRoomImageUrl = room.customRoomImageUrl,
             ceremonyAt = room.ceremonyAt,
             coupleNameA = room.coupleNameA,
             coupleNameB = room.coupleNameB,
@@ -927,7 +942,9 @@ fun LuvAppNav() {
         )
         prefs.upsertLobby(lobby)
         PairSessionState.setCapacity(lobby.id, room.capacity)
-        CanvasStore.setActiveLobby(lobby.id)
+        if (!lobby.isCustomRoom) {
+            CanvasStore.setActiveLobby(lobby.id)
+        }
         PairConnectionService.startAll(context)
         LockScreenWidgetProvider.requestUpdate(context)
         refreshAccount()
@@ -1092,6 +1109,9 @@ fun LuvAppNav() {
                 isWedding = room.isWedding,
                 isWeddingRetake = room.isWeddingRetake,
                 isWeddingCeremony = room.isWeddingCeremony,
+                isCustomRoom = room.isCustomRoom,
+                customRoomId = room.customRoomId,
+                customRoomImageUrl = room.customRoomImageUrl,
                 ceremonyAt = room.ceremonyAt,
                 coupleNameA = room.coupleNameA,
                 coupleNameB = room.coupleNameB,
@@ -1107,9 +1127,23 @@ fun LuvAppNav() {
             prefs.upsertLobby(lobby)
             prefs.setActiveLobby(lobby.id)
             PairSessionState.setCapacity(lobby.id, room.capacity)
-            CanvasStore.setActiveLobby(lobby.id)
+            if (!lobby.isCustomRoom) {
+                CanvasStore.setActiveLobby(lobby.id)
+            }
             PairConnectionService.startAll(context)
             LockScreenWidgetProvider.requestUpdate(context)
+            if (lobby.isCustomRoom) {
+                context.startActivity(
+                    Intent(context, com.luv.couple.ui.space.CustomRoomActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        putExtra(com.luv.couple.ui.space.CustomRoomActivity.EXTRA_CODE, lobby.code)
+                        putExtra(com.luv.couple.ui.space.CustomRoomActivity.EXTRA_TOKEN, lobby.token)
+                        putExtra(com.luv.couple.ui.space.CustomRoomActivity.EXTRA_BELL, lobby.spaceBell)
+                    }
+                )
+                refreshAccount()
+                return true
+            }
             context.startActivity(
                 Intent(context, LockDrawActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -1629,6 +1663,90 @@ fun LuvAppNav() {
         )
     }
 
+    if (showCustomRoomPicker) {
+        AlertDialog(
+            onDismissRequest = { showCustomRoomPicker = false },
+            containerColor = BgDeep,
+            title = {
+                Text("Neuer Raum", fontFamily = BodyFont, color = Color.White, fontSize = 20.sp)
+            },
+            text = {
+                Column {
+                    when {
+                        customRoomPickerBusy -> Text(
+                            "Lade Räume…",
+                            color = TextMuted,
+                            fontFamily = BodyFont
+                        )
+                        customRoomChoices.isEmpty() -> Text(
+                            "Noch keine Räume im Admin angelegt.",
+                            color = TextMuted,
+                            fontFamily = BodyFont
+                        )
+                        else -> customRoomChoices.forEach { card ->
+                            TextButton(
+                                onClick = {
+                                    showCustomRoomPicker = false
+                                    scope.launch {
+                                        busy = true
+                                        try {
+                                            val room = LuvApiClient.createRoom(
+                                                name = card.name,
+                                                customRoomId = card.id
+                                            )
+                                            val lobby = Lobby(
+                                                id = UUID.randomUUID().toString(),
+                                                name = room.name.ifBlank { card.name },
+                                                role = Role.HOST,
+                                                code = room.code,
+                                                token = room.token,
+                                                invite = room.invite,
+                                                capacity = room.capacity,
+                                                isFree = room.isFree,
+                                                isCustomRoom = true,
+                                                customRoomId = room.customRoomId ?: card.id,
+                                                customRoomImageUrl = room.customRoomImageUrl
+                                                    ?: card.imageUrl,
+                                                spaceBell = true,
+                                                hostNickname = room.hostNickname,
+                                                hostColorSide = room.hostColorSide,
+                                                createdByMe = true
+                                            )
+                                            prefs.upsertLobby(lobby)
+                                            PairSessionState.setCapacity(lobby.id, room.capacity)
+                                            PairConnectionService.startAll(context)
+                                            LockScreenWidgetProvider.requestUpdate(context)
+                                            refreshAccount()
+                                            Toast.makeText(
+                                                context,
+                                                "Raum „${lobby.name}“ bereit",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        } catch (e: Exception) {
+                                            joinError = when (e) {
+                                                is LuvApiException -> e.message
+                                                else -> "Raum konnte nicht erstellt werden."
+                                            }
+                                        } finally {
+                                            busy = false
+                                        }
+                                    }
+                                }
+                            ) {
+                                Text(card.name, color = AccentRose, fontFamily = BodyFont)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showCustomRoomPicker = false }) {
+                    Text("Abbrechen", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
+    }
+
     NoCoinsUi.Dialog(
         visible = showNoCoins,
         onDismiss = { showNoCoins = false },
@@ -1870,6 +1988,31 @@ fun LuvAppNav() {
                                         } else {
                                             pendingCeremonyGathering = true
                                         }
+                                    } else if (lobby.isCustomRoom) {
+                                        context.startActivity(
+                                            Intent(
+                                                context,
+                                                com.luv.couple.ui.space.CustomRoomActivity::class.java
+                                            ).apply {
+                                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                                putExtra(
+                                                    com.luv.couple.ui.space.CustomRoomActivity.EXTRA_CODE,
+                                                    lobby.code
+                                                )
+                                                putExtra(
+                                                    com.luv.couple.ui.space.CustomRoomActivity.EXTRA_TOKEN,
+                                                    lobby.token
+                                                )
+                                                putExtra(
+                                                    com.luv.couple.ui.space.CustomRoomActivity.EXTRA_BELL,
+                                                    lobby.spaceBell
+                                                )
+                                            }
+                                        )
+                                        scope.launch {
+                                            PairConnectionService.startAll(context)
+                                            runCatching { LuvApiClient.pingAchievement("lobby_opens") }
+                                        }
                                     } else {
                                         CanvasStore.setActiveLobby(lobby.id)
                                         CanvasStore.updateKnownLobbies(lobbies.map { it.id })
@@ -1896,6 +2039,16 @@ fun LuvAppNav() {
                                 }
                             },
                             onCreateEventLobby = { event -> createEventLobby(event) },
+                            onCreateCustomRoom = {
+                                if (requireGoogleOrToast()) {
+                                    showCustomRoomPicker = true
+                                }
+                            },
+                            onToggleSpaceBell = { lobby ->
+                                scope.launch {
+                                    prefs.upsertLobby(lobby.copy(spaceBell = !lobby.spaceBell))
+                                }
+                            },
                             onJoinLobby = {
                                 if (requireGoogleOrToast()) {
                                     joinError = null

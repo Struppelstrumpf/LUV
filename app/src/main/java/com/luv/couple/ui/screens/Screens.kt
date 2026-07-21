@@ -294,8 +294,10 @@ fun LobbiesScreen(
     onOpenLobby: (Lobby) -> Unit,
     onCreateLobby: () -> Unit,
     onCreateEventLobby: (SeasonEvent) -> Unit = {},
+    onCreateCustomRoom: () -> Unit = {},
     onJoinLobby: () -> Unit,
     onRandomLobby: () -> Unit,
+    onToggleSpaceBell: (Lobby) -> Unit = {},
     onInviteSeat: (Lobby) -> Unit,
     onBuySeat: (Lobby) -> Unit,
     onRenameLobby: (Lobby) -> Unit,
@@ -588,6 +590,14 @@ fun LobbiesScreen(
                             onCreateLobby()
                         }
                     )
+                    PrimaryButton(
+                        label = "Neuer Raum",
+                        color = accent,
+                        onClick = {
+                            showLobbyPlusDialog = false
+                            onCreateCustomRoom()
+                        }
+                    )
                     if (eventLobby != null) {
                         PrimaryButton(
                             label = when {
@@ -834,6 +844,7 @@ fun LobbiesScreen(
                         onRename = { onRenameLobby(lobby) },
                         onLeave = { onLeaveLobby(lobby) },
                         onReconnect = { onReconnect(lobby) },
+                        onToggleSpaceBell = { onToggleSpaceBell(lobby) },
                         reportCoachTargets = lobby.id == firstLobbyId,
                         onCoachLobbyPositioned = { center, size ->
                             coachLobby = reportCoachHole(center, size)
@@ -945,6 +956,7 @@ private fun LobbyCard(
     onRename: () -> Unit,
     onLeave: () -> Unit,
     onReconnect: () -> Unit,
+    onToggleSpaceBell: () -> Unit = {},
     reportCoachTargets: Boolean = false,
     onCoachLobbyPositioned: (Offset, IntSize) -> Unit = { _, _ -> },
     onCoachSeatPositioned: (Offset, IntSize) -> Unit = { _, _ -> }
@@ -1177,6 +1189,7 @@ private fun LobbyCard(
                             lobby.isWedding && lobby.isWeddingRetake -> "💒 Hochzeitsbild"
                             lobby.isWedding -> "💒 Hochzeitsbild"
                             lobby.isRandom -> "🎲 Random"
+                            lobby.isCustomRoom -> lobby.name.ifBlank { "Raum" }
                             else -> lobby.name
                         },
                         modifier = if (reorderEnabled && !lobby.isWeddingCeremony) {
@@ -1210,6 +1223,7 @@ private fun LobbyCard(
                                     "Hochzeitsbild nachholen · beide mit ✓ bestätigen"
                                 lobby.isWedding -> "Hochzeitsbild · je 10 Striche, dann Timer oder Coins"
                                 lobby.isRandom -> "Zufalls-Lobby · max. 5"
+                                lobby.isCustomRoom -> "Raum · kein Malen · sitzen & laufen"
                                 lobby.createdByMe -> "Von dir erstellt"
                                 else -> "Beigetreten"
                             },
@@ -1227,15 +1241,27 @@ private fun LobbyCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (!lobby.isEventLobby && !lobby.isWeddingCeremony) {
-                        Text(
-                            text = if (proximityOn) "🔔" else "🔕",
-                            fontSize = 18.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier
-                                .clickable { showProximityDialog = true }
-                                .padding(horizontal = 4.dp, vertical = 2.dp),
-                            color = if (proximityOn) accent else TextMuted
-                        )
+                        if (lobby.isCustomRoom) {
+                            Text(
+                                text = if (lobby.spaceBell) "🔔" else "🔕",
+                                fontSize = 18.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier
+                                    .clickable(onClick = onToggleSpaceBell)
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                color = if (lobby.spaceBell) accent else TextMuted
+                            )
+                        } else {
+                            Text(
+                                text = if (proximityOn) "🔔" else "🔕",
+                                fontSize = 18.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier
+                                    .clickable { showProximityDialog = true }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                color = if (proximityOn) accent else TextMuted
+                            )
+                        }
                         StatusChip(rememberStickyConnectionState(state))
                     }
                 }
@@ -1257,6 +1283,8 @@ private fun LobbyCard(
                     else -> formatCountdown(openAt - now)
                 }
                 PrimaryButton(label, accent, onOpen)
+            } else if (lobby.isCustomRoom) {
+                PrimaryButton("Raum betreten", accent, onOpen)
             } else {
                 PrimaryButton("Leinwand öffnen", accent, onOpen)
             }
@@ -1309,7 +1337,7 @@ private fun LobbyCard(
             if (lobby.role == Role.HOST && !lobby.isRandom && !lobby.isWedding && !lobby.isWeddingCeremony && !lobby.isEventLobby) {
                 PrimaryButton("Umbenennen", Color.Transparent, onRename, bordered = true)
             }
-            if (!lobby.isWedding || lobby.isWeddingCeremony) {
+            if (!lobby.isWedding || lobby.isWeddingCeremony || lobby.isCustomRoom) {
                 Text(
                     "Verlassen",
                     color = TextMuted,

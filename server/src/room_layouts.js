@@ -1,29 +1,28 @@
 /**
- * Admin-konfigurierbare Raum-Layouts (z. B. Hochzeitskapelle).
- * Zonen: normalisierte 0–1 Koordinaten relativ zum Raumbild.
- *
- *  - green  + rect   → nur hier darf gelaufen werden (Avatar komplett drin)
- *  - red    + rect   → Hindernis (Bänke etc.) — drum herum laufen
- *  - yellow + circle → Sitz Eheleute
- *  - blue   + circle → Sitz (auch außerhalb Grün / in Rot)
- *  - brown  + circle → Spawn aller Avatare
- *  - orange + circle → Avatar-Radius (Größe der runden Avatare)
- *
- * Schneiden sich zwei Grüns → ein Rechteck (Bounding-Box der Komponente).
- * In der App sind die Zonen unsichtbar — nur System-Logik.
+ * Raum-Layouts (Hochzeit + nutzerdefinierte Räume).
+ * Zonen 0–1 relativ zum Bild. viewRect = sichtbarer Raumbereich (weiße Linie).
  */
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
 
-const ROOM_DEFS = {
-  wedding: {
-    id: "wedding",
-    name: "Hochzeit",
-    imageUrl: "/luv/wedding-chapel-room.png",
-  },
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
+const IMAGE_DIR = path.join(DATA_DIR, "room-images");
+
+const WEDDING = {
+  id: "wedding",
+  name: "Hochzeit",
+  imageUrl: "/luv/wedding-chapel-room.png",
+  builtin: true,
 };
 
 const DEFAULT_AVATAR_R = 0.028;
 const GRID_W = 48;
 const GRID_H = 64;
+
+function ensureDirs() {
+  fs.mkdirSync(IMAGE_DIR, { recursive: true });
+}
 
 function ensureStore(db) {
   if (!db.roomLayouts || typeof db.roomLayouts !== "object") {
@@ -36,6 +35,17 @@ function clamp01(n, fallback = 0) {
   const v = Number(n);
   if (!Number.isFinite(v)) return fallback;
   return Math.min(1, Math.max(0, v));
+}
+
+function sanitizeViewRect(raw) {
+  if (!raw || typeof raw !== "object") {
+    return { x: 0, y: 0, w: 1, h: 1 };
+  }
+  const x = clamp01(raw.x, 0);
+  const y = clamp01(raw.y, 0);
+  const w = Math.min(1 - x, Math.max(0.05, Number(raw.w) || 1));
+  const h = Math.min(1 - y, Math.max(0.05, Number(raw.h) || 1));
+  return { x, y, w, h };
 }
 
 function sanitizeZone(raw, index) {
@@ -100,26 +110,24 @@ function rectsOverlapOrTouch(a, b, eps = 0.002) {
   );
 }
 
-/** Schneiden/berühren sich Grüns → zu einem Rechteck (Bounding-Box) mergen. */
 function mergeGreenZones(zones) {
   const greens = zones.filter((z) => z.color === "green" && z.shape === "rect");
   const others = zones.filter((z) => !(z.color === "green" && z.shape === "rect"));
   if (greens.length <= 1) return zones;
-
   const n = greens.length;
   const parent = Array.from({ length: n }, (_, i) => i);
-  function find(i) {
+  const find = (i) => {
     while (parent[i] !== i) {
       parent[i] = parent[parent[i]];
       i = parent[i];
     }
     return i;
-  }
-  function uni(a, b) {
+  };
+  const uni = (a, b) => {
     const ra = find(a);
     const rb = find(b);
     if (ra !== rb) parent[rb] = ra;
-  }
+  };
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       if (rectsOverlapOrTouch(greens[i], greens[j])) uni(i, j);
@@ -132,7 +140,6 @@ function mergeGreenZones(zones) {
     groups.get(r).push(greens[i]);
   }
   const merged = [];
-  let gi = 0;
   for (const list of groups.values()) {
     let x0 = Infinity;
     let y0 = Infinity;
@@ -145,7 +152,7 @@ function mergeGreenZones(zones) {
       y1 = Math.max(y1, g.y + g.h);
     }
     merged.push({
-      id: list[0].id || `green_${gi}`,
+      id: list[0].id || `green_${merged.length}`,
       color: "green",
       shape: "rect",
       x: clamp01(x0),
@@ -153,78 +160,202 @@ function mergeGreenZones(zones) {
       w: Math.min(1, Math.max(0.01, x1 - x0)),
       h: Math.min(1, Math.max(0.01, y1 - y0)),
     });
-    gi++;
   }
   return [...others, ...merged];
 }
 
-function listRooms(db) {
+function imagePublicUrl(roomId, ver) {
+  const v = ver ? `?v=${ver}` : "";
+  return `/luv/v1/room-layouts/${encodeURIComponent(roomId)}/image${v}`;
+}
+
+function imageFilePath(roomId, ext) {
+  return path.join(IMAGE_DIR, `${roomId}.${ext}`);
+}
+
+function findImageFile(roomId) {
+  ensureDirs();
+  for (const ext of ["png", "jpg", "jpeg", "webp"]) {
+    const p = imageFilePath(roomId, ext);
+    if (fs.existsSync(p)) return { path: p, ext };
+  }
+  return null;
+}
+
+function saveImageBase64(roomId, dataUrlOrB64, mimeHint) {
+  ensureDirs();
+  let b64 = String(dataUrlOrB64 || "");
+  let mime = String(mimeHint || "");
+  const m = /^data:([^;]+);base64,(.+)$/i.exec(b64);
+  if (m) {
+    mime = m[1];
+    b64 = m[2];
+  }
+  b64 = b64.replace(/\s/g, "");
+  if (!b64 || b64.length < 32) return { error: "bad_image" };
+  if (b64.length > 12_000_000) return { error: "image_too_large" };
+  let ext = "png";
+  if (/jpeg|jpg/i.test(mime)) ext = "jpg";
+  else if (/webp/i.test(mime)) ext = "webp";
+  else if (/png/i.test(mime)) ext = "png";
+  // alte Dateien weg
+  for (const e of ["png", "jpg", "jpeg", "webp"]) {
+    const old = imageFilePath(roomId, e);
+    if (fs.existsSync(old)) fs.unlinkSync(old);
+  }
+  const buf = Buffer.from(b64, "base64");
+  if (buf.length < 64) return { error: "bad_image" };
+  fs.writeFileSync(imageFilePath(roomId, ext), buf);
+  return { ok: true, ext };
+}
+
+function listRooms(db, { forApp = false } = {}) {
   ensureStore(db);
-  return Object.values(ROOM_DEFS).map((def) => {
-    const saved = db.roomLayouts[def.id];
-    const zones = Array.isArray(saved?.zones) ? saved.zones : [];
-    return {
-      id: def.id,
-      name: def.name,
-      imageUrl: def.imageUrl,
-      zoneCount: zones.length,
-      updatedAt: saved?.updatedAt || null,
-    };
-  });
+  const out = [];
+  // Hochzeit immer (Admin); App-Picker nur Custom
+  if (!forApp) {
+    out.push(summarize(db, "wedding"));
+  }
+  for (const id of Object.keys(db.roomLayouts)) {
+    if (id === "wedding") continue;
+    out.push(summarize(db, id));
+  }
+  if (forApp) {
+    return out.filter((r) => r && r.id !== "wedding" && r.hasImage);
+  }
+  return out.filter(Boolean);
+}
+
+function summarize(db, roomId) {
+  const layout = getLayout(db, roomId);
+  if (!layout) return null;
+  return {
+    id: layout.id,
+    name: layout.name,
+    imageUrl: layout.imageUrl,
+    zoneCount: layout.zones.length,
+    updatedAt: layout.updatedAt,
+    builtin: layout.builtin,
+    hasImage: layout.hasImage,
+    viewRect: layout.viewRect,
+  };
 }
 
 function getLayout(db, roomId) {
-  const def = ROOM_DEFS[String(roomId || "")];
-  if (!def) return null;
+  const id = String(roomId || "").trim().slice(0, 64);
+  if (!id) return null;
   ensureStore(db);
-  const saved = db.roomLayouts[def.id];
+  const saved = db.roomLayouts[id];
+  const builtin = id === "wedding";
+  if (!saved && !builtin) return null;
+
   const zones = Array.isArray(saved?.zones)
     ? mergeGreenZones(saved.zones.map((z, i) => sanitizeZone(z, i)).filter(Boolean))
     : [];
+  const viewRect = sanitizeViewRect(saved?.viewRect);
+  const img = findImageFile(id);
+  const hasImage = Boolean(img) || builtin;
+  const updatedAt = saved?.updatedAt || null;
+  let imageUrl = WEDDING.imageUrl;
+  if (builtin && !img) imageUrl = WEDDING.imageUrl;
+  else if (img || (saved && saved.imageExt)) {
+    imageUrl = imagePublicUrl(id, updatedAt || Date.now());
+  }
+  const name =
+    (saved && String(saved.name || "").trim().slice(0, 40)) ||
+    (builtin ? WEDDING.name : id);
+
   return {
-    id: def.id,
-    name: def.name,
-    imageUrl: def.imageUrl,
-    updatedAt: saved?.updatedAt || null,
+    id,
+    name,
+    imageUrl,
+    updatedAt,
     zones,
+    viewRect,
+    builtin,
+    hasImage,
     avatarR: avatarRadius(zones),
-    spawn: spawnPoint(zones),
+    spawn: spawnPoint(zones, viewRect),
   };
 }
 
-function saveLayout(db, roomId, zonesRaw) {
-  const def = ROOM_DEFS[String(roomId || "")];
-  if (!def) return { error: "unknown_room" };
-  if (!Array.isArray(zonesRaw)) return { error: "bad_zones" };
+function createRoom(db, { name, imageBase64, mime } = {}) {
   ensureStore(db);
-  const zones = mergeGreenZones(
-    zonesRaw
-      .slice(0, 200)
-      .map((z, i) => sanitizeZone(z, i))
-      .filter(Boolean)
-  );
-  const next = {
-    id: def.id,
-    name: def.name,
-    imageUrl: def.imageUrl,
+  const id = `room_${crypto.randomBytes(6).toString("hex")}`;
+  const nick = String(name || "Raum").trim().slice(0, 40) || "Raum";
+  const img = saveImageBase64(id, imageBase64, mime);
+  if (img.error) return { error: img.error };
+  db.roomLayouts[id] = {
+    id,
+    name: nick,
+    imageExt: img.ext,
+    viewRect: { x: 0, y: 0, w: 1, h: 1 },
+    zones: [],
     updatedAt: Date.now(),
-    zones,
+    createdAt: Date.now(),
   };
-  db.roomLayouts[def.id] = next;
-  return { ok: true, layout: getLayout(db, def.id) };
+  return { ok: true, layout: getLayout(db, id) };
+}
+
+function saveLayout(db, roomId, body = {}) {
+  const id = String(roomId || "").trim().slice(0, 64);
+  if (!id) return { error: "unknown_room" };
+  ensureStore(db);
+  const builtin = id === "wedding";
+  if (!builtin && !db.roomLayouts[id] && !body.imageBase64) {
+    return { error: "unknown_room" };
+  }
+  const prev = db.roomLayouts[id] || {
+    id,
+    name: builtin ? WEDDING.name : id,
+    viewRect: { x: 0, y: 0, w: 1, h: 1 },
+    zones: [],
+  };
+  if (body.imageBase64) {
+    const img = saveImageBase64(id, body.imageBase64, body.mime);
+    if (img.error) return { error: img.error };
+    prev.imageExt = img.ext;
+  }
+  if (body.name != null) {
+    prev.name = String(body.name || "").trim().slice(0, 40) || prev.name;
+  }
+  if (body.viewRect) prev.viewRect = sanitizeViewRect(body.viewRect);
+  if (Array.isArray(body.zones)) {
+    prev.zones = mergeGreenZones(
+      body.zones
+        .slice(0, 200)
+        .map((z, i) => sanitizeZone(z, i))
+        .filter(Boolean)
+    );
+  }
+  prev.id = id;
+  prev.updatedAt = Date.now();
+  db.roomLayouts[id] = prev;
+  return { ok: true, layout: getLayout(db, id) };
+}
+
+function deleteRoom(db, roomId) {
+  const id = String(roomId || "").trim();
+  if (!id || id === "wedding") return { error: "cannot_delete" };
+  ensureStore(db);
+  if (!db.roomLayouts[id]) return { error: "unknown_room" };
+  delete db.roomLayouts[id];
+  for (const e of ["png", "jpg", "jpeg", "webp"]) {
+    const p = imageFilePath(id, e);
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  }
+  return { ok: true };
 }
 
 function findZone(db, roomId, seatId) {
   const layout = getLayout(db, roomId);
   if (!layout) return null;
-  const id = String(seatId || "");
-  return layout.zones.find((z) => z.id === id) || null;
+  return layout.zones.find((z) => z.id === String(seatId || "")) || null;
 }
 
 function findSitZone(db, roomId, seatId) {
   const z = findZone(db, roomId, seatId);
-  if (!z) return null;
-  if (z.color !== "yellow" && z.color !== "blue") return null;
+  if (!z || (z.color !== "yellow" && z.color !== "blue")) return null;
   return z;
 }
 
@@ -243,9 +374,7 @@ function isGuestSeat(zoneOrId) {
 function zoneContains(z, x, y, pad = 0) {
   if (!z) return false;
   if (z.shape === "circle") {
-    const dx = x - z.cx;
-    const dy = y - z.cy;
-    return Math.hypot(dx, dy) <= (Number(z.r) || 0) + pad;
+    return Math.hypot(x - z.cx, y - z.cy) <= (Number(z.r) || 0) + pad;
   }
   return (
     x >= z.x - pad &&
@@ -261,24 +390,22 @@ function avatarRadius(zones) {
   return DEFAULT_AVATAR_R;
 }
 
-function spawnPoint(zones) {
+function spawnPoint(zones, viewRect) {
   const brown = (zones || []).find((z) => z.color === "brown" && z.shape === "circle");
   if (brown) return { x: brown.cx, y: brown.cy };
-  return { x: 0.5, y: 0.86 };
+  const vr = viewRect || { x: 0, y: 0, w: 1, h: 1 };
+  return { x: vr.x + vr.w * 0.5, y: vr.y + vr.h * 0.85 };
 }
 
-/** Punkt in mind. einem Grün (ohne Pad). */
 function pointInGreen(zones, x, y) {
   return (zones || []).some((z) => z.color === "green" && zoneContains(z, x, y, 0));
 }
 
-/** Avatar-Kreis komplett in Grün und ohne Rot-Schnitt. */
 function isWalkable(layout, x, y) {
   const zones = layout?.zones || [];
   const r = layout?.avatarR != null ? layout.avatarR : avatarRadius(zones);
   const greens = zones.filter((z) => z.color === "green");
   if (!greens.length) return false;
-
   const samples = [[x, y]];
   for (let i = 0; i < 12; i++) {
     const a = (i / 12) * Math.PI * 2;
@@ -287,11 +414,7 @@ function isWalkable(layout, x, y) {
   for (const [px, py] of samples) {
     if (!pointInGreen(zones, px, py)) return false;
   }
-  const reds = zones.filter((z) => z.color === "red");
-  for (const red of reds) {
-    if (zoneContains(red, x, y, r)) return false;
-  }
-  return true;
+  return !zones.some((z) => z.color === "red" && zoneContains(z, x, y, r));
 }
 
 function isBlocked(layout, x, y) {
@@ -299,10 +422,7 @@ function isBlocked(layout, x, y) {
 }
 
 function cellCenter(ix, iy) {
-  return {
-    x: (ix + 0.5) / GRID_W,
-    y: (iy + 0.5) / GRID_H,
-  };
+  return { x: (ix + 0.5) / GRID_W, y: (iy + 0.5) / GRID_H };
 }
 
 function toCell(x, y) {
@@ -342,29 +462,20 @@ function nearestWalkableCell(layout, walk, x, y) {
   return best;
 }
 
-/** A* in Grün um Rot herum. Ziel = nächste begehbare Zelle zum Wunschpunkt. */
 function findPath(layout, fromX, fromY, toX, toY) {
   const walk = buildWalkGrid(layout);
   const start = nearestWalkableCell(layout, walk, fromX, fromY);
   const goal = nearestWalkableCell(layout, walk, toX, toY);
   if (!start || !goal) return [];
-
   const key = (ix, iy) => iy * GRID_W + ix;
   const open = [{ ix: start.ix, iy: start.iy, g: 0, f: 0 }];
   const came = new Map();
   const gScore = new Map([[key(start.ix, start.iy), 0]]);
   const closed = new Set();
   const dirs = [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1],
-    [1, 1],
-    [1, -1],
-    [-1, 1],
-    [-1, -1],
+    [1, 0], [-1, 0], [0, 1], [0, -1],
+    [1, 1], [1, -1], [-1, 1], [-1, -1],
   ];
-
   while (open.length) {
     open.sort((a, b) => a.f - b.f);
     const cur = open.shift();
@@ -389,26 +500,28 @@ function findPath(layout, fromX, fromY, toX, toY) {
       if (nix < 0 || niy < 0 || nix >= GRID_W || niy >= GRID_H) continue;
       const nk = key(nix, niy);
       if (!walk[nk] || closed.has(nk)) continue;
-      // Diagonale: beide Seiten müssen begehbar sein
-      if (dx !== 0 && dy !== 0) {
+      if (dx && dy) {
         if (!walk[key(cur.ix + dx, cur.iy)] || !walk[key(cur.ix, cur.iy + dy)]) continue;
       }
-      const step = dx !== 0 && dy !== 0 ? 1.414 : 1;
+      const step = dx && dy ? 1.414 : 1;
       const ng = (gScore.get(ck) || 0) + step;
       if (ng >= (gScore.get(nk) ?? Infinity)) continue;
       came.set(nk, ck);
       gScore.set(nk, ng);
-      const h = Math.hypot(nix - goal.ix, niy - goal.iy);
-      open.push({ ix: nix, iy: niy, g: ng, f: ng + h });
+      open.push({
+        ix: nix,
+        iy: niy,
+        g: ng,
+        f: ng + Math.hypot(nix - goal.ix, niy - goal.iy),
+      });
     }
   }
   return [];
 }
 
-/** Erste Position am braunen Spawn (oder nächstes begehbares Grün). */
 function ensureSpawnPosition(layout, positions, userId) {
   if (!positions || !userId || positions[userId]) return positions?.[userId] || null;
-  const sp = layout?.spawn || spawnPoint(layout?.zones || []);
+  const sp = layout?.spawn || spawnPoint(layout?.zones || [], layout?.viewRect);
   if (isWalkable(layout, sp.x, sp.y)) {
     positions[userId] = { x: sp.x, y: sp.y };
     return positions[userId];
@@ -424,7 +537,6 @@ function ensureSpawnPosition(layout, positions, userId) {
   return positions[userId];
 }
 
-/** Bewegung entlang Pathfinding; stoppt am Grün-Rand / vor Rot. */
 function clampMove(layout, fromX, fromY, toX, toY) {
   let x = Math.min(1, Math.max(0, Number(fromX) || 0.5));
   let y = Math.min(1, Math.max(0, Number(fromY) || 0.75));
@@ -433,7 +545,6 @@ function clampMove(layout, fromX, fromY, toX, toY) {
   if (!layout) return { x: tx, y: ty };
   const path = findPath(layout, x, y, tx, ty);
   if (!path.length) {
-    // Geradeaus so weit wie möglich in Grün
     const dist = Math.hypot(tx - x, ty - y);
     const steps = Math.min(80, Math.max(1, Math.ceil(dist / 0.01)));
     for (let i = 1; i <= steps; i++) {
@@ -450,10 +561,14 @@ function clampMove(layout, fromX, fromY, toX, toY) {
 }
 
 module.exports = {
-  ROOM_DEFS,
+  WEDDING,
+  IMAGE_DIR,
   listRooms,
   getLayout,
+  createRoom,
   saveLayout,
+  deleteRoom,
+  findImageFile,
   findZone,
   findSitZone,
   isCoupleSeat,

@@ -457,6 +457,10 @@ class PrefsRepository(private val context: Context) {
                     isWedding = r.isWedding || prev?.isWedding == true,
                     isWeddingRetake = r.isWeddingRetake || prev?.isWeddingRetake == true,
                     isWeddingCeremony = r.isWeddingCeremony || prev?.isWeddingCeremony == true,
+                    isCustomRoom = r.isCustomRoom || prev?.isCustomRoom == true,
+                    customRoomId = r.customRoomId ?: prev?.customRoomId,
+                    customRoomImageUrl = r.customRoomImageUrl ?: prev?.customRoomImageUrl,
+                    spaceBell = prev?.spaceBell ?: true,
                     ceremonyAt = r.ceremonyAt.takeIf { it > 0 } ?: (prev?.ceremonyAt ?: 0L),
                     coupleNameA = r.coupleNameA ?: prev?.coupleNameA,
                     coupleNameB = r.coupleNameB ?: prev?.coupleNameB,
@@ -1387,6 +1391,10 @@ class PrefsRepository(private val context: Context) {
                                 isWedding = o.optBoolean("isWedding", false),
                                 isWeddingRetake = o.optBoolean("isWeddingRetake", false),
                                 isWeddingCeremony = o.optBoolean("isWeddingCeremony", false),
+                                isCustomRoom = o.optBoolean("isCustomRoom", false),
+                                customRoomId = o.optString("customRoomId").takeIf { it.isNotBlank() },
+                                customRoomImageUrl = o.optString("customRoomImageUrl").takeIf { it.isNotBlank() },
+                                spaceBell = o.optBoolean("spaceBell", true),
                                 ceremonyAt = o.optLong("ceremonyAt", 0L),
                                 coupleNameA = o.optString("coupleNameA").takeIf { it.isNotBlank() },
                                 coupleNameB = o.optString("coupleNameB").takeIf { it.isNotBlank() },
@@ -1435,6 +1443,10 @@ class PrefsRepository(private val context: Context) {
                         .put("isWedding", lobby.isWedding)
                         .put("isWeddingRetake", lobby.isWeddingRetake)
                         .put("isWeddingCeremony", lobby.isWeddingCeremony)
+                        .put("isCustomRoom", lobby.isCustomRoom)
+                        .put("customRoomId", lobby.customRoomId ?: "")
+                        .put("customRoomImageUrl", lobby.customRoomImageUrl ?: "")
+                        .put("spaceBell", lobby.spaceBell)
                         .put("ceremonyAt", lobby.ceremonyAt)
                         .put("coupleNameA", lobby.coupleNameA ?: "")
                         .put("coupleNameB", lobby.coupleNameB ?: "")

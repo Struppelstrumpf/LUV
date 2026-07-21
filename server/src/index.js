@@ -2702,6 +2702,21 @@ function serializeRoom(code, room) {
       : null,
     eventEndsAt: room.eventEndsAt ? String(room.eventEndsAt).slice(0, 40) : null,
     invitesAllowed: room.invitesAllowed !== false,
+    isCustomRoom: Boolean(room.isCustomRoom),
+    customRoomId: room.customRoomId ? String(room.customRoomId).slice(0, 64) : null,
+    customRoomImageUrl: room.customRoomImageUrl
+      ? String(room.customRoomImageUrl).slice(0, 300)
+      : null,
+    space:
+      room.space && typeof room.space === "object"
+        ? {
+            positions: room.space.positions || {},
+            seated: room.space.seated || {},
+            reactions: room.space.reactions || {},
+            lastMoveAt: Number(room.space.lastMoveAt) || 0,
+            lastMoveBy: room.space.lastMoveBy || null,
+          }
+        : null,
     publicShare:
       room.publicShare && typeof room.publicShare === "object"
         ? {
@@ -2798,6 +2813,21 @@ function restoreRoomsFromDisk() {
         : null,
       eventEndsAt: data.eventEndsAt ? String(data.eventEndsAt).slice(0, 40) : null,
       invitesAllowed: data.invitesAllowed !== false,
+      isCustomRoom: Boolean(data.isCustomRoom),
+      customRoomId: data.customRoomId ? String(data.customRoomId).slice(0, 64) : null,
+      customRoomImageUrl: data.customRoomImageUrl
+        ? String(data.customRoomImageUrl).slice(0, 300)
+        : null,
+      space:
+        data.space && typeof data.space === "object"
+          ? {
+              positions: data.space.positions || {},
+              seated: data.space.seated || {},
+              reactions: data.space.reactions || {},
+              lastMoveAt: Number(data.space.lastMoveAt) || 0,
+              lastMoveBy: data.space.lastMoveBy || null,
+            }
+          : null,
       publicShare:
         data.publicShare && typeof data.publicShare === "object"
           ? {
@@ -3514,6 +3544,21 @@ function hydrateRoom(code, data, tokenOverride) {
       : null,
     eventEndsAt: data.eventEndsAt ? String(data.eventEndsAt).slice(0, 40) : null,
     invitesAllowed: data.invitesAllowed !== false,
+    isCustomRoom: Boolean(data.isCustomRoom),
+    customRoomId: data.customRoomId ? String(data.customRoomId).slice(0, 64) : null,
+    customRoomImageUrl: data.customRoomImageUrl
+      ? String(data.customRoomImageUrl).slice(0, 300)
+      : null,
+    space:
+      data.space && typeof data.space === "object"
+        ? {
+            positions: data.space.positions || {},
+            seated: data.space.seated || {},
+            reactions: data.space.reactions || {},
+            lastMoveAt: Number(data.space.lastMoveAt) || 0,
+            lastMoveBy: data.space.lastMoveBy || null,
+          }
+        : null,
     publicShare:
       data.publicShare && typeof data.publicShare === "object"
         ? {
@@ -3661,6 +3706,10 @@ function publicJoinedLobbies(user) {
     isWeddingCeremony: Boolean(
       meta?.isWeddingCeremony || room?.isWeddingCeremony
     ),
+    isCustomRoom: Boolean(meta?.isCustomRoom || room?.isCustomRoom),
+    customRoomId: meta?.customRoomId || room?.customRoomId || null,
+    customRoomImageUrl:
+      meta?.customRoomImageUrl || room?.customRoomImageUrl || null,
     weddingRetake: Boolean(
       meta?.weddingRetake || rooms.get(code)?.weddingRetake
     ),
@@ -5177,6 +5226,10 @@ function publicHostedLobbies(user) {
     isWeddingCeremony: Boolean(
       meta?.isWeddingCeremony || room?.isWeddingCeremony
     ),
+    isCustomRoom: Boolean(meta?.isCustomRoom || room?.isCustomRoom),
+    customRoomId: meta?.customRoomId || room?.customRoomId || null,
+    customRoomImageUrl:
+      meta?.customRoomImageUrl || room?.customRoomImageUrl || null,
     weddingRetake: Boolean(
       meta?.weddingRetake || rooms.get(code)?.weddingRetake || getDb().rooms?.[code]?.weddingRetake
     ),
@@ -9524,6 +9577,38 @@ app.post("/v1/redeem", (req, res) => {
   });
 });
 
+/** App: gespeicherte Custom-Räume (Picker) */
+app.get("/v1/room-layouts", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  return res.json({ ok: true, rooms: roomLayouts.listRooms(db, { forApp: true }) });
+});
+
+app.get("/v1/room-layouts/:roomId/image", (req, res) => {
+  const id = String(req.params.roomId || "").trim();
+  const file = roomLayouts.findImageFile(id);
+  if (!file) {
+    if (id === "wedding") {
+      const fallback = path.join(WEB_DIR, "wedding-chapel-room.png");
+      if (fs.existsSync(fallback)) {
+        res.type("png");
+        return res.sendFile(fallback);
+      }
+    }
+    return res.status(404).json({ error: "no_image" });
+  }
+  const type =
+    file.ext === "jpg" || file.ext === "jpeg"
+      ? "image/jpeg"
+      : file.ext === "webp"
+        ? "image/webp"
+        : "image/png";
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  res.type(type);
+  return res.sendFile(file.path);
+});
+
 /** Öffentlich für App: Raum-Layout (Zonen) laden */
 app.get("/v1/room-layouts/:roomId", (req, res) => {
   const db = getDb();
@@ -9539,6 +9624,20 @@ app.get("/v1/admin/room-layouts", (req, res) => {
   return res.json({ ok: true, rooms: roomLayouts.listRooms(db) });
 });
 
+app.post("/v1/admin/room-layouts", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const db = getDb();
+  const result = roomLayouts.createRoom(db, {
+    name: req.body?.name,
+    imageBase64: req.body?.imageBase64 || req.body?.image,
+    mime: req.body?.mime,
+  });
+  if (result.error) return res.status(400).json({ error: result.error });
+  scheduleSave();
+  return res.status(201).json({ ok: true, layout: result.layout });
+});
+
 app.get("/v1/admin/room-layouts/:roomId", (req, res) => {
   const ctx = requireStaff(req, res, "market.settings");
   if (!ctx) return;
@@ -9552,7 +9651,13 @@ app.put("/v1/admin/room-layouts/:roomId", (req, res) => {
   const ctx = requireStaff(req, res, "market.settings");
   if (!ctx) return;
   const db = getDb();
-  const result = roomLayouts.saveLayout(db, req.params.roomId, req.body?.zones);
+  const result = roomLayouts.saveLayout(db, req.params.roomId, {
+    zones: req.body?.zones,
+    viewRect: req.body?.viewRect,
+    name: req.body?.name,
+    imageBase64: req.body?.imageBase64 || req.body?.image,
+    mime: req.body?.mime,
+  });
   if (result.error) {
     return res.status(400).json({ error: result.error });
   }
@@ -9561,11 +9666,18 @@ app.put("/v1/admin/room-layouts/:roomId", (req, res) => {
     ok: true,
     layout: result.layout,
     live: true,
-    message:
-      req.params.roomId === "wedding"
-        ? "Gespeichert — gilt sofort im Hochzeits-Trausaal."
-        : "Gespeichert — gilt sofort in der App.",
+    message: "Gespeichert — gilt sofort in der App.",
   });
+});
+
+app.delete("/v1/admin/room-layouts/:roomId", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const db = getDb();
+  const result = roomLayouts.deleteRoom(db, req.params.roomId);
+  if (result.error) return res.status(400).json({ error: result.error });
+  scheduleSave();
+  return res.json({ ok: true });
 });
 
 app.get("/v1/admin/overview", (req, res) => {
@@ -14071,10 +14183,39 @@ app.post("/v1/rooms", (req, res) => {
       eventEndsAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     }
   }
+  const rawCustomRoomId = String(req.body?.customRoomId || "").trim().slice(0, 64);
+  let customRoomId = null;
+  let customRoomImageUrl = null;
+  if (rawCustomRoomId) {
+    if (eventId) {
+      return res.status(400).json({ error: "bad_combo", message: "Kein Event mit Custom-Raum." });
+    }
+    const lay = roomLayouts.getLayout(getDb(), rawCustomRoomId);
+    if (!lay || lay.id === "wedding" || !lay.hasImage) {
+      return res.status(400).json({
+        error: "unknown_room",
+        message: "Raum nicht gefunden. Bitte zuerst im Admin anlegen.",
+      });
+    }
+    customRoomId = lay.id;
+    customRoomImageUrl = lay.imageUrl
+      ? lay.imageUrl.startsWith("http")
+        ? lay.imageUrl
+        : `https://reineke.pro${lay.imageUrl.startsWith("/") ? "" : "/"}${lay.imageUrl}`
+      : null;
+  }
   const name = eventId
     ? "Event"
-    : String(req.body?.name || "Zusammen").trim().slice(0, MAX_LOBBY_NAME_LENGTH) ||
-      "Zusammen";
+    : customRoomId
+      ? String(
+          roomLayouts.getLayout(getDb(), customRoomId)?.name ||
+            req.body?.name ||
+            "Raum"
+        )
+          .trim()
+          .slice(0, MAX_LOBBY_NAME_LENGTH) || "Raum"
+      : String(req.body?.name || "Zusammen").trim().slice(0, MAX_LOBBY_NAME_LENGTH) ||
+        "Zusammen";
   let charged = 0;
   let isFree = false;
   if (eventId) {
@@ -14131,6 +14272,12 @@ app.post("/v1/rooms", (req, res) => {
     eventPromptChoices,
     eventEndsAt,
     invitesAllowed: eventId ? false : true,
+    isCustomRoom: Boolean(customRoomId),
+    customRoomId,
+    customRoomImageUrl,
+    space: customRoomId
+      ? { positions: {}, seated: {}, reactions: {}, lastMoveAt: 0, lastMoveBy: null }
+      : null,
     strokes: [],
     stickers: [],
   });
@@ -14147,6 +14294,9 @@ app.post("/v1/rooms", (req, res) => {
     eventPrompt,
     eventPromptChoices,
     eventEndsAt,
+    isCustomRoom: Boolean(customRoomId),
+    customRoomId,
+    customRoomImageUrl,
   };
   if (eventId) {
     const prog = require("./event_engine").ensureUserProgress(ctx.user, eventId);
@@ -14181,9 +14331,177 @@ app.post("/v1/rooms", (req, res) => {
     eventPrompt,
     eventPromptChoices,
     eventEndsAt,
+    isCustomRoom: Boolean(customRoomId),
+    customRoomId,
+    customRoomImageUrl,
     palette: eventLobbyCfg?.palette || null,
     user: publicUser(ctx.user),
     ...inviteFor(code),
+  });
+});
+
+function ensureRoomSpace(room) {
+  if (!room.space || typeof room.space !== "object") {
+    room.space = {
+      positions: {},
+      seated: {},
+      reactions: {},
+      lastMoveAt: 0,
+      lastMoveBy: null,
+    };
+  }
+  if (!room.space.positions) room.space.positions = {};
+  if (!room.space.seated) room.space.seated = {};
+  if (!room.space.reactions) room.space.reactions = {};
+  return room.space;
+}
+
+function publicRoomSpace(room, db, viewerId) {
+  const space = ensureRoomSpace(room);
+  const layout = room.customRoomId
+    ? roomLayouts.getLayout(db, room.customRoomId)
+    : null;
+  const memberIds = Array.isArray(room.memberUserIds) ? room.memberUserIds : [];
+  const people = memberIds.map((uid) => {
+    const u = db.users?.[uid];
+    const pos = space.positions[uid] || layout?.spawn || { x: 0.5, y: 0.85 };
+    const react = space.reactions[uid];
+    return {
+      userId: uid,
+      nickname: u ? String(u.nickname || "").trim().slice(0, 18) || "Jemand" : "Jemand",
+      petEmoji: u?.inventory?.equippedPet || "🐣",
+      x: Number(pos.x) || 0.5,
+      y: Number(pos.y) || 0.85,
+      seatedSeatId: space.seated[uid] || null,
+      reaction: react && react.until > Date.now() ? react.emoji : null,
+      reactionUntil: react ? Number(react.until) || 0 : 0,
+      isMe: uid === viewerId,
+    };
+  });
+  return {
+    customRoomId: room.customRoomId || null,
+    roomName: room.name || "Raum",
+    layout,
+    people,
+    lastMoveAt: Number(space.lastMoveAt) || 0,
+    lastMoveBy: space.lastMoveBy || null,
+  };
+}
+
+function requireCustomRoomMember(req, res) {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return null;
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  let room = rooms.get(code);
+  if (!room) {
+    const saved = getDb().rooms?.[code];
+    if (saved) {
+      room = hydrateRoom(code, saved);
+      rooms.set(code, room);
+    }
+  }
+  if (!room || !room.isCustomRoom || !room.customRoomId) {
+    res.status(400).json({ error: "not_custom_room" });
+    return null;
+  }
+  const members = Array.isArray(room.memberUserIds) ? room.memberUserIds : [];
+  if (!members.includes(ctx.user.id) && room.hostUserId !== ctx.user.id) {
+    res.status(403).json({ error: "not_member" });
+    return null;
+  }
+  return { ctx, code, room };
+}
+
+app.get("/v1/rooms/:code/space", (req, res) => {
+  const pack = requireCustomRoomMember(req, res);
+  if (!pack) return;
+  const db = getDb();
+  const space = ensureRoomSpace(pack.room);
+  roomLayouts.ensureSpawnPosition(
+    roomLayouts.getLayout(db, pack.room.customRoomId),
+    space.positions,
+    pack.ctx.user.id
+  );
+  return res.json({ ok: true, space: publicRoomSpace(pack.room, db, pack.ctx.user.id) });
+});
+
+app.post("/v1/rooms/:code/space/move", (req, res) => {
+  const pack = requireCustomRoomMember(req, res);
+  if (!pack) return;
+  const db = getDb();
+  const layout = roomLayouts.getLayout(db, pack.room.customRoomId);
+  const space = ensureRoomSpace(pack.room);
+  if (space.seated[pack.ctx.user.id]) {
+    delete space.seated[pack.ctx.user.id];
+  }
+  const prev = space.positions[pack.ctx.user.id] || layout?.spawn || { x: 0.5, y: 0.85 };
+  const clamped = roomLayouts.clampMove(
+    layout,
+    prev.x,
+    prev.y,
+    Number(req.body?.x),
+    Number(req.body?.y)
+  );
+  space.positions[pack.ctx.user.id] = { x: clamped.x, y: clamped.y };
+  space.lastMoveAt = Date.now();
+  space.lastMoveBy = pack.ctx.user.id;
+  pack.room.lastActiveAt = Date.now();
+  persistRooms();
+  return res.json({
+    ok: true,
+    blocked: Boolean(clamped.blocked),
+    space: publicRoomSpace(pack.room, db, pack.ctx.user.id),
+  });
+});
+
+app.post("/v1/rooms/:code/space/sit", (req, res) => {
+  const pack = requireCustomRoomMember(req, res);
+  if (!pack) return;
+  const db = getDb();
+  const seatId = String(req.body?.seatId || "").trim().slice(0, 48);
+  const zone = roomLayouts.findSitZone(db, pack.room.customRoomId, seatId);
+  if (!zone || zone.color !== "blue") {
+    return res.status(400).json({ error: "bad_seat" });
+  }
+  const space = ensureRoomSpace(pack.room);
+  if (Object.values(space.seated).includes(seatId)) {
+    return res.status(400).json({ error: "seat_taken" });
+  }
+  space.seated[pack.ctx.user.id] = seatId;
+  const sx = zone.shape === "circle" ? zone.cx : zone.x + zone.w / 2;
+  const sy = zone.shape === "circle" ? zone.cy : zone.y + zone.h / 2;
+  space.positions[pack.ctx.user.id] = { x: sx, y: sy };
+  space.lastMoveAt = Date.now();
+  space.lastMoveBy = pack.ctx.user.id;
+  persistRooms();
+  return res.json({ ok: true, space: publicRoomSpace(pack.room, db, pack.ctx.user.id) });
+});
+
+app.post("/v1/rooms/:code/space/stand", (req, res) => {
+  const pack = requireCustomRoomMember(req, res);
+  if (!pack) return;
+  const space = ensureRoomSpace(pack.room);
+  delete space.seated[pack.ctx.user.id];
+  persistRooms();
+  return res.json({
+    ok: true,
+    space: publicRoomSpace(pack.room, getDb(), pack.ctx.user.id),
+  });
+});
+
+app.post("/v1/rooms/:code/space/react", (req, res) => {
+  const pack = requireCustomRoomMember(req, res);
+  if (!pack) return;
+  const emoji = String(req.body?.emoji || "").trim().slice(0, 8);
+  if (!emoji) return res.status(400).json({ error: "bad_emoji" });
+  const space = ensureRoomSpace(pack.room);
+  space.reactions[pack.ctx.user.id] = { emoji, until: Date.now() + 2000 };
+  persistRooms();
+  return res.json({
+    ok: true,
+    space: publicRoomSpace(pack.room, getDb(), pack.ctx.user.id),
   });
 });
 
@@ -14919,6 +15237,22 @@ app.post("/v1/rooms/:code/join", (req, res) => {
   const isHost = Boolean(room.hostUserId && ctx.user.id === room.hostUserId);
   const suggestedColorIndex = assignRoomColor(room, ctx.user.id, isHost);
   const roster = roomRosterAll(room);
+  if (room.isCustomRoom && room.customRoomId) {
+    ensureJoinedRooms(ctx.user);
+    ctx.user.joinedRooms[code] = {
+      ...(ctx.user.joinedRooms[code] || {}),
+      token: room.token,
+      name: room.name || "Raum",
+      capacity: capacity,
+      isFree: Boolean(room.isFree),
+      isCustomRoom: true,
+      customRoomId: room.customRoomId,
+      customRoomImageUrl: room.customRoomImageUrl || null,
+      hostColorSide: normalizeHostColorSide(room.hostColorSide),
+      hostNickname: room.hostNickname || "Host",
+    };
+    scheduleSave();
+  }
   return res.json({
     token: room.token,
     peers: uniqueConnectedCount(room),
@@ -14931,6 +15265,9 @@ app.post("/v1/rooms/:code/join", (req, res) => {
     isRandom: Boolean(room.isRandom),
     isWedding: Boolean(room.isWedding),
     isWeddingCeremony: Boolean(room.isWeddingCeremony),
+    isCustomRoom: Boolean(room.isCustomRoom),
+    customRoomId: room.customRoomId || null,
+    customRoomImageUrl: room.customRoomImageUrl || null,
     weddingRetake: Boolean(room.weddingRetake),
     ceremonyAt: Number(room.ceremonyAt) || 0,
     coupleNicknames: room.coupleNicknames || null,

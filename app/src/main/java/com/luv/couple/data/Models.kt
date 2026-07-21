@@ -192,6 +192,12 @@ data class Lobby(
      * Pin oben im Home; Verlassen nur über Ceremony-Leave.
      */
     val isWeddingCeremony: Boolean = false,
+    /** Custom-Raum-Lobby (kein Malen) — Zusatz zu Normal/Event/Random. */
+    val isCustomRoom: Boolean = false,
+    val customRoomId: String? = null,
+    val customRoomImageUrl: String? = null,
+    /** Glocke: Vibration wenn jemand im Raum läuft. */
+    val spaceBell: Boolean = true,
     /** Geplante Zeremonie-Zeit (epoch ms), nur Ceremony. */
     val ceremonyAt: Long = 0L,
     /** Namen Brautpaar für Ceremony-Karte. */

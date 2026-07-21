@@ -1,6 +1,5 @@
 /**
- * Admin: Räume — Layout-Editor (Hochzeit).
- * Zonen nur im Admin sichtbar; App nutzt sie unsichtbar.
+ * Admin Räume: + Raum, Bild-Upload, Crop (weiß), Zonen.
  */
 (() => {
   function host() {
@@ -17,23 +16,26 @@
   }
 
   const TOOLS = [
-    { id: "red-rect", label: "Rot eckig", color: "red", shape: "rect", hint: "Hindernis (Bänke) — drum herum" },
-    { id: "green-rect", label: "Grün eckig", color: "green", shape: "rect", hint: "Nur hier laufen; Schnitt → ein Bereich" },
-    { id: "yellow-circle", label: "Gelb rund", color: "yellow", shape: "circle", hint: "Sitz Eheleute" },
-    { id: "blue-circle", label: "Blau rund", color: "blue", shape: "circle", hint: "Sitz (Tipp → hinlaufen & setzen)" },
-    { id: "brown-circle", label: "Braun rund", color: "brown", shape: "circle", hint: "Spawn aller Avatare" },
-    { id: "orange-circle", label: "Orange rund", color: "orange", shape: "circle", hint: "Avatar-Größe" },
+    { id: "view-rect", label: "Weiß Sichtbereich", color: "white", shape: "rect", hint: "Sichtbarer Raum" },
+    { id: "red-rect", label: "Rot", color: "red", shape: "rect", hint: "Hindernis" },
+    { id: "green-rect", label: "Grün", color: "green", shape: "rect", hint: "Laufen" },
+    { id: "blue-circle", label: "Blau Sitz", color: "blue", shape: "circle", hint: "Hinsetzen" },
+    { id: "brown-circle", label: "Braun Spawn", color: "brown", shape: "circle", hint: "Spawn" },
+    { id: "orange-circle", label: "Orange Größe", color: "orange", shape: "circle", hint: "Avatar" },
+    { id: "yellow-circle", label: "Gelb Ehe", color: "yellow", shape: "circle", hint: "Nur Hochzeit" },
   ];
 
   const FILL = {
-    red: "rgba(229, 57, 53, 0.45)",
-    green: "rgba(67, 160, 71, 0.4)",
-    yellow: "rgba(255, 213, 79, 0.5)",
-    blue: "rgba(66, 165, 245, 0.45)",
-    brown: "rgba(141, 110, 99, 0.5)",
-    orange: "rgba(255, 152, 0, 0.45)",
+    white: "rgba(255,255,255,0.12)",
+    red: "rgba(229,57,53,0.4)",
+    green: "rgba(67,160,71,0.35)",
+    yellow: "rgba(255,213,79,0.45)",
+    blue: "rgba(66,165,245,0.45)",
+    brown: "rgba(141,110,99,0.45)",
+    orange: "rgba(255,152,0,0.4)",
   };
   const STROKE = {
+    white: "#ffffff",
     red: "#e53935",
     green: "#43a047",
     yellow: "#ffd54f",
@@ -42,25 +44,7 @@
     orange: "#ff9800",
   };
 
-  const LABEL = {
-    red: "Rot Hindernis",
-    green: "Grün laufen",
-    yellow: "Gelb Eheleute",
-    blue: "Blau Sitz",
-    brown: "Braun Spawn",
-    orange: "Orange Avatar-Größe",
-  };
-
   let editor = null;
-
-  function rectsOverlapOrTouch(a, b, eps = 0.002) {
-    return !(
-      a.x + a.w < b.x - eps ||
-      b.x + b.w < a.x - eps ||
-      a.y + a.h < b.y - eps ||
-      b.y + b.h < a.y - eps
-    );
-  }
 
   function mergeGreens(zones) {
     const greens = zones.filter((z) => z.color === "green" && z.shape === "rect");
@@ -75,14 +59,21 @@
       }
       return i;
     };
-    const uni = (a, b) => {
-      const ra = find(a);
-      const rb = find(b);
-      if (ra !== rb) parent[rb] = ra;
-    };
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) {
-        if (rectsOverlapOrTouch(greens[i], greens[j])) uni(i, j);
+        const a = greens[i];
+        const b = greens[j];
+        const touch = !(
+          a.x + a.w < b.x - 0.002 ||
+          b.x + b.w < a.x - 0.002 ||
+          a.y + a.h < b.y - 0.002 ||
+          b.y + b.h < a.y - 0.002
+        );
+        if (touch) {
+          const ra = find(i);
+          const rb = find(j);
+          if (ra !== rb) parent[rb] = ra;
+        }
       }
     }
     const groups = new Map();
@@ -93,10 +84,10 @@
     }
     const merged = [];
     for (const list of groups.values()) {
-      let x0 = Infinity;
-      let y0 = Infinity;
-      let x1 = -Infinity;
-      let y1 = -Infinity;
+      let x0 = Infinity,
+        y0 = Infinity,
+        x1 = -Infinity,
+        y1 = -Infinity;
       for (const g of list) {
         x0 = Math.min(x0, g.x);
         y0 = Math.min(y0, g.y);
@@ -116,36 +107,105 @@
     return [...others, ...merged];
   }
 
+  function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+  }
+
+  async function createFromImage(dataUrl, name) {
+    const res = await api("/admin/room-layouts", {
+      method: "POST",
+      body: JSON.stringify({
+        name: name || "Raum",
+        imageBase64: dataUrl,
+      }),
+    });
+    return res.layout;
+  }
+
   async function renderRooms() {
     const root = contentEl();
     if (!root) return;
-    if (editor && editor.roomId) {
+    if (editor?.roomId) {
       await renderEditor(editor.roomId);
       return;
     }
-    root.innerHTML = `<p class="muted">Lade Räume…</p>`;
+    root.innerHTML = `<p class="muted">Lade…</p>`;
     const data = await api("/admin/room-layouts");
     const rooms = data.rooms || [];
     root.innerHTML = `
       <div class="panel">
-        <h3>Räume</h3>
-        <p class="help">Bereiche selbst einzeichnen und speichern. In der App sind sie unsichtbar — nur Lauf-/Sitz-/Spawn-Logik.</p>
-        <div class="room-list">
+        <div class="room-editor-bar">
+          <h3 style="margin:0;flex:1">Räume</h3>
+          <button type="button" class="btn" id="roomAdd">+ Raum</button>
+          <input type="file" id="roomFile" accept="image/*" hidden />
+        </div>
+        <p class="help">Bild per Drag &amp; Drop, Strg+V oder Ordner. Dann Sichtbereich (weiß) und Zonen zeichnen. In der App unsichtbar.</p>
+        <div id="roomDrop" class="room-drop">Bild hier ablegen oder einfügen (Strg+V)</div>
+        <div class="room-list" style="margin-top:1rem">
           ${rooms
             .map(
               (r) => `
             <button type="button" class="room-card" data-room="${esc(r.id)}">
-              <span class="room-card-title">Raum: ${esc(r.name)}</span>
+              <span class="room-card-title">${r.builtin ? "Raum: " : ""}${esc(r.name)}</span>
               <span class="muted">${r.zoneCount || 0} Bereiche${
-                r.updatedAt
-                  ? " · gespeichert " + new Date(r.updatedAt).toLocaleString("de-DE")
-                  : " · leer"
-              }</span>
+                r.updatedAt ? " · " + new Date(r.updatedAt).toLocaleString("de-DE") : ""
+              }${r.builtin ? " · Hochzeit" : ""}</span>
             </button>`
             )
-            .join("")}
+            .join("") || `<p class="muted">Noch keine Räume — + Raum tippen.</p>`}
         </div>
       </div>`;
+
+    const fileInput = root.querySelector("#roomFile");
+    const openPicker = () => fileInput.click();
+    root.querySelector("#roomAdd").addEventListener("click", openPicker);
+
+    async function handleFiles(files) {
+      const f = files && files[0];
+      if (!f || !f.type.startsWith("image/")) return;
+      const dataUrl = await fileToDataUrl(f);
+      const name = (f.name || "Raum").replace(/\.[^.]+$/, "").slice(0, 40);
+      try {
+        const layout = await createFromImage(dataUrl, name);
+        editor = { roomId: layout.id };
+        renderRooms();
+      } catch (e) {
+        alert(e.message || "Upload fehlgeschlagen");
+      }
+    }
+
+    fileInput.addEventListener("change", () => handleFiles(fileInput.files));
+    const drop = root.querySelector("#roomDrop");
+    drop.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      drop.classList.add("over");
+    });
+    drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+    drop.addEventListener("drop", (e) => {
+      e.preventDefault();
+      drop.classList.remove("over");
+      handleFiles(e.dataTransfer.files);
+    });
+    drop.addEventListener("click", openPicker);
+
+    const onPaste = async (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const it of items) {
+        if (it.type.startsWith("image/")) {
+          e.preventDefault();
+          await handleFiles([it.getAsFile()]);
+          break;
+        }
+      }
+    };
+    document.addEventListener("paste", onPaste, { once: true });
+
     root.querySelectorAll("[data-room]").forEach((btn) => {
       btn.addEventListener("click", () => {
         editor = { roomId: btn.getAttribute("data-room") };
@@ -160,62 +220,69 @@
     const data = await api(`/admin/room-layouts/${encodeURIComponent(roomId)}`);
     const layout = data.layout;
     if (!layout) {
-      root.innerHTML = `<p class="error">Raum nicht gefunden.</p>`;
+      root.innerHTML = `<p class="error">Nicht gefunden</p>`;
       return;
     }
 
     let zones = mergeGreens((layout.zones || []).map((z) => ({ ...z })));
-    let tool = TOOLS[0].id;
+    let viewRect = { ...(layout.viewRect || { x: 0, y: 0, w: 1, h: 1 }) };
+    let tool = "view-rect";
     let selectedId = null;
     let draft = null;
     let dirty = false;
+    let pendingImage = null;
 
     root.innerHTML = `
       <div class="room-editor">
         <div class="room-editor-bar">
           <button type="button" class="btn ghost" id="roomBack">← Räume</button>
-          <h3 style="margin:0">Raum: ${esc(layout.name)}</h3>
+          <input id="roomName" value="${esc(layout.name)}" style="flex:1;min-width:8rem" />
           <button type="button" class="btn" id="roomSave">Speichern</button>
+          ${
+            layout.builtin
+              ? ""
+              : `<button type="button" class="btn ghost danger" id="roomDel">Löschen</button>`
+          }
         </div>
-        <p class="help">
-          Rot = Hindernis · Grün = laufen (Schnitt → ein Bereich) · Blau = Sitz · Gelb = Eheleute ·
-          Braun = Spawn · Orange = Avatar-Größe. In der Hochzeit unsichtbar.
-        </p>
+        <p class="help">Weiß = sichtbarer Raum · Grün/Rot/Blau = Logik (in der App unsichtbar). Bild komplett sichtbar, ohne Scrollen.</p>
         <div class="room-tools" id="roomTools"></div>
-        <div class="room-editor-body">
-          <div class="room-canvas-wrap">
-            <canvas id="roomCanvas" width="900" height="1200"></canvas>
-          </div>
-          <div class="room-side">
-            <p class="muted" id="roomStatus"></p>
-            <h4>Bereiche</h4>
-            <ul class="room-zone-list" id="roomZoneList"></ul>
-            <button type="button" class="btn ghost danger" id="roomDelete" disabled>Ausgewählten löschen</button>
-            <button type="button" class="btn ghost danger" id="roomClearAll" style="margin-top:0.5rem">Alle löschen</button>
-          </div>
+        <div class="room-fit-wrap" id="roomFit">
+          <canvas id="roomCanvas"></canvas>
+        </div>
+        <div class="room-side" style="margin-top:0.75rem">
+          <p class="muted" id="roomStatus"></p>
+          <ul class="room-zone-list" id="roomZoneList"></ul>
+          <button type="button" class="btn ghost danger" id="roomDelete" disabled>Auswahl löschen</button>
+          <button type="button" class="btn ghost danger" id="roomClearAll" style="margin-top:0.4rem">Alle Zonen löschen</button>
+          <button type="button" class="btn ghost" id="roomReimg" style="margin-top:0.4rem">Bild ersetzen</button>
+          <input type="file" id="roomReFile" accept="image/*" hidden />
         </div>
       </div>`;
 
     const canvas = root.querySelector("#roomCanvas");
     const ctx = canvas.getContext("2d");
+    const fit = root.querySelector("#roomFit");
     const img = new Image();
     img.crossOrigin = "anonymous";
     let imgReady = false;
 
     function setStatus(msg) {
-      const el = root.querySelector("#roomStatus");
-      if (el) el.textContent = (msg || "") + (dirty ? " · ungespeichert" : "");
+      root.querySelector("#roomStatus").textContent =
+        (msg || "") + (dirty ? " · ungespeichert" : "");
     }
 
     function paintTools() {
       const box = root.querySelector("#roomTools");
-      box.innerHTML = TOOLS.map(
-        (t) => `
-        <button type="button" class="room-tool ${tool === t.id ? "active" : ""}" data-tool="${t.id}" title="${esc(t.hint)}">
-          <span class="swatch" style="background:${STROKE[t.color]}"></span>
-          ${esc(t.label)}
+      const tools =
+        roomId === "wedding" ? TOOLS : TOOLS.filter((t) => t.color !== "yellow");
+      box.innerHTML = tools
+        .map(
+          (t) => `
+        <button type="button" class="room-tool ${tool === t.id ? "active" : ""}" data-tool="${t.id}">
+          <span class="swatch" style="background:${STROKE[t.color]}"></span>${esc(t.label)}
         </button>`
-      ).join("");
+        )
+        .join("");
       box.querySelectorAll("[data-tool]").forEach((b) => {
         b.addEventListener("click", () => {
           tool = b.getAttribute("data-tool");
@@ -229,45 +296,60 @@
 
     function paintList() {
       const ul = root.querySelector("#roomZoneList");
-      ul.innerHTML = zones
-        .map((z, i) => {
-          const shape = z.shape === "circle" ? "rund" : "eckig";
-          return `<li class="${selectedId === z.id ? "sel" : ""}" data-zid="${esc(z.id)}">
-            <span class="dot" style="background:${STROKE[z.color] || "#fff"}"></span>
-            ${i + 1}. ${LABEL[z.color] || z.color} (${shape}) <code>${esc(z.id)}</code>
-          </li>`;
-        })
+      const items = [
+        {
+          id: "__view__",
+          label: "Sichtbereich (weiß)",
+          color: "white",
+        },
+        ...zones.map((z, i) => ({
+          id: z.id,
+          label: `${i + 1}. ${z.color} ${z.shape}`,
+          color: z.color,
+        })),
+      ];
+      ul.innerHTML = items
+        .map(
+          (it) => `<li class="${selectedId === it.id ? "sel" : ""}" data-zid="${esc(it.id)}">
+          <span class="dot" style="background:${STROKE[it.color] || "#fff"}"></span>${esc(it.label)}
+        </li>`
+        )
         .join("");
       ul.querySelectorAll("[data-zid]").forEach((li) => {
         li.addEventListener("click", () => {
           selectedId = li.getAttribute("data-zid");
           paintList();
           draw();
-          root.querySelector("#roomDelete").disabled = !selectedId;
+          root.querySelector("#roomDelete").disabled = selectedId === "__view__" || !selectedId;
         });
       });
-      root.querySelector("#roomDelete").disabled = !selectedId;
     }
 
-    function normFromEvent(ev) {
-      const rect = canvas.getBoundingClientRect();
-      return {
-        x: Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width)),
-        y: Math.min(1, Math.max(0, (ev.clientY - rect.top) / rect.height)),
-      };
+    function layoutCanvas() {
+      const maxW = fit.clientWidth || 640;
+      const maxH = Math.min(window.innerHeight * 0.62, 720);
+      if (!imgReady) {
+        canvas.width = maxW;
+        canvas.height = maxH;
+        return;
+      }
+      const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight);
+      canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      canvas.style.width = canvas.width + "px";
+      canvas.style.height = canvas.height + "px";
     }
 
-    function drawZone(z, highlight) {
+    function drawZoneShape(z, highlight, colorKey) {
+      const col = colorKey || z.color;
       ctx.save();
-      ctx.fillStyle = FILL[z.color] || "rgba(255,255,255,0.2)";
-      ctx.strokeStyle = highlight ? "#fff" : STROKE[z.color] || "#fff";
-      ctx.lineWidth = highlight ? 3 : 2;
+      ctx.fillStyle = FILL[col] || "rgba(255,255,255,0.15)";
+      ctx.strokeStyle = highlight ? "#fff" : STROKE[col] || "#fff";
+      ctx.lineWidth = highlight ? 3 : col === "white" ? 3 : 2;
       if (z.shape === "circle") {
-        const cx = z.cx * canvas.width;
-        const cy = z.cy * canvas.height;
         const r = z.r * Math.min(canvas.width, canvas.height);
         ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.arc(z.cx * canvas.width, z.cy * canvas.height, r, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
       } else {
@@ -278,14 +360,20 @@
     }
 
     function draw() {
+      layoutCanvas();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (imgReady) ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       else {
         ctx.fillStyle = "#1a1520";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
-      zones.forEach((z) => drawZone(z, z.id === selectedId));
-      if (draft) drawZone(draft, true);
+      drawZoneShape(
+        { shape: "rect", ...viewRect },
+        selectedId === "__view__",
+        "white"
+      );
+      zones.forEach((z) => drawZoneShape(z, z.id === selectedId));
+      if (draft) drawZoneShape(draft, true, draft.color);
     }
 
     function currentTool() {
@@ -294,16 +382,24 @@
 
     function newId(color) {
       const prefix =
-        color === "yellow"
-          ? "altar_"
-          : color === "blue"
-            ? "sit_"
-            : color === "brown"
-              ? "spawn_"
-              : color === "orange"
-                ? "avatar_"
+        color === "blue"
+          ? "sit_"
+          : color === "brown"
+            ? "spawn_"
+            : color === "orange"
+              ? "avatar_"
+              : color === "yellow"
+                ? "altar_"
                 : `${color}_`;
       return `${prefix}${Math.random().toString(36).slice(2, 8)}`;
+    }
+
+    function norm(ev) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width)),
+        y: Math.min(1, Math.max(0, (ev.clientY - rect.top) / rect.height)),
+      };
     }
 
     let drawing = false;
@@ -311,12 +407,11 @@
 
     canvas.addEventListener("mousedown", (ev) => {
       drawing = true;
-      start = normFromEvent(ev);
-      selectedId = null;
+      start = norm(ev);
       const t = currentTool();
       draft = {
-        id: newId(t.color),
-        color: t.color,
+        id: t.id === "view-rect" ? "__view__" : newId(t.color),
+        color: t.color === "white" ? "white" : t.color,
         shape: t.shape,
         x: start.x,
         y: start.y,
@@ -326,33 +421,32 @@
         cy: start.y,
         r: 0.01,
       };
-      paintList();
       draw();
     });
-
     canvas.addEventListener("mousemove", (ev) => {
       if (!drawing || !draft || !start) return;
-      const p = normFromEvent(ev);
+      const p = norm(ev);
       if (draft.shape === "circle") {
         draft.cx = start.x;
         draft.cy = start.y;
-        const minR = draft.color === "orange" ? 0.008 : 0.012;
-        draft.r = Math.min(0.45, Math.max(minR, Math.hypot(p.x - start.x, p.y - start.y)));
+        draft.r = Math.min(0.45, Math.max(0.008, Math.hypot(p.x - start.x, p.y - start.y)));
       } else {
         draft.x = Math.min(start.x, p.x);
         draft.y = Math.min(start.y, p.y);
-        draft.w = Math.max(0.015, Math.abs(p.x - start.x));
-        draft.h = Math.max(0.015, Math.abs(p.y - start.y));
+        draft.w = Math.max(0.02, Math.abs(p.x - start.x));
+        draft.h = Math.max(0.02, Math.abs(p.y - start.y));
       }
       draw();
     });
-
-    function finishDraw() {
+    function finish() {
       if (!drawing) return;
       drawing = false;
       if (draft) {
-        const minR = draft.color === "orange" ? 0.008 : 0.012;
-        if (draft.shape === "circle" && draft.r >= minR) {
+        if (draft.id === "__view__" || draft.color === "white") {
+          viewRect = { x: draft.x, y: draft.y, w: draft.w, h: draft.h };
+          selectedId = "__view__";
+          dirty = true;
+        } else if (draft.shape === "circle" && draft.r >= 0.008) {
           zones.push({
             id: draft.id,
             color: draft.color,
@@ -361,9 +455,8 @@
             cy: draft.cy,
             r: draft.r,
           });
-          selectedId = draft.id;
           dirty = true;
-        } else if (draft.shape === "rect" && draft.w >= 0.015 && draft.h >= 0.015) {
+        } else if (draft.shape === "rect" && draft.w >= 0.02) {
           zones.push({
             id: draft.id,
             color: draft.color,
@@ -373,61 +466,78 @@
             w: draft.w,
             h: draft.h,
           });
-          selectedId = draft.id;
           dirty = true;
         }
-        if (dirty) {
-          zones = mergeGreens(zones);
-          selectedId = zones.find((z) => z.id === selectedId)?.id || selectedId;
-        }
+        if (dirty) zones = mergeGreens(zones);
       }
       draft = null;
       start = null;
       paintList();
-      setStatus(`${zones.length} Bereiche`);
+      setStatus(`${zones.length} Zonen`);
       draw();
     }
-
-    canvas.addEventListener("mouseup", finishDraw);
-    canvas.addEventListener("mouseleave", finishDraw);
+    canvas.addEventListener("mouseup", finish);
+    canvas.addEventListener("mouseleave", finish);
 
     root.querySelector("#roomBack").addEventListener("click", () => {
-      if (dirty && !confirm("Ungespeicherte Änderungen verwerfen?")) return;
+      if (dirty && !confirm("Verwerfen?")) return;
       editor = null;
       renderRooms();
     });
-
     root.querySelector("#roomDelete").addEventListener("click", () => {
-      if (!selectedId) return;
+      if (!selectedId || selectedId === "__view__") return;
       zones = zones.filter((z) => z.id !== selectedId);
       selectedId = null;
       dirty = true;
       paintList();
-      setStatus(`${zones.length} Bereiche`);
+      setStatus(`${zones.length} Zonen`);
       draw();
     });
-
     root.querySelector("#roomClearAll").addEventListener("click", () => {
-      if (!zones.length) return;
-      if (!confirm("Wirklich alle Bereiche löschen?")) return;
+      if (!confirm("Alle Zonen löschen?")) return;
       zones = [];
-      selectedId = null;
       dirty = true;
       paintList();
-      setStatus("Leer — speichern, damit die App das übernimmt");
+      setStatus("Leer");
       draw();
     });
-
+    const reFile = root.querySelector("#roomReFile");
+    root.querySelector("#roomReimg").addEventListener("click", () => reFile.click());
+    reFile.addEventListener("change", async () => {
+      const f = reFile.files?.[0];
+      if (!f) return;
+      pendingImage = await fileToDataUrl(f);
+      img.src = pendingImage;
+      dirty = true;
+      setStatus("Neues Bild");
+    });
+    const delBtn = root.querySelector("#roomDel");
+    if (delBtn) {
+      delBtn.addEventListener("click", async () => {
+        if (!confirm("Raum wirklich löschen?")) return;
+        await api(`/admin/room-layouts/${encodeURIComponent(roomId)}`, { method: "DELETE" });
+        editor = null;
+        renderRooms();
+      });
+    }
     root.querySelector("#roomSave").addEventListener("click", async () => {
       try {
         zones = mergeGreens(zones);
+        const body = {
+          name: root.querySelector("#roomName").value.trim() || layout.name,
+          zones,
+          viewRect,
+        };
+        if (pendingImage) body.imageBase64 = pendingImage;
         const res = await api(`/admin/room-layouts/${encodeURIComponent(roomId)}`, {
           method: "PUT",
-          body: JSON.stringify({ zones }),
+          body: JSON.stringify(body),
         });
         zones = mergeGreens((res.layout?.zones || zones).map((z) => ({ ...z })));
+        viewRect = res.layout?.viewRect || viewRect;
+        pendingImage = null;
         dirty = false;
-        setStatus(res.message || "Gespeichert — gilt sofort im Trausaal (unsichtbar)");
+        setStatus(res.message || "Gespeichert");
         paintList();
         draw();
       } catch (e) {
@@ -437,22 +547,13 @@
 
     paintTools();
     paintList();
-    setStatus(zones.length ? `${zones.length} Bereiche` : "Leer — Bereiche selbst einzeichnen");
-    draw();
-
+    setStatus(zones.length ? `${zones.length} Zonen` : "Zonen einzeichnen");
+    window.addEventListener("resize", draw);
     img.onload = () => {
       imgReady = true;
-      const maxW = 900;
-      const scale = maxW / img.naturalWidth;
-      canvas.width = maxW;
-      canvas.height = Math.round(img.naturalHeight * scale);
       draw();
     };
-    img.onerror = () => {
-      setStatus("Bild konnte nicht geladen werden — Zonen trotzdem editierbar");
-      draw();
-    };
-    img.src = layout.imageUrl + "?v=" + (layout.updatedAt || Date.now());
+    img.src = (pendingImage || layout.imageUrl) + (layout.imageUrl.includes("?") ? "" : `?v=${layout.updatedAt || Date.now()}`);
   }
 
   window.LuvAdmRooms = { renderRooms };

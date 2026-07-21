@@ -2120,3 +2120,36 @@ button.cal-inv-tile { cursor: pointer; }
   margin-left: auto;
 }
 .btn.danger { color: var(--danger); }
+
+.room-drop {
+  margin-top: 0.75rem;
+  padding: 1.4rem;
+  border: 2px dashed var(--line);
+  border-radius: 16px;
+  text-align: center;
+  color: var(--muted);
+  cursor: pointer;
+}
+.room-drop.over {
+  border-color: var(--rose);
+  background: rgba(233, 78, 119, 0.08);
+  color: var(--text);
+}
+.room-fit-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  max-height: min(62vh, 720px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #0a0c12;
+}
+.room-fit-wrap #roomCanvas {
+  display: block;
+  max-width: 100%;
+  max-height: min(62vh, 720px);
+  cursor: crosshair;
+  touch-action: none;
+}

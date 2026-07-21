@@ -29,6 +29,9 @@ data class RoomSession(
     val isWedding: Boolean = false,
     val isWeddingRetake: Boolean = false,
     val isWeddingCeremony: Boolean = false,
+    val isCustomRoom: Boolean = false,
+    val customRoomId: String? = null,
+    val customRoomImageUrl: String? = null,
     val ceremonyAt: Long = 0L,
     val coupleNameA: String? = null,
     val coupleNameB: String? = null,
@@ -134,6 +137,9 @@ data class RemoteLobby(
     val isWedding: Boolean = false,
     val isWeddingRetake: Boolean = false,
     val isWeddingCeremony: Boolean = false,
+    val isCustomRoom: Boolean = false,
+    val customRoomId: String? = null,
+    val customRoomImageUrl: String? = null,
     val ceremonyAt: Long = 0L,
     val coupleNameA: String? = null,
     val coupleNameB: String? = null,
@@ -567,6 +573,9 @@ object LuvApiClient {
                 isWedding = o.optBoolean("isWedding", false),
                 isWeddingRetake = o.optBoolean("weddingRetake", false),
                 isWeddingCeremony = o.optBoolean("isWeddingCeremony", false),
+                isCustomRoom = o.optBoolean("isCustomRoom", false),
+                customRoomId = o.optString("customRoomId").takeIf { it.isNotBlank() },
+                customRoomImageUrl = o.optString("customRoomImageUrl").takeIf { it.isNotBlank() },
                 ceremonyAt = o.optLong("ceremonyAt", 0L),
                 coupleNameA = o.optJSONObject("coupleNicknames")?.optString("a")
                     ?.takeIf { it.isNotBlank() },
@@ -2572,6 +2581,13 @@ object LuvApiClient {
         val isAvatarSize: Boolean get() = color == "orange"
     }
 
+    data class RoomViewRect(
+        val x: Float = 0f,
+        val y: Float = 0f,
+        val w: Float = 1f,
+        val h: Float = 1f,
+    )
+
     data class RoomLayout(
         val id: String,
         val name: String,
@@ -2580,6 +2596,29 @@ object LuvApiClient {
         val avatarR: Float = 0.028f,
         val spawnX: Float = 0.5f,
         val spawnY: Float = 0.86f,
+        val imageUrl: String = "",
+        val viewRect: RoomViewRect = RoomViewRect(),
+    )
+
+    data class RoomSpacePerson(
+        val userId: String,
+        val nickname: String,
+        val petEmoji: String,
+        val x: Float,
+        val y: Float,
+        val seatedSeatId: String? = null,
+        val reaction: String? = null,
+        val reactionUntil: Long = 0L,
+        val isMe: Boolean = false,
+    )
+
+    data class RoomSpaceInfo(
+        val customRoomId: String? = null,
+        val roomName: String = "",
+        val layout: RoomLayout? = null,
+        val people: List<RoomSpacePerson> = emptyList(),
+        val lastMoveAt: Long = 0L,
+        val lastMoveBy: String? = null,
     )
 
     private fun parseRoomLayout(o: JSONObject?, fallbackId: String = "wedding"): RoomLayout? {
@@ -2605,6 +2644,7 @@ object LuvApiClient {
             }
         }
         val spawn = o.optJSONObject("spawn")
+        val vr = o.optJSONObject("viewRect")
         val orangeR = zones.firstOrNull { it.isAvatarSize }?.r
         return RoomLayout(
             id = o.optString("id", fallbackId),
@@ -2622,6 +2662,47 @@ object LuvApiClient {
             spawnY = spawn?.optDouble("y", 0.86)?.toFloat()
                 ?: zones.firstOrNull { it.isSpawn }?.cy
                 ?: 0.86f,
+            imageUrl = o.optString("imageUrl", ""),
+            viewRect = RoomViewRect(
+                x = vr?.optDouble("x", 0.0)?.toFloat() ?: 0f,
+                y = vr?.optDouble("y", 0.0)?.toFloat() ?: 0f,
+                w = (vr?.optDouble("w", 1.0)?.toFloat() ?: 1f).coerceAtLeast(0.01f),
+                h = (vr?.optDouble("h", 1.0)?.toFloat() ?: 1f).coerceAtLeast(0.01f),
+            ),
+        )
+    }
+
+    private fun parseRoomSpace(o: JSONObject?): RoomSpaceInfo? {
+        if (o == null) return null
+        val peopleArr = o.optJSONArray("people")
+        val people = buildList {
+            if (peopleArr != null) {
+                for (i in 0 until peopleArr.length()) {
+                    val p = peopleArr.optJSONObject(i) ?: continue
+                    add(
+                        RoomSpacePerson(
+                            userId = p.optString("userId"),
+                            nickname = p.optString("nickname"),
+                            petEmoji = p.optString("petEmoji", "🐣"),
+                            x = p.optDouble("x", 0.5).toFloat(),
+                            y = p.optDouble("y", 0.85).toFloat(),
+                            seatedSeatId = p.optString("seatedSeatId").takeIf { it.isNotBlank() },
+                            reaction = p.optString("reaction").takeIf { it.isNotBlank() },
+                            reactionUntil = p.optLong("reactionUntil", 0L),
+                            isMe = p.optBoolean("isMe", false),
+                        )
+                    )
+                }
+            }
+        }
+        val customId = o.optString("customRoomId").takeIf { it.isNotBlank() }
+        return RoomSpaceInfo(
+            customRoomId = customId,
+            roomName = o.optString("roomName", ""),
+            layout = parseRoomLayout(o.optJSONObject("layout"), customId ?: "room"),
+            people = people,
+            lastMoveAt = o.optLong("lastMoveAt", 0L),
+            lastMoveBy = o.optString("lastMoveBy").takeIf { it.isNotBlank() },
         )
     }
 
@@ -2630,6 +2711,43 @@ object LuvApiClient {
         parseRoomLayout(json.optJSONObject("layout"), roomId)
             ?: RoomLayout(id = roomId, name = roomId, zones = emptyList())
     }
+
+    suspend fun fetchRoomSpace(code: String): RoomSpaceInfo = withContext(Dispatchers.IO) {
+        val c = code.trim().uppercase().removePrefix("LUV-")
+        val json = authedGet("/v1/rooms/$c/space")
+        parseRoomSpace(json.optJSONObject("space"))
+            ?: RoomSpaceInfo(roomName = c)
+    }
+
+    suspend fun spaceMove(code: String, x: Float, y: Float): RoomSpaceInfo =
+        withContext(Dispatchers.IO) {
+            val c = code.trim().uppercase().removePrefix("LUV-")
+            val body = JSONObject().put("x", x.toDouble()).put("y", y.toDouble()).toString()
+            val json = authedPost("/v1/rooms/$c/space/move", body)
+            parseRoomSpace(json.optJSONObject("space")) ?: RoomSpaceInfo()
+        }
+
+    suspend fun spaceSit(code: String, seatId: String): RoomSpaceInfo =
+        withContext(Dispatchers.IO) {
+            val c = code.trim().uppercase().removePrefix("LUV-")
+            val body = JSONObject().put("seatId", seatId).toString()
+            val json = authedPost("/v1/rooms/$c/space/sit", body)
+            parseRoomSpace(json.optJSONObject("space")) ?: RoomSpaceInfo()
+        }
+
+    suspend fun spaceStand(code: String): RoomSpaceInfo = withContext(Dispatchers.IO) {
+        val c = code.trim().uppercase().removePrefix("LUV-")
+        val json = authedPost("/v1/rooms/$c/space/stand", "{}")
+        parseRoomSpace(json.optJSONObject("space")) ?: RoomSpaceInfo()
+    }
+
+    suspend fun spaceReact(code: String, emoji: String): RoomSpaceInfo =
+        withContext(Dispatchers.IO) {
+            val c = code.trim().uppercase().removePrefix("LUV-")
+            val body = JSONObject().put("emoji", emoji).toString()
+            val json = authedPost("/v1/rooms/$c/space/react", body)
+            parseRoomSpace(json.optJSONObject("space")) ?: RoomSpaceInfo()
+        }
 
     suspend fun fetchCeremony(): CeremonyBundle = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/me/marriage/ceremony")
@@ -3933,6 +4051,7 @@ object LuvApiClient {
         name: String = "Lobby",
         hostColorSide: String = "blue",
         eventId: String? = null,
+        customRoomId: String? = null,
     ): RoomSession =
         withContext(Dispatchers.IO) {
             val side = if (hostColorSide.equals("purple", ignoreCase = true)) "purple" else "blue"
@@ -3941,11 +4060,40 @@ object LuvApiClient {
                 .put("hostColorSide", side)
             val eid = eventId?.trim().orEmpty()
             if (eid.isNotEmpty()) body.put("eventId", eid.take(64))
+            val cr = customRoomId?.trim().orEmpty()
+            if (cr.isNotEmpty()) body.put("customRoomId", cr.take(64))
             val request = authedRequestBuilder("/v1/rooms")
                 .post(body.toString().toRequestBody(jsonMedia))
                 .build()
             executeRoom(request)
         }
+
+    data class CustomRoomCard(
+        val id: String,
+        val name: String,
+        val imageUrl: String,
+    )
+
+    suspend fun listCustomRooms(): List<CustomRoomCard> = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/room-layouts")
+        val arr = json.optJSONArray("rooms") ?: return@withContext emptyList()
+        buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val id = o.optString("id").trim()
+                if (id.isBlank() || id == "wedding") continue
+                var img = o.optString("imageUrl", "")
+                if (img.startsWith("/")) img = "https://reineke.pro$img"
+                add(
+                    CustomRoomCard(
+                        id = id,
+                        name = o.optString("name", "Raum"),
+                        imageUrl = img,
+                    )
+                )
+            }
+        }
+    }
 
     suspend fun joinRoom(rawCode: String): RoomSession = withContext(Dispatchers.IO) {
         val code = normalizeCode(rawCode)
@@ -4310,6 +4458,9 @@ object LuvApiClient {
                 isWedding = parsed.optBoolean("isWedding", false),
                 isWeddingRetake = parsed.optBoolean("weddingRetake", false),
                 isWeddingCeremony = parsed.optBoolean("isWeddingCeremony", false),
+                isCustomRoom = parsed.optBoolean("isCustomRoom", false),
+                customRoomId = parsed.optString("customRoomId").takeIf { it.isNotBlank() },
+                customRoomImageUrl = parsed.optString("customRoomImageUrl").takeIf { it.isNotBlank() },
                 ceremonyAt = parsed.optLong("ceremonyAt", 0L),
                 coupleNameA = parsed.optJSONObject("coupleNicknames")?.optString("a")
                     ?.takeIf { it.isNotBlank() },
