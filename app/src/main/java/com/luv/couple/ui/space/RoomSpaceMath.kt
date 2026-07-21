@@ -91,9 +91,18 @@ fun findPath(
     toY: Float,
     avatarR: Float,
 ): List<Pair<Float, Float>> {
-    val walk = buildWalkGrid(zones, avatarR)
+    // Etwas kleiner fürs Raster → Ränder/schmale Gassen bleiben erreichbar
+    val pathR = (avatarR * 0.82f).coerceAtLeast(0.008f)
+    val walk = buildWalkGrid(zones, pathR)
     val start = nearestWalkable(walk, fromX, fromY) ?: return emptyList()
     val goal = nearestWalkable(walk, toX, toY) ?: return emptyList()
+    if (start.first == goal.first && start.second == goal.second) {
+        return if (walkableAt(zones, toX, toY, pathR)) {
+            listOf(toX to toY)
+        } else {
+            listOf(cellCenter(goal.first, goal.second))
+        }
+    }
     data class Node(val ix: Int, val iy: Int, val g: Float, val f: Float)
     fun key(ix: Int, iy: Int) = iy * GRID_W + ix
     val open = ArrayList<Node>()
@@ -121,6 +130,16 @@ fun findPath(
                 k = came[k]!!
             }
             path.reverse()
+            // Start == Ziel: trotzdem einen Punkt liefern (sonst tut Tippen „nichts“)
+            if (path.isEmpty()) {
+                path += cellCenter(goal.first, goal.second)
+            }
+            if (walkableAt(zones, toX, toY, pathR)) {
+                val last = path.last()
+                if (hypot(last.first - toX, last.second - toY) > 0.002f) {
+                    path += toX to toY
+                }
+            }
             return path
         }
         for ((dx, dy) in dirs) {

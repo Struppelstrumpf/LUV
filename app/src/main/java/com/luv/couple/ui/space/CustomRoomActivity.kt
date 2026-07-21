@@ -366,7 +366,6 @@ fun CustomRoomScreen(
             val ay = if (p.userId == myId || p.isMe) myY else p.y
             val sx = screenFracX(ax)
             val sy = screenFracY(ay)
-            // Außerhalb Kamera nicht zeichnen (leicht gepuffert)
             if (sx < -0.15f || sx > 1.15f || sy < -0.15f || sy > 1.15f) return@forEach
             val petId = clipItemId(p.petEmoji).ifBlank { "🐣" }
             Box(
@@ -410,22 +409,52 @@ fun CustomRoomScreen(
         val seatedRef = rememberUpdatedState(seated)
         val spaceRef = rememberUpdatedState(space)
 
+        suspend fun walkAndSync(tx: Float, ty: Float, zns: List<LuvApiClient.RoomZone>, aR: Float) {
+            val path = findPath(zns, myX, myY, tx, ty, aR)
+            if (path.isEmpty()) return
+            walkAlongPath(
+                path,
+                { x, y -> myX = x; myY = y },
+                { myX },
+                { myY },
+                onStep = { applyCameraEdge(myX, myY, smooth = true) },
+            )
+            applyCameraEdge(myX, myY, smooth = false)
+            runCatching { LuvApiClient.spaceMove(code, myX, myY) }
+                .onSuccess { space = it }
+        }
+
+        // Volle Fläche — gleiche Maße wie Avatar/Kamera (kein bottom-padding, sonst falsch am Rand)
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = 64.dp)
                 .pointerInput(code) {
                     detectTapGestures { offset ->
+                        val w = size.width.coerceAtLeast(1)
+                        val h = size.height.coerceAtLeast(1)
                         val vr = viewRef.value
-                        val cW = camFWRef.value
-                        val cH = camFHRef.value
-                        val tapLocalX = camLXRef.value + (offset.x / size.width).coerceIn(0f, 1f) * cW
-                        val tapLocalY = camLYRef.value + (offset.y / size.height).coerceIn(0f, 1f) * cH
+                        val cW = camFWRef.value.coerceAtLeast(0.01f)
+                        val cH = camFHRef.value.coerceAtLeast(0.01f)
+                        val screenX = (offset.x / w).coerceIn(0f, 1f)
+                        val screenY = (offset.y / h).coerceIn(0f, 1f)
+                        val tapLocalX = camLXRef.value + screenX * cW
+                        val tapLocalY = camLYRef.value + screenY * cH
                         val rawX = vr.x + tapLocalX * vr.w
                         val rawY = vr.y + tapLocalY * vr.h
                         val zns = zonesRef.value
                         val aR = avatarRRef.value
-                        val hitR = (aR * 1.8f).coerceAtLeast(0.035f)
+                        val hitR = (aR * 2.2f).coerceAtLeast(0.04f)
+
+                        if (zns.none { it.isWalk }) {
+                            scope.launch {
+                                Toast.makeText(
+                                    context,
+                                    "Kein Laufbereich (grün) gesetzt",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                            return@detectTapGestures
+                        }
 
                         if (seatedRef.value) {
                             scope.launch {
@@ -435,19 +464,7 @@ fun CustomRoomScreen(
                                         space = it
                                         seated = false
                                     }
-                                val path = findPath(zns, myX, myY, rawX, rawY, aR)
-                                if (path.isNotEmpty()) {
-                                    walkAlongPath(
-                                        path,
-                                        { x, y -> myX = x; myY = y },
-                                        { myX },
-                                        { myY },
-                                        onStep = { applyCameraEdge(myX, myY, smooth = true) },
-                                    )
-                                    applyCameraEdge(myX, myY, smooth = false)
-                                    runCatching { LuvApiClient.spaceMove(code, myX, myY) }
-                                        .onSuccess { space = it }
-                                }
+                                walkAndSync(rawX, rawY, zns, aR)
                                 walking = false
                             }
                             return@detectTapGestures
@@ -456,25 +473,14 @@ fun CustomRoomScreen(
                         val hitSit = sitRef.value.firstOrNull { z ->
                             val taken = spaceRef.value?.people?.any { it.seatedSeatId == z.id } == true
                             !taken && (
-                                zoneContains(z, rawX, rawY, 0.02f) ||
+                                zoneContains(z, rawX, rawY, 0.03f) ||
                                     hypot(rawX - z.sitX, rawY - z.sitY) < hitR
                                 )
                         }
                         if (hitSit != null) {
                             scope.launch {
                                 walking = true
-                                val path = findPath(zns, myX, myY, hitSit.sitX, hitSit.sitY, aR)
-                                if (path.isNotEmpty()) {
-                                    walkAlongPath(
-                                        path,
-                                        { x, y -> myX = x; myY = y },
-                                        { myX },
-                                        { myY },
-                                        onStep = { applyCameraEdge(myX, myY, smooth = true) },
-                                    )
-                                    applyCameraEdge(myX, myY, smooth = false)
-                                }
-                                runCatching { LuvApiClient.spaceMove(code, myX, myY) }
+                                walkAndSync(hitSit.sitX, hitSit.sitY, zns, aR)
                                 runCatching { LuvApiClient.spaceSit(code, hitSit.id) }
                                     .onSuccess {
                                         space = it
@@ -495,24 +501,10 @@ fun CustomRoomScreen(
                             return@detectTapGestures
                         }
 
-                        if (!walkableAt(zns, rawX, rawY, aR) && zns.none { it.isWalk }) {
-                            return@detectTapGestures
-                        }
                         scope.launch {
                             walking = true
-                            val path = findPath(zns, myX, myY, rawX, rawY, aR)
-                            if (path.isNotEmpty()) {
-                                walkAlongPath(
-                                    path,
-                                    { x, y -> myX = x; myY = y },
-                                    { myX },
-                                    { myY },
-                                    onStep = { applyCameraEdge(myX, myY, smooth = true) },
-                                )
-                                applyCameraEdge(myX, myY, smooth = false)
-                                runCatching { LuvApiClient.spaceMove(code, myX, myY) }
-                                    .onSuccess { space = it }
-                            }
+                            // Tip auf Rot/außerhalb → nächstes Grün (findPath); Tip auf Grün → dorthin
+                            walkAndSync(rawX, rawY, zns, aR)
                             walking = false
                         }
                     }

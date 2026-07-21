@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.76",
+            listOf(
+                "Neuer Raum: Tippen am Rand/oben/unten und Laufen zu Zielen wieder zuverlässig",
+            )
+        ),
+        Entry(
             "2.2.75",
             listOf(
                 "Play-Anforderungen: Android 16 (API 36) und Billing Library 8",
