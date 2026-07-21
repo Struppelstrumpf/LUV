@@ -131,6 +131,13 @@ class MainActivity : ComponentActivity() {
         ) {
             return
         }
+        // Hochzeit-Deep-Link → Sozial / Presence-Popup
+        if (data?.contains("/luv/w/", ignoreCase = true) == true ||
+            data?.contains("/love/w/", ignoreCase = true) == true
+        ) {
+            com.luv.couple.net.PendingDeepLink.offer(com.luv.couple.net.DeepLinkTarget.SozialWedding)
+            return
+        }
         // Mehrere Formen: luv://join/CODE, https://…/luv/j/CODE, intent://join/CODE#Intent;…
         val candidates = buildList {
             if (!data.isNullOrBlank()) add(data)

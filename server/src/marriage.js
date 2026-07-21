@@ -460,6 +460,8 @@ function isBusyStatus(status) {
     status === "proposed" ||
     status === "engaged" ||
     status === "wedding" ||
+    status === "ceremony_pending" ||
+    status === "ceremony_scheduled" ||
     status === "married"
   );
 }
@@ -487,6 +489,16 @@ function publicMarriage(m, viewerId, users, opts = {}) {
     m.status !== "wedding" ||
     (weddingMyStrokes >= weddingStrokesRequired &&
       weddingPartnerStrokes >= weddingStrokesRequired);
+  const engageFreeSkipUsed = m.engageFreeSkipUsed === true;
+  // Verlobung: kein Coin-Skip — nur 1× gratis „Hochzeits-Lobby öffnen“
+  const engageSkipCost = 0;
+  // Wedding-Mal-Phase: Coin-Skip erst nach je 10 Strichen
+  const weddingSkipCost =
+    m.status === "wedding" && weddingStrokesReady
+      ? skipWaitCost(weddingRemainingMs, WEDDING_LOBBY_MS)
+      : 0;
+  const ceremonyReady =
+    m.status === "ceremony_pending" || m.status === "ceremony_scheduled";
   return {
     id: m.id || pairKey(m.a, m.b),
     status: m.status,
@@ -506,10 +518,10 @@ function publicMarriage(m, viewerId, users, opts = {}) {
     marriedAt: m.marriedAt || 0,
     hasWeddingImage: Boolean(m.weddingImageFile),
     guestbookCount: Array.isArray(m.guestbook) ? m.guestbook.length : 0,
-    engageSkipCost:
-      m.status === "engaged" ? skipWaitCost(engageRemainingMs, ENGAGE_WAIT_MS) : 0,
-    weddingSkipCost:
-      m.status === "wedding" ? skipWaitCost(weddingRemainingMs, WEDDING_LOBBY_MS) : 0,
+    engageSkipCost,
+    weddingSkipCost,
+    engageFreeSkipUsed,
+    engageFreeSkipAvailable: m.status === "engaged" && !engageFreeSkipUsed,
     engageRemainingLabel:
       m.status === "engaged" ? formatRemaining(engageRemainingMs) : null,
     weddingRemainingLabel:
@@ -531,6 +543,10 @@ function publicMarriage(m, viewerId, users, opts = {}) {
         ? m.weddingConfirm[partnerId]
         : false
     ),
+    ceremonyReady,
+    ceremonyAt: Number(m.ceremonyAt) || 0,
+    ceremonyLobbyCode: m.ceremonyLobbyCode || null,
+    ceremonyPhase: m.ceremony?.phase || "none",
   };
 }
 

@@ -456,6 +456,10 @@ class PrefsRepository(private val context: Context) {
                     isRandom = r.isRandom || prev?.isRandom == true,
                     isWedding = r.isWedding || prev?.isWedding == true,
                     isWeddingRetake = r.isWeddingRetake || prev?.isWeddingRetake == true,
+                    isWeddingCeremony = r.isWeddingCeremony || prev?.isWeddingCeremony == true,
+                    ceremonyAt = r.ceremonyAt.takeIf { it > 0 } ?: (prev?.ceremonyAt ?: 0L),
+                    coupleNameA = r.coupleNameA ?: prev?.coupleNameA,
+                    coupleNameB = r.coupleNameB ?: prev?.coupleNameB,
                     hostNickname = r.hostNickname.ifBlank { prev?.hostNickname.orEmpty() },
                     hostColorSide = r.hostColorSide,
                     peakPeers = prev?.peakPeers ?: 1,
@@ -519,10 +523,11 @@ class PrefsRepository(private val context: Context) {
                     if (seen.add(code)) add(sanitizeEventLobbyFields(lobby))
                 }
             }
-            prefs[lobbiesKey] = encodeLobbies(merged)
+            prefs[lobbiesKey] = encodeLobbies(pinSpecialLobbies(merged))
             val active = prefs[activeLobbyKey]
-            if (active.isNullOrBlank() || merged.none { it.id == active }) {
-                if (merged.isNotEmpty()) prefs[activeLobbyKey] = merged.first().id
+            val pinned = pinSpecialLobbies(merged)
+            if (active.isNullOrBlank() || pinned.none { it.id == active }) {
+                if (pinned.isNotEmpty()) prefs[activeLobbyKey] = pinned.first().id
                 else prefs.remove(activeLobbyKey)
             }
         }
@@ -888,9 +893,10 @@ class PrefsRepository(private val context: Context) {
                 if (list.size >= PeerPalette.MAX_LOBBIES) {
                     throw IllegalStateException("max_lobbies")
                 }
-                list.add(clean)
+                if (clean.isWeddingCeremony) list.add(0, clean)
+                else list.add(clean)
             }
-            prefs[lobbiesKey] = encodeLobbies(list)
+            prefs[lobbiesKey] = encodeLobbies(pinSpecialLobbies(list))
             prefs[activeLobbyKey] = clean.id
             // Neu beigetreten / erstellt → Dismiss-Sperre für diesen Code aufheben
             val code = clean.code.uppercase()
@@ -1056,8 +1062,9 @@ class PrefsRepository(private val context: Context) {
                     if (none { it.id == lobby.id }) add(lobby)
                 }
             }
-            if (next.map { it.id } == list.map { it.id }) return@edit
-            prefs[lobbiesKey] = encodeLobbies(next)
+            val pinned = pinSpecialLobbies(next)
+            if (pinned.map { it.id } == list.map { it.id }) return@edit
+            prefs[lobbiesKey] = encodeLobbies(pinned)
             changed = true
         }
         if (changed) mirrorSettingsToCloud()
@@ -1379,6 +1386,10 @@ class PrefsRepository(private val context: Context) {
                                 isRandom = o.optBoolean("isRandom", false),
                                 isWedding = o.optBoolean("isWedding", false),
                                 isWeddingRetake = o.optBoolean("isWeddingRetake", false),
+                                isWeddingCeremony = o.optBoolean("isWeddingCeremony", false),
+                                ceremonyAt = o.optLong("ceremonyAt", 0L),
+                                coupleNameA = o.optString("coupleNameA").takeIf { it.isNotBlank() },
+                                coupleNameB = o.optString("coupleNameB").takeIf { it.isNotBlank() },
                                 hostNickname = o.optString("hostNickname", ""),
                                 hostColorSide = o.optString("hostColorSide", "blue").ifBlank { "blue" },
                                 peakPeers = o.optInt("peakPeers", 1).coerceAtLeast(1),
@@ -1423,6 +1434,10 @@ class PrefsRepository(private val context: Context) {
                         .put("isRandom", lobby.isRandom)
                         .put("isWedding", lobby.isWedding)
                         .put("isWeddingRetake", lobby.isWeddingRetake)
+                        .put("isWeddingCeremony", lobby.isWeddingCeremony)
+                        .put("ceremonyAt", lobby.ceremonyAt)
+                        .put("coupleNameA", lobby.coupleNameA ?: "")
+                        .put("coupleNameB", lobby.coupleNameB ?: "")
                         .put("hostNickname", lobby.hostNickname)
                         .put("hostColorSide", lobby.hostColorSide)
                         .put("peakPeers", lobby.peakPeers.coerceAtLeast(1))

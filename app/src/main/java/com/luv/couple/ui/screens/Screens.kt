@@ -104,6 +104,9 @@ import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Role
 import com.luv.couple.data.RoomPreview
 import com.luv.couple.data.asCleanJsonString
+import com.luv.couple.data.pinSpecialLobbies
+import com.luv.couple.ui.wedding.formatCeremonyAt
+import com.luv.couple.ui.wedding.formatCountdown
 import com.luv.couple.lock.CanvasStore
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.EventSession
@@ -885,11 +888,11 @@ fun LobbiesScreen(
 
 private fun mergeLobbyOrder(current: List<Lobby>, incoming: List<Lobby>): List<Lobby> {
     if (incoming.isEmpty()) return emptyList()
-    if (current.isEmpty()) return incoming
+    if (current.isEmpty()) return pinSpecialLobbies(incoming)
     val byId = incoming.associateBy { it.id }
     val kept = current.mapNotNull { byId[it.id] }
     val known = kept.map { it.id }.toSet()
-    return kept + incoming.filter { it.id !in known }
+    return pinSpecialLobbies(kept + incoming.filter { it.id !in known })
 }
 
 /** UI-Schutz: höchstens eine Event-Lobby pro eventId. */
@@ -1170,12 +1173,13 @@ private fun LobbyCard(
                     AutoShrinkLobbyName(
                         name = when {
                             lobby.isEventLobby -> "Event"
+                            lobby.isWeddingCeremony -> "💒 Hochzeit"
                             lobby.isWedding && lobby.isWeddingRetake -> "💒 Hochzeitsbild"
-                            lobby.isWedding -> "💒 Hochzeit"
+                            lobby.isWedding -> "💒 Hochzeitsbild"
                             lobby.isRandom -> "🎲 Random"
                             else -> lobby.name
                         },
-                        modifier = if (reorderEnabled) {
+                        modifier = if (reorderEnabled && !lobby.isWeddingCeremony) {
                             Modifier.pointerInput(lobby.id) {
                                 detectDragGesturesAfterLongPress(
                                     onDragStart = { onNameDragStart() },
@@ -1196,9 +1200,15 @@ private fun LobbyCard(
                     } else {
                         Text(
                             text = when {
+                                lobby.isWeddingCeremony -> {
+                                    val names = listOfNotNull(lobby.coupleNameA, lobby.coupleNameB)
+                                        .joinToString(" & ")
+                                        .ifBlank { "Brautpaar" }
+                                    "$names · ${formatCeremonyAt(lobby.ceremonyAt)}"
+                                }
                                 lobby.isWedding && lobby.isWeddingRetake ->
                                     "Hochzeitsbild nachholen · beide mit ✓ bestätigen"
-                                lobby.isWedding -> "Hochzeit · je 10 Striche, dann Timer oder Coins"
+                                lobby.isWedding -> "Hochzeitsbild · je 10 Striche, dann Timer oder Coins"
                                 lobby.isRandom -> "Zufalls-Lobby · max. 5"
                                 lobby.createdByMe -> "Von dir erstellt"
                                 else -> "Beigetreten"
@@ -1206,8 +1216,8 @@ private fun LobbyCard(
                             color = TextMuted,
                             fontFamily = BodyFont,
                             fontSize = 11.sp,
-                            maxLines = 1,
-                            softWrap = false,
+                            maxLines = 2,
+                            softWrap = true,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
@@ -1216,7 +1226,7 @@ private fun LobbyCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (!lobby.isEventLobby) {
+                    if (!lobby.isEventLobby && !lobby.isWeddingCeremony) {
                         Text(
                             text = if (proximityOn) "🔔" else "🔕",
                             fontSize = 18.sp,
@@ -1237,7 +1247,19 @@ private fun LobbyCard(
             ) {
                 ReconnectBanner(reconnect = reconnect, accent = accent, onReconnect = onReconnect)
             }
-            PrimaryButton("Leinwand öffnen", accent, onOpen)
+            if (lobby.isWeddingCeremony) {
+                val now = System.currentTimeMillis()
+                val openAt = (lobby.ceremonyAt - 10 * 60 * 1000L).coerceAtLeast(0L)
+                val open = lobby.ceremonyAt > 0L && now >= openAt
+                val label = when {
+                    lobby.ceremonyAt <= 0L -> "Hochzeit"
+                    open -> "Zur Hochzeit"
+                    else -> formatCountdown(openAt - now)
+                }
+                PrimaryButton(label, accent, onOpen)
+            } else {
+                PrimaryButton("Leinwand öffnen", accent, onOpen)
+            }
             val eventPromptShown = lobby.eventPrompt.asCleanJsonString()
                 ?: EventSession.state.value?.active
                     ?.firstOrNull { it.id == lobby.eventId }
@@ -1252,7 +1274,20 @@ private fun LobbyCard(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-            if (!lobby.isRandom && !lobby.isWedding && !lobby.isEventLobby) {
+            if (lobby.isWeddingCeremony) {
+                SeatGrid(
+                    capacity = lobby.capacity.coerceIn(2, 10),
+                    maxPeers = 10,
+                    occupied = occupied,
+                    nicknames = nicknames,
+                    accent = accent,
+                    canInvite = lobby.role == Role.HOST || lobby.createdByMe,
+                    canBuySlots = false,
+                    onInvite = onInviteSeat,
+                    onBuy = {},
+                    onFirstInviteSeatPositioned = null
+                )
+            } else if (!lobby.isRandom && !lobby.isWedding && !lobby.isEventLobby) {
                 SeatGrid(
                     capacity = capacity,
                     maxPeers = PeerPalette.MAX_PEERS,
@@ -1271,10 +1306,10 @@ private fun LobbyCard(
                     }
                 )
             }
-            if (lobby.role == Role.HOST && !lobby.isRandom && !lobby.isWedding && !lobby.isEventLobby) {
+            if (lobby.role == Role.HOST && !lobby.isRandom && !lobby.isWedding && !lobby.isWeddingCeremony && !lobby.isEventLobby) {
                 PrimaryButton("Umbenennen", Color.Transparent, onRename, bordered = true)
             }
-            if (!lobby.isWedding) {
+            if (!lobby.isWedding || lobby.isWeddingCeremony) {
                 Text(
                     "Verlassen",
                     color = TextMuted,

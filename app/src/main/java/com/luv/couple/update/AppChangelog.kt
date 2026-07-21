@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.66",
+            listOf(
+                "Hochzeit: Zeremonie-Lobby mit Gästen und Altar — zusätzlich zu Hochzeitsbild, Event und Random",
+                "Verlobung: einmal gratis „Hochzeits-Lobby öffnen“, Coin-Skip erst nach je 10 Strichen",
+            )
+        ),
+        Entry(
             "2.2.65",
             listOf(
                 "Lootbox: Kauf-Bestätigen und Schalter wieder oberhalb der Navigationsleiste",

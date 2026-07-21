@@ -207,6 +207,9 @@ private fun FriendsPanel(
     var lobbyInvites by remember { mutableStateOf<List<LuvApiClient.LobbyInvite>>(emptyList()) }
     var myMarriage by remember { mutableStateOf<LuvApiClient.MarriageInfo?>(null) }
     var showSkipWait by remember { mutableStateOf(false) }
+    var showCeremonyPresence by remember { mutableStateOf(false) }
+    var showCeremonyGathering by remember { mutableStateOf(false) }
+    var leftNoticeName by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     var busyId by remember { mutableStateOf<String?>(null) }
     var dragId by remember { mutableStateOf<String?>(null) }
@@ -225,6 +228,20 @@ private fun FriendsPanel(
         while (true) {
             runCatching { LuvApiClient.fetchLiveCount() }.onSuccess { liveCount = it }
             delay(15_000)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (com.luv.couple.net.PendingWeddingCeremony.consume()) {
+            showCeremonyPresence = true
+        }
+        while (true) {
+            runCatching { LuvApiClient.fetchCeremony() }.onSuccess { bundle ->
+                if (bundle.ceremony?.leftNotify == true) {
+                    leftNoticeName = bundle.ceremony.leftByNickname
+                }
+            }
+            delay(8_000)
         }
     }
 
@@ -495,7 +512,7 @@ private fun FriendsPanel(
             } else {
                 waitM.weddingRemainingLabel ?: "…"
             }
-            val cost = if (waitM.status == "engaged") waitM.engageSkipCost else waitM.weddingSkipCost
+            val cost = waitM.weddingSkipCost
             val need = waitM.weddingStrokesRequired.coerceAtLeast(1)
             val strokesReady = waitM.status != "wedding" || waitM.weddingStrokesReady
             Column(
@@ -509,43 +526,90 @@ private fun FriendsPanel(
             ) {
                 Text(
                     if (waitM.status == "engaged") "💝 Verlobt mit ${waitM.partnerNickname ?: "…"}"
-                    else "💒 Hochzeitsleinwand mit ${waitM.partnerNickname ?: "…"}",
+                    else "💒 Hochzeitsbild mit ${waitM.partnerNickname ?: "…"}",
                     color = TextPrimary,
                     fontFamily = DisplayFont,
                     fontSize = 16.sp
                 )
                 Text(
                     if (waitM.status == "engaged") {
-                        "Noch $label bis zur Hochzeitsleinwand (7 Tage Wartezeit)."
+                        "Timer: $label (7 Tage). Einmal gratis die Hochzeitsbild-Lobby öffnen."
                     } else {
-                        "Striche: du ${waitM.weddingMyStrokes.coerceAtMost(need)}/$need · " +
-                            "Partner ${waitM.weddingPartnerStrokes.coerceAtMost(need)}/$need. " +
-                            if (strokesReady) {
-                                if (cost > 0) "Noch $label — oder mit Coins heiraten."
-                                else "Bereit — ihr könnt heiraten."
-                            } else {
-                                "Jeder braucht $need Striche, bevor Heirat (warten oder Coins) geht."
-                            }
+                        "Timer: $label · Striche: du ${waitM.weddingMyStrokes.coerceAtMost(need)}/$need · " +
+                            "Partner ${waitM.weddingPartnerStrokes.coerceAtMost(need)}/$need."
                     },
                     color = Color(0xFFFFD54F),
                     fontFamily = BodyFont,
                     fontSize = 13.sp
                 )
-                Text(
-                    when {
-                        waitM.status == "wedding" && !strokesReady ->
-                            "Timer & Coins · erst je $need Striche"
-                        cost > 0 -> "Wartezeit: $label · überspringen · $cost Coins"
-                        else -> "Jetzt fortsetzen"
-                    },
-                    color = AccentRose,
-                    fontFamily = DisplayFont,
-                    fontSize = 14.sp,
-                    modifier = Modifier
-                        .clickable { showSkipWait = true }
-                        .padding(vertical = 4.dp)
-                )
+                if (waitM.status == "engaged" && waitM.engageFreeSkipAvailable) {
+                    Text(
+                        "Hochzeits-Lobby öffnen",
+                        color = AccentRose,
+                        fontFamily = DisplayFont,
+                        fontSize = 15.sp,
+                        modifier = Modifier
+                            .clickable {
+                                busyId = "open-wedding"
+                                scope.launch {
+                                    runCatching { LuvApiClient.openWeddingLobbyFree() }
+                                        .onSuccess {
+                                            myMarriage = it.marriage
+                                            Toast.makeText(
+                                                context,
+                                                "Hochzeitsbild-Lobby ist bereit — schau unter Home.",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                        .onFailure { e ->
+                                            Toast.makeText(
+                                                context,
+                                                e.message ?: "Öffnen fehlgeschlagen",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    busyId = null
+                                }
+                            }
+                            .padding(vertical = 4.dp)
+                    )
+                } else if (waitM.status == "wedding" && strokesReady) {
+                    Text(
+                        if (cost > 0) "Wartezeit überspringen · $cost Coins" else "Weiter zur Hochzeit",
+                        color = AccentRose,
+                        fontFamily = DisplayFont,
+                        fontSize = 14.sp,
+                        modifier = Modifier
+                            .clickable { showSkipWait = true }
+                            .padding(vertical = 4.dp)
+                    )
+                } else if (waitM.status == "wedding") {
+                    Text(
+                        "Coin-Skip erst nach je $need Strichen",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp
+                    )
+                }
             }
+        }
+
+        if (myMarriage?.ceremonyReady == true ||
+            myMarriage?.status == "ceremony_pending" ||
+            myMarriage?.status == "ceremony_scheduled"
+        ) {
+            Text(
+                "Hochzeit",
+                color = AccentRose,
+                fontFamily = DisplayFont,
+                fontSize = 18.sp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0x33FFD54F))
+                    .clickable { showCeremonyPresence = true }
+                    .padding(14.dp)
+            )
         }
 
         if (lobbyInvites.isNotEmpty()) {
@@ -775,6 +839,46 @@ private fun FriendsPanel(
                 myMarriage = it
                 reload()
             }
+        )
+    }
+
+    if (showCeremonyPresence) {
+        com.luv.couple.ui.wedding.WeddingPresenceDialog(
+            onDismiss = { showCeremonyPresence = false },
+            onScheduled = {
+                showCeremonyPresence = false
+                reload()
+                Toast.makeText(context, "Hochzeit-Lobby oben im Home", Toast.LENGTH_SHORT).show()
+            },
+            onShareRemind = { text ->
+                com.luv.couple.ui.wedding.shareWeddingText(context, text)
+            }
+        )
+    }
+
+    if (showCeremonyGathering) {
+        com.luv.couple.ui.wedding.WeddingGatheringDialog(
+            onDismiss = { showCeremonyGathering = false },
+            onEnterAltar = {
+                showCeremonyGathering = false
+                context.startActivity(
+                    android.content.Intent(
+                        context,
+                        com.luv.couple.ui.wedding.WeddingRoomActivity::class.java
+                    )
+                )
+            },
+            onShareRemind = { text ->
+                com.luv.couple.ui.wedding.shareWeddingText(context, text)
+            },
+            isCouple = myMarriage?.partnerId != null
+        )
+    }
+
+    leftNoticeName?.let { name ->
+        com.luv.couple.ui.wedding.WeddingLeftNoticeDialog(
+            partnerName = name,
+            onDismiss = { leftNoticeName = null }
         )
     }
 }

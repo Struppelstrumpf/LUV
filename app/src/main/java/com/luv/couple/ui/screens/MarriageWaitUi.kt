@@ -64,37 +64,27 @@ fun MarriageSkipWaitDialog(
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     val coins = AccountSession.account.value?.coins ?: 0
-    val isEngage = marriage.status == "engaged"
     val isWedding = marriage.status == "wedding"
-    if (!isEngage && !isWedding) {
+    if (!isWedding) {
         onDismiss()
         return
     }
-    val cost = if (isEngage) marriage.engageSkipCost else marriage.weddingSkipCost
-    val label = if (isEngage) {
-        marriage.engageRemainingLabel ?: "…"
-    } else {
-        marriage.weddingRemainingLabel ?: "…"
-    }
+    val cost = marriage.weddingSkipCost
+    val label = marriage.weddingRemainingLabel ?: "…"
     val need = marriage.weddingStrokesRequired.coerceAtLeast(1)
-    val strokesReady = !isWedding || marriage.weddingStrokesReady
-    val title = if (isEngage) "7 Tage Verlobung" else "Hochzeitsleinwand"
-    val subtitle = if (isEngage) {
-        "Noch $label — dann öffnet sich eure gemeinsame Hochzeitsleinwand."
-    } else if (!strokesReady) {
+    val strokesReady = marriage.weddingStrokesReady
+    val title = "Hochzeitsbild"
+    val subtitle = if (!strokesReady) {
         "Zuerst malt jeder mindestens $need Striche. Danach könnt ihr die restliche Zeit " +
-            "abwarten oder mit Coins sofort heiraten."
+            "abwarten oder mit Coins zur Zeremonie freischalten."
     } else if (cost <= 0) {
-        "Striche geschafft und Wartezeit vorbei — ihr könnt jetzt heiraten."
+        "Striche geschafft und Wartezeit vorbei — weiter zur Hochzeits-Zeremonie."
     } else {
-        "Noch $label Wartezeit — oder mit Coins sofort heiraten."
+        "Noch $label Wartezeit — oder mit Coins zur Zeremonie freischalten."
     }
-    val nextHint = if (isEngage) {
-        "Ablauf: 7 Tage warten → gemeinsam malen (je $need Striche) → Ehe. " +
-            "Überspringen kostet Coins."
-    } else {
-        "Ehe geht erst, wenn beide je $need Striche gemalt haben — egal ob ihr wartet oder Coins zahlt."
-    }
+    val nextHint =
+        "Nach dem Hochzeitsbild folgt die Zeremonie mit Gästen — nicht die Auto-Ehe."
+    val isEngage = false
     val canPay = strokesReady && coins >= cost
 
     Dialog(

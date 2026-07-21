@@ -207,6 +207,8 @@ fun LuvAppNav() {
     var marketReturnTo by remember { mutableStateOf<MarketReturnTo>(MarketReturnTo.None) }
     var inventorySubTab by remember { mutableIntStateOf(0) }
     var sozialSubTab by remember { mutableIntStateOf(0) }
+    var pendingCeremonyGathering by remember { mutableStateOf(false) }
+    var coldFeetLobby by remember { mutableStateOf<Lobby?>(null) }
     var reopenProfileChest by remember { mutableStateOf(false) }
     var profileChestTab by remember { mutableIntStateOf(0) }
     var showEmojiBarEditor by remember { mutableStateOf(false) }
@@ -911,6 +913,10 @@ fun LuvAppNav() {
             isRandom = room.isRandom,
             isWedding = room.isWedding,
             isWeddingRetake = room.isWeddingRetake,
+            isWeddingCeremony = room.isWeddingCeremony,
+            ceremonyAt = room.ceremonyAt,
+            coupleNameA = room.coupleNameA,
+            coupleNameB = room.coupleNameB,
             hostNickname = room.hostNickname,
             hostColorSide = room.hostColorSide,
             createdByMe = false,
@@ -1085,6 +1091,10 @@ fun LuvAppNav() {
                 isRandom = room.isRandom,
                 isWedding = room.isWedding,
                 isWeddingRetake = room.isWeddingRetake,
+                isWeddingCeremony = room.isWeddingCeremony,
+                ceremonyAt = room.ceremonyAt,
+                coupleNameA = room.coupleNameA,
+                coupleNameB = room.coupleNameB,
                 hostNickname = room.hostNickname,
                 hostColorSide = room.hostColorSide,
                 createdByMe = false,
@@ -1513,6 +1523,11 @@ fun LuvAppNav() {
         showPublicSplash = false
         when (target) {
             com.luv.couple.net.DeepLinkTarget.Home -> tab = 0
+            com.luv.couple.net.DeepLinkTarget.SozialWedding -> {
+                sozialSubTab = 0
+                tab = 1
+                com.luv.couple.net.PendingWeddingCeremony.offer()
+            }
             com.luv.couple.net.DeepLinkTarget.SozialFriends -> {
                 sozialSubTab = 0
                 tab = 1
@@ -1581,6 +1596,37 @@ fun LuvAppNav() {
             }
             else -> showPublicSplash = false
         }
+    }
+
+    if (pendingCeremonyGathering) {
+        com.luv.couple.ui.wedding.WeddingGatheringDialog(
+            onDismiss = { pendingCeremonyGathering = false },
+            onEnterAltar = {
+                pendingCeremonyGathering = false
+                context.startActivity(
+                    Intent(context, com.luv.couple.ui.wedding.WeddingRoomActivity::class.java)
+                )
+            },
+            onShareRemind = { text ->
+                com.luv.couple.ui.wedding.shareWeddingText(context, text)
+            },
+            isCouple = true
+        )
+    }
+    coldFeetLobby?.let { lobby ->
+        com.luv.couple.ui.wedding.WeddingColdFeetDialog(
+            onDismiss = { coldFeetLobby = null },
+            onLeft = {
+                coldFeetLobby = null
+                scope.launch {
+                    prefs.dismissLobbyCode(lobby.code)
+                    prefs.removeLobby(lobby.id)
+                    runCatching { syncCloudAccount(force = true) }
+                    refreshAccount()
+                    Toast.makeText(context, "Hochzeit verlassen", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
     }
 
     NoCoinsUi.Dialog(
@@ -1812,20 +1858,34 @@ fun LuvAppNav() {
                             onGoogleSignIn = { connectGoogle() },
                             onOpenLobby = { lobby ->
                                 if (requireGoogleOrToast()) {
-                                    CanvasStore.setActiveLobby(lobby.id)
-                                    CanvasStore.updateKnownLobbies(lobbies.map { it.id })
-                                    context.startActivity(
-                                        Intent(context, LockDrawActivity::class.java).apply {
-                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                            putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
+                                    if (lobby.isWeddingCeremony) {
+                                        val now = System.currentTimeMillis()
+                                        val openAt = lobby.ceremonyAt - 10 * 60 * 1000L
+                                        if (lobby.ceremonyAt > 0L && now < openAt) {
+                                            Toast.makeText(
+                                                context,
+                                                "Noch ${com.luv.couple.ui.wedding.formatCountdown(openAt - now)} bis „Zur Hochzeit“",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        } else {
+                                            pendingCeremonyGathering = true
                                         }
-                                    )
-                                    scope.launch {
-                                        prefs.setActiveLobby(lobby.id)
-                                        prefs.markLobbyCanvasSeen(lobby.code)
-                                        prefs.snoozeLobbyGlow(lobby.code)
-                                        runCatching { LuvApiClient.pingAchievement("lobby_opens") }
-                                        refreshAccount()
+                                    } else {
+                                        CanvasStore.setActiveLobby(lobby.id)
+                                        CanvasStore.updateKnownLobbies(lobbies.map { it.id })
+                                        context.startActivity(
+                                            Intent(context, LockDrawActivity::class.java).apply {
+                                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                                putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
+                                            }
+                                        )
+                                        scope.launch {
+                                            prefs.setActiveLobby(lobby.id)
+                                            prefs.markLobbyCanvasSeen(lobby.code)
+                                            prefs.snoozeLobbyGlow(lobby.code)
+                                            runCatching { LuvApiClient.pingAchievement("lobby_opens") }
+                                            refreshAccount()
+                                        }
                                     }
                                 }
                             },
@@ -1909,7 +1969,9 @@ fun LuvAppNav() {
                                 navController.navigate(Routes.rename(lobby.id))
                             },
                             onLeaveLobby = { lobby ->
-                                scope.launch {
+                                if (lobby.isWeddingCeremony) {
+                                    coldFeetLobby = lobby
+                                } else scope.launch {
                                     // Sofort lokal sperren — Cloud-Sync darf die Kachel nicht zurückholen
                                     prefs.dismissLobbyCode(lobby.code)
                                     if (lobby.isEventLobby) {

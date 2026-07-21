@@ -162,6 +162,16 @@ object PeerPalette {
     }
 }
 
+/** Ceremony oben, dann Hochzeitsbild-Mal-Lobby — Rest unveränderte Relative-Order. */
+fun pinSpecialLobbies(list: List<Lobby>): List<Lobby> {
+    if (list.size <= 1) return list
+    val ceremony = list.filter { it.isWeddingCeremony }
+    val paint = list.filter { it.isWedding && !it.isWeddingCeremony }
+    val rest = list.filter { !it.isWeddingCeremony && !(it.isWedding && !it.isWeddingCeremony) }
+    if (ceremony.isEmpty() && paint.isEmpty()) return list
+    return ceremony + paint + rest
+}
+
 data class Lobby(
     val id: String,
     val name: String,
@@ -173,10 +183,20 @@ data class Lobby(
     val isFree: Boolean = false,
     /** Zufalls-Matchmaking-Lobby (blau, keine Einladungen). */
     val isRandom: Boolean = false,
-    /** Hochzeitsleinwand — kein Verlassen, keine Einladungen. */
+    /** Hochzeitsbild-Mal-Lobby — kein Verlassen, keine Einladungen. */
     val isWedding: Boolean = false,
     /** Nachträgliches Hochzeitsbild (Ehe ohne gespeichertes Bild). */
     val isWeddingRetake: Boolean = false,
+    /**
+     * Hochzeits-Zeremonie-Lobby (ohne Malen) — Zusatz, ersetzt keine anderen Lobby-Typen.
+     * Pin oben im Home; Verlassen nur über Ceremony-Leave.
+     */
+    val isWeddingCeremony: Boolean = false,
+    /** Geplante Zeremonie-Zeit (epoch ms), nur Ceremony. */
+    val ceremonyAt: Long = 0L,
+    /** Namen Brautpaar für Ceremony-Karte. */
+    val coupleNameA: String? = null,
+    val coupleNameB: String? = null,
     val hostNickname: String = "",
     val hostColorSide: String = "blue",
     /** Höchste jemals gesehene Peer-Zahl — für Paar-Modus. */

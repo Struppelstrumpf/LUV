@@ -28,6 +28,10 @@ data class RoomSession(
     val isRandom: Boolean = false,
     val isWedding: Boolean = false,
     val isWeddingRetake: Boolean = false,
+    val isWeddingCeremony: Boolean = false,
+    val ceremonyAt: Long = 0L,
+    val coupleNameA: String? = null,
+    val coupleNameB: String? = null,
     val name: String = "Lobby",
     val hostNickname: String = "Host",
     val hostColorSide: String = "blue",
@@ -129,6 +133,10 @@ data class RemoteLobby(
     val isRandom: Boolean = false,
     val isWedding: Boolean = false,
     val isWeddingRetake: Boolean = false,
+    val isWeddingCeremony: Boolean = false,
+    val ceremonyAt: Long = 0L,
+    val coupleNameA: String? = null,
+    val coupleNameB: String? = null,
     val lastCanvasAt: Long = 0L,
     val lastCanvasActorId: String? = null,
     val hostColorSide: String,
@@ -558,6 +566,12 @@ object LuvApiClient {
                 isRandom = o.optBoolean("isRandom", false),
                 isWedding = o.optBoolean("isWedding", false),
                 isWeddingRetake = o.optBoolean("weddingRetake", false),
+                isWeddingCeremony = o.optBoolean("isWeddingCeremony", false),
+                ceremonyAt = o.optLong("ceremonyAt", 0L),
+                coupleNameA = o.optJSONObject("coupleNicknames")?.optString("a")
+                    ?.takeIf { it.isNotBlank() },
+                coupleNameB = o.optJSONObject("coupleNicknames")?.optString("b")
+                    ?.takeIf { it.isNotBlank() },
                 lastCanvasAt = o.optLong("lastCanvasAt", 0L),
                 lastCanvasActorId = o.optString("lastCanvasActorId").takeIf { it.isNotBlank() },
                 hostColorSide = o.optString("hostColorSide", "blue"),
@@ -2018,6 +2032,8 @@ object LuvApiClient {
         val hasWeddingImage: Boolean = false,
         val engageSkipCost: Int = 0,
         val weddingSkipCost: Int = 0,
+        val engageFreeSkipUsed: Boolean = false,
+        val engageFreeSkipAvailable: Boolean = false,
         val engageRemainingLabel: String? = null,
         val weddingRemainingLabel: String? = null,
         val weddingMyStrokes: Int = 0,
@@ -2026,7 +2042,49 @@ object LuvApiClient {
         val weddingStrokesReady: Boolean = true,
         val weddingImageRetake: Boolean = false,
         val weddingConfirmMine: Boolean = false,
-        val weddingConfirmPartner: Boolean = false
+        val weddingConfirmPartner: Boolean = false,
+        val ceremonyReady: Boolean = false,
+        val ceremonyAt: Long = 0L,
+        val ceremonyLobbyCode: String? = null,
+        val ceremonyPhase: String = "none"
+    )
+
+    data class CeremonyGuest(
+        val userId: String,
+        val nickname: String,
+        val petEmoji: String,
+        val present: Boolean,
+        val isCouple: Boolean,
+        val seatedSeatId: String? = null,
+        val x: Float = 0.5f,
+        val y: Float = 0.75f,
+        val reaction: String? = null,
+        val reactionUntil: Long = 0L,
+        val vow: String? = null,
+        val vowProgress: Float = 0f
+    )
+
+    data class CeremonyInfo(
+        val phase: String = "none",
+        val ceremonyAt: Long = 0L,
+        val ceremonyLobbyCode: String? = null,
+        val couplePresent: Int = 0,
+        val coupleRequired: Int = 2,
+        val partnerPresent: Boolean = false,
+        val partnerNickname: String? = null,
+        val startConfirmMine: Boolean = false,
+        val startConfirmPartner: Boolean = false,
+        val startConfirmReady: Boolean = false,
+        val openForEntry: Boolean = false,
+        val msUntilCeremony: Long = 0L,
+        val msUntilOpen: Long = 0L,
+        val gathering: List<CeremonyGuest> = emptyList(),
+        val gatheringPresentCount: Int = 0,
+        val gatheringTotal: Int = 0,
+        val allGathered: Boolean = false,
+        val leftNotify: Boolean = false,
+        val leftByNickname: String? = null,
+        val capacity: Int = 10
     )
 
     data class WeddingImageConfirmResult(
@@ -2205,7 +2263,61 @@ object LuvApiClient {
             weddingStrokesReady = o.optBoolean("weddingStrokesReady", status != "wedding"),
             weddingImageRetake = o.optBoolean("weddingImageRetake", false),
             weddingConfirmMine = o.optBoolean("weddingConfirmMine", false),
-            weddingConfirmPartner = o.optBoolean("weddingConfirmPartner", false)
+            weddingConfirmPartner = o.optBoolean("weddingConfirmPartner", false),
+            engageFreeSkipUsed = o.optBoolean("engageFreeSkipUsed", false),
+            engageFreeSkipAvailable = o.optBoolean("engageFreeSkipAvailable", false),
+            ceremonyReady = o.optBoolean("ceremonyReady", false) ||
+                status == "ceremony_pending" || status == "ceremony_scheduled",
+            ceremonyAt = o.optLong("ceremonyAt", 0L),
+            ceremonyLobbyCode = o.optString("ceremonyLobbyCode").takeIf { it.isNotBlank() },
+            ceremonyPhase = o.optString("ceremonyPhase", "none").ifBlank { "none" }
+        )
+    }
+
+    private fun parseCeremonyInfo(o: JSONObject?): CeremonyInfo? {
+        if (o == null) return null
+        val gathering = ArrayList<CeremonyGuest>()
+        val arr = o.optJSONArray("gathering")
+        if (arr != null) {
+            for (i in 0 until arr.length()) {
+                val g = arr.optJSONObject(i) ?: continue
+                gathering += CeremonyGuest(
+                    userId = g.optString("userId"),
+                    nickname = g.optString("nickname", "Jemand"),
+                    petEmoji = g.optString("petEmoji", "🐣").ifBlank { "🐣" },
+                    present = g.optBoolean("present", false),
+                    isCouple = g.optBoolean("isCouple", false),
+                    seatedSeatId = g.optString("seatedSeatId").takeIf { it.isNotBlank() },
+                    x = g.optDouble("x", 0.5).toFloat(),
+                    y = g.optDouble("y", 0.75).toFloat(),
+                    reaction = g.optString("reaction").takeIf { it.isNotBlank() },
+                    reactionUntil = g.optLong("reactionUntil", 0L),
+                    vow = g.optString("vow").takeIf { it.isNotBlank() },
+                    vowProgress = g.optDouble("vowProgress", 0.0).toFloat()
+                )
+            }
+        }
+        return CeremonyInfo(
+            phase = o.optString("phase", "none"),
+            ceremonyAt = o.optLong("ceremonyAt", 0L),
+            ceremonyLobbyCode = o.optString("ceremonyLobbyCode").takeIf { it.isNotBlank() },
+            couplePresent = o.optInt("couplePresent", 0),
+            coupleRequired = o.optInt("coupleRequired", 2),
+            partnerPresent = o.optBoolean("partnerPresent", false),
+            partnerNickname = o.optString("partnerNickname").takeIf { it.isNotBlank() },
+            startConfirmMine = o.optBoolean("startConfirmMine", false),
+            startConfirmPartner = o.optBoolean("startConfirmPartner", false),
+            startConfirmReady = o.optBoolean("startConfirmReady", false),
+            openForEntry = o.optBoolean("openForEntry", false),
+            msUntilCeremony = o.optLong("msUntilCeremony", 0L),
+            msUntilOpen = o.optLong("msUntilOpen", 0L),
+            gathering = gathering,
+            gatheringPresentCount = o.optInt("gatheringPresentCount", 0),
+            gatheringTotal = o.optInt("gatheringTotal", 0),
+            allGathered = o.optBoolean("allGathered", false),
+            leftNotify = o.optBoolean("leftNotify", false),
+            leftByNickname = o.optString("leftByNickname").takeIf { it.isNotBlank() },
+            capacity = o.optInt("capacity", 10)
         )
     }
 
@@ -2417,6 +2529,134 @@ object LuvApiClient {
             marriage = parseMarriageInfo(json.optJSONObject("marriage")),
             coins = user?.optInt("coins") ?: (AccountSession.account.value?.coins ?: 0)
         )
+    }
+
+    suspend fun openWeddingLobbyFree(): MarriageSkipResult = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/me/marriage/open-wedding-lobby", "{}")
+        val user = json.optJSONObject("user")
+        if (user != null) {
+            AccountSession.setAccount(AccountInfo.fromApi(user))
+        }
+        MarriageSkipResult(
+            cost = 0,
+            marriage = parseMarriageInfo(json.optJSONObject("marriage")),
+            coins = user?.optInt("coins") ?: (AccountSession.account.value?.coins ?: 0)
+        )
+    }
+
+    data class CeremonyBundle(
+        val marriage: MarriageInfo?,
+        val ceremony: CeremonyInfo?
+    )
+
+    suspend fun fetchCeremony(): CeremonyBundle = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/me/marriage/ceremony")
+        CeremonyBundle(
+            marriage = parseMarriageInfo(json.optJSONObject("marriage")),
+            ceremony = parseCeremonyInfo(json.optJSONObject("ceremony"))
+        )
+    }
+
+    suspend fun ceremonyPresence(bucket: String = "presence"): CeremonyInfo? =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("bucket", bucket).toString()
+            val json = authedPost("/v1/me/marriage/ceremony/presence", body)
+            parseCeremonyInfo(json.optJSONObject("ceremony"))
+        }
+
+    suspend fun ceremonyStartConfirm(): CeremonyInfo? = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/me/marriage/ceremony/start-confirm", "{}")
+        parseCeremonyInfo(json.optJSONObject("ceremony"))
+    }
+
+    suspend fun ceremonySchedule(ceremonyAtMs: Long): CeremonyBundle =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("ceremonyAt", ceremonyAtMs).toString()
+            val json = authedPost("/v1/me/marriage/ceremony/schedule", body)
+            CeremonyBundle(
+                marriage = parseMarriageInfo(json.optJSONObject("marriage")),
+                ceremony = parseCeremonyInfo(json.optJSONObject("ceremony"))
+            )
+        }
+
+    data class CeremonyRemindResult(
+        val shareText: String,
+        val shareUrl: String,
+        val imageUrl: String
+    )
+
+    suspend fun ceremonyRemind(): CeremonyRemindResult = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/me/marriage/ceremony/remind", "{}")
+        CeremonyRemindResult(
+            shareText = json.optString("shareText"),
+            shareUrl = json.optString("shareUrl"),
+            imageUrl = json.optString("imageUrl")
+        )
+    }
+
+    suspend fun ceremonyKickAbsent(): CeremonyInfo? = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/me/marriage/ceremony/kick-absent", "{}")
+        parseCeremonyInfo(json.optJSONObject("ceremony"))
+    }
+
+    suspend fun ceremonyEnterAltar(): CeremonyInfo? = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/me/marriage/ceremony/enter-altar", "{}")
+        parseCeremonyInfo(json.optJSONObject("ceremony"))
+    }
+
+    suspend fun ceremonyMove(x: Float, y: Float): CeremonyInfo? = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("x", x.toDouble()).put("y", y.toDouble()).toString()
+        val json = authedPost("/v1/me/marriage/ceremony/move", body)
+        parseCeremonyInfo(json.optJSONObject("ceremony"))
+    }
+
+    suspend fun ceremonySit(seatId: String): CeremonyInfo? = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("seatId", seatId).toString()
+        val json = authedPost("/v1/me/marriage/ceremony/sit", body)
+        parseCeremonyInfo(json.optJSONObject("ceremony"))
+    }
+
+    suspend fun ceremonyReact(emoji: String): CeremonyInfo? = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("emoji", emoji).toString()
+        val json = authedPost("/v1/me/marriage/ceremony/react", body)
+        parseCeremonyInfo(json.optJSONObject("ceremony"))
+    }
+
+    data class CeremonyVowResult(
+        val married: Boolean = false,
+        val rejected: Boolean = false,
+        val rejectedBy: String? = null,
+        val message: String? = null,
+        val ceremony: CeremonyInfo? = null,
+        val marriage: MarriageInfo? = null
+    )
+
+    suspend fun ceremonyVow(choice: String, progress: Float): CeremonyVowResult =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject()
+                .put("choice", choice)
+                .put("progress", progress.toDouble())
+                .toString()
+            val json = authedPost("/v1/me/marriage/ceremony/vow", body)
+            CeremonyVowResult(
+                married = json.optBoolean("married", false),
+                rejected = json.optBoolean("rejected", false),
+                rejectedBy = json.optString("rejectedBy").takeIf { it.isNotBlank() },
+                message = json.optString("message").takeIf { it.isNotBlank() },
+                ceremony = parseCeremonyInfo(json.optJSONObject("ceremony")),
+                marriage = parseMarriageInfo(json.optJSONObject("marriage"))
+            )
+        }
+
+    suspend fun ceremonyLeave(holdMs: Long): Boolean = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("holdMs", holdMs).toString()
+        val json = authedPost("/v1/me/marriage/ceremony/leave", body)
+        json.optBoolean("ok", false)
+    }
+
+    suspend fun dismissCeremonyLeftNotice() = withContext(Dispatchers.IO) {
+        authedPost("/v1/me/marriage/ceremony/dismiss-left-notice", "{}")
+        Unit
     }
 
     suspend fun fetchWeddingImageConfirm(): WeddingImageConfirmResult = withContext(Dispatchers.IO) {
@@ -3985,6 +4225,12 @@ object LuvApiClient {
                 isRandom = parsed.optBoolean("isRandom", false),
                 isWedding = parsed.optBoolean("isWedding", false),
                 isWeddingRetake = parsed.optBoolean("weddingRetake", false),
+                isWeddingCeremony = parsed.optBoolean("isWeddingCeremony", false),
+                ceremonyAt = parsed.optLong("ceremonyAt", 0L),
+                coupleNameA = parsed.optJSONObject("coupleNicknames")?.optString("a")
+                    ?.takeIf { it.isNotBlank() },
+                coupleNameB = parsed.optJSONObject("coupleNicknames")?.optString("b")
+                    ?.takeIf { it.isNotBlank() },
                 name = parsed.optString("name", "Lobby"),
                 hostNickname = parsed.optString("hostNickname", "Host"),
                 hostColorSide = parsed.optString("hostColorSide", "blue").ifBlank { "blue" },

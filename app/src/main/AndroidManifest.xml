@@ -86,6 +86,10 @@
                 <data
                     android:scheme="https"
                     android:host="reineke.pro"
+                    android:pathPrefix="/luv/w/" />
+                <data
+                    android:scheme="https"
+                    android:host="reineke.pro"
                     android:pathPrefix="/luv/shop/return" />
             </intent-filter>
         </activity>
@@ -114,6 +118,12 @@
 
         <activity
             android:name=".lock.MemoryActivity"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:theme="@style/Theme.LUV" />
+
+        <activity
+            android:name=".ui.wedding.WeddingRoomActivity"
             android:exported="false"
             android:resizeableActivity="true"
             android:theme="@style/Theme.LUV" />
