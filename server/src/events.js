@@ -706,13 +706,22 @@ function nextOccurrence(ev, now = new Date()) {
         start: ymd(w.start),
         end: ymd(addDays(w.end, -1)),
         active,
+        fromMs: w.start.getTime(),
+        untilMs: w.end.getTime(),
+        // Aktive Fenster zuerst, sonst chronologisch
         t: active ? 0 : w.start.getTime(),
       };
       if (!best || cand.t < best.t) best = cand;
     }
   }
   if (!best) return null;
-  return { start: best.start, end: best.end, active: best.active };
+  return {
+    start: best.start,
+    end: best.end,
+    active: best.active,
+    fromMs: best.fromMs,
+    untilMs: best.untilMs,
+  };
 }
 
 function normalizeDecor(d, fallback) {
@@ -1500,10 +1509,25 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
       row.canCollect = prog.lastCollectDay !== dayKey;
       active.push(row);
     } else if (occ && !occ.active) {
-      upcoming.push({ ...row, canCollect: false, canCreateLobby: false });
+      // Abgelaufene Absolute-Fenster nicht unter „Demnächst“
+      const untilMs = Number(occ.untilMs);
+      if (Number.isFinite(untilMs) && untilMs < now.getTime()) {
+        /* skip past */
+      } else {
+        upcoming.push({
+          ...row,
+          canCollect: false,
+          canCreateLobby: false,
+          _fromMs: Number.isFinite(Number(occ.fromMs))
+            ? Number(occ.fromMs)
+            : Number.POSITIVE_INFINITY,
+        });
+      }
     }
   }
-  upcoming.sort((a, b) => String(a.windowStart || "").localeCompare(String(b.windowStart || "")));
+  // Numerisch nach Start sortieren — Display-Labels („Fr 18:00“) dürfen Custom-Events
+  // nicht hinter Builtins mit „2026-…“ aus dem Top-8 drängen.
+  upcoming.sort((a, b) => (a._fromMs || 0) - (b._fromMs || 0));
   // Bei Überlappung (Advent ∩ Weihnachten) Decor vom Event mit höchstem sort
   const primary =
     active.slice().sort((a, b) => (b.sort || 0) - (a.sort || 0))[0] || null;
@@ -1511,7 +1535,7 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
     ok: true,
     dayKey,
     active,
-    upcoming: upcoming.slice(0, 8),
+    upcoming: upcoming.slice(0, 16).map(({ _fromMs, ...rest }) => rest),
     primaryDecor: primary?.decor || null,
     primaryEventId: primary?.id || null,
   };

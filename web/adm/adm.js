@@ -2631,7 +2631,52 @@
             : "Hintergrund";
     }
 
-    function applyEventChoice(evId) {
+    function isPlaceholderLabel(label) {
+      const s = String(label || "").trim();
+      if (!s) return true;
+      if (
+        [
+          "Herz",
+          "Bild-Begleiter",
+          "Bild-Item",
+          "Eigenes Emoji",
+          "Eigener Hintergrund",
+          "Event-Begleiter",
+          "Event-Emoji",
+          "Event-Sticker",
+          "Event-Hintergrund",
+        ].includes(s)
+      ) {
+        return true;
+      }
+      // Auto-Vorschlag vom Event, z. B. „Herzltag-Begleiter“
+      if (/^.+-(Begleiter|Emoji|Sticker|Hintergrund)$/.test(s)) return true;
+      return false;
+    }
+
+    /** Formularfelder aus Step „Gestalten“ in draft lesen — vor jedem Repaint. */
+    function readDesignFormIntoDraft() {
+      const form = $("wizForm");
+      if (!form || step !== 1) return;
+      const fd = new FormData(form);
+      const label = String(fd.get("label") || "").trim();
+      const search = String(fd.get("searchText") || "").trim();
+      const earlyPrice = String(fd.get("priceCoinsEarly") || "").trim();
+      if (label) draft.label = label;
+      if (search) draft.searchText = search;
+      if (earlyPrice !== "" && Number(earlyPrice) >= 1) {
+        draft.priceCoins = Number(earlyPrice);
+      }
+      const evId = String(fd.get("eventId") || "").trim();
+      if (evId) draft.eventId = evId;
+    }
+
+    function applyEventChoice(evId, { keepUserFields = false } = {}) {
+      const prevLabel = draft.label;
+      const prevSearch = draft.searchText;
+      const prevItemId = draft.itemId;
+      const prevImg = draft.imageDataUrl;
+      const prevVc = draft.visualConfig;
       const ev = eventOptions.find((e) => e.id === evId);
       draft.eventId = evId || "";
       if (!ev) {
@@ -2653,6 +2698,15 @@
       }
       draft.source = "custom";
       draft.isEventItem = true;
+      if (keepUserFields) {
+        if (!isPlaceholderLabel(prevLabel)) draft.label = prevLabel;
+        if (prevSearch && !isPlaceholderLabel(prevLabel)) draft.searchText = prevSearch;
+        if (prevImg) draft.imageDataUrl = prevImg;
+        if (prevVc) draft.visualConfig = prevVc;
+        if (prevItemId && (prevImg || prevVc || !isPlaceholderLabel(prevLabel))) {
+          draft.itemId = prevItemId;
+        }
+      }
     }
 
     function paint() {
@@ -2700,7 +2754,8 @@
       const eventSel = $("eventPetSelect");
       if (eventSel) {
         eventSel.onchange = () => {
-          applyEventChoice(String(eventSel.value || "").trim());
+          readDesignFormIntoDraft();
+          applyEventChoice(String(eventSel.value || "").trim(), { keepUserFields: true });
           paint();
         };
       }
@@ -2822,23 +2877,27 @@
       if (srcEmoji)
         srcEmoji.onclick = () => {
           if (draft.isEventItem && draft.kind === "pets") return;
+          readDesignFormIntoDraft();
           draft.source = "emoji";
           draft.imageDataUrl = null;
           paint();
         };
       if (srcCustom)
         srcCustom.onclick = () => {
+          readDesignFormIntoDraft();
           draft.source = "custom";
           paint();
         };
       const pickEmoji = $("pickEmoji");
       if (pickEmoji)
         pickEmoji.onclick = () => {
+          readDesignFormIntoDraft();
           Studio()?.openEmojiPicker((emoji) => {
+            readDesignFormIntoDraft();
             draft.itemId = emoji;
             draft.source = "emoji";
             draft.imageDataUrl = null;
-            if (!draft.label || draft.label === "Herz" || draft.label === "Bild-Begleiter") {
+            if (isPlaceholderLabel(draft.label)) {
               draft.label = emoji;
             }
             paint();
@@ -2860,12 +2919,14 @@
       const openGlyph = $("openGlyph");
       if (openGlyph)
         openGlyph.onclick = () => {
+          readDesignFormIntoDraft();
           Studio()?.openGlyphComposer(
             (dataUrl) => {
+              readDesignFormIntoDraft();
               draft.imageDataUrl = dataUrl;
               draft.source = "custom";
               ensureCustomImageId();
-              if (!draft.label || draft.label === "Herz") draft.label = "Eigenes Emoji";
+              if (isPlaceholderLabel(draft.label)) draft.label = "Eigenes Emoji";
               paint();
               focusWizardLabel();
             },
@@ -2876,11 +2937,13 @@
       const openImg = $("openPetImage");
       if (openImg)
         openImg.onclick = () => {
+          readDesignFormIntoDraft();
           openPetImageEditor((dataUrl) => {
+            readDesignFormIntoDraft();
             draft.imageDataUrl = dataUrl;
             draft.source = "custom";
             ensureCustomImageId();
-            if (!draft.label || draft.label === "Herz") draft.label = "Bild-Item";
+            if (isPlaceholderLabel(draft.label)) draft.label = "Bild-Item";
             paint();
             focusWizardLabel();
           }, draft.kind === "pets" ? "Begleiter freistellen" : "Bild freistellen");
@@ -2889,6 +2952,7 @@
       const clearImg = $("clearPetImage");
       if (clearImg)
         clearImg.onclick = () => {
+          readDesignFormIntoDraft();
           draft.imageDataUrl = null;
           paint();
         };
@@ -2896,9 +2960,11 @@
       const openTheme = $("openThemeStudio");
       if (openTheme)
         openTheme.onclick = () => {
+          readDesignFormIntoDraft();
           Studio()?.openThemeStudio(draft.visualConfig, (cfg) => {
+            readDesignFormIntoDraft();
             draft.visualConfig = cfg;
-            if (!draft.label || draft.label === "Herz") draft.label = "Eigener Hintergrund";
+            if (isPlaceholderLabel(draft.label)) draft.label = "Eigener Hintergrund";
             ensureThemeId();
             paint();
           });
@@ -2942,15 +3008,7 @@
             alert("Bitte ein Event wählen.");
             return false;
           }
-          const keepLabel = draft.label;
-          const keepSearch = draft.searchText;
-          const keepVc = draft.visualConfig;
-          const keepImg = draft.imageDataUrl;
-          applyEventChoice(evId);
-          if (keepLabel) draft.label = keepLabel;
-          if (keepSearch) draft.searchText = keepSearch;
-          if (keepVc) draft.visualConfig = keepVc;
-          if (keepImg) draft.imageDataUrl = keepImg;
+          applyEventChoice(evId, { keepUserFields: true });
           if (draft.kind === "themes") {
             if (!draft.visualConfig) {
               alert("Bitte zuerst den Hintergrund-Designer öffnen.");

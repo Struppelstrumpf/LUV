@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.60",
+            listOf(
+                "Sozial-Events: Event-Shop-Vorschau ohne überlappende Kacheln, Demnächst-Popup deckt das Menü ab, eigene Events wieder in der Vorschau",
+            )
+        ),
+        Entry(
             "2.2.59",
             listOf(
                 "Lootbox-Popup: Kauf-bestätigen-Schalter bleibt sichtbar (nicht unter dem Bildschirm)",

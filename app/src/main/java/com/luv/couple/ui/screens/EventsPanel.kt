@@ -988,34 +988,41 @@ private fun UpcomingEventPreviewDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        listOf(accent.copy(0.55f), BgDeep, BgDeep)
+                        listOf(Color(0xFF120E18), BgDeep, Color(0xFF0A1520))
                     )
                 )
         ) {
+            // Event-Akzent + Partikel über opaker Basis — Menü scheint nicht durch
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(accent.copy(0.28f))
+            )
             com.luv.couple.ui.MenuAmbientBackground(
                 eventDecor = event.decor.copy(
-                    // Vorschau immer mit Partikeln — sonst wirkt das Popup grau/leer
                     particles = event.decor.particles.takeIf { it != "none" } ?: "sparkle",
                     intensity = event.decor.intensity.coerceAtLeast(0.55f),
                 ),
                 modifier = Modifier.fillMaxSize()
             )
-            // Nur leichter Schleier — Event-Farbe & Animation bleiben sichtbar
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(
                         Brush.verticalGradient(
                             listOf(
-                                Color.Transparent,
-                                BgDeep.copy(0.28f),
+                                BgDeep.copy(0.15f),
+                                BgDeep.copy(0.35f),
                                 BgDeep.copy(0.55f),
                             )
                         )
@@ -1342,7 +1349,7 @@ private fun EventShopTile(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy((-6).dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             preview.forEach { item ->
                 Box(
                     modifier = Modifier
@@ -1360,7 +1367,8 @@ private fun EventShopTile(
                     modifier = Modifier
                         .size(40.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(BgDeep.copy(0.4f)),
+                        .background(BgDeep.copy(0.4f))
+                        .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(10.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Text("+${items.size - 2}", color = TextMuted, fontFamily = DisplayFont, fontSize = 12.sp)
