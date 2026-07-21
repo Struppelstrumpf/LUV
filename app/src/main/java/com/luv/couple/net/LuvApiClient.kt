@@ -3490,6 +3490,23 @@ object LuvApiClient {
         }
     }
 
+    /** Trial-Gast: eigene Zeichnung entfernen und Lobby verlassen. */
+    suspend fun trialExitRoom(code: String) = withContext(Dispatchers.IO) {
+        val clean = normalizeCode(code) ?: return@withContext
+        val request = authedRequestBuilder("/v1/rooms/$clean/trial-exit").post(emptyBody).build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful && response.code != 404) {
+                val raw = response.body?.string().orEmpty()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                throw LuvApiException(
+                    message = json?.optString("message")?.takeIf { it.isNotBlank() }
+                        ?: "Probezeichnen beenden fehlgeschlagen.",
+                    error = json?.optString("error")
+                )
+            }
+        }
+    }
+
     /** Event-Lobby beenden: Contest-Eintrag + Auflösen. */
     suspend fun closeEventLobby(code: String, token: String) = withContext(Dispatchers.IO) {
         val clean = normalizeCode(code) ?: throw LuvApiException("Ungültiger Code.")

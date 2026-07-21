@@ -161,22 +161,17 @@ fun TemplatesBrowserSheet(
                 }
             } else if (templates.isEmpty()) {
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 24.dp),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        "Noch keine Vorlagen",
+                        "Hier kannst du Bilder bunt vorzeichnen und als Vorlage einfügen.",
                         color = TextPrimary,
                         fontFamily = DisplayFont,
-                        fontSize = 18.sp
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        "Tippe +, um etwas zu zeichnen.",
-                        color = TextMuted,
-                        fontFamily = BodyFont,
-                        fontSize = 13.sp,
+                        fontSize = 17.sp,
                         textAlign = TextAlign.Center
                     )
                 }

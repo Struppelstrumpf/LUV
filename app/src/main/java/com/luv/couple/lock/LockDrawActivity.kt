@@ -54,6 +54,7 @@ import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairEvent
 import com.luv.couple.net.PairSessionState
+import com.luv.couple.net.PendingInviteRejoin
 import com.luv.couple.net.PendingOnboardingRestart
 import com.luv.couple.net.PublicVoteEvent
 import com.luv.couple.notify.LiveProximity
@@ -105,6 +106,7 @@ class LockDrawActivity : ComponentActivity() {
     private var trialOverlay: FrameLayout? = null
     private var trialDrawUntil: Long = 0L
     private var trialGateActive: Boolean = false
+    private var trialExitDone: Boolean = false
     private val trialGoogleLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -129,13 +131,16 @@ class LockDrawActivity : ComponentActivity() {
                 )
                 LuvApp.instance.prefs.setTutorialDone(true)
                 AccountSession.setAccount(auth.user)
+                runCatching { performTrialExit() }
+                val code = currentLobbyCode()
+                if (!code.isNullOrBlank()) PendingInviteRejoin.offer(code)
                 dismissTrialGate()
                 Toast.makeText(
                     this@LockDrawActivity,
-                    "Angemeldet — weiter malen ♥",
+                    "Angemeldet — wir holen dich zurück ♥",
                     Toast.LENGTH_SHORT
                 ).show()
-                PairConnectionService.startAll(this@LockDrawActivity)
+                finish()
             } catch (e: Exception) {
                 if (e is com.luv.couple.net.LuvApiException && e.error == "cancelled") {
                     Toast.makeText(this@LockDrawActivity, "Abgebrochen", Toast.LENGTH_SHORT).show()
@@ -2929,10 +2934,45 @@ class LockDrawActivity : ComponentActivity() {
         return trialDrawUntil > System.currentTimeMillis()
     }
 
-    /** Zurück: bei Trial → Onboarding (Name/Tutorial/Google), sonst Home. */
+    private suspend fun currentLobbyCode(): String? {
+        val id = lobbyId
+        val fromPrefs = if (!id.isNullOrBlank()) {
+            LuvApp.instance.prefs.snapshot().lobbies
+                .firstOrNull { it.id == id }
+                ?.code
+        } else null
+        return fromPrefs?.takeIf { it.isNotBlank() }
+            ?: AccountSession.account.value?.trialRoomCode?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Gast-Zeichnung entfernen + aus Lobby kicken; Code für späteren Rejoin merken.
+     */
+    private suspend fun performTrialExit() {
+        if (trialExitDone) return
+        trialExitDone = true
+        val code = currentLobbyCode()
+        val uid = AccountSession.account.value?.id
+        val lid = lobbyId
+        if (!code.isNullOrBlank()) {
+            PendingInviteRejoin.offer(code)
+            runCatching { LuvApiClient.trialExitRoom(code) }
+        }
+        if (!uid.isNullOrBlank() && !lid.isNullOrBlank()) {
+            CanvasStore.removeStrokesByAuthor(uid, lid)
+        }
+        drawingView.setStrokes(CanvasStore.snapshot(lid), animateNew = false)
+    }
+
+    /** Zurück: bei Trial → Exit + Onboarding (Name/Tutorial/Google), sonst Home. */
     private fun leaveCanvas() {
         if (isTrialSession()) {
-            PendingOnboardingRestart.offer()
+            lifecycleScope.launch {
+                performTrialExit()
+                PendingOnboardingRestart.offer()
+                finish()
+            }
+            return
         }
         finish()
     }
@@ -2968,6 +3008,9 @@ class LockDrawActivity : ComponentActivity() {
         }
         trialGateActive = true
         drawingView.inputBlocked = true
+        lifecycleScope.launch {
+            performTrialExit()
+        }
         val root = rootView ?: return
         val overlay = FrameLayout(this).apply {
             setBackgroundColor(0xCC0B0E14.toInt())
@@ -2991,7 +3034,7 @@ class LockDrawActivity : ComponentActivity() {
             typeface = Typeface.create("serif", Typeface.NORMAL)
         }
         val lede = TextView(this).apply {
-            text = "Melde dich kurz mit Google an, um weiter mitzuzeichnen."
+            text = "Melde dich kurz mit Google an — danach holen wir dich mit deinem Namen zurück."
             setTextColor(0xCCF4F1EC.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             gravity = Gravity.CENTER

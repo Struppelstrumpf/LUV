@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.47",
+            listOf(
+                "Einladungs-Gast: Zeichnung wird beim Google-Gate/Zurück entfernt; nach Login zurück in die Lobby oder eigene Lobby starten",
+            )
+        ),
+        Entry(
             "2.2.46",
             listOf(
                 "Tutorial-Inventar: nur Hund-Sticker; andere Tabs gesperrt; Hund größer und mit Pfeil markiert",

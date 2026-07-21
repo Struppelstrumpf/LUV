@@ -67,8 +67,13 @@ const SUPER_ADMIN_EMAILS = new Set(
 const SIDELOAD_LOGIN_EMAILS = new Set(
   String(
     process.env.SIDELOAD_LOGIN_EMAILS ||
-      process.env.SUPER_ADMIN_EMAILS ||
-      "xstruppelstrumpf@gmail.com"
+      [
+        // Du / Emrys (gleiche Google-Mail), Jane, Zaubermaus, Till
+        "xstruppelstrumpf@gmail.com",
+        "foxyspoint@gmail.com",
+        "pinselpoint@gmail.com",
+        "tihapoint@gmail.com",
+      ].join(",")
   )
     .split(",")
     .map((e) => e.trim().toLowerCase())
@@ -13091,6 +13096,93 @@ app.get("/v1/rooms/:code/invite-image", (req, res) => {
   res.setHeader("ETag", `"inv-${code}-${mtime}"`);
   res.type("png");
   return fs.createReadStream(file).pipe(res);
+});
+
+/**
+ * Trial-Gast verlässt: eigene Strokes weg + aus Lobby kicken.
+ * Danach Google-Login / Onboarding → Client rejoined mit echtem Namen.
+ */
+app.post("/v1/rooms/:code/trial-exit", (req, res) => {
+  const ctx = requireAuth(req, res, { allowTrial: true });
+  if (!ctx) return;
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  let room = rooms.get(code);
+  if (!room) {
+    const saved = getDb().rooms?.[code];
+    if (saved && typeof saved === "object") {
+      room = hydrateRoom(code, saved);
+      rooms.set(code, room);
+    }
+  }
+  const uid = ctx.user.id;
+  let removed = 0;
+  if (room) {
+    const list = ensureRoomStrokes(room, code);
+    const keep = [];
+    const removeIds = [];
+    for (const s of list) {
+      if (s && String(s.authorId || "") === uid) {
+        removeIds.push(String(s.id || "").trim());
+      } else {
+        keep.push(s);
+      }
+    }
+    if (removeIds.length > 0) {
+      room.strokes = keep;
+      scheduleStrokeSave(code, room);
+      removed = removeIds.length;
+      broadcastRoom(room, {
+        type: "erase_commit",
+        remove: removeIds.filter(Boolean).slice(0, 400),
+        add: [],
+      });
+    }
+    const leftNick =
+      String(ctx.user.nickname || "")
+        .trim()
+        .slice(0, 18) || "Gast";
+    for (const [peerId, sock] of [...room.sockets.entries()]) {
+      if (sock.luvUserId && sock.luvUserId === uid) {
+        sock.luvLeft = true;
+        try {
+          sock.close(4001, "left");
+        } catch {
+          /* ignore */
+        }
+        room.sockets.delete(peerId);
+      }
+    }
+    forgetMember(room, uid);
+    const roster = roomRosterAll(room);
+    const online = roster.filter((m) => m.online).length;
+    broadcastRoom(room, {
+      type: "peer_left",
+      userId: uid,
+      nickname: leftNick,
+      peers: online,
+      count: online,
+      capacity: roomCapacity(room),
+      members: roster.map((m) => m.nickname),
+      memberList: roster,
+    });
+    broadcastPeerCount(room);
+    ensureHostOrDissolve(room, code, { immediateEmpty: true });
+    releaseHostedRoom(code, uid);
+    forgetJoinedLobby(ctx.user, code);
+    touchRoom(room);
+    persistRooms();
+  } else {
+    releaseHostedRoom(code, uid);
+    forgetJoinedLobby(ctx.user, code);
+  }
+  // Trial-Flags behalten bis Google-Upgrade (Client rejoined danach)
+  if (ctx.user.isTrial) {
+    ctx.user.trialRoomCode = code;
+  }
+  scheduleSave();
+  return res.json({ ok: true, code, removed });
 });
 
 /**

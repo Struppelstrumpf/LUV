@@ -11,7 +11,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -69,6 +71,7 @@ import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairEvent
 import com.luv.couple.net.PairSessionState
 import com.luv.couple.net.InstallReferrerJoin
+import com.luv.couple.net.PendingInviteRejoin
 import com.luv.couple.net.PendingJoin
 import com.luv.couple.net.PendingOnboardingRestart
 import com.luv.couple.net.PendingShop
@@ -169,6 +172,7 @@ fun LuvAppNav() {
     val marketDot by com.luv.couple.net.NotificationBadges.hasMarketDot.collectAsStateWithLifecycle()
     val inventarDot by com.luv.couple.net.NotificationBadges.hasInventoryDot.collectAsStateWithLifecycle()
     val pendingJoin by PendingJoin.code.collectAsStateWithLifecycle()
+    val pendingInviteRejoin by PendingInviteRejoin.code.collectAsStateWithLifecycle()
     val pendingOnboardingRestart by PendingOnboardingRestart.pending.collectAsStateWithLifecycle()
     val pendingShopReturn by PendingShopReturn.pending.collectAsStateWithLifecycle()
     val pendingShop by PendingShop.open.collectAsStateWithLifecycle()
@@ -207,6 +211,8 @@ fun LuvAppNav() {
     var publicReports by remember { mutableStateOf<List<PublicReportInfo>>(emptyList()) }
     var showNoCoins by remember { mutableStateOf(false) }
     var inviteLobby by remember { mutableStateOf<Lobby?>(null) }
+    /** Nach Trial: Lobby voll/weg → freundlicher Create-Dialog */
+    var inviteRejoinDialog by remember { mutableStateOf<String?>(null) }
     // Sofort Splash — nicht erst nach Prefs/Nav, sonst Sekunden Schwarzbild
     var showPublicSplash by remember {
         mutableStateOf(
@@ -815,60 +821,76 @@ fun LuvAppNav() {
         }
     }
 
+    fun openLobbyCanvas(lobbyId: String, trialUntil: Long? = null) {
+        context.startActivity(
+            Intent(context, LockDrawActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobbyId)
+                if (trialUntil != null && trialUntil > 0L) {
+                    putExtra(LockDrawActivity.EXTRA_TRIAL_DRAW_UNTIL, trialUntil)
+                }
+            }
+        )
+    }
+
+    /** joinWithCode-Kern ohne busy-Lock (für Rejoin). */
+    suspend fun joinWithCodeUnlocked(raw: String): Boolean {
+        val snap = prefs.snapshot()
+        val normalized = LuvApiClient.normalizeCode(raw).orEmpty()
+        val already = snap.lobbies.firstOrNull {
+            it.code.equals(normalized, ignoreCase = true)
+        }
+        if (already != null) {
+            prefs.setActiveLobby(already.id)
+            CanvasStore.setActiveLobby(already.id)
+            CanvasStore.updateKnownLobbies(snap.lobbies.map { it.id })
+            PairConnectionService.startAll(context)
+            return true
+        }
+        if (snap.lobbies.size >= PeerPalette.MAX_LOBBIES) {
+            joinError = "Maximal ${PeerPalette.MAX_LOBBIES} Lobbys."
+            return false
+        }
+        val room = LuvApiClient.joinRoom(raw)
+        room.suggestedColorIndex?.let { suggested ->
+            prefs.setColorIndex(suggested)
+            colorIndex = suggested
+            CanvasStore.updateProfile(snap.nickname.orEmpty(), suggested)
+        }
+        val lobby = Lobby(
+            id = UUID.randomUUID().toString(),
+            name = room.name.ifBlank { "Lobby" },
+            role = Role.JOIN,
+            code = room.code,
+            token = room.token,
+            invite = room.invite,
+            capacity = room.capacity,
+            isFree = room.isFree,
+            isRandom = room.isRandom,
+            isWedding = room.isWedding,
+            isWeddingRetake = room.isWeddingRetake,
+            hostNickname = room.hostNickname,
+            hostColorSide = room.hostColorSide,
+            createdByMe = false,
+            eventId = room.eventId,
+            eventPrompt = room.eventPrompt,
+            eventEndsAt = room.eventEndsAt,
+        )
+        prefs.upsertLobby(lobby)
+        PairSessionState.setCapacity(lobby.id, room.capacity)
+        CanvasStore.setActiveLobby(lobby.id)
+        PairConnectionService.startAll(context)
+        LockScreenWidgetProvider.requestUpdate(context)
+        refreshAccount()
+        return true
+    }
+
     suspend fun joinWithCode(raw: String): Boolean {
         if (busy) return false
         busy = true
         joinError = null
         return try {
-            val snap = prefs.snapshot()
-            val normalized = LuvApiClient.normalizeCode(raw).orEmpty()
-            val already = snap.lobbies.firstOrNull {
-                it.code.equals(normalized, ignoreCase = true)
-            }
-            if (already != null) {
-                // Schon Mitglied → als Erfolg behandeln (Leinwand öffnen), kein Fehler
-                prefs.setActiveLobby(already.id)
-                CanvasStore.setActiveLobby(already.id)
-                CanvasStore.updateKnownLobbies(snap.lobbies.map { it.id })
-                PairConnectionService.startAll(context)
-                true
-            } else if (snap.lobbies.size >= PeerPalette.MAX_LOBBIES) {
-                joinError = "Maximal ${PeerPalette.MAX_LOBBIES} Lobbys."
-                false
-            } else {
-                val room = LuvApiClient.joinRoom(raw)
-                room.suggestedColorIndex?.let { suggested ->
-                    prefs.setColorIndex(suggested)
-                    colorIndex = suggested
-                    CanvasStore.updateProfile(snap.nickname.orEmpty(), suggested)
-                }
-                val lobby = Lobby(
-                    id = UUID.randomUUID().toString(),
-                    name = room.name.ifBlank { "Lobby" },
-                    role = Role.JOIN,
-                    code = room.code,
-                    token = room.token,
-                    invite = room.invite,
-                    capacity = room.capacity,
-                    isFree = room.isFree,
-                    isRandom = room.isRandom,
-                    isWedding = room.isWedding,
-                    isWeddingRetake = room.isWeddingRetake,
-                    hostNickname = room.hostNickname,
-                    hostColorSide = room.hostColorSide,
-                    createdByMe = false,
-                    eventId = room.eventId,
-                    eventPrompt = room.eventPrompt,
-                    eventEndsAt = room.eventEndsAt,
-                )
-                prefs.upsertLobby(lobby)
-                PairSessionState.setCapacity(lobby.id, room.capacity)
-                CanvasStore.setActiveLobby(lobby.id)
-                PairConnectionService.startAll(context)
-                LockScreenWidgetProvider.requestUpdate(context)
-                refreshAccount()
-                true
-            }
+            joinWithCodeUnlocked(raw)
         } catch (e: Exception) {
             joinError = when (e) {
                 is LuvApiException -> e.message
@@ -880,16 +902,109 @@ fun LuvAppNav() {
         }
     }
 
-    fun openLobbyCanvas(lobbyId: String, trialUntil: Long? = null) {
-        context.startActivity(
-            Intent(context, LockDrawActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobbyId)
-                if (trialUntil != null && trialUntil > 0L) {
-                    putExtra(LockDrawActivity.EXTRA_TRIAL_DRAW_UNTIL, trialUntil)
-                }
+    /** Nach Trial-Anmeldung: mit echtem Namen zurück in die Einladungs-Lobby. */
+    suspend fun tryInviteRejoin(openCanvas: Boolean = true): Boolean {
+        val code = PendingInviteRejoin.peek() ?: return false
+        if (busy) return false
+        busy = true
+        joinError = null
+        PendingInviteRejoin.consume()
+        return try {
+            val ok = joinWithCodeUnlocked(code)
+            if (ok) {
+                val lobbyId = prefs.snapshot().lobbies.firstOrNull {
+                    it.code.equals(code, ignoreCase = true)
+                }?.id
+                if (openCanvas && lobbyId != null) openLobbyCanvas(lobbyId)
+                true
+            } else {
+                inviteRejoinDialog = "gone"
+                false
             }
-        )
+        } catch (e: LuvApiException) {
+            joinError = e.message
+            inviteRejoinDialog = when (e.error) {
+                "room_full" -> "full"
+                else -> "gone"
+            }
+            false
+        } catch (e: Exception) {
+            joinError = e.message ?: "Beitreten fehlgeschlagen."
+            inviteRejoinDialog = "gone"
+            false
+        } finally {
+            busy = false
+        }
+    }
+
+    fun createInviteFallbackLobby() {
+        if (busy) return
+        if (!requireGoogleOrToast()) return
+        scope.launch {
+            busy = true
+            try {
+                refreshAccount()
+                val snap = prefs.snapshot()
+                if (snap.lobbies.size >= PeerPalette.MAX_LOBBIES) {
+                    Toast.makeText(
+                        context,
+                        "Maximal ${PeerPalette.MAX_LOBBIES} Lobbys.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return@launch
+                }
+                val hostColorSide = if (colorIndex % 2 == 0) "blue" else "purple"
+                val room = LuvApiClient.createRoom(
+                    name = "Meine Leinwand",
+                    hostColorSide = hostColorSide
+                )
+                AccountSession.account.value?.let { prefs.updateAccount(it) }
+                val myColor = PeerPalette.hostSideColor(hostColorSide)
+                prefs.setColorIndex(myColor)
+                colorIndex = myColor
+                val nick = snap.nickname.orEmpty().ifBlank { "Luv" }
+                CanvasStore.updateProfile(nick, myColor)
+                val lobby = Lobby(
+                    id = UUID.randomUUID().toString(),
+                    name = room.name.ifBlank { "Meine Leinwand" },
+                    role = Role.HOST,
+                    code = room.code,
+                    token = room.token,
+                    invite = room.invite,
+                    capacity = room.capacity,
+                    isFree = room.isFree,
+                    hostNickname = room.hostNickname.ifBlank { nick },
+                    hostColorSide = hostColorSide,
+                    createdByMe = true
+                )
+                prefs.upsertLobby(lobby)
+                PairSessionState.setCapacity(lobby.id, room.capacity)
+                CanvasStore.setActiveLobby(lobby.id)
+                CanvasStore.updateKnownLobbies(prefs.snapshot().lobbies.map { it.id })
+                PairConnectionService.startAll(context)
+                refreshAccount()
+                inviteRejoinDialog = null
+                openLobbyCanvas(lobby.id)
+                Toast.makeText(
+                    context,
+                    if (room.isFree) "Deine Lobby ist bereit — lade Freunde ein ♥"
+                    else "Lobby erstellt · ${PeerPalette.LOBBY_CREATE_COST} Coins",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } catch (e: Exception) {
+                if (e is LuvApiException && e.isNoCoins) {
+                    showNoCoins = true
+                } else {
+                    Toast.makeText(
+                        context,
+                        e.message ?: "Lobby erstellen fehlgeschlagen",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } finally {
+                busy = false
+            }
+        }
     }
 
     /** Invite ohne Google: 60s Probezeichnen, dann Gate in LockDraw. */
@@ -1153,6 +1268,25 @@ fun LuvAppNav() {
         PendingOnboardingRestart.consume()
         showPublicSplash = false
         restartOnboardingAfterTrial()
+    }
+
+    // Nach Google (Trial-Gate): mit echtem Namen zurück in die Einladungs-Lobby
+    LaunchedEffect(
+        pendingInviteRejoin,
+        account?.googleLinked,
+        account?.id,
+        startDestination
+    ) {
+        val code = PendingInviteRejoin.peek() ?: return@LaunchedEffect
+        if (startDestination == null) return@LaunchedEffect
+        if (account?.googleLinked != true) return@LaunchedEffect
+        if (account?.isTrial == true) return@LaunchedEffect
+        if (LuvApiClient.sessionToken.isNullOrBlank()) return@LaunchedEffect
+        // Während Onboarding/Tutorial warten — dort wird nach Finish rejoined
+        if (startDestination == Routes.TUTORIAL) return@LaunchedEffect
+        showPublicSplash = false
+        if (startDestination != Routes.MAIN) startDestination = Routes.MAIN
+        tryInviteRejoin(openCanvas = true)
     }
 
     LaunchedEffect(needsGoogleGate) {
@@ -1484,14 +1618,17 @@ fun LuvAppNav() {
                                 if (hasGoogleSession) {
                                     runCatching { syncCloudAccount(force = true) }
                                 }
-                                // Erstlauf: Skizze als normale Host-Lobby im Hauptmenü
-                                runCatching {
-                                    createTutorialLobby(nick, payload.strokes)
-                                }.onFailure { e ->
-                                    Log.w("LuvAppNav", "Tutorial-Lobby fehlgeschlagen", e)
-                                }
+                                startDestination = Routes.MAIN
                                 navController.navigate(Routes.MAIN) {
                                     popUpTo(Routes.TUTORIAL) { inclusive = true }
+                                }
+                                // Invite-Trial: LaunchedEffect rejoined; sonst Tutorial-Lobby
+                                if (PendingInviteRejoin.peek() == null) {
+                                    runCatching {
+                                        createTutorialLobby(nick, payload.strokes)
+                                    }.onFailure { e ->
+                                        Log.w("LuvAppNav", "Tutorial-Lobby fehlgeschlagen", e)
+                                    }
                                 }
                             }
                         } catch (e: Exception) {
@@ -2217,6 +2354,50 @@ fun LuvAppNav() {
                 onDecline = { dismissInviteConfirm() }
             )
         }
+    }
+
+    inviteRejoinDialog?.let { reason ->
+        val free = account?.canCreateFreeLobby != false
+        val cost = account?.lobbyCreateCost ?: PeerPalette.LOBBY_CREATE_COST
+        AlertDialog(
+            onDismissRequest = { inviteRejoinDialog = null },
+            title = {
+                Text(
+                    when (reason) {
+                        "full" -> "Lobby ist voll"
+                        else -> "Lobby nicht mehr da"
+                    }
+                )
+            },
+            text = {
+                Text(
+                    when (reason) {
+                        "full" ->
+                            "Kein Platz mehr — fang doch selbst an zu zeichnen und lade " +
+                                "deinen Partner oder Freunde ein."
+                        else ->
+                            "Die Lobby gibt’s nicht mehr. Fang doch selbst an zu zeichnen und lade " +
+                                "deinen Partner oder Freunde ein."
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { createInviteFallbackLobby() },
+                    enabled = !busy
+                ) {
+                    Text(
+                        if (free) "Lobby erstellen"
+                        else "Lobby erstellen · $cost Coins"
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { inviteRejoinDialog = null }) {
+                    Text("Später")
+                }
+            }
+        )
     }
 
     // Live-Hinweise / Verwarnungen vom Team (WS + Poll)

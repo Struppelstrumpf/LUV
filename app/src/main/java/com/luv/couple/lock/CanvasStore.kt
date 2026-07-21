@@ -941,6 +941,18 @@ object CanvasStore {
         if (removed) bump(lobbyId)
     }
 
+    /** Nur Strokes eines Users entfernen (z. B. Trial-Gast beim Verlassen). */
+    fun removeStrokesByAuthor(authorId: String, lobbyId: String) {
+        val uid = authorId.trim()
+        if (uid.isEmpty()) return
+        val c = canvas(lobbyId)
+        val gone = c.strokes.filter { it.authorId == uid }.map { it.id }.toSet()
+        if (gone.isEmpty()) return
+        c.strokes.removeAll { it.id in gone }
+        c.localStrokeIds.removeAll(gone)
+        bump(lobbyId)
+    }
+
     fun clear(
         localOnly: Boolean = false,
         notifyPeer: Boolean = false,
