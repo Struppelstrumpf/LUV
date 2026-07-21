@@ -11281,7 +11281,8 @@ app.get("/v1/admin/shop/items", (req, res) => {
   const ctx = requireStaff(req, res, "market.settings");
   if (!ctx) return;
   seedShopCatalogIfNeeded();
-  shopCatalog.deactivateExpired(getDb());
+  const expired = shopCatalog.deactivateExpired(getDb());
+  if (expired) scheduleSave();
   const kind = String(req.query?.kind || "").trim() || null;
   const q = String(req.query?.q || "").trim().slice(0, 40);
   const items = shopCatalog.listPublicCatalog(getDb(), {
@@ -11289,7 +11290,6 @@ app.get("/v1/admin/shop/items", (req, res) => {
     kind: kind || undefined,
     q,
   });
-  scheduleSave();
   return res.json({ ok: true, items, count: items.length });
 });
 
@@ -11305,7 +11305,6 @@ app.get("/v1/admin/shop/calendar", (req, res) => {
     status: String(req.query?.status || "").trim(),
     mark: String(req.query?.mark || "").trim(),
   });
-  scheduleSave();
   return res.json({ ok: true, ...data });
 });
 
@@ -11318,8 +11317,19 @@ app.get("/v1/admin/shop/calendar/month", (req, res) => {
   const year = Number(req.query?.year) || now.getFullYear();
   const month = Number(req.query?.month) || now.getMonth() + 1;
   const data = shopCalendar.monthGrid(getDb(), year, month);
-  scheduleSave();
   return res.json({ ok: true, ...data });
+});
+
+/** Volle Itemliste für einen Shop-Tag (Inventar-Popup) */
+app.get("/v1/admin/shop/calendar/day", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  const result = shopCalendar.dayInventory(getDb(), String(req.query?.date || "").trim());
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, message: result.message });
+  }
+  return res.json(result);
 });
 
 app.get("/v1/admin/shop/rotation-plans", (req, res) => {

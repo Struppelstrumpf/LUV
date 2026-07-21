@@ -593,14 +593,14 @@
     if (state.shopQ) q.set("q", state.shopQ);
     if (state.shopKind) q.set("kind", state.shopKind);
     if (state.shopSource) q.set("source", state.shopSource);
-    const data = await api("/admin/items/universe?" + q.toString());
+    const shopQs = new URLSearchParams();
+    if (state.shopQ) shopQs.set("q", state.shopQ);
+    if (state.shopKind) shopQs.set("kind", state.shopKind);
+    const [data, shopData] = await Promise.all([
+      api("/admin/items/universe?" + q.toString()),
+      api("/admin/shop/items?" + shopQs.toString()),
+    ]);
     state.shopUniverse = data.items || [];
-
-    // Shop-Katalog parallel für Bearbeiten/Preis/Bild
-    const shopData = await api(
-      "/admin/shop/items?" +
-        new URLSearchParams(state.shopQ ? { q: state.shopQ } : {}).toString()
-    );
     state.shopItems = shopData.items || [];
     const shopByKey = Object.fromEntries(
       state.shopItems.map((it) => [`${it.kind}:${it.itemId}`, it])
@@ -1283,7 +1283,7 @@
         if (n <= 0) {
           body = `<span class="cal-cell-empty">—</span>`;
         } else if (n <= 4) {
-          const chips = (d.items || [])
+          const chips = (d.preview || d.items || [])
             .slice(0, 3)
             .map((it) => `<span class="cal-chip" title="${esc(it.label || it.itemId)}">${esc(it.emoji || "·")}</span>`)
             .join("");
@@ -1442,9 +1442,8 @@
       paintAdd();
     }
 
-    function openDayInventoryModal(date, kindFilter) {
-      const day = days.find((d) => d.date === date);
-      if (!day) return;
+    async function openDayInventoryModal(date, kindFilter) {
+      const dayMeta = days.find((d) => d.date === date) || { date, shopFrom: null, shopUntil: null };
       state.calDay = date;
       const KIND_LABEL = {
         stickers: "Sticker",
@@ -1453,9 +1452,31 @@
         emojis: "Emojis",
         other: "Sonstige",
       };
+      openModal(
+        `<h3 style="margin:0 0 0.35rem;font-family:var(--display)">${esc(date)} · Laden…</h3>
+         <p class="help">Inventar wird geladen.</p>`,
+        true
+      );
+      let dayPayload;
+      try {
+        dayPayload = await api(
+          `/admin/shop/calendar/day?date=${encodeURIComponent(date)}`
+        );
+      } catch (err) {
+        openModal(
+          `<h3>Fehler</h3><p class="error">${esc(err?.message || "Laden fehlgeschlagen")}</p>
+           <div class="actions"><button type="button" class="btn ghost" id="cancelModal">Schließen</button></div>`,
+          true
+        );
+        const c = $("cancelModal");
+        if (c) c.onclick = closeModal;
+        return;
+      }
+      const allItems = dayPayload.items || [];
+      const shopFrom = dayPayload.shopFrom || dayMeta.shopFrom;
+      const shopUntil = dayPayload.shopUntil || dayMeta.shopUntil;
       let q = "";
       let filterKind = kindFilter || "";
-      const allItems = day.items || [];
 
       function paintInv() {
         const items = allItems.filter((it) => {
@@ -1475,7 +1496,7 @@
           </h3>
           <p class="help" style="margin:0 0 0.5rem">
             ${items.length} Items · Fenster 03:00→03:00 Berlin
-            ${day.shopFrom ? ` (${esc(fmtWhen(day.shopFrom))} – ${esc(fmtWhen(day.shopUntil))})` : ""}
+            ${shopFrom ? ` (${esc(fmtWhen(shopFrom))} – ${esc(fmtWhen(shopUntil))})` : ""}
           </p>
           <div class="shop-cats" id="calInvKinds" style="margin:0 0 0.45rem">
             <button type="button" class="shop-cat ${!filterKind ? "on" : ""}" data-inv-kind="">Alle</button>
@@ -1549,14 +1570,18 @@
             plans.length
               ? plans
                   .map((p) => {
-                    const act = (p.activeNow || [])
-                      .map((a) => `${a.emoji || ""} ${a.label || a.itemId}`)
-                      .join(", ") || "—";
+                    const actList = p.activeNow || [];
+                    const act =
+                      actList.length > 0
+                        ? actList
+                            .map((a) => `${a.emoji || ""} ${a.label || a.itemId}`)
+                            .join(", ")
+                        : "Details im Tab „Rotation“";
                     return `<div class="cal-plan-mini ${p.enabled ? "" : "is-off"}">
                       <strong>${esc(p.label)}</strong>
-                      <div class="muted" style="font-size:0.8rem">${p.itemCount || 0} Items · ${
-                      p.activeSharePct || 0
-                    } % aktiv</div>
+                      <div class="muted" style="font-size:0.8rem">${p.itemCount || 0} Items${
+                      p.activeSharePct != null ? ` · Ziel ~${p.activeSharePct} %` : ""
+                    }</div>
                       <div style="margin-top:0.25rem">${esc(act)}</div>
                     </div>`;
                   })

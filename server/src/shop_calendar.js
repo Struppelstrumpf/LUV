@@ -969,40 +969,33 @@ function monthGrid(db, year, month /* 1-12 */) {
     );
     const dayStart = bounds.from;
     const dayEnd = bounds.until;
-    const active = all
-      .filter((it) => {
-        const plan = it.rotationPlanId ? plansMap[it.rotationPlanId] : null;
-        if (plan && plan.enabled !== false && (plan.model || "independent") !== "queue") {
-          return itemActiveOnDayForPlan(plan, it.itemId, dayStart, dayEnd);
-        }
-        return itemActiveOnDay(it, dayStart, dayEnd);
-      })
-      .map((it) => ({
-        kind: it.kind,
-        itemId: it.itemId,
-        label: it.label,
-        emoji: calendarGlyph(it),
-        priceCoins: shopCatalog.effectivePrice(it),
-        rotationPlanId: it.rotationPlanId || null,
-        availableFrom: it.availableFrom || null,
-        availableUntil: it.availableUntil || null,
-        hasImage: Boolean(it.hasImage),
-        imageUrl:
-          it.hasImage && (it.kind === "pets" || it.kind === "emojis" || it.kind === "stickers")
-            ? `/luv/v1/shop/pet-image/${encodeURIComponent(it.itemId)}`
-            : null,
-      }));
+    let count = 0;
     const byKind = { stickers: 0, themes: 0, pets: 0, emojis: 0, other: 0 };
-    for (const it of active) {
+    const preview = [];
+    for (const it of all) {
+      const plan = it.rotationPlanId ? plansMap[it.rotationPlanId] : null;
+      const on =
+        plan && plan.enabled !== false && (plan.model || "independent") !== "queue"
+          ? itemActiveOnDayForPlan(plan, it.itemId, dayStart, dayEnd)
+          : itemActiveOnDay(it, dayStart, dayEnd);
+      if (!on) continue;
+      count += 1;
       if (byKind[it.kind] != null) byKind[it.kind] += 1;
       else byKind.other += 1;
+      // Nur 3 Chips fürs Grid — volle Liste erst per /calendar/day
+      if (preview.length < 3) {
+        preview.push({
+          emoji: calendarGlyph(it),
+          label: it.label || it.itemId,
+        });
+      }
     }
     days.push({
       date: `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`,
       day: d,
       weekday: (berlinParts(new Date(dayStart + 4 * 3600000)).weekday + 6) % 7,
-      items: active,
-      count: active.length,
+      preview,
+      count,
       byKind,
       shopFrom: dayStart,
       shopUntil: dayEnd,
@@ -1012,6 +1005,19 @@ function monthGrid(db, year, month /* 1-12 */) {
   const today = `${todayParts.year}-${String(todayParts.month).padStart(2, "0")}-${String(
     todayParts.day
   ).padStart(2, "0")}`;
+  // Pläne nur als Leichtgewicht — volle Preview im Tab „Rotation“
+  const plansLite = Object.values(ensureRotationPlans(db))
+    .filter(Boolean)
+    .sort((a, b) => String(a.label).localeCompare(String(b.label), "de"))
+    .map((p) => ({
+      id: p.id,
+      label: p.label,
+      enabled: p.enabled !== false,
+      model: p.model || "independent",
+      itemCount: Array.isArray(p.itemKeys) ? p.itemKeys.length : 0,
+      activeSharePct: Math.max(0, Math.min(100, Number(p.targetSharePct) || 50)),
+      activeNow: [],
+    }));
   return {
     year: y,
     month: m,
@@ -1020,31 +1026,63 @@ function monthGrid(db, year, month /* 1-12 */) {
     days,
     today,
     shopRolloverHour: SHOP_ROLLOVER_HOUR,
-    plans: listRotationPlansSafe(db).map((p) => ({
-      id: p.id,
-      label: p.label,
-      enabled: p.enabled,
-      model: p.model || "independent",
-      itemCount: p.itemCount,
-      activeCount: p.activeCount || 0,
-      activeSharePct: p.activeSharePct || 0,
-      activeNow: p.activeNow,
-      explain: p.explain,
-      cycleUnit: p.cycleUnit,
-      cycleLength: p.cycleLength,
-      activeUnit: p.activeUnit,
-      activeLength: p.activeLength,
-      shortDays: p.shortDays || 3,
-      longDays: p.longDays || 7,
-      concurrent: p.concurrent,
-      mode: p.mode,
-      priceMin: p.priceMin,
-      priceMax: p.priceMax,
-      itemKeys: p.itemKeys || [],
-      members: (p.members || []).slice(0, 80),
-      anchorAt: p.anchorAt,
-      seeded: Boolean(p.seeded),
-    })),
+    plans: plansLite,
+  };
+}
+
+/** Volle Itemliste für einen Shop-Tag (Inventar-Popup). */
+function dayInventory(db, dateStr) {
+  const raw = String(dateStr || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return { ok: false, error: "bad_date", message: "Datum YYYY-MM-DD erwartet." };
+  }
+  const bounds = berlinShopDayBounds(raw);
+  if (!bounds || !Number.isFinite(bounds.from)) {
+    return { ok: false, error: "bad_date", message: "Ungültiges Datum." };
+  }
+  const dayStart = bounds.from;
+  const dayEnd = bounds.until;
+  const cat = shopCatalog.ensureShopCatalog(db);
+  const all = Object.values(cat.items || {}).filter(Boolean);
+  const plansMap = ensureRotationPlans(db);
+  const items = [];
+  const byKind = { stickers: 0, themes: 0, pets: 0, emojis: 0, other: 0 };
+  for (const it of all) {
+    const plan = it.rotationPlanId ? plansMap[it.rotationPlanId] : null;
+    const on =
+      plan && plan.enabled !== false && (plan.model || "independent") !== "queue"
+        ? itemActiveOnDayForPlan(plan, it.itemId, dayStart, dayEnd)
+        : itemActiveOnDay(it, dayStart, dayEnd);
+    if (!on) continue;
+    if (byKind[it.kind] != null) byKind[it.kind] += 1;
+    else byKind.other += 1;
+    items.push({
+      kind: it.kind,
+      itemId: it.itemId,
+      label: it.label,
+      emoji: calendarGlyph(it),
+      priceCoins: shopCatalog.effectivePrice(it),
+      rotationPlanId: it.rotationPlanId || null,
+      availableFrom: it.availableFrom || null,
+      availableUntil: it.availableUntil || null,
+      hasImage: Boolean(it.hasImage),
+      imageUrl:
+        it.hasImage && (it.kind === "pets" || it.kind === "emojis" || it.kind === "stickers")
+          ? `/luv/v1/shop/pet-image/${encodeURIComponent(it.itemId)}`
+          : null,
+    });
+  }
+  items.sort((a, b) =>
+    String(a.label || a.itemId).localeCompare(String(b.label || b.itemId), "de")
+  );
+  return {
+    ok: true,
+    date: raw,
+    items,
+    count: items.length,
+    byKind,
+    shopFrom: dayStart,
+    shopUntil: dayEnd,
   };
 }
 
@@ -1242,6 +1280,7 @@ module.exports = {
   applyAllRotationPlans,
   ensureDefaultExpensiveRotation,
   monthGrid,
+  dayInventory,
   previewPlanActive,
   DAY_MS,
   WEEK_MS,
