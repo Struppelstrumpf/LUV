@@ -74,6 +74,8 @@ import com.luv.couple.net.InstallReferrerJoin
 import com.luv.couple.net.PendingInviteRejoin
 import com.luv.couple.net.PendingJoin
 import com.luv.couple.net.PendingOnboardingRestart
+import com.luv.couple.net.PendingTutorialKeepAuth
+import com.luv.couple.ui.screens.MarketHubCache
 import com.luv.couple.net.PendingShop
 import com.luv.couple.net.PendingShopReturn
 import com.luv.couple.net.PendingSplashSkip
@@ -151,6 +153,7 @@ fun LuvAppNav() {
         val activity = context.findActivity()
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
+            // Flag am Window bleibt — nur View-Flag zurücksetzen
             view.keepScreenOn = false
         }
     }
@@ -174,6 +177,7 @@ fun LuvAppNav() {
     val pendingJoin by PendingJoin.code.collectAsStateWithLifecycle()
     val pendingInviteRejoin by PendingInviteRejoin.code.collectAsStateWithLifecycle()
     val pendingOnboardingRestart by PendingOnboardingRestart.pending.collectAsStateWithLifecycle()
+    val pendingTutorialKeepAuth by PendingTutorialKeepAuth.pending.collectAsStateWithLifecycle()
     val pendingShopReturn by PendingShopReturn.pending.collectAsStateWithLifecycle()
     val pendingShop by PendingShop.open.collectAsStateWithLifecycle()
     val pendingMarketplace by com.luv.couple.net.PendingMarketplace.open.collectAsStateWithLifecycle()
@@ -1007,7 +1011,7 @@ fun LuvAppNav() {
         }
     }
 
-    /** Invite ohne Google: 60s Probezeichnen, dann Gate in LockDraw. */
+    /** Invite ohne Google: 30s Probezeichnen, dann Gate in LockDraw. */
     suspend fun trialJoinWithCode(raw: String): Boolean {
         if (busy) return false
         busy = true
@@ -1087,6 +1091,26 @@ fun LuvAppNav() {
         prefs.clearForLogout()
         AccountSession.setAccount(null)
         LuvApiClient.sessionToken = null
+        tab = 0
+        joinError = null
+        accountMessage = null
+        showInviteOverlay = false
+        tutorialReplay = false
+        startDestination = Routes.TUTORIAL
+        navController.navigate(Routes.TUTORIAL) {
+            popUpTo(0) { inclusive = true }
+        }
+    }
+
+    /** Trial-Gate + neues Google-Konto: Tutorial/Name, Session behalten, danach Rejoin. */
+    suspend fun startTutorialKeepAuthAfterTrial() {
+        PairConnectionService.stop(context)
+        PairSessionState.reset()
+        CanvasStore.clearAll(notifyPeer = false)
+        prefs.snapshot().lobbies.toList().forEach { lobby ->
+            runCatching { prefs.removeLobby(lobby.id) }
+        }
+        prefs.setTutorialDone(false)
         tab = 0
         joinError = null
         accountMessage = null
@@ -1250,6 +1274,8 @@ fun LuvAppNav() {
             }
             Routes.MAIN
         }
+        // Marktplatz/Itemshop-Vorschau schon beim Start laden (auch ohne Markt-Tab)
+        scope.launch { runCatching { MarketHubCache.warm() } }
     }
 
     // Invite-Deep-Link / Install-Referrer → Overlay (über Tutorial oder Home)
@@ -1270,12 +1296,22 @@ fun LuvAppNav() {
         restartOnboardingAfterTrial()
     }
 
+    // Trial-Gate + neues Google-Konto → Tutorial behalten Session
+    LaunchedEffect(pendingTutorialKeepAuth, startDestination) {
+        if (!PendingTutorialKeepAuth.peek()) return@LaunchedEffect
+        if (startDestination == null) return@LaunchedEffect
+        PendingTutorialKeepAuth.consume()
+        showPublicSplash = false
+        startTutorialKeepAuthAfterTrial()
+    }
+
     // Nach Google (Trial-Gate): mit echtem Namen zurück in die Einladungs-Lobby
     LaunchedEffect(
         pendingInviteRejoin,
         account?.googleLinked,
         account?.id,
-        startDestination
+        startDestination,
+        pendingTutorialKeepAuth
     ) {
         val code = PendingInviteRejoin.peek() ?: return@LaunchedEffect
         if (startDestination == null) return@LaunchedEffect
@@ -1284,6 +1320,8 @@ fun LuvAppNav() {
         if (LuvApiClient.sessionToken.isNullOrBlank()) return@LaunchedEffect
         // Während Onboarding/Tutorial warten — dort wird nach Finish rejoined
         if (startDestination == Routes.TUTORIAL) return@LaunchedEffect
+        if (PendingTutorialKeepAuth.peek()) return@LaunchedEffect
+        if (navController.currentDestination?.route == Routes.TUTORIAL) return@LaunchedEffect
         showPublicSplash = false
         if (startDestination != Routes.MAIN) startDestination = Routes.MAIN
         tryInviteRejoin(openCanvas = true)
@@ -1304,6 +1342,7 @@ fun LuvAppNav() {
             scope.launch {
                 runCatching { AppUpdater.check(context, notify = notify) }
                 runCatching { refreshAccount() }
+                runCatching { MarketHubCache.warm() }
                 if (AccountSession.account.value?.googleLinked == true) {
                     runCatching { syncCloudAccount() }
                 }

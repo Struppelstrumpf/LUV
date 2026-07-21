@@ -56,6 +56,7 @@ import com.luv.couple.net.PairEvent
 import com.luv.couple.net.PairSessionState
 import com.luv.couple.net.PendingInviteRejoin
 import com.luv.couple.net.PendingOnboardingRestart
+import com.luv.couple.net.PendingTutorialKeepAuth
 import com.luv.couple.net.PublicVoteEvent
 import com.luv.couple.notify.LiveProximity
 import com.luv.couple.shop.ShopCatalog
@@ -124,22 +125,41 @@ class LockDrawActivity : ComponentActivity() {
                     integrityNonce = attestation?.nonce
                 )
                 LuvApiClient.sessionToken = auth.sessionToken
+                val nick = auth.user.nickname.trim()
+                val returning = !auth.created &&
+                    nick.length >= 2 &&
+                    !nick.equals("Gast", ignoreCase = true) &&
+                    !nick.equals("Luv", ignoreCase = true)
                 LuvApp.instance.prefs.saveSession(
                     auth.sessionToken,
                     auth.user,
-                    applyNickname = true
+                    applyNickname = returning
                 )
-                LuvApp.instance.prefs.setTutorialDone(true)
                 AccountSession.setAccount(auth.user)
                 runCatching { performTrialExit() }
                 val code = currentLobbyCode()
                 if (!code.isNullOrBlank()) PendingInviteRejoin.offer(code)
-                dismissTrialGate()
-                Toast.makeText(
-                    this@LockDrawActivity,
-                    "Angemeldet — wir holen dich zurück ♥",
-                    Toast.LENGTH_SHORT
-                ).show()
+                // Nach Probezeit nicht wieder freigeben — Overlay weg, Zeichnen bleibt aus
+                trialGateActive = true
+                drawingView.inputBlocked = true
+                trialOverlay?.let { (it.parent as? ViewGroup)?.removeView(it) }
+                trialOverlay = null
+                if (returning) {
+                    LuvApp.instance.prefs.setTutorialDone(true)
+                    Toast.makeText(
+                        this@LockDrawActivity,
+                        "Angemeldet — wir holen dich zurück ♥",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    LuvApp.instance.prefs.setTutorialDone(false)
+                    PendingTutorialKeepAuth.offer()
+                    Toast.makeText(
+                        this@LockDrawActivity,
+                        "Kurz Name wählen — dann geht’s weiter ♥",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
                 finish()
             } catch (e: Exception) {
                 if (e is com.luv.couple.net.LuvApiException && e.error == "cancelled") {
@@ -3027,14 +3047,15 @@ class LockDrawActivity : ComponentActivity() {
             setPadding(48, 48, 48, 48)
         }
         val title = TextView(this).apply {
-            text = "Schön, dass du da bist"
+            text = "Probezeit vorbei"
             setTextColor(0xFFF4F1EC.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
             gravity = Gravity.CENTER
             typeface = Typeface.create("serif", Typeface.NORMAL)
         }
         val lede = TextView(this).apply {
-            text = "Melde dich kurz mit Google an — danach holen wir dich mit deinem Namen zurück."
+            text = "Melde dich mit Google an. Hast du schon ein Konto, " +
+                "bist du gleich wieder mit deinem Namen dabei — sonst wählst du kurz einen Namen."
             setTextColor(0xCCF4F1EC.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             gravity = Gravity.CENTER

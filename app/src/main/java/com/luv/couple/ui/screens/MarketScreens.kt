@@ -283,10 +283,16 @@ fun MarketScreen(
         }
     }
 }
-/** Letzter Markt-Hub — sofort anzeigen, während neu geladen wird. */
-private object MarketHubCache {
+
+/** Marktplatz/Itemshop-Vorschau — beim App-Start vorwärmen, Tab zeigt sofort Cache. */
+object MarketHubCache {
     @Volatile
     var latest: LuvApiClient.MarketHubData? = null
+
+    suspend fun warm() {
+        val fresh = runCatching { LuvApiClient.fetchMarketHub() }.getOrNull() ?: return
+        latest = fresh
+    }
 }
 
 @Composable

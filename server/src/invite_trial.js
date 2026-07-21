@@ -1,10 +1,10 @@
 /**
- * Invite-Landing + 60s-Probezeichnen (Trial) — Hilfen für index.js
+ * Invite-Landing + 30s-Probezeichnen (Trial) — Hilfen für index.js
  */
 const fs = require("fs");
 const path = require("path");
 
-const TRIAL_DRAW_MS = 60_000;
+const TRIAL_DRAW_MS = 30_000;
 const FALLBACK_OG = "https://reineke.pro/downloads/luv/og.jpg?v=1813";
 
 function escapeHtml(value) {

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.48",
+            listOf(
+                "Probezeit 30 Sekunden mit Google-Popup; Marktplatz/Itemshop beim App-Start vorgeladen; Bildschirm bleibt in der App wach",
+            )
+        ),
+        Entry(
             "2.2.47",
             listOf(
                 "Einladungs-Gast: Zeichnung wird beim Google-Gate/Zurück entfernt; nach Login zurück in die Lobby oder eigene Lobby starten",
