@@ -54,10 +54,14 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.offset
 import kotlin.math.min
+import kotlin.math.roundToInt
 import com.luv.couple.LuvApp
 import com.luv.couple.lock.CanvasMemoryKeeper
 import com.luv.couple.net.AccountSession
@@ -123,12 +127,39 @@ private fun vibrateShort(context: Context, ms: Long = 80L) {
     }
 }
 
-private fun cropToViewRect(src: Bitmap, vr: LuvApiClient.RoomViewRect): Bitmap {
-    val left = (src.width * vr.x).toInt().coerceIn(0, src.width - 1)
-    val top = (src.height * vr.y).toInt().coerceIn(0, src.height - 1)
-    val width = (src.width * vr.w).toInt().coerceIn(1, src.width - left)
-    val height = (src.height * vr.h).toInt().coerceIn(1, src.height - top)
-    return Bitmap.createBitmap(src, left, top, width, height)
+/**
+ * Gleiche Projektion wie Admin ([ContentScale.Fit] / letterbox):
+ * Bildkoordinaten 0..1 → Screen-Pixel im sichtbaren Kartenrechteck.
+ */
+private data class MapViewport(
+    val left: Float,
+    val top: Float,
+    val width: Float,
+    val height: Float,
+) {
+    fun toScreenX(ix: Float): Float = left + ix * width
+    fun toScreenY(iy: Float): Float = top + iy * height
+    fun toScreenR(r: Float): Float = r * min(width, height)
+    fun fromScreenX(sx: Float): Float = ((sx - left) / width.coerceAtLeast(1f)).coerceIn(0f, 1f)
+    fun fromScreenY(sy: Float): Float = ((sy - top) / height.coerceAtLeast(1f)).coerceIn(0f, 1f)
+    fun containsScreen(sx: Float, sy: Float): Boolean =
+        sx in left..(left + width) && sy in top..(top + height)
+
+    companion object {
+        fun fit(boxW: Float, boxH: Float, imgW: Int, imgH: Int): MapViewport {
+            val iw = imgW.coerceAtLeast(1).toFloat()
+            val ih = imgH.coerceAtLeast(1).toFloat()
+            val scale = min(boxW / iw, boxH / ih)
+            val cw = iw * scale
+            val ch = ih * scale
+            return MapViewport(
+                left = (boxW - cw) * 0.5f,
+                top = (boxH - ch) * 0.5f,
+                width = cw,
+                height = ch,
+            )
+        }
+    }
 }
 
 @Composable
@@ -161,17 +192,7 @@ fun CustomRoomScreen(
 
     val zones = layout?.zones.orEmpty()
     val avatarR = layout?.avatarR?.takeIf { it > 0f } ?: DEFAULT_AVATAR_R
-    val viewRect = layout?.viewRect ?: LuvApiClient.RoomViewRect()
     val sitZones = remember(zones) { zones.filter { it.isGuestSeat } }
-
-    fun imageToViewX(ix: Float): Float =
-        ((ix - viewRect.x) / viewRect.w.coerceAtLeast(0.01f)).coerceIn(0f, 1f)
-
-    fun imageToViewY(iy: Float): Float =
-        ((iy - viewRect.y) / viewRect.h.coerceAtLeast(0.01f)).coerceIn(0f, 1f)
-
-    fun viewToImageX(vx: Float): Float = viewRect.x + vx * viewRect.w
-    fun viewToImageY(vy: Float): Float = viewRect.y + vy * viewRect.h
 
     LaunchedEffect(Unit) {
         emojiBar = withContext(Dispatchers.IO) {
@@ -235,22 +256,19 @@ fun CustomRoomScreen(
         }
     }
 
-    LaunchedEffect(layout?.imageUrl, layout?.updatedAt, layout?.viewRect) {
+    LaunchedEffect(layout?.imageUrl, layout?.updatedAt) {
         val url = layout?.imageUrl?.trim().orEmpty()
         if (url.isBlank()) {
             roomBitmap = null
             return@LaunchedEffect
         }
-        val vr = layout?.viewRect ?: LuvApiClient.RoomViewRect()
         val loaded = withContext(Dispatchers.IO) {
             runCatching {
                 val abs = CanvasMemoryKeeper.absoluteImageUrl(url)
                 val req = Request.Builder().url(abs).get().build()
                 LuvApiClient.httpClient().newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@runCatching null
-                    val full = resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
-                        ?: return@runCatching null
-                    cropToViewRect(full, vr)
+                    resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
                 }
             }.getOrNull()
         }
@@ -264,25 +282,35 @@ fun CustomRoomScreen(
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
+        val density = LocalDensity.current
+        val boxWpx = with(density) { maxWidth.toPx() }
+        val boxHpx = with(density) { maxHeight.toPx() }
         val bmp = roomBitmap
+        val viewport = remember(bmp?.width, bmp?.height, boxWpx, boxHpx) {
+            if (bmp == null) MapViewport(0f, 0f, boxWpx, boxHpx)
+            else MapViewport.fit(boxWpx, boxHpx, bmp.width, bmp.height)
+        }
+
         if (bmp != null) {
             Image(
                 bitmap = bmp.asImageBitmap(),
                 contentDescription = layout?.name ?: "Raum",
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.FillBounds,
+                contentScale = ContentScale.Fit,
             )
         }
 
         if (showZones && zones.isNotEmpty()) {
             ZoneOverlay(
                 zones = zones,
-                viewRect = viewRect,
+                viewport = viewport,
                 modifier = Modifier.fillMaxSize(),
             )
         }
 
-        val avatarDp = (maxWidth * (avatarR * 2f / viewRect.w.coerceAtLeast(0.01f))).let { s ->
+        val avatarDp = with(density) {
+            (viewport.toScreenR(avatarR) * 2f).toDp()
+        }.let { s ->
             when {
                 s < 22.dp -> 22.dp
                 s > 64.dp -> 64.dp
@@ -293,8 +321,8 @@ fun CustomRoomScreen(
         // Andere Spieler + ich (meine Position nur lokal)
         val others = space?.people.orEmpty().filter { it.userId != myId && !it.isMe }
         others.forEach { p ->
-            val vx = imageToViewX(p.x)
-            val vy = imageToViewY(p.y)
+            val sx = viewport.toScreenX(p.x)
+            val sy = viewport.toScreenY(p.y)
             val petId = clipItemId(p.petEmoji).ifBlank { "🐣" }
             AvatarBubble(
                 petId = petId,
@@ -302,15 +330,17 @@ fun CustomRoomScreen(
                 avatarDp = avatarDp,
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(
-                        start = maxWidth * vx - avatarDp / 2,
-                        top = maxHeight * vy - avatarDp / 2,
-                    ),
+                    .offset {
+                        IntOffset(
+                            (sx - avatarDp.toPx() / 2f).roundToInt(),
+                            (sy - avatarDp.toPx() / 2f).roundToInt(),
+                        )
+                    },
             )
         }
         run {
-            val vx = imageToViewX(myX)
-            val vy = imageToViewY(myY)
+            val sx = viewport.toScreenX(myX)
+            val sy = viewport.toScreenY(myY)
             val petId = clipItemId(
                 space?.people?.find { it.userId == myId || it.isMe }?.petEmoji
             ).ifBlank { "🐣" }
@@ -320,14 +350,16 @@ fun CustomRoomScreen(
                 avatarDp = avatarDp,
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(
-                        start = maxWidth * vx - avatarDp / 2,
-                        top = maxHeight * vy - avatarDp / 2,
-                    ),
+                    .offset {
+                        IntOffset(
+                            (sx - avatarDp.toPx() / 2f).roundToInt(),
+                            (sy - avatarDp.toPx() / 2f).roundToInt(),
+                        )
+                    },
             )
         }
 
-        val viewRef = rememberUpdatedState(viewRect)
+        val viewportRef = rememberUpdatedState(viewport)
         val zonesRef = rememberUpdatedState(zones)
         val avatarRRef = rememberUpdatedState(avatarR)
         val sitRef = rememberUpdatedState(sitZones)
@@ -361,13 +393,10 @@ fun CustomRoomScreen(
                 .pointerInput(code) {
                     detectTapGestures { offset ->
                         if (walking) return@detectTapGestures
-                        val w = size.width.coerceAtLeast(1)
-                        val h = size.height.coerceAtLeast(1)
-                        val vr = viewRef.value
-                        val viewX = (offset.x / w).coerceIn(0.005f, 0.995f)
-                        val viewY = (offset.y / h).coerceIn(0.005f, 0.995f)
-                        val rawX = vr.x + viewX * vr.w
-                        val rawY = vr.y + viewY * vr.h
+                        val vp = viewportRef.value
+                        if (!vp.containsScreen(offset.x, offset.y)) return@detectTapGestures
+                        val rawX = vp.fromScreenX(offset.x)
+                        val rawY = vp.fromScreenY(offset.y)
                         val zns = zonesRef.value
                         val aR = avatarRRef.value
                         val hitR = (aR * 3.5f).coerceAtLeast(0.06f)
@@ -549,16 +578,10 @@ fun CustomRoomScreen(
 @Composable
 private fun ZoneOverlay(
     zones: List<LuvApiClient.RoomZone>,
-    viewRect: LuvApiClient.RoomViewRect,
+    viewport: MapViewport,
     modifier: Modifier = Modifier,
 ) {
-    val vrW = viewRect.w.coerceAtLeast(0.01f)
-    val vrH = viewRect.h.coerceAtLeast(0.01f)
     Canvas(modifier = modifier) {
-        fun toScreenX(ix: Float) = ((ix - viewRect.x) / vrW) * size.width
-        fun toScreenY(iy: Float) = ((iy - viewRect.y) / vrH) * size.height
-        fun toScreenR(r: Float) = r * min(size.width / vrW, size.height / vrH)
-
         // Grün zuerst (unten), dann Rot/Blau usw.
         val ordered = zones.sortedBy { z ->
             when (z.color) {
@@ -591,15 +614,15 @@ private fun ZoneOverlay(
                 else -> Color.White
             }
             if (z.shape == "circle") {
-                val c = Offset(toScreenX(z.cx), toScreenY(z.cy))
-                val rad = toScreenR(z.r).coerceAtLeast(4f)
+                val c = Offset(viewport.toScreenX(z.cx), viewport.toScreenY(z.cy))
+                val rad = viewport.toScreenR(z.r).coerceAtLeast(4f)
                 drawCircle(color = fill, radius = rad, center = c)
                 drawCircle(color = stroke, radius = rad, center = c, style = Stroke(width = 3f))
             } else {
-                val left = toScreenX(z.x)
-                val top = toScreenY(z.y)
-                val w = (z.w / vrW) * size.width
-                val h = (z.h / vrH) * size.height
+                val left = viewport.toScreenX(z.x)
+                val top = viewport.toScreenY(z.y)
+                val w = z.w * viewport.width
+                val h = z.h * viewport.height
                 drawRect(color = fill, topLeft = Offset(left, top), size = Size(w, h))
                 drawRect(
                     color = stroke,
