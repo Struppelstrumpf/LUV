@@ -326,7 +326,8 @@ object ProfileCatalog {
                 particleSize = vc.size.coerceIn(0.4f, 2.5f)
             )
             rememberedThemes[key] = built
-            com.luv.couple.shop.LiveShopCatalog.ThemeVisualCache.put(key, vc)
+            // Cache füllen ohne extra Compose-Tick (Tick kommt vom Katalog-/Inventory-Fetch)
+            com.luv.couple.shop.LiveShopCatalog.ThemeVisualCache.put(key, vc, bump = false)
             return built
         }
         rememberedThemes[key]?.takeIf {

@@ -21,6 +21,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.luv.couple.shop.LiveShopCatalog
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -36,8 +38,9 @@ fun ProfileThemeBackdrop(
     modifier: Modifier = Modifier,
     marriageCelebration: Boolean = false
 ) {
-    // Jedes Mal neu auflösen — ThemeVisualCache / rememberTheme halten visualConfig.
-    val theme = ProfileCatalog.theme(themeId)
+    // Katalog-Tick: visualConfig kommt oft erst nach Inventory/Shop-Fetch.
+    val catalogTick by LiveShopCatalog.catalogTick.collectAsStateWithLifecycle()
+    val theme = remember(themeId, catalogTick) { ProfileCatalog.theme(themeId) }
     ProfileThemeBackdrop(
         theme = theme,
         modifier = modifier,
@@ -68,10 +71,13 @@ fun ProfileThemeBackdrop(
                 size = androidx.compose.ui.geometry.Size(size.width, size.height * 0.52f)
             )
         }
-        if (theme.effect == "emoji_fx" && theme.particleEmojis.isNotEmpty()) {
-            EmojiParticleOverlay(theme)
-        } else {
-            ThemeFxOverlay(theme.effect)
+        when {
+            theme.effect == "emoji_fx" && theme.particleEmojis.isNotEmpty() ->
+                EmojiParticleOverlay(theme)
+            theme.effect == "emoji_fx" ->
+                ThemeFxOverlay("sparkles")
+            else ->
+                ThemeFxOverlay(theme.effect)
         }
         if (marriageCelebration) {
             WeddingBlessingRain()

@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.57",
+            listOf(
+                "Sozial-Events: Datum als TT.MM.JJJJ, schönere Event-Vorschau, feste Popup-Hintergründe",
+                "Eigene Profil-Hintergründe: Animation bleibt nach Laden zuverlässig sichtbar",
+            )
+        ),
+        Entry(
             "2.2.56",
             listOf(
                 "Nächtlicher Wartungsmodus 02:59–03:09 mit Timer, Herz-Hüpfer-Minispiel und 2-Coin-Dankeschön",

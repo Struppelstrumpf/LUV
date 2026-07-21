@@ -71,6 +71,28 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+
+/** Server liefert oft YYYY-MM-DD — Anzeige als 29.07.2026 (Uhrzeit-Labels bleiben). */
+private fun formatEventWhenPart(raw: String?): String? {
+    val t = raw?.trim().orEmpty()
+    if (t.isEmpty()) return null
+    val ymd = Regex("""^(\d{4})-(\d{2})-(\d{2})$""").matchEntire(t)
+    if (ymd != null) {
+        return "${ymd.groupValues[3]}.${ymd.groupValues[2]}.${ymd.groupValues[1]}"
+    }
+    // ISO-Datum am Anfang einer längeren Zeichenkette
+    val iso = Regex("""^(\d{4})-(\d{2})-(\d{2})([T\s].*)?$""").matchEntire(t)
+    if (iso != null && iso.groupValues[4].isBlank()) {
+        return "${iso.groupValues[3]}.${iso.groupValues[2]}.${iso.groupValues[1]}"
+    }
+    return t
+}
+
+private fun formatEventWhenLabel(start: String?, end: String?, blank: String = "bald"): String {
+    val parts = listOfNotNull(formatEventWhenPart(start), formatEventWhenPart(end)).distinct()
+    return parts.joinToString(" – ").ifBlank { blank }
+}
 
 @Composable
 fun EventsPanel(
@@ -281,9 +303,7 @@ private fun EventHeroCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                val win = listOfNotNull(event.windowStart, event.windowEnd)
-                    .distinct()
-                    .joinToString(" – ")
+                val win = formatEventWhenLabel(event.windowStart, event.windowEnd, blank = "")
                 if (win.isNotBlank()) {
                     Text(win, color = TextMuted, fontFamily = BodyFont, fontSize = 11.sp)
                 }
@@ -837,12 +857,24 @@ private fun ContestWinnerPopup(
     winner: EventContestWinner,
     onDismiss: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(BgDeep.copy(0.88f))
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(horizontal = 22.dp)
                 .clip(RoundedCornerShape(20.dp))
                 .background(BgSoft)
+                .clickable(enabled = false) {}
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -885,6 +917,7 @@ private fun ContestWinnerPopup(
                 textAlign = TextAlign.Center
             )
         }
+        }
     }
 }
 
@@ -919,11 +952,12 @@ private fun UpcomingEventRow(event: SeasonEvent, onClick: () -> Unit) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            val whenLabel = listOfNotNull(event.windowStart, event.windowEnd)
-                .distinct()
-                .joinToString(" – ")
-                .ifBlank { "bald" }
-            Text(whenLabel, color = TextMuted, fontFamily = BodyFont, fontSize = 11.sp)
+            Text(
+                formatEventWhenLabel(event.windowStart, event.windowEnd),
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 11.sp
+            )
         }
         Text("›", color = accent, fontFamily = DisplayFont, fontSize = 18.sp)
     }
@@ -959,17 +993,33 @@ private fun UpcomingEventPreviewDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(BgDeep)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(accent.copy(0.55f), BgDeep, BgDeep)
+                    )
+                )
         ) {
             com.luv.couple.ui.MenuAmbientBackground(
-                eventDecor = event.decor,
+                eventDecor = event.decor.copy(
+                    // Vorschau immer mit Partikeln — sonst wirkt das Popup grau/leer
+                    particles = event.decor.particles.takeIf { it != "none" } ?: "sparkle",
+                    intensity = event.decor.intensity.coerceAtLeast(0.55f),
+                ),
                 modifier = Modifier.fillMaxSize()
             )
-            // Leichtes Overlay, damit Kacheln darunter nicht durchscheinen
+            // Nur leichter Schleier — Event-Farbe & Animation bleiben sichtbar
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(BgDeep.copy(0.72f))
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Transparent,
+                                BgDeep.copy(0.28f),
+                                BgDeep.copy(0.55f),
+                            )
+                        )
+                    )
             )
             Column(
                 modifier = Modifier
@@ -980,7 +1030,16 @@ private fun UpcomingEventPreviewDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(event.emoji, fontSize = 36.sp)
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(accent.copy(0.35f))
+                            .border(1.dp, accent.copy(0.55f), RoundedCornerShape(16.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(event.emoji, fontSize = 30.sp)
+                    }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             event.title,
@@ -988,11 +1047,18 @@ private fun UpcomingEventPreviewDialog(
                             fontFamily = DisplayFont,
                             fontSize = 24.sp
                         )
-                        val whenLabel = listOfNotNull(event.windowStart, event.windowEnd)
-                            .distinct()
-                            .joinToString(" – ")
+                        val whenLabel = formatEventWhenLabel(
+                            event.windowStart,
+                            event.windowEnd,
+                            blank = ""
+                        )
                         if (whenLabel.isNotBlank()) {
-                            Text(whenLabel, color = TextMuted, fontFamily = BodyFont, fontSize = 13.sp)
+                            Text(
+                                whenLabel,
+                                color = accent,
+                                fontFamily = DisplayFont,
+                                fontSize = 14.sp
+                            )
                         }
                     }
                     Text(ornament, fontSize = 24.sp)
@@ -1003,10 +1069,16 @@ private fun UpcomingEventPreviewDialog(
                 event.decor.bannerText.takeIf { it.isNotBlank() }?.let { banner ->
                     Text(
                         banner,
-                        color = accent,
+                        color = TextPrimary,
                         fontFamily = DisplayFont,
                         fontSize = 16.sp,
-                        modifier = Modifier.padding(top = 6.dp)
+                        modifier = Modifier
+                            .padding(top = 10.dp)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(accent.copy(0.28f))
+                            .border(1.dp, accent.copy(0.4f), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
                     )
                 }
                 Column(
@@ -1019,10 +1091,16 @@ private fun UpcomingEventPreviewDialog(
                 ) {
                     Text(
                         body,
-                        color = TextMuted,
+                        color = TextPrimary.copy(0.9f),
                         fontFamily = BodyFont,
                         fontSize = 15.sp,
-                        lineHeight = 22.sp
+                        lineHeight = 22.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(BgDeep.copy(0.42f))
+                            .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(14.dp))
+                            .padding(horizontal = 14.dp, vertical = 12.dp)
                     )
                     val rewards = event.resolvedRewardItems
                     if (rewards.isNotEmpty()) {
@@ -1169,15 +1247,24 @@ private fun EventItemPeekDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(BgDeep.copy(0.9f))
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 28.dp)
+                .widthIn(max = 420.dp)
                 .clip(RoundedCornerShape(22.dp))
                 .background(
-                    Brush.verticalGradient(listOf(accent.copy(0.4f), BgSoft, BgDeep))
+                    Brush.verticalGradient(listOf(accent.copy(0.45f), BgSoft, BgDeep))
                 )
                 .border(1.dp, accent.copy(0.4f), RoundedCornerShape(22.dp))
+                .clickable(enabled = false) {}
                 .padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1226,6 +1313,7 @@ private fun EventItemPeekDialog(
             TextButton(onClick = onDismiss) {
                 Text("Schließen", color = accent, fontFamily = DisplayFont)
             }
+        }
         }
     }
 }
@@ -1350,6 +1438,13 @@ private fun EventShopBuyDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(BgDeep.copy(0.9f))
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1357,9 +1452,10 @@ private fun EventShopBuyDialog(
                 .heightIn(max = 560.dp)
                 .clip(RoundedCornerShape(22.dp))
                 .background(
-                    Brush.verticalGradient(listOf(accent.copy(0.35f), BgSoft, BgDeep.copy(0.5f)))
+                    Brush.verticalGradient(listOf(accent.copy(0.4f), BgSoft, BgDeep))
                 )
                 .border(1.dp, accent.copy(0.4f), RoundedCornerShape(22.dp))
+                .clickable(enabled = false) {}
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -1493,6 +1589,7 @@ private fun EventShopBuyDialog(
             TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
                 Text("Schließen", color = accent, fontFamily = DisplayFont)
             }
+        }
         }
     }
 }

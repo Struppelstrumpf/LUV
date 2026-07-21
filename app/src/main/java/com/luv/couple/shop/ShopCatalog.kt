@@ -2,6 +2,9 @@ package com.luv.couple.shop
 
 import com.luv.couple.R
 import com.luv.couple.net.ShopPack
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 object ShopCatalog {
     const val MAX_BAR = 8
@@ -479,9 +482,9 @@ object LiveShopCatalog {
     @Volatile var remoteThemes: List<ShopTheme>? = null
         set(value) {
             field = value
-            catalogEpoch++
+            bumpCatalog()
             value?.forEach { t ->
-                t.visualConfig?.let { ThemeVisualCache.put(t.id, it) }
+                t.visualConfig?.let { ThemeVisualCache.put(t.id, it, bump = false) }
             }
         }
     @Volatile var remotePets: List<ShopPet>? = null
@@ -490,6 +493,15 @@ object LiveShopCatalog {
     /** Steigt bei Theme-/Katalog-Updates — Compose recomposed Backdrop. */
     @Volatile var catalogEpoch: Int = 0
         private set
+    private val _catalogTick = MutableStateFlow(0)
+    /** Compose-freundlich: Backdrop beobachtet Tick und lädt visualConfig neu. */
+    val catalogTick: StateFlow<Int> = _catalogTick.asStateFlow()
+
+    private fun bumpCatalog() {
+        catalogEpoch++
+        _catalogTick.value = catalogEpoch
+    }
+
     /** Admin-Anzeigenamen: "pets:🐯" → "Tiger" (gewinnt über lokale Fallbacks). */
     @Volatile var displayLabels: Map<String, String> = emptyMap()
         private set
@@ -505,9 +517,12 @@ object LiveShopCatalog {
     /** Merkt visualConfig, falls Public-Catalog das Feld später weglässt. */
     object ThemeVisualCache {
         private val map = java.util.concurrent.ConcurrentHashMap<String, ThemeVisualConfig>()
-        fun put(id: String, vc: ThemeVisualConfig) {
+        fun put(id: String, vc: ThemeVisualConfig, bump: Boolean = true) {
             val key = id.trim()
-            if (key.isNotEmpty()) map[key] = vc
+            if (key.isEmpty()) return
+            val prev = map[key]
+            map[key] = vc
+            if (bump && prev != vc) bumpCatalog()
         }
         fun get(id: String): ThemeVisualConfig? = map[id.trim()]
     }
