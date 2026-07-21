@@ -84,7 +84,42 @@ class WeddingRoomActivity : ComponentActivity() {
     }
 }
 
-private data class SeatDef(val id: String, val x: Float, val y: Float, val altar: Boolean)
+private const val AVATAR_R = 0.028f
+
+private fun zoneContains(z: LuvApiClient.RoomZone, x: Float, y: Float, pad: Float = 0f): Boolean {
+    return if (z.shape == "circle") {
+        hypot(x - z.cx, y - z.cy) <= z.r + pad
+    } else {
+        x >= z.x - pad && x <= z.x + z.w + pad &&
+            y >= z.y - pad && y <= z.y + z.h + pad
+    }
+}
+
+private fun blockedAt(zones: List<LuvApiClient.RoomZone>, x: Float, y: Float): Boolean {
+    return zones.any { it.isBlock && zoneContains(it, x, y, AVATAR_R * 0.35f) }
+}
+
+private fun walkableAt(zones: List<LuvApiClient.RoomZone>, x: Float, y: Float): Boolean {
+    if (blockedAt(zones, x, y)) return false
+    val greens = zones.filter { it.isWalk }
+    if (greens.isEmpty()) return true
+    return greens.any { zoneContains(it, x, y, AVATAR_R) }
+}
+
+/** Läuft in Richtung Ziel; stoppt vor roten Bereichen. */
+private fun walkStepToward(
+    fromX: Float,
+    fromY: Float,
+    toX: Float,
+    toY: Float,
+    zones: List<LuvApiClient.RoomZone>,
+): Pair<Float, Float> {
+    val dist = hypot(toX - fromX, toY - fromY).coerceAtLeast(0.0001f)
+    val step = 0.012f
+    val nx = fromX + (toX - fromX) / dist * step.coerceAtMost(dist)
+    val ny = fromY + (toY - fromY) / dist * step.coerceAtMost(dist)
+    return if (walkableAt(zones, nx, ny)) nx to ny else fromX to fromY
+}
 
 @Composable
 fun WeddingRoomScreen(onClose: () -> Unit) {
@@ -101,24 +136,37 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     var married by remember { mutableStateOf(false) }
     var confetti by remember { mutableStateOf(false) }
     var myReaction by remember { mutableStateOf<String?>(null) }
+    var layout by remember { mutableStateOf<LuvApiClient.RoomLayout?>(null) }
 
-    // Sitze am Kapellen-Layout (Vogelperspektive): Altar vorne, 4 Bankreihen je Seite
-    val seats = remember {
+    val fallbackZones = remember {
         listOf(
-            SeatDef("altar_a", 0.40f, 0.30f, true),
-            SeatDef("altar_b", 0.60f, 0.30f, true),
-            SeatDef("bench_0", 0.30f, 0.44f, false),
-            SeatDef("bench_1", 0.30f, 0.54f, false),
-            SeatDef("bench_2", 0.30f, 0.63f, false),
-            SeatDef("bench_3", 0.30f, 0.72f, false),
-            SeatDef("bench_4", 0.70f, 0.44f, false),
-            SeatDef("bench_5", 0.70f, 0.54f, false),
-            SeatDef("bench_6", 0.70f, 0.63f, false),
-            SeatDef("bench_7", 0.70f, 0.72f, false),
+            LuvApiClient.RoomZone("altar_a", "yellow", "circle", cx = 0.4f, cy = 0.3f, r = 0.04f),
+            LuvApiClient.RoomZone("altar_b", "yellow", "circle", cx = 0.6f, cy = 0.3f, r = 0.04f),
+            LuvApiClient.RoomZone("bench_0", "blue", "circle", cx = 0.3f, cy = 0.44f, r = 0.035f),
+            LuvApiClient.RoomZone("bench_1", "blue", "circle", cx = 0.3f, cy = 0.54f, r = 0.035f),
+            LuvApiClient.RoomZone("bench_2", "blue", "circle", cx = 0.3f, cy = 0.63f, r = 0.035f),
+            LuvApiClient.RoomZone("bench_3", "blue", "circle", cx = 0.3f, cy = 0.72f, r = 0.035f),
+            LuvApiClient.RoomZone("bench_4", "blue", "circle", cx = 0.7f, cy = 0.44f, r = 0.035f),
+            LuvApiClient.RoomZone("bench_5", "blue", "circle", cx = 0.7f, cy = 0.54f, r = 0.035f),
+            LuvApiClient.RoomZone("bench_6", "blue", "circle", cx = 0.7f, cy = 0.63f, r = 0.035f),
+            LuvApiClient.RoomZone("bench_7", "blue", "circle", cx = 0.7f, cy = 0.72f, r = 0.035f),
         )
+    }
+    val zones = layout?.zones?.takeIf { it.isNotEmpty() } ?: fallbackZones
+    val sitZones = remember(zones, ceremony) {
+        val meCouple = ceremony?.gathering?.find { it.userId == myId }?.isCouple == true
+        zones.filter { z ->
+            when {
+                z.isCoupleSeat -> meCouple
+                z.isGuestSeat -> !meCouple
+                else -> false
+            }
+        }
     }
 
     LaunchedEffect(Unit) {
+        runCatching { LuvApiClient.fetchRoomLayout("wedding") }
+            .onSuccess { layout = it }
         while (!married && rejectName == null) {
             runCatching { LuvApiClient.fetchCeremony() }
                 .onSuccess {
@@ -224,15 +272,19 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             }
         } else {
             val c = ceremony
-            // Seats
-            seats.forEach { seat ->
+            // Gelbe/blaue Sitz-Zonen aus Admin-Layout
+            sitZones.forEach { seat ->
                 val taken = c?.gathering?.any { it.seatedSeatId == seat.id } == true
+                val markerColor = when {
+                    seat.isCoupleSeat -> Color(0xFFFFD54F)
+                    else -> Color(0xFF64B5F6)
+                }
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(
-                            start = (roomW * seat.x) - 18.dp,
-                            top = (roomH * seat.y) - 18.dp
+                            start = (roomW * seat.sitX) - 18.dp,
+                            top = (roomH * seat.sitY) - 18.dp
                         )
                 ) {
                     Box(
@@ -241,36 +293,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                             .clip(CircleShape)
                             .border(
                                 2.dp,
-                                if (taken) Color(0xFFFFD54F) else Color.White.copy(0.35f),
+                                if (taken) markerColor else markerColor.copy(0.55f),
                                 CircleShape
                             )
-                            .background(Color.Black.copy(0.25f))
-                            .clickable(enabled = !seated && !taken) {
-                                scope.launch {
-                                    // Move then sit
-                                    val steps = 8
-                                    val sx = myX
-                                    val sy = myY
-                                    for (i in 1..steps) {
-                                        myX = sx + (seat.x - sx) * (i / steps.toFloat())
-                                        myY = sy + (seat.y - sy) * (i / steps.toFloat())
-                                        delay(80)
-                                    }
-                                    runCatching { LuvApiClient.ceremonyMove(seat.x, seat.y) }
-                                    runCatching { LuvApiClient.ceremonySit(seat.id) }
-                                        .onSuccess {
-                                            ceremony = it
-                                            seated = true
-                                        }
-                                        .onFailure {
-                                            Toast.makeText(
-                                                context,
-                                                it.message ?: "Sitz belegt",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        }
-                                }
-                            },
+                            .background(Color.Black.copy(0.25f)),
                         contentAlignment = Alignment.Center
                     ) {
                         if (!taken) Text("·", color = Color.White.copy(0.5f))
@@ -350,24 +376,91 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 }
             }
 
-            // Tap to move (if not seated)
+            // Tippen → Schritttempo laufen; an roten Bereichen stoppen
             if (!seated) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(Unit) {
+                        .pointerInput(zones) {
                             detectTapGestures { offset ->
-                                val tx = (offset.x / size.width).coerceIn(0.08f, 0.92f)
-                                val ty = (offset.y / size.height).coerceIn(0.12f, 0.90f)
+                                val rawX = (offset.x / size.width).coerceIn(0.02f, 0.98f)
+                                val rawY = (offset.y / size.height).coerceIn(0.02f, 0.98f)
+                                // Blau/Gelb tippen → in die Nähe laufen und setzen
+                                val hitSit = sitZones.firstOrNull { z ->
+                                    val taken = ceremony?.gathering?.any { it.seatedSeatId == z.id } == true
+                                    !taken && (
+                                        zoneContains(z, rawX, rawY, 0.025f) ||
+                                            hypot(rawX - z.sitX, rawY - z.sitY) < 0.045f
+                                        )
+                                }
+                                if (hitSit != null) {
+                                    scope.launch {
+                                        val tx = hitSit.sitX
+                                        val ty = hitSit.sitY
+                                        var guard = 0
+                                        while (hypot(tx - myX, ty - myY) > 0.04f && guard < 220) {
+                                            val (nx, ny) = walkStepToward(myX, myY, tx, ty, zones)
+                                            if (nx == myX && ny == myY) break
+                                            myX = nx
+                                            myY = ny
+                                            delay(55)
+                                            guard++
+                                        }
+                                        runCatching { LuvApiClient.ceremonyMove(myX, myY) }
+                                        if (hypot(tx - myX, ty - myY) <= 0.09f) {
+                                            runCatching { LuvApiClient.ceremonySit(hitSit.id) }
+                                                .onSuccess {
+                                                    ceremony = it
+                                                    seated = true
+                                                    myX = tx
+                                                    myY = ty
+                                                }
+                                                .onFailure {
+                                                    Toast.makeText(
+                                                        context,
+                                                        it.message ?: "Sitz belegt",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
+                                        }
+                                    }
+                                    return@detectTapGestures
+                                }
+                                var tx = rawX
+                                var ty = rawY
+                                if (!walkableAt(zones, tx, ty)) {
+                                    var found = false
+                                    for (r in 1..12) {
+                                        val d = r * 0.02f
+                                        val candidates = listOf(
+                                            tx to (ty - d), tx to (ty + d),
+                                            (tx - d) to ty, (tx + d) to ty,
+                                        )
+                                        val ok = candidates.firstOrNull { (x, y) ->
+                                            walkableAt(
+                                                zones,
+                                                x.coerceIn(0.02f, 0.98f),
+                                                y.coerceIn(0.02f, 0.98f)
+                                            )
+                                        }
+                                        if (ok != null) {
+                                            tx = ok.first.coerceIn(0.02f, 0.98f)
+                                            ty = ok.second.coerceIn(0.02f, 0.98f)
+                                            found = true
+                                            break
+                                        }
+                                    }
+                                    if (!found) return@detectTapGestures
+                                }
                                 scope.launch {
-                                    val dist = hypot(tx - myX, ty - myY)
-                                    val steps = (dist * 20).toInt().coerceIn(4, 24)
-                                    val sx = myX
-                                    val sy = myY
-                                    for (i in 1..steps) {
-                                        myX = sx + (tx - sx) * (i / steps.toFloat())
-                                        myY = sy + (ty - sy) * (i / steps.toFloat())
-                                        delay(70)
+                                    var guard = 0
+                                    while (hypot(tx - myX, ty - myY) > 0.015f && guard < 280) {
+                                        val (nx, ny) = walkStepToward(myX, myY, tx, ty, zones)
+                                        if (nx == myX && ny == myY) break
+                                        myX = nx
+                                        myY = ny
+                                        delay(55)
+                                        guard++
                                     }
                                     runCatching { LuvApiClient.ceremonyMove(myX, myY) }
                                 }

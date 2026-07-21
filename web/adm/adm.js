@@ -73,6 +73,7 @@
     { id: "mods", label: "Moderatoren", hint: "Mods einladen und Rechte setzen.", perm: "mods.manage", adminOnly: true },
     { id: "bericht", label: "Bericht", hint: "Nächtliche Wartungsberichte: Backup, Shop-Zyklus, Health — kopieren für die KI.", perm: "market.settings" },
     { id: "market", label: "Einstellungen", hint: "Markt-Preisfenster und Erfolgs-Tageslimit.", perm: "market.settings" },
+    { id: "rooms", label: "Räume", hint: "Sonder-Räume (z. B. Hochzeit): begehbare, blockierte und Sitz-Bereiche einzeichnen.", perm: "market.settings" },
     { id: "live", label: "Live-Hinweis", hint: "Nachricht an alle App-Nutzer senden.", perm: "live.notify" },
   ];
 
@@ -612,6 +613,7 @@
       else if (id === "mods") await renderMods();
       else if (id === "bericht") await renderMaintenanceBericht();
       else if (id === "market") await renderMarketSettings();
+      else if (id === "rooms") await window.LuvAdmRooms.renderRooms();
       else if (id === "live") await renderLive();
     } catch (e) {
       content.innerHTML = `<p class="error">${esc(e.message)}</p>`;

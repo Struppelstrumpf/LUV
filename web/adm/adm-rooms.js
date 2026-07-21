@@ -1,0 +1,393 @@
+/**
+ * Admin: Räume — Layout-Editor (Hochzeit).
+ * Hängt an window.LuvAdmRooms — braucht LuvAdmHost (api/esc/content).
+ */
+(() => {
+  function host() {
+    return window.LuvAdmHost || {};
+  }
+  function api(path, opts) {
+    return host().api(path, opts);
+  }
+  function esc(s) {
+    return host().esc(s);
+  }
+  function contentEl() {
+    return host().content;
+  }
+
+  const TOOLS = [
+    { id: "red-rect", label: "Rot eckig", color: "red", shape: "rect", hint: "Blockiert" },
+    { id: "green-rect", label: "Grün eckig", color: "green", shape: "rect", hint: "Begehbar" },
+    { id: "yellow-circle", label: "Gelb rund", color: "yellow", shape: "circle", hint: "Eheleute" },
+    { id: "blue-rect", label: "Blau eckig", color: "blue", shape: "rect", hint: "Sitz" },
+    { id: "blue-circle", label: "Blau rund", color: "blue", shape: "circle", hint: "Sitz" },
+  ];
+
+  const FILL = {
+    red: "rgba(229, 57, 53, 0.45)",
+    green: "rgba(67, 160, 71, 0.4)",
+    yellow: "rgba(255, 213, 79, 0.5)",
+    blue: "rgba(66, 165, 245, 0.45)",
+  };
+  const STROKE = {
+    red: "#e53935",
+    green: "#43a047",
+    yellow: "#ffd54f",
+    blue: "#42a5f5",
+  };
+
+  let editor = null;
+
+  async function renderRooms() {
+    const root = contentEl();
+    if (!root) return;
+    if (editor && editor.roomId) {
+      await renderEditor(editor.roomId);
+      return;
+    }
+    root.innerHTML = `<p class="muted">Lade Räume…</p>`;
+    const data = await api("/admin/room-layouts");
+    const rooms = data.rooms || [];
+    root.innerHTML = `
+      <div class="panel">
+        <h3>Räume</h3>
+        <p class="help">Bereiche für Sonder-Räume einzeichnen. Gespeicherte Layouts nutzt die App live.</p>
+        <div class="room-list">
+          ${rooms
+            .map(
+              (r) => `
+            <button type="button" class="room-card" data-room="${esc(r.id)}">
+              <span class="room-card-title">Raum: ${esc(r.name)}</span>
+              <span class="muted">${r.zoneCount || 0} Bereiche${
+                r.updatedAt
+                  ? " · gespeichert " + new Date(r.updatedAt).toLocaleString("de-DE")
+                  : " · Standard"
+              }</span>
+            </button>`
+            )
+            .join("")}
+        </div>
+      </div>`;
+    root.querySelectorAll("[data-room]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        editor = { roomId: btn.getAttribute("data-room") };
+        renderRooms();
+      });
+    });
+  }
+
+  async function renderEditor(roomId) {
+    const root = contentEl();
+    root.innerHTML = `<p class="muted">Lade Raum…</p>`;
+    const data = await api(`/admin/room-layouts/${encodeURIComponent(roomId)}`);
+    const layout = data.layout;
+    if (!layout) {
+      root.innerHTML = `<p class="error">Raum nicht gefunden.</p>`;
+      return;
+    }
+
+    let zones = (layout.zones || []).map((z) => ({ ...z }));
+    let tool = TOOLS[0].id;
+    let selectedId = null;
+    let draft = null;
+    let dirty = false;
+    let status = "";
+
+    root.innerHTML = `
+      <div class="room-editor">
+        <div class="room-editor-bar">
+          <button type="button" class="btn ghost" id="roomBack">← Räume</button>
+          <h3 style="margin:0">Raum: ${esc(layout.name)}</h3>
+          <button type="button" class="btn" id="roomSave">Speichern</button>
+        </div>
+        <p class="help" id="roomHint">Werkzeug wählen, dann auf dem Bild ziehen. Rot = blockiert, Grün = begehbar, Gelb = Eheleute, Blau = Sitz (Tipp → hinlaufen).</p>
+        <div class="room-tools" id="roomTools"></div>
+        <div class="room-editor-body">
+          <div class="room-canvas-wrap">
+            <canvas id="roomCanvas" width="900" height="1200"></canvas>
+          </div>
+          <div class="room-side">
+            <p class="muted" id="roomStatus"></p>
+            <h4>Bereiche</h4>
+            <ul class="room-zone-list" id="roomZoneList"></ul>
+            <button type="button" class="btn ghost danger" id="roomDelete" disabled>Ausgewählten löschen</button>
+            <button type="button" class="btn ghost" id="roomResetDefaults" style="margin-top:0.5rem">Standard-Sitze laden</button>
+          </div>
+        </div>
+      </div>`;
+
+    const canvas = root.querySelector("#roomCanvas");
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    let imgReady = false;
+
+    function setStatus(msg) {
+      status = msg || "";
+      const el = root.querySelector("#roomStatus");
+      if (el) el.textContent = status + (dirty ? " · ungespeichert" : "");
+    }
+
+    function paintTools() {
+      const box = root.querySelector("#roomTools");
+      box.innerHTML = TOOLS.map(
+        (t) => `
+        <button type="button" class="room-tool ${tool === t.id ? "active" : ""}" data-tool="${t.id}" title="${esc(t.hint)}">
+          <span class="swatch" style="background:${STROKE[t.color]}"></span>
+          ${esc(t.label)}
+        </button>`
+      ).join("");
+      box.querySelectorAll("[data-tool]").forEach((b) => {
+        b.addEventListener("click", () => {
+          tool = b.getAttribute("data-tool");
+          selectedId = null;
+          paintTools();
+          paintList();
+          draw();
+        });
+      });
+    }
+
+    function paintList() {
+      const ul = root.querySelector("#roomZoneList");
+      ul.innerHTML = zones
+        .map((z, i) => {
+          const label =
+            z.color === "red"
+              ? "Rot blockiert"
+              : z.color === "green"
+                ? "Grün begehbar"
+                : z.color === "yellow"
+                  ? "Gelb Eheleute"
+                  : "Blau Sitz";
+          const shape = z.shape === "circle" ? "rund" : "eckig";
+          return `<li class="${selectedId === z.id ? "sel" : ""}" data-zid="${esc(z.id)}">
+            <span class="dot" style="background:${STROKE[z.color]}"></span>
+            ${i + 1}. ${label} (${shape}) <code>${esc(z.id)}</code>
+          </li>`;
+        })
+        .join("");
+      ul.querySelectorAll("[data-zid]").forEach((li) => {
+        li.addEventListener("click", () => {
+          selectedId = li.getAttribute("data-zid");
+          paintList();
+          draw();
+          root.querySelector("#roomDelete").disabled = !selectedId;
+        });
+      });
+      root.querySelector("#roomDelete").disabled = !selectedId;
+    }
+
+    function normFromEvent(ev) {
+      const rect = canvas.getBoundingClientRect();
+      const x = (ev.clientX - rect.left) / rect.width;
+      const y = (ev.clientY - rect.top) / rect.height;
+      return {
+        x: Math.min(1, Math.max(0, x)),
+        y: Math.min(1, Math.max(0, y)),
+      };
+    }
+
+    function drawZone(z, highlight) {
+      ctx.save();
+      ctx.fillStyle = FILL[z.color] || "rgba(255,255,255,0.2)";
+      ctx.strokeStyle = highlight ? "#fff" : STROKE[z.color] || "#fff";
+      ctx.lineWidth = highlight ? 3 : 2;
+      if (z.shape === "circle") {
+        const cx = z.cx * canvas.width;
+        const cy = z.cy * canvas.height;
+        const r = z.r * Math.min(canvas.width, canvas.height);
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        const x = z.x * canvas.width;
+        const y = z.y * canvas.height;
+        const w = z.w * canvas.width;
+        const h = z.h * canvas.height;
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeRect(x, y, w, h);
+      }
+      ctx.restore();
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (imgReady) {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      } else {
+        ctx.fillStyle = "#1a1520";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      zones.forEach((z) => drawZone(z, z.id === selectedId));
+      if (draft) drawZone(draft, true);
+    }
+
+    function currentTool() {
+      return TOOLS.find((t) => t.id === tool) || TOOLS[0];
+    }
+
+    function newId(color) {
+      const prefix = color === "yellow" ? "altar_" : color === "blue" ? "sit_" : `${color}_`;
+      return `${prefix}${Math.random().toString(36).slice(2, 8)}`;
+    }
+
+    let drawing = false;
+    let start = null;
+
+    canvas.addEventListener("mousedown", (ev) => {
+      drawing = true;
+      start = normFromEvent(ev);
+      selectedId = null;
+      const t = currentTool();
+      draft = {
+        id: newId(t.color),
+        color: t.color,
+        shape: t.shape,
+        x: start.x,
+        y: start.y,
+        w: 0.01,
+        h: 0.01,
+        cx: start.x,
+        cy: start.y,
+        r: 0.01,
+      };
+      paintList();
+      draw();
+    });
+
+    canvas.addEventListener("mousemove", (ev) => {
+      if (!drawing || !draft || !start) return;
+      const p = normFromEvent(ev);
+      if (draft.shape === "circle") {
+        draft.cx = start.x;
+        draft.cy = start.y;
+        const dx = p.x - start.x;
+        const dy = p.y - start.y;
+        draft.r = Math.min(0.45, Math.max(0.015, Math.hypot(dx, dy)));
+      } else {
+        draft.x = Math.min(start.x, p.x);
+        draft.y = Math.min(start.y, p.y);
+        draft.w = Math.max(0.015, Math.abs(p.x - start.x));
+        draft.h = Math.max(0.015, Math.abs(p.y - start.y));
+      }
+      draw();
+    });
+
+    function finishDraw() {
+      if (!drawing) return;
+      drawing = false;
+      if (draft) {
+        if (draft.shape === "circle" && draft.r >= 0.015) {
+          zones.push({
+            id: draft.id,
+            color: draft.color,
+            shape: "circle",
+            cx: draft.cx,
+            cy: draft.cy,
+            r: draft.r,
+          });
+          selectedId = draft.id;
+          dirty = true;
+        } else if (draft.shape === "rect" && draft.w >= 0.015 && draft.h >= 0.015) {
+          zones.push({
+            id: draft.id,
+            color: draft.color,
+            shape: "rect",
+            x: draft.x,
+            y: draft.y,
+            w: draft.w,
+            h: draft.h,
+          });
+          selectedId = draft.id;
+          dirty = true;
+        }
+      }
+      draft = null;
+      start = null;
+      paintList();
+      setStatus(`${zones.length} Bereiche`);
+      draw();
+    }
+
+    canvas.addEventListener("mouseup", finishDraw);
+    canvas.addEventListener("mouseleave", finishDraw);
+
+    root.querySelector("#roomBack").addEventListener("click", () => {
+      if (dirty && !confirm("Ungespeicherte Änderungen verwerfen?")) return;
+      editor = null;
+      renderRooms();
+    });
+
+    root.querySelector("#roomDelete").addEventListener("click", () => {
+      if (!selectedId) return;
+      zones = zones.filter((z) => z.id !== selectedId);
+      selectedId = null;
+      dirty = true;
+      paintList();
+      setStatus(`${zones.length} Bereiche`);
+      draw();
+    });
+
+    root.querySelector("#roomResetDefaults").addEventListener("click", () => {
+      if (!confirm("Standard-Sitze (gelb/blau) laden? Aktuelle Zonen werden ersetzt.")) return;
+      zones = [
+        { id: "altar_a", color: "yellow", shape: "circle", cx: 0.4, cy: 0.3, r: 0.04 },
+        { id: "altar_b", color: "yellow", shape: "circle", cx: 0.6, cy: 0.3, r: 0.04 },
+        { id: "bench_0", color: "blue", shape: "circle", cx: 0.3, cy: 0.44, r: 0.035 },
+        { id: "bench_1", color: "blue", shape: "circle", cx: 0.3, cy: 0.54, r: 0.035 },
+        { id: "bench_2", color: "blue", shape: "circle", cx: 0.3, cy: 0.63, r: 0.035 },
+        { id: "bench_3", color: "blue", shape: "circle", cx: 0.3, cy: 0.72, r: 0.035 },
+        { id: "bench_4", color: "blue", shape: "circle", cx: 0.7, cy: 0.44, r: 0.035 },
+        { id: "bench_5", color: "blue", shape: "circle", cx: 0.7, cy: 0.54, r: 0.035 },
+        { id: "bench_6", color: "blue", shape: "circle", cx: 0.7, cy: 0.63, r: 0.035 },
+        { id: "bench_7", color: "blue", shape: "circle", cx: 0.7, cy: 0.72, r: 0.035 },
+      ];
+      dirty = true;
+      selectedId = null;
+      paintList();
+      setStatus("Standard geladen");
+      draw();
+    });
+
+    root.querySelector("#roomSave").addEventListener("click", async () => {
+      try {
+        const res = await api(`/admin/room-layouts/${encodeURIComponent(roomId)}`, {
+          method: "PUT",
+          body: JSON.stringify({ zones }),
+        });
+        zones = (res.layout?.zones || zones).map((z) => ({ ...z }));
+        dirty = false;
+        setStatus("Gespeichert");
+        paintList();
+        draw();
+      } catch (e) {
+        setStatus("Fehler: " + (e.message || e));
+      }
+    });
+
+    paintTools();
+    paintList();
+    setStatus(`${zones.length} Bereiche`);
+    draw();
+
+    img.onload = () => {
+      imgReady = true;
+      // canvas aspect an Bild anpassen
+      const maxW = 900;
+      const scale = maxW / img.naturalWidth;
+      canvas.width = maxW;
+      canvas.height = Math.round(img.naturalHeight * scale);
+      draw();
+    };
+    img.onerror = () => {
+      setStatus("Bild konnte nicht geladen werden — Zonen trotzdem editierbar");
+      draw();
+    };
+    img.src = layout.imageUrl + "?v=" + (layout.updatedAt || Date.now());
+  }
+
+  window.LuvAdmRooms = { renderRooms };
+})();

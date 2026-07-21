@@ -39,6 +39,7 @@ const DEFAULT = {
   marriages: {},
   guestbookReports: [],
   shopCatalog: { items: {}, version: 1 },
+  roomLayouts: {},
 };
 
 function ensureDir() {
@@ -141,6 +142,10 @@ function load() {
         raw.shopCatalog && typeof raw.shopCatalog === "object"
           ? raw.shopCatalog
           : { items: {}, version: 1 },
+      roomLayouts:
+        raw.roomLayouts && typeof raw.roomLayouts === "object"
+          ? raw.roomLayouts
+          : {},
     };
   } catch {
     return structuredClone(DEFAULT);

@@ -21,6 +21,7 @@ const market = require("./market");
 const lootbox = require("./lootbox");
 const marriage = require("./marriage");
 const weddingCeremony = require("./wedding_ceremony");
+const roomLayouts = require("./room_layouts");
 const shopCatalog = require("./shop_catalog");
 const petImages = require("./pet_images");
 const playBilling = require("./play_billing");
@@ -8905,15 +8906,25 @@ app.post("/v1/me/marriage/ceremony/sit", (req, res) => {
   if (c.seated[ctx.user.id]) {
     return res.json({ ok: true, already: true, ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users) });
   }
-  const seatId = String(req.body?.seatId || "").trim().slice(0, 32);
+  const seatId = String(req.body?.seatId || "").trim().slice(0, 48);
   if (!seatId) return res.status(400).json({ error: "bad_seat" });
   const taken = Object.values(c.seated).includes(seatId);
   if (taken) return res.status(400).json({ error: "seat_taken" });
   const isCouple = weddingCeremony.isCouple(m, ctx.user.id);
-  if (isCouple && !seatId.startsWith("altar_")) {
-    return res.status(400).json({ error: "couple_altar_only", message: "Bitte vor dem Altar Platz nehmen." });
+  const zone = roomLayouts.findZone(db, "wedding", seatId);
+  const coupleSeat = zone
+    ? roomLayouts.isCoupleSeat(zone)
+    : roomLayouts.isCoupleSeat(seatId);
+  const guestSeat = zone
+    ? roomLayouts.isGuestSeat(zone)
+    : roomLayouts.isGuestSeat(seatId);
+  if (isCouple && !coupleSeat) {
+    return res.status(400).json({
+      error: "couple_altar_only",
+      message: "Bitte auf einen gelben Platz (Eheleute) setzen.",
+    });
   }
-  if (!isCouple && seatId.startsWith("altar_")) {
+  if (!isCouple && !guestSeat) {
     return res.status(400).json({ error: "guest_bench_only" });
   }
   c.seated[ctx.user.id] = seatId;
@@ -9482,6 +9493,42 @@ app.post("/v1/redeem", (req, res) => {
     items: grantedItems,
     user: publicUser(ctx.user),
   });
+});
+
+/** Öffentlich für App: Raum-Layout (Zonen) laden */
+app.get("/v1/room-layouts/:roomId", (req, res) => {
+  const db = getDb();
+  const layout = roomLayouts.getLayout(db, req.params.roomId);
+  if (!layout) return res.status(404).json({ error: "unknown_room" });
+  return res.json({ ok: true, layout });
+});
+
+app.get("/v1/admin/room-layouts", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const db = getDb();
+  return res.json({ ok: true, rooms: roomLayouts.listRooms(db) });
+});
+
+app.get("/v1/admin/room-layouts/:roomId", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const db = getDb();
+  const layout = roomLayouts.getLayout(db, req.params.roomId);
+  if (!layout) return res.status(404).json({ error: "unknown_room" });
+  return res.json({ ok: true, layout });
+});
+
+app.put("/v1/admin/room-layouts/:roomId", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const db = getDb();
+  const result = roomLayouts.saveLayout(db, req.params.roomId, req.body?.zones);
+  if (result.error) {
+    return res.status(400).json({ error: result.error });
+  }
+  scheduleSave();
+  return res.json({ ok: true, layout: result.layout });
 });
 
 app.get("/v1/admin/overview", (req, res) => {

@@ -2549,6 +2549,64 @@ object LuvApiClient {
         val ceremony: CeremonyInfo?
     )
 
+    data class RoomZone(
+        val id: String,
+        val color: String,
+        val shape: String,
+        val x: Float = 0f,
+        val y: Float = 0f,
+        val w: Float = 0f,
+        val h: Float = 0f,
+        val cx: Float = 0f,
+        val cy: Float = 0f,
+        val r: Float = 0f,
+    ) {
+        val sitX: Float get() = if (shape == "circle") cx else x + w / 2f
+        val sitY: Float get() = if (shape == "circle") cy else y + h / 2f
+        val isCoupleSeat: Boolean get() = color == "yellow" || id.startsWith("altar_")
+        val isGuestSeat: Boolean get() = color == "blue"
+        val isBlock: Boolean get() = color == "red"
+        val isWalk: Boolean get() = color == "green"
+    }
+
+    data class RoomLayout(
+        val id: String,
+        val name: String,
+        val zones: List<RoomZone>,
+    )
+
+    suspend fun fetchRoomLayout(roomId: String): RoomLayout = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/room-layouts/${roomId.trim()}")
+        val lay = json.optJSONObject("layout") ?: JSONObject()
+        val arr = lay.optJSONArray("zones")
+        val zones = buildList {
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val z = arr.optJSONObject(i) ?: continue
+                    add(
+                        RoomZone(
+                            id = z.optString("id"),
+                            color = z.optString("color"),
+                            shape = z.optString("shape"),
+                            x = z.optDouble("x", 0.0).toFloat(),
+                            y = z.optDouble("y", 0.0).toFloat(),
+                            w = z.optDouble("w", 0.0).toFloat(),
+                            h = z.optDouble("h", 0.0).toFloat(),
+                            cx = z.optDouble("cx", 0.0).toFloat(),
+                            cy = z.optDouble("cy", 0.0).toFloat(),
+                            r = z.optDouble("r", 0.0).toFloat(),
+                        )
+                    )
+                }
+            }
+        }
+        RoomLayout(
+            id = lay.optString("id", roomId),
+            name = lay.optString("name", roomId),
+            zones = zones,
+        )
+    }
+
     suspend fun fetchCeremony(): CeremonyBundle = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/me/marriage/ceremony")
         CeremonyBundle(
