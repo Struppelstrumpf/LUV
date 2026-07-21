@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.58",
+            listOf(
+                "Bug melden (+10 Coins bei hilfreichen Meldungen) unter Konto — Abholen unter Sozial → Freunde",
+            )
+        ),
+        Entry(
             "2.2.57",
             listOf(
                 "Sozial-Events: Datum als TT.MM.JJJJ, schönere Event-Vorschau, feste Popup-Hintergründe",

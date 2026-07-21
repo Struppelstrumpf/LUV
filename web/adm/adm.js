@@ -67,7 +67,7 @@
     { id: "achievements", label: "Erfolge", hint: "Erfolge ansehen, deaktivieren und mit Wizard erstellen/bearbeiten.", perm: "market.settings" },
     { id: "dailies", label: "Tagesaufgaben", hint: "Planer: welche Aufgaben, wie viele, Coin-Belohnung und Anleitungen.", perm: "market.settings" },
     { id: "phrases", label: "Sprüche", hint: "Push- und Share-Sprüche bearbeiten, Tap-Ziel wählen. Mehrfachauswahl möglich.", perm: "live.notify" },
-    { id: "reports", label: "Meldungen", hint: "Gemeldete Lobby-/Galerie-Bilder prüfen.", perm: "reports.view" },
+    { id: "reports", label: "Meldungen", hint: "Bugs, Hilfe, Lobby- und Galerie-Meldungen prüfen.", perm: "reports.view" },
     { id: "codes", label: "Codes", hint: "Gutscheincodes erstellen und widerrufen.", perm: "codes.view" },
     { id: "users", label: "Nutzer", hint: "Vollprofil: Coins, Erfolge, Logs, Lobbys, Verwarnungen, Streak.", perm: "gm.search" },
     { id: "mods", label: "Moderatoren", hint: "Mods einladen und Rechte setzen.", perm: "mods.manage", adminOnly: true },
@@ -3307,13 +3307,102 @@
   }
 
   async function renderReports() {
-    const peer = await api("/admin/peer-reports").catch(() => ({ reports: [] }));
-    const pub = await api("/admin/public-reports").catch(() => ({ reports: [] }));
+    const [peer, pub, bugs, help] = await Promise.all([
+      api("/admin/peer-reports").catch(() => ({ reports: [] })),
+      api("/admin/public-reports").catch(() => ({ reports: [] })),
+      api("/admin/bug-reports").catch(() => ({ reports: [] })),
+      api("/admin/help-messages").catch(() => ({ messages: [] })),
+    ]);
+    const bugRows = bugs.reports || [];
+    const helpRows = help.messages || [];
     const rows = [...(peer.reports || []), ...(pub.reports || [])];
+    const fmtWhen = (ms) => {
+      try {
+        return new Date(ms).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
+      } catch {
+        return "—";
+      }
+    };
     content.innerHTML = `
       <div class="panel">
-        <h3>Meldungen</h3>
-        <p class="help">Offene Fälle zuerst prüfen. „Behalten“ schließt die Meldung, „Löschen“ entfernt den Inhalt.</p>
+        <h3 style="font-family:var(--display);margin:0 0 0.35rem">Bug-Meldungen</h3>
+        <p class="help" style="margin:0 0 0.75rem">
+          Hilfreich = User kann unter Sozial → Freunde +10 Coins abholen (servergeprüft).
+          Profil / Nutzer öffnet den Spieler zum Einstellen.
+        </p>
+        <div class="list">
+          ${
+            bugRows.length
+              ? bugRows
+                  .map(
+                    (r) => `<div class="list-item" style="margin-bottom:0.65rem">
+              <div class="row" style="align-items:flex-start;gap:0.75rem;flex-wrap:wrap">
+                <div style="flex:1;min-width:12rem">
+                  <strong>${esc(r.nickname || "Jemand")}</strong>
+                  ${r.status === "helpful" ? `<span class="badge" style="margin-left:0.35rem">hilfreich</span>` : ""}
+                  <div class="muted" style="font-size:0.8rem;margin-top:0.2rem">${esc(fmtWhen(r.createdAt))} · ${esc(r.locationLabel || "")} · ${esc(r.visibilityLabel || "")}${r.reproducible ? " · reproduzierbar" : ""}</div>
+                  <p style="margin:0.45rem 0 0;white-space:pre-wrap">${esc(r.description || "")}</p>
+                  ${
+                    r.imageUrl
+                      ? `<a href="${esc(r.imageUrl)}" target="_blank" rel="noopener" style="display:inline-block;margin-top:0.5rem">
+                          <img src="${esc(r.imageUrl)}" alt="" style="max-width:100%;max-height:180px;border-radius:10px;border:1px solid rgba(255,255,255,0.1)" />
+                        </a>`
+                      : ""
+                  }
+                  ${
+                    r.videoUrl
+                      ? `<div style="margin-top:0.4rem"><a href="${esc(r.videoUrl)}" target="_blank" rel="noopener">Video öffnen</a></div>`
+                      : ""
+                  }
+                </div>
+                <div class="actions" style="flex-direction:column;align-items:stretch;gap:0.35rem">
+                  ${r.userId ? `<button class="btn secondary btn-xs" data-bug-user="${esc(r.userId)}" data-bug-nick="${esc(r.nickname || "")}">Nutzer</button>` : ""}
+                  ${
+                    r.status === "open"
+                      ? `<button class="btn btn-xs" data-bug-helpful="${esc(r.id)}">Hilfreich +10</button>`
+                      : ""
+                  }
+                  <button class="btn danger btn-xs" data-bug-del="${esc(r.id)}">Löschen</button>
+                </div>
+              </div>
+            </div>`
+                  )
+                  .join("")
+              : `<p class="muted">Keine Bug-Meldungen.</p>`
+          }
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Hilfe-Anfragen</h3>
+        <div class="list">
+          ${
+            helpRows.length
+              ? helpRows
+                  .map(
+                    (m) => `<div class="list-item">
+              <div class="row">
+                <div style="flex:1">
+                  <strong>${esc(m.nickname || "Jemand")}</strong>
+                  <div class="muted" style="font-size:0.8rem">${esc(fmtWhen(m.createdAt))}</div>
+                  <p style="margin:0.35rem 0 0;white-space:pre-wrap">${esc(m.message || "")}</p>
+                </div>
+                <div class="actions">
+                  ${m.userId ? `<button class="btn secondary btn-xs" data-bug-user="${esc(m.userId)}" data-bug-nick="${esc(m.nickname || "")}">Nutzer</button>` : ""}
+                  <button class="btn danger btn-xs" data-help-del="${esc(m.id)}">Löschen</button>
+                </div>
+              </div>
+            </div>`
+                  )
+                  .join("")
+              : `<p class="muted">Keine Hilfe-Anfragen.</p>`
+          }
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Bild- & Lobby-Meldungen</h3>
+        <p class="help">„Behalten“ schließt die Meldung, „Löschen“ entfernt den Inhalt.</p>
         <div class="list">
           ${
             rows.length
@@ -3322,8 +3411,8 @@
                     (r) => `<div class="list-item">
               <div class="row">
                 <div>
-                  <strong>${esc(r.id || r.publicId || "report")}</strong>
-                  <div class="muted">${esc(r.reason || r.status || "")}</div>
+                  <strong>${esc(r.targetNickname || r.nameLine || r.id || r.publicId || "report")}</strong>
+                  <div class="muted">${esc(r.lobbyName || r.hostNickname || r.status || "")} · von ${esc(r.reporterNickname || "")}</div>
                 </div>
                 <div class="actions">
                   ${
@@ -3341,6 +3430,58 @@
           }
         </div>
       </div>`;
+
+    content.querySelectorAll("[data-bug-helpful]").forEach((b) => {
+      b.onclick = async () => {
+        const id = b.getAttribute("data-bug-helpful");
+        try {
+          await api(`/admin/bug-reports/${encodeURIComponent(id)}/helpful`, {
+            method: "POST",
+            body: "{}",
+          });
+          renderReports();
+        } catch (err) {
+          alert(err?.message || "Fehlgeschlagen");
+        }
+      };
+    });
+    content.querySelectorAll("[data-bug-del]").forEach((b) => {
+      b.onclick = async () => {
+        const id = b.getAttribute("data-bug-del");
+        if (!confirm("Bug-Meldung löschen?")) return;
+        try {
+          await api(`/admin/bug-reports/${encodeURIComponent(id)}/delete`, {
+            method: "POST",
+            body: "{}",
+          });
+          renderReports();
+        } catch (err) {
+          alert(err?.message || "Fehlgeschlagen");
+        }
+      };
+    });
+    content.querySelectorAll("[data-help-del]").forEach((b) => {
+      b.onclick = async () => {
+        const id = b.getAttribute("data-help-del");
+        try {
+          await api(`/admin/help-messages/${encodeURIComponent(id)}/delete`, {
+            method: "POST",
+            body: "{}",
+          });
+          renderReports();
+        } catch (err) {
+          alert(err?.message || "Fehlgeschlagen");
+        }
+      };
+    });
+    content.querySelectorAll("[data-bug-user]").forEach((b) => {
+      b.onclick = () => {
+        const id = b.getAttribute("data-bug-user");
+        if (!id) return;
+        state.userFocusId = id;
+        goTab("users", { userId: id });
+      };
+    });
     content.querySelectorAll("[data-keep]").forEach((b) => {
       b.onclick = async () => {
         const type = b.getAttribute("data-type");

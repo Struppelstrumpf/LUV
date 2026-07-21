@@ -1,7 +1,9 @@
 package com.luv.couple.ui.screens
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -62,6 +64,7 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.data.AccountInfo
 import com.luv.couple.data.PeerPalette
+import com.luv.couple.net.BugReportInfo
 import com.luv.couple.net.HelpMessageInfo
 import com.luv.couple.net.LiveNoticeBus
 import com.luv.couple.net.LuvApiClient
@@ -134,6 +137,7 @@ fun AdminHubScreen(
     var overviewPublic by remember { mutableIntStateOf(0) }
     var overviewPeer by remember { mutableIntStateOf(0) }
     var overviewHelp by remember { mutableIntStateOf(0) }
+    var overviewBugs by remember { mutableIntStateOf(0) }
     var overviewMods by remember { mutableIntStateOf(0) }
     var overviewVouchers by remember { mutableIntStateOf(0) }
     var permGroups by remember { mutableStateOf<List<StaffPermGroup>>(emptyList()) }
@@ -145,6 +149,7 @@ fun AdminHubScreen(
     var publicReports by remember { mutableStateOf<List<PublicReportInfo>>(emptyList()) }
     var peerReports by remember { mutableStateOf<List<PeerReportInfo>>(emptyList()) }
     var helpMessages by remember { mutableStateOf<List<HelpMessageInfo>>(emptyList()) }
+    var bugReports by remember { mutableStateOf<List<BugReportInfo>>(emptyList()) }
 
     var vouchers by remember { mutableStateOf<List<VoucherInfo>>(emptyList()) }
     var showVoucherWizard by remember { mutableStateOf(false) }
@@ -223,6 +228,7 @@ fun AdminHubScreen(
                     overviewPublic = it.openPublicReports
                     overviewPeer = it.openPeerReports
                     overviewHelp = it.openHelpMessages
+                    overviewBugs = it.openBugReports
                     overviewMods = it.moderators
                     overviewVouchers = it.vouchers
                     if (it.permissionGroups.isNotEmpty()) permGroups = it.permissionGroups
@@ -263,6 +269,7 @@ fun AdminHubScreen(
                 publicReports = runCatching { LuvApiClient.listPublicReports() }.getOrDefault(emptyList())
                 peerReports = runCatching { LuvApiClient.listPeerReports() }.getOrDefault(emptyList())
                 helpMessages = runCatching { LuvApiClient.listHelpMessages() }.getOrDefault(emptyList())
+                bugReports = runCatching { LuvApiClient.listBugReports() }.getOrDefault(emptyList())
             }
             AdminTab.Codes -> if (can("codes.view")) {
                 vouchers = runCatching { LuvApiClient.listVouchers() }.getOrDefault(emptyList())
@@ -456,6 +463,9 @@ fun AdminHubScreen(
                                     Triple("Hilfe", "$overviewHelp", {
                                         if (can("reports.view")) tab = AdminTab.Reports
                                     }),
+                                    Triple("Bugs", "$overviewBugs", {
+                                        if (can("reports.view")) tab = AdminTab.Reports
+                                    }),
                                     Triple("Moderatoren", "$overviewMods", {
                                         if (isAdmin || can("mods.manage")) tab = AdminTab.Mods
                                     }),
@@ -627,6 +637,47 @@ fun AdminHubScreen(
                     }
 
                     AdminTab.Reports -> {
+                        Text("Bug-Meldungen", fontFamily = DisplayFont, color = TextPrimary, fontSize = 20.sp)
+                        if (bugReports.isEmpty()) AdminEmpty("Keine offenen Bug-Meldungen.")
+                        bugReports.forEach { b ->
+                            HubBugCard(
+                                report = b,
+                                canAct = can("reports.act"),
+                                canOpenUser = can("gm.search") && !b.userId.isNullOrBlank(),
+                                onHelpful = {
+                                    scope.launch {
+                                        runCatching { LuvApiClient.markBugReportHelpful(b.id) }
+                                            .onSuccess {
+                                                bugReports = runCatching { LuvApiClient.listBugReports() }
+                                                    .getOrDefault(bugReports)
+                                                toast("Als hilfreich markiert — User kann +10 🪙 abholen")
+                                                reloadOverview()
+                                            }
+                                            .onFailure { toast(it.message ?: "Fehler") }
+                                    }
+                                },
+                                onDelete = {
+                                    scope.launch {
+                                        runCatching { LuvApiClient.deleteBugReport(b.id) }
+                                            .onSuccess {
+                                                bugReports = bugReports.filterNot { it.id == b.id }
+                                                toast("Gelöscht")
+                                                reloadOverview()
+                                            }
+                                            .onFailure { toast(it.message ?: "Fehler") }
+                                    }
+                                },
+                                onOpenProfile = {
+                                    val uid = b.userId
+                                    if (!uid.isNullOrBlank()) onOpenProfile(uid, b.nickname)
+                                },
+                                onOpenAdminUser = {
+                                    val uid = b.userId
+                                    if (!uid.isNullOrBlank()) openUserById(uid, b.nickname)
+                                }
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
                         Text("Hilfe-Anfragen", fontFamily = DisplayFont, color = TextPrimary, fontSize = 20.sp)
                         if (helpMessages.isEmpty()) AdminEmpty("Keine offenen Hilfe-Nachrichten.")
                         helpMessages.forEach { m ->
@@ -1729,6 +1780,136 @@ private fun AdminDangerBtn(label: String, onClick: () -> Unit) {
             .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
         Text(label, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun HubBugCard(
+    report: BugReportInfo,
+    canAct: Boolean,
+    canOpenUser: Boolean,
+    onHelpful: () -> Unit,
+    onDelete: () -> Unit,
+    onOpenProfile: () -> Unit,
+    onOpenAdminUser: () -> Unit,
+) {
+    val context = LocalContext.current
+    val whenLabel = remember(report.createdAt) {
+        if (report.createdAt <= 0L) ""
+        else SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.GERMANY).format(Date(report.createdAt))
+    }
+    var bitmap by remember(report.imageUrl) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(report.imageUrl) {
+        val raw = report.imageUrl.trim()
+        if (raw.isBlank() || !raw.startsWith("http")) {
+            bitmap = null
+            return@LaunchedEffect
+        }
+        bitmap = withContext(Dispatchers.IO) {
+            runCatching {
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(8, TimeUnit.SECONDS)
+                    .readTimeout(12, TimeUnit.SECONDS)
+                    .build()
+                client.newCall(Request.Builder().url(raw).get().build()).execute().use { resp ->
+                    if (!resp.isSuccessful) return@runCatching null
+                    resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
+                }
+            }.getOrNull()
+        }
+    }
+    val gold = Color(0xFFFFD54F)
+    AdminCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                report.nickname,
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 17.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (report.status == "helpful" || report.rewardPending) {
+                Text("hilfreich", color = gold, fontFamily = DisplayFont, fontSize = 12.sp)
+            }
+        }
+        if (whenLabel.isNotBlank()) {
+            Text(whenLabel, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
+        }
+        Text(
+            "${report.locationLabel} · ${report.visibilityLabel}" +
+                if (report.reproducible) " · reproduzierbar" else "",
+            color = TextMuted,
+            fontFamily = BodyFont,
+            fontSize = 12.sp
+        )
+        Text(
+            report.description,
+            color = TextPrimary,
+            fontFamily = BodyFont,
+            fontSize = 14.sp,
+            lineHeight = 20.sp
+        )
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(BgDeep)
+            )
+        } else if (report.imageUrl.isNotBlank()) {
+            Text(
+                "Bild: ${report.imageUrl}",
+                color = AccentRose,
+                fontFamily = BodyFont,
+                fontSize = 12.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clickable {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(report.imageUrl)))
+                    }
+                }
+            )
+        }
+        if (report.videoUrl.isNotBlank()) {
+            Text(
+                "Video öffnen",
+                color = AccentRose,
+                fontFamily = DisplayFont,
+                fontSize = 13.sp,
+                modifier = Modifier.clickable {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(report.videoUrl)))
+                    }
+                }
+            )
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (canOpenUser) {
+                AdminGhostBtn("Profil", onOpenProfile)
+                AdminGhostBtn("Nutzer", onOpenAdminUser)
+            }
+            if (canAct) {
+                if (report.status == "open") {
+                    AdminPrimaryBtn("Hilfreich +10", fillMaxWidth = false, onClick = onHelpful)
+                }
+                AdminDangerBtn("Löschen", onDelete)
+            }
+        }
     }
 }
 

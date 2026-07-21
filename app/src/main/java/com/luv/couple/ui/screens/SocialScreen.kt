@@ -216,6 +216,8 @@ private fun FriendsPanel(
     val gapPx = with(density) { 10.dp.toPx() }
     var showAddFriend by remember { mutableStateOf(false) }
     var pendingFriendshipCoins by remember { mutableIntStateOf(0) }
+    var pendingBugCoins by remember { mutableIntStateOf(0) }
+    var claimingBug by remember { mutableStateOf(false) }
     var claimingCoins by remember { mutableStateOf(false) }
     var liveCount by remember { mutableIntStateOf(-1) }
 
@@ -261,6 +263,11 @@ private fun FriendsPanel(
                         ).show()
                     }
                 }
+            runCatching { LuvApiClient.pendingBugRewards() }
+                .onSuccess { (_, reports) ->
+                    pendingBugCoins = reports.sumOf { it.rewardCoins.coerceAtLeast(10) }
+                }
+                .onFailure { /* ignore */ }
             loading = false
         }
     }
@@ -293,7 +300,7 @@ private fun FriendsPanel(
         return idx.coerceIn(0, friends.lastIndex)
     }
 
-    val staffInbox by com.luv.couple.net.StaffWarningBus.inbox.collectAsStateWithLifecycle()
+        val staffInbox by com.luv.couple.net.StaffWarningBus.inbox.collectAsStateWithLifecycle()
 
     Column(
         modifier = modifier
@@ -304,6 +311,70 @@ private fun FriendsPanel(
             ),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        if (pendingBugCoins > 0) {
+            val gold = Color(0xFFFFD54F)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(gold.copy(0.18f))
+                    .border(1.dp, gold.copy(0.55f), RoundedCornerShape(18.dp))
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Hilfreicher Bug belohnt",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 17.sp
+                )
+                Text(
+                    "Danke für deine Meldung — hol dir $pendingBugCoins Coins ab.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(gold.copy(0.35f))
+                        .clickable(enabled = !claimingBug) {
+                            claimingBug = true
+                            scope.launch {
+                                runCatching { LuvApiClient.claimBugReportReward() }
+                                    .onSuccess { coins ->
+                                        pendingBugCoins = 0
+                                        Toast.makeText(
+                                            context,
+                                            if (coins > 0) "+$coins Coins abgeholt"
+                                            else "Bereits abgeholt",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                        reload()
+                                    }
+                                    .onFailure {
+                                        Toast.makeText(
+                                            context,
+                                            it.message ?: "Abholen fehlgeschlagen",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                claimingBug = false
+                            }
+                        }
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        if (claimingBug) "…" else "Belohnung abholen  +$pendingBugCoins 🪙",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 15.sp
+                    )
+                }
+            }
+        }
         // Nur Verwarnungen — Geschenke sind einmaliges Popup, nicht dauerhaft hier
         val warnInbox = staffInbox.filter { it.severity != "gift" }
         if (warnInbox.isNotEmpty()) {

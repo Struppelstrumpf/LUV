@@ -98,6 +98,7 @@ fun AccountHomeScreen(
     var legalDoc by remember { mutableStateOf<LegalDoc?>(null) }
     var showChangelog by remember { mutableStateOf(false) }
     var confirmLogout by remember { mutableStateOf(false) }
+    var showBugReport by remember { mutableStateOf(false) }
     MenuBackdrop(includeNavigationBars = false) {
         Column(
             modifier = Modifier
@@ -168,6 +169,7 @@ fun AccountHomeScreen(
             MenuButton("Einstellungen", BgSoft, onOpenSettings, bordered = true)
             MenuButton("Code einlösen", BgSoft, onOpenRedeem, bordered = true)
             MenuButton("Hilfe", BgSoft, onOpenHelp, bordered = true)
+            MenuButton("Bug melden  +10 🪙", BgSoft, { showBugReport = true }, bordered = true)
             if (account?.isStaff == true || account?.isAdmin == true) {
                 MenuButton(
                     if (account?.isAdmin == true) "Admin" else "Moderator",
@@ -224,6 +226,9 @@ fun AccountHomeScreen(
     }
     if (showChangelog) {
         ChangelogDialog(onDismiss = { showChangelog = false })
+    }
+    if (showBugReport) {
+        BugReportDialog(onDismiss = { showBugReport = false })
     }
     if (confirmLogout) {
         AlertDialog(

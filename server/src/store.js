@@ -18,6 +18,7 @@ const DEFAULT = {
   publicReports: {},
   peerReports: {},
   helpMessages: {},
+  bugReports: {},
   liveNotice: null,
   maintenance: {
     nightKey: null,
@@ -84,6 +85,8 @@ function load() {
         raw.helpMessages && typeof raw.helpMessages === "object"
           ? raw.helpMessages
           : {},
+      bugReports:
+        raw.bugReports && typeof raw.bugReports === "object" ? raw.bugReports : {},
       liveNotice:
         raw.liveNotice && typeof raw.liveNotice === "object" ? raw.liveNotice : null,
       maintenance:

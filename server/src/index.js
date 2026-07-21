@@ -34,6 +34,7 @@ const seasonEvents = require("./events");
 const adminWebAuth = require("./admin_web_auth");
 const maintenance = require("./maintenance");
 const shopChangeQueue = require("./shop_change_queue");
+const bugReports = require("./bug_reports");
 ach.bindGetDb(getDb);
 const {
   STICKER_SHOP_PRICES,
@@ -4012,6 +4013,7 @@ const PAID_CREDIT_REASONS = new Set([
   "event_contest_prize",
   "event_vote",
   "maintenance_reward",
+  "bug_report_reward",
 ]);
 
 /** Soft-Earn (nicht als IAP-Äquivalent / Tip-fähig stapeln). */
@@ -8745,6 +8747,7 @@ app.get("/v1/admin/overview", (req, res) => {
   const openHelp = Object.values(helpMessages()).filter(
     (r) => (r.status || "open") === "open"
   ).length;
+  const openBugs = bugReports.openCount(db);
   const mods = users.filter((u) => {
     ensureStaffFields(u);
     return u.role === "mod";
@@ -8756,6 +8759,7 @@ app.get("/v1/admin/overview", (req, res) => {
     openPublicReports: openPublic,
     openPeerReports: openPeer,
     openHelpMessages: openHelp,
+    openBugReports: openBugs,
     moderators: mods,
     vouchers: Object.values(db.vouchers || {}).filter((v) => v && !v.revoked).length,
     me: publicUser(ctx.user),
@@ -13763,6 +13767,96 @@ app.post("/v1/admin/help-messages/:id/delete", (req, res) => {
   entry.resolvedBy = ctx.user.id;
   scheduleSave();
   return res.json({ ok: true, message: helpMessageView(entry) });
+});
+
+/** Bug-Meldungen (Screenshot-Link, Video, Ort, Repro) */
+app.post("/v1/bug-reports", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const result = bugReports.createReport(getDb(), ctx.user, req.body || {});
+  if (!result.ok) {
+    return res.status(result.status || 400).json({
+      error: result.error,
+      message: result.message,
+    });
+  }
+  scheduleSave();
+  console.log(
+    `bug report ${result.report.id} by=${ctx.user.nickname || ctx.user.id}`
+  );
+  return res.status(201).json({ ok: true, report: result.report });
+});
+
+app.get("/v1/me/bug-reports/pending", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const reports = bugReports.pendingRewardReports(getDb(), ctx.user.id);
+  return res.json({
+    ok: true,
+    pending: reports.length,
+    rewardCoins: bugReports.REWARD_COINS,
+    reports,
+  });
+});
+
+app.post("/v1/me/bug-reports/claim", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const reportId = String(req.body?.reportId || "").trim() || null;
+  const result = bugReports.claimRewards(getDb(), ctx.user, applyLedger, {
+    reportId,
+  });
+  flushSave();
+  return res.json({
+    ok: true,
+    claimed: result.claimed,
+    coins: result.coins,
+    pending: result.pending,
+    rewardCoins: bugReports.REWARD_COINS,
+    user: publicUser(ctx.user),
+  });
+});
+
+app.get("/v1/admin/bug-reports", (req, res) => {
+  const ctx = requireStaff(req, res, "reports.view");
+  if (!ctx) return;
+  return res.json({
+    ok: true,
+    reports: bugReports.listOpenForAdmin(getDb()),
+    rewardCoins: bugReports.REWARD_COINS,
+  });
+});
+
+app.post("/v1/admin/bug-reports/:id/helpful", (req, res) => {
+  const ctx = requireStaff(req, res, "reports.act");
+  if (!ctx) return;
+  const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  const result = bugReports.markHelpful(getDb(), id, ctx.user.id);
+  if (!result.ok) {
+    return res.status(result.status || 400).json({
+      error: result.error,
+      message: result.message,
+    });
+  }
+  scheduleSave();
+  staffAudit(ctx.user, "bug_report_helpful", { id, already: Boolean(result.already) });
+  return res.json({ ok: true, report: result.report });
+});
+
+app.post("/v1/admin/bug-reports/:id/delete", (req, res) => {
+  const ctx = requireStaff(req, res, "reports.act");
+  if (!ctx) return;
+  const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  const result = bugReports.deleteReport(getDb(), id, ctx.user.id);
+  if (!result.ok) {
+    return res.status(result.status || 400).json({
+      error: result.error,
+      message: result.message,
+    });
+  }
+  scheduleSave();
+  staffAudit(ctx.user, "bug_report_delete", { id });
+  return res.json({ ok: true, report: result.report });
 });
 
 app.delete("/v1/rooms/:code", (req, res) => {

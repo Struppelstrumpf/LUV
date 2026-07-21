@@ -193,6 +193,25 @@ data class HelpMessageInfo(
     val createdAt: Long
 )
 
+data class BugReportInfo(
+    val id: String,
+    val status: String,
+    val description: String,
+    val imageUrl: String,
+    val videoUrl: String,
+    val reproducible: Boolean,
+    val location: String,
+    val locationLabel: String,
+    val locationOther: String,
+    val visibility: String,
+    val visibilityLabel: String,
+    val nickname: String,
+    val userId: String?,
+    val createdAt: Long,
+    val rewardPending: Boolean,
+    val rewardCoins: Int = 10,
+)
+
 data class StaffUserCard(
     val userId: String,
     val nickname: String,
@@ -221,6 +240,7 @@ data class StaffOverview(
     val openPublicReports: Int,
     val openPeerReports: Int,
     val openHelpMessages: Int = 0,
+    val openBugReports: Int = 0,
     val moderators: Int,
     val vouchers: Int,
     val permissionGroups: List<StaffPermGroup>
@@ -1016,6 +1036,88 @@ object LuvApiClient {
         authedPost("/v1/admin/help-messages/${messageId.encodeURL()}/delete", "{}")
     }
 
+    suspend fun submitBugReport(
+        description: String,
+        imageUrl: String,
+        videoUrl: String,
+        reproducible: Boolean,
+        location: String,
+        locationOther: String,
+        visibility: String,
+    ) = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("description", description.trim().take(1200))
+            .put("imageUrl", imageUrl.trim().take(500))
+            .put("videoUrl", videoUrl.trim().take(500))
+            .put("reproducible", reproducible)
+            .put("location", location.trim().take(32))
+            .put("locationOther", locationOther.trim().take(80))
+            .put("visibility", visibility.trim().take(16))
+            .toString()
+        authedPost("/v1/bug-reports", body)
+    }
+
+    private fun parseBugReport(o: JSONObject): BugReportInfo = BugReportInfo(
+        id = o.getString("id"),
+        status = o.optString("status", "open"),
+        description = o.optString("description"),
+        imageUrl = o.optString("imageUrl"),
+        videoUrl = o.optString("videoUrl"),
+        reproducible = o.optBoolean("reproducible", false),
+        location = o.optString("location", "other"),
+        locationLabel = o.optString("locationLabel", o.optString("location", "—")),
+        locationOther = o.optString("locationOther"),
+        visibility = o.optString("visibility", "self"),
+        visibilityLabel = o.optString("visibilityLabel", o.optString("visibility", "—")),
+        nickname = o.optString("nickname", "Jemand"),
+        userId = o.optString("userId").takeIf { it.isNotBlank() && it != "null" },
+        createdAt = o.optLong("createdAt"),
+        rewardPending = o.optBoolean("rewardPending", false),
+        rewardCoins = o.optInt("rewardCoins", 10),
+    )
+
+    suspend fun listBugReports(): List<BugReportInfo> = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/admin/bug-reports")
+        val arr = json.optJSONArray("reports") ?: return@withContext emptyList()
+        buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                add(parseBugReport(o))
+            }
+        }
+    }
+
+    suspend fun markBugReportHelpful(reportId: String) = withContext(Dispatchers.IO) {
+        authedPost("/v1/admin/bug-reports/${reportId.encodeURL()}/helpful", "{}")
+    }
+
+    suspend fun deleteBugReport(reportId: String) = withContext(Dispatchers.IO) {
+        authedPost("/v1/admin/bug-reports/${reportId.encodeURL()}/delete", "{}")
+    }
+
+    suspend fun pendingBugRewards(): Pair<Int, List<BugReportInfo>> = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/me/bug-reports/pending")
+        val arr = json.optJSONArray("reports")
+        val list = buildList {
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    add(parseBugReport(o))
+                }
+            }
+        }
+        json.optInt("pending", list.size) to list
+    }
+
+    /** Server prüft hilfreichen Status — Coins nur bei gültigem Claim. */
+    suspend fun claimBugReportReward(reportId: String? = null): Int = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+        if (!reportId.isNullOrBlank()) body.put("reportId", reportId)
+        val json = authedPost("/v1/me/bug-reports/claim", body.toString())
+        json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
+        json.optInt("coins", 0)
+    }
+
     private fun parseStaffUserCard(o: JSONObject?): StaffUserCard? {
         if (o == null) return null
         val id = o.optString("userId").ifBlank { o.optString("id") }
@@ -1081,6 +1183,7 @@ object LuvApiClient {
             openPublicReports = json.optInt("openPublicReports", 0),
             openPeerReports = json.optInt("openPeerReports", 0),
             openHelpMessages = json.optInt("openHelpMessages", 0),
+            openBugReports = json.optInt("openBugReports", 0),
             moderators = json.optInt("moderators", 0),
             vouchers = json.optInt("vouchers", 0),
             permissionGroups = parsePermGroups(json.optJSONArray("permissionGroups"))
