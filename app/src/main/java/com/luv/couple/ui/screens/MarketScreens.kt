@@ -1503,7 +1503,11 @@ private fun ItemShopContent(
                 Spacer(modifier = Modifier.height(s(8.dp)))
             }
             val q = searchQuery
-            val stickers = remember(catalogTick, q, cycle.epoch) {
+            // Server-Katalog ist Wahrheit (Fix/Fenster). Client-Rotation darf Fix-Items
+            // nicht mehr aus dem Grid nehmen — Suche zeigte sie deshalb schon, die Liste nicht.
+            val skipClientRotation =
+                q.isNotBlank() || LiveShopCatalog.remoteCatalogLoaded
+            val stickers = remember(catalogTick, q, cycle.epoch, skipClientRotation) {
                 val filtered = LiveShopCatalog.stickers().filter {
                     LiveShopCatalog.matchesQuery(
                         q,
@@ -1519,10 +1523,10 @@ private fun ItemShopContent(
                     priceOf = { it.priceCoins },
                     remainingOf = { it.remainingMs },
                     withRemaining = { item, rem -> item.copy(remainingMs = rem) },
-                    skipRotation = q.isNotBlank()
+                    skipRotation = skipClientRotation
                 ).first
             }
-            val themes = remember(catalogTick, q, cycle.epoch) {
+            val themes = remember(catalogTick, q, cycle.epoch, skipClientRotation) {
                 val filtered = LiveShopCatalog.themes().filter {
                     LiveShopCatalog.matchesQuery(q, it.emoji, it.label, it.searchText)
                 }
@@ -1533,10 +1537,10 @@ private fun ItemShopContent(
                     priceOf = { it.priceCoins },
                     remainingOf = { it.remainingMs },
                     withRemaining = { item, rem -> item.copy(remainingMs = rem) },
-                    skipRotation = q.isNotBlank()
+                    skipRotation = skipClientRotation
                 ).first
             }
-            val pets = remember(catalogTick, q, cycle.epoch) {
+            val pets = remember(catalogTick, q, cycle.epoch, skipClientRotation) {
                 val filtered = LiveShopCatalog.pets().filter {
                     LiveShopCatalog.matchesQuery(q, it.emoji, it.label, it.searchText)
                 }
@@ -1547,10 +1551,10 @@ private fun ItemShopContent(
                     priceOf = { it.priceCoins },
                     remainingOf = { it.remainingMs },
                     withRemaining = { item, rem -> item.copy(remainingMs = rem) },
-                    skipRotation = q.isNotBlank()
+                    skipRotation = skipClientRotation
                 ).first
             }
-            val emojis = remember(catalogTick, q, cycle.epoch) {
+            val emojis = remember(catalogTick, q, cycle.epoch, skipClientRotation) {
                 val filtered = LiveShopCatalog.emojis().filter {
                     LiveShopCatalog.matchesQuery(
                         q,
@@ -1566,7 +1570,7 @@ private fun ItemShopContent(
                     priceOf = { it.priceCoins },
                     remainingOf = { it.remainingMs },
                     withRemaining = { item, rem -> item.copy(remainingMs = rem) },
-                    skipRotation = q.isNotBlank()
+                    skipRotation = skipClientRotation
                 ).first
             }
             when (tab) {
