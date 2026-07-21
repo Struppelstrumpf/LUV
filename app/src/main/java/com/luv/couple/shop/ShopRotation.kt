@@ -122,11 +122,12 @@ object ShopRotation {
         val day = nowMs / 86_400_000L
 
         if (skipRotation || shopable.isEmpty()) {
+            val sorted = shopable.sortedWith(compareBy({ priceOf(it) }, { idOf(it) }))
             val grid = if (withRemaining != null) {
-                shopable.map { item ->
+                sorted.map { item ->
                     withRemaining(item, remainingOf(item)?.takeIf { it > 0L })
                 }
-            } else shopable
+            } else sorted
             val gridIds = grid.map { idOf(it) }.toHashSet()
             val (preview, days, perItem) = pickPreview(
                 pool = previewPool ?: shopable,
@@ -184,6 +185,8 @@ object ShopRotation {
         for (item in timed + pinned + mixed) {
             if (seen.add(idOf(item))) gridRaw.add(item)
         }
+        // Gesamtes Grid nach Preis (Custom + Builtin + Timer) — keine Sonderzone „unten“
+        gridRaw.sortWith(compareBy({ priceOf(it) }, { idOf(it) }))
 
         val grid = if (withRemaining != null) {
             gridRaw.map { item ->

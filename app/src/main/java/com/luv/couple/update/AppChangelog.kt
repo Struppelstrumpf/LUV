@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.62",
+            listOf(
+                "Itemshop: alle Items (auch Custom) nach Preis sortiert",
+                "Bug melden: „Hilfreich“ gibt sofort +10 Coins und schließt den Fall",
+            )
+        ),
+        Entry(
             "2.2.61",
             listOf(
                 "Stiftfarbe bleibt je Lobby (normal / Event / Random) — Wechsel in einer Lobby ändert die anderen nicht",

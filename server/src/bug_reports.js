@@ -194,31 +194,71 @@ function listOpenForAdmin(db) {
   return Object.values(store)
     .filter((r) => {
       const st = r.status || "open";
-      return st === "open" || st === "helpful";
+      // Nur offene; hilfreich ohne Auszahlung (Legacy) noch sichtbar
+      if (st === "open") return true;
+      if (st === "helpful" && !r.rewardClaimedAt) return true;
+      return false;
     })
     .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))
     .slice(0, 120)
     .map(publicView);
 }
 
-function markHelpful(db, id, staffUserId) {
+/**
+ * Hilfreich: sofort +10 Coins, Fall zu und aus der Liste (gelöscht).
+ * @param {function} [applyLedger] (userId, delta, reason, refId) => user|null
+ */
+function markHelpful(db, id, staffUserId, applyLedger) {
   const store = ensureStore(db);
   const entry = store[String(id || "")];
   if (!entry) return { ok: false, status: 404, error: "not_found" };
   const st = entry.status || "open";
-  if (st === "deleted") {
-    return { ok: false, status: 400, error: "deleted", message: "Bereits gelöscht." };
+  if (st === "deleted" && entry.rewardClaimedAt) {
+    return { ok: false, status: 400, error: "deleted", message: "Bereits erledigt." };
   }
-  if (st === "claimed") {
-    return { ok: false, status: 400, error: "claimed", message: "Belohnung schon abgeholt." };
+  if (st === "claimed" || entry.rewardClaimedAt) {
+    entry.status = "deleted";
+    entry.resolvedAt = entry.resolvedAt || Date.now();
+    entry.resolvedBy = staffUserId || entry.resolvedBy || null;
+    return { ok: true, already: true, coins: 0, report: publicView(entry) };
   }
-  if (st === "helpful") {
-    return { ok: true, already: true, report: publicView(entry) };
+
+  // Noch nicht ausgezahlt (open oder altes helpful ohne Claim)
+  let coins = 0;
+  const uid = entry.userId;
+  if (!uid) {
+    return {
+      ok: false,
+      status: 400,
+      error: "no_user",
+      message: "Meldung ohne User — keine Coins möglich.",
+    };
   }
-  entry.status = "helpful";
+  if (typeof applyLedger !== "function") {
+    return {
+      ok: false,
+      status: 500,
+      error: "no_ledger",
+      message: "Auszahlung nicht verfügbar.",
+    };
+  }
+  const u = applyLedger(uid, REWARD_COINS, "bug_report_reward", entry.id);
+  if (!u) {
+    return {
+      ok: false,
+      status: 400,
+      error: "ledger_failed",
+      message: "Coins konnten nicht gutgeschrieben werden.",
+    };
+  }
+  coins = REWARD_COINS;
+  entry.status = "deleted";
   entry.helpfulAt = Date.now();
   entry.helpfulBy = staffUserId || null;
-  return { ok: true, report: publicView(entry) };
+  entry.rewardClaimedAt = Date.now();
+  entry.resolvedAt = Date.now();
+  entry.resolvedBy = staffUserId || null;
+  return { ok: true, already: false, coins, report: publicView(entry) };
 }
 
 function deleteReport(db, id, staffUserId) {
@@ -288,8 +328,9 @@ function claimRewards(db, user, applyLedger, { reportId = null } = {}) {
     if (entry.status !== "helpful" || entry.rewardClaimedAt) continue;
     const u = applyLedger(uid, REWARD_COINS, "bug_report_reward", entry.id);
     if (!u) continue;
-    entry.status = "claimed";
+    entry.status = "deleted";
     entry.rewardClaimedAt = Date.now();
+    entry.resolvedAt = Date.now();
     claimed += 1;
     coins += REWARD_COINS;
   }

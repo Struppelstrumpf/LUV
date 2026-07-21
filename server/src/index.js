@@ -13902,16 +13902,32 @@ app.post("/v1/admin/bug-reports/:id/helpful", (req, res) => {
   const ctx = requireStaff(req, res, "reports.act");
   if (!ctx) return;
   const id = String(req.params.id || "").replace(/[^a-zA-Z0-9_-]/g, "");
-  const result = bugReports.markHelpful(getDb(), id, ctx.user.id);
+  const result = bugReports.markHelpful(getDb(), id, ctx.user.id, (uid, coins, reason, ref) =>
+    applyLedger(uid, coins, reason, ref)
+  );
   if (!result.ok) {
     return res.status(result.status || 400).json({
       error: result.error,
       message: result.message,
     });
   }
-  scheduleSave();
-  staffAudit(ctx.user, "bug_report_helpful", { id, already: Boolean(result.already) });
-  return res.json({ ok: true, report: result.report });
+  flushSave();
+  staffAudit(ctx.user, "bug_report_helpful", {
+    id,
+    already: Boolean(result.already),
+    coins: result.coins || 0,
+  });
+  return res.json({
+    ok: true,
+    report: result.report,
+    coins: result.coins || 0,
+    message:
+      result.coins > 0
+        ? `+${result.coins} Coins gutgeschrieben — Fall geschlossen.`
+        : result.already
+          ? "Bereits erledigt."
+          : "Fall geschlossen.",
+  });
 });
 
 app.post("/v1/admin/bug-reports/:id/delete", (req, res) => {

@@ -648,9 +648,8 @@ fun AdminHubScreen(
                                     scope.launch {
                                         runCatching { LuvApiClient.markBugReportHelpful(b.id) }
                                             .onSuccess {
-                                                bugReports = runCatching { LuvApiClient.listBugReports() }
-                                                    .getOrDefault(bugReports)
-                                                toast("Als hilfreich markiert — User kann +10 🪙 abholen")
+                                                bugReports = bugReports.filterNot { it.id == b.id }
+                                                toast("+10 🪙 gutgeschrieben — Fall geschlossen")
                                                 reloadOverview()
                                             }
                                             .onFailure { toast(it.message ?: "Fehler") }

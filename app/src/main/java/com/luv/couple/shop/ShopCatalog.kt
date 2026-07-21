@@ -602,7 +602,7 @@ object LiveShopCatalog {
         return ShopEventRewards.filterShopList(
             merged
                 .map { p -> displayLabel("pets", p.emoji)?.let { p.copy(label = it) } ?: p }
-                .sortedBy { it.priceCoins }
+                .sortedWith(compareBy({ it.priceCoins }, { it.emoji }))
         , "pets") { it.emoji }
     }
 

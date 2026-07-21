@@ -3632,7 +3632,7 @@
                   ${r.userId ? `<button class="btn secondary btn-xs" data-bug-user="${esc(r.userId)}" data-bug-nick="${esc(r.nickname || "")}">Nutzer</button>` : ""}
                   ${
                     r.status === "open"
-                      ? `<button class="btn btn-xs" data-bug-helpful="${esc(r.id)}">Hilfreich +10</button>`
+                      ? `<button class="btn btn-xs" data-bug-helpful="${esc(r.id)}">Hilfreich · +10 Coins &amp; schließen</button>`
                       : ""
                   }
                   <button class="btn danger btn-xs" data-bug-del="${esc(r.id)}">Löschen</button>
@@ -3708,10 +3708,14 @@
       b.onclick = async () => {
         const id = b.getAttribute("data-bug-helpful");
         try {
-          await api(`/admin/bug-reports/${encodeURIComponent(id)}/helpful`, {
+          const res = await api(`/admin/bug-reports/${encodeURIComponent(id)}/helpful`, {
             method: "POST",
             body: "{}",
           });
+          const c = Number(res?.coins) || 0;
+          if (c > 0) {
+            /* ok */
+          }
           renderReports();
         } catch (err) {
           alert(err?.message || "Fehlgeschlagen");
