@@ -8638,6 +8638,8 @@ app.get("/v1/me/marriage/ceremony", (req, res) => {
     ok: true,
     marriage: pubM,
     ceremony: cer,
+    // Admin-Raum-Editor → live im Trausaal
+    roomLayout: roomLayouts.getLayout(db, "wedding"),
   });
 });
 
@@ -8881,13 +8883,22 @@ app.post("/v1/me/marriage/ceremony/move", (req, res) => {
   if (c.seated[ctx.user.id]) {
     return res.status(400).json({ error: "already_seated" });
   }
-  const x = Math.min(1, Math.max(0, Number(req.body?.x) || 0.5));
-  const y = Math.min(1, Math.max(0, Number(req.body?.y) || 0.75));
-  c.positions[ctx.user.id] = { x, y };
+  const layout = roomLayouts.getLayout(db, "wedding");
+  const prev = c.positions[ctx.user.id] || { x: 0.5, y: 0.86 };
+  const clamped = roomLayouts.clampMove(
+    layout,
+    prev.x,
+    prev.y,
+    Number(req.body?.x),
+    Number(req.body?.y)
+  );
+  c.positions[ctx.user.id] = { x: clamped.x, y: clamped.y };
   scheduleSave();
   return res.json({
     ok: true,
     ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+    roomLayout: layout,
+    blocked: Boolean(clamped.blocked),
   });
 });
 
@@ -8904,20 +8915,28 @@ app.post("/v1/me/marriage/ceremony/sit", (req, res) => {
     return res.status(400).json({ error: "not_in_room" });
   }
   if (c.seated[ctx.user.id]) {
-    return res.json({ ok: true, already: true, ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users) });
+    return res.json({
+      ok: true,
+      already: true,
+      ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+      roomLayout: roomLayouts.getLayout(db, "wedding"),
+    });
   }
   const seatId = String(req.body?.seatId || "").trim().slice(0, 48);
   if (!seatId) return res.status(400).json({ error: "bad_seat" });
   const taken = Object.values(c.seated).includes(seatId);
   if (taken) return res.status(400).json({ error: "seat_taken" });
   const isCouple = weddingCeremony.isCouple(m, ctx.user.id);
-  const zone = roomLayouts.findZone(db, "wedding", seatId);
-  const coupleSeat = zone
-    ? roomLayouts.isCoupleSeat(zone)
-    : roomLayouts.isCoupleSeat(seatId);
-  const guestSeat = zone
-    ? roomLayouts.isGuestSeat(zone)
-    : roomLayouts.isGuestSeat(seatId);
+  // Nur Sitz-Zonen aus dem Admin-Layout (gelb/blau)
+  const zone = roomLayouts.findSitZone(db, "wedding", seatId);
+  if (!zone) {
+    return res.status(400).json({
+      error: "bad_seat",
+      message: "Dieser Platz ist im Raum-Layout nicht definiert.",
+    });
+  }
+  const coupleSeat = roomLayouts.isCoupleSeat(zone);
+  const guestSeat = roomLayouts.isGuestSeat(zone);
   if (isCouple && !coupleSeat) {
     return res.status(400).json({
       error: "couple_altar_only",
@@ -8928,6 +8947,9 @@ app.post("/v1/me/marriage/ceremony/sit", (req, res) => {
     return res.status(400).json({ error: "guest_bench_only" });
   }
   c.seated[ctx.user.id] = seatId;
+  const sx = zone.shape === "circle" ? zone.cx : zone.x + zone.w / 2;
+  const sy = zone.shape === "circle" ? zone.cy : zone.y + zone.h / 2;
+  c.positions[ctx.user.id] = { x: sx, y: sy };
   const memberIds = Array.isArray(m.ceremonyMemberIds) ? m.ceremonyMemberIds : [m.a, m.b];
   const allSeated = memberIds.every((uid) => c.seated[uid]);
   if (allSeated) c.phase = "vows";
@@ -8935,6 +8957,7 @@ app.post("/v1/me/marriage/ceremony/sit", (req, res) => {
   return res.json({
     ok: true,
     ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+    roomLayout: roomLayouts.getLayout(db, "wedding"),
   });
 });
 
@@ -9528,7 +9551,15 @@ app.put("/v1/admin/room-layouts/:roomId", (req, res) => {
     return res.status(400).json({ error: result.error });
   }
   scheduleSave();
-  return res.json({ ok: true, layout: result.layout });
+  return res.json({
+    ok: true,
+    layout: result.layout,
+    live: true,
+    message:
+      req.params.roomId === "wedding"
+        ? "Gespeichert — gilt sofort im Hochzeits-Trausaal."
+        : "Gespeichert — gilt sofort in der App.",
+  });
 });
 
 app.get("/v1/admin/overview", (req, res) => {

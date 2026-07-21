@@ -165,12 +165,16 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
+        // Layout kommt mit der Zeremonie-API (Admin-Speichern → sofort live)
         runCatching { LuvApiClient.fetchRoomLayout("wedding") }
             .onSuccess { layout = it }
         while (!married && rejectName == null) {
             runCatching { LuvApiClient.fetchCeremony() }
                 .onSuccess {
                     ceremony = it.ceremony
+                    if (it.roomLayout != null && it.roomLayout.zones.isNotEmpty()) {
+                        layout = it.roomLayout
+                    }
                     val me = it.ceremony?.gathering?.find { g -> g.userId == myId }
                     if (me != null) {
                         if (me.seatedSeatId != null) seated = true

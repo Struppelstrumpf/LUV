@@ -145,6 +145,13 @@ function findZone(db, roomId, seatId) {
   return layout.zones.find((z) => z.id === id) || null;
 }
 
+function findSitZone(db, roomId, seatId) {
+  const z = findZone(db, roomId, seatId);
+  if (!z) return null;
+  if (z.color !== "yellow" && z.color !== "blue") return null;
+  return z;
+}
+
 function isCoupleSeat(zoneOrId) {
   if (!zoneOrId) return false;
   if (typeof zoneOrId === "string") return zoneOrId.startsWith("altar_");
@@ -159,13 +166,68 @@ function isGuestSeat(zoneOrId) {
   return zoneOrId.color === "blue";
 }
 
+const AVATAR_R = 0.028;
+
+function zoneContains(z, x, y, pad = 0) {
+  if (!z) return false;
+  if (z.shape === "circle") {
+    const dx = x - z.cx;
+    const dy = y - z.cy;
+    return Math.hypot(dx, dy) <= (Number(z.r) || 0) + pad;
+  }
+  return (
+    x >= z.x - pad &&
+    x <= z.x + z.w + pad &&
+    y >= z.y - pad &&
+    y <= z.y + z.h + pad
+  );
+}
+
+function isBlocked(layout, x, y) {
+  const zones = layout?.zones || [];
+  return zones.some((z) => z.color === "red" && zoneContains(z, x, y, AVATAR_R * 0.35));
+}
+
+function isWalkable(layout, x, y) {
+  if (isBlocked(layout, x, y)) return false;
+  const greens = (layout?.zones || []).filter((z) => z.color === "green");
+  if (!greens.length) return true;
+  return greens.some((z) => zoneContains(z, x, y, AVATAR_R));
+}
+
+/** Bewegung schrittweise clampen — stoppt vor roten Bereichen. */
+function clampMove(layout, fromX, fromY, toX, toY) {
+  let x = Math.min(1, Math.max(0, Number(fromX) || 0.5));
+  let y = Math.min(1, Math.max(0, Number(fromY) || 0.75));
+  const tx = Math.min(1, Math.max(0, Number(toX) || x));
+  const ty = Math.min(1, Math.max(0, Number(toY) || y));
+  if (!layout) return { x: tx, y: ty };
+  const dist = Math.hypot(tx - x, ty - y);
+  if (dist < 1e-6) return { x, y };
+  const steps = Math.min(80, Math.max(1, Math.ceil(dist / 0.012)));
+  for (let i = 1; i <= steps; i++) {
+    const nx = x + ((tx - x) * i) / steps;
+    const ny = y + ((ty - y) * i) / steps;
+    if (!isWalkable(layout, nx, ny)) {
+      return { x, y, blocked: true };
+    }
+    x = nx;
+    y = ny;
+  }
+  return { x, y, blocked: false };
+}
+
 module.exports = {
   ROOM_DEFS,
   listRooms,
   getLayout,
   saveLayout,
   findZone,
+  findSitZone,
   isCoupleSeat,
   isGuestSeat,
+  isBlocked,
+  isWalkable,
+  clampMove,
   defaultWeddingZones,
 };

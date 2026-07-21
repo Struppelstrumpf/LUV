@@ -2546,7 +2546,8 @@ object LuvApiClient {
 
     data class CeremonyBundle(
         val marriage: MarriageInfo?,
-        val ceremony: CeremonyInfo?
+        val ceremony: CeremonyInfo?,
+        val roomLayout: RoomLayout? = null,
     )
 
     data class RoomZone(
@@ -2573,45 +2574,51 @@ object LuvApiClient {
         val id: String,
         val name: String,
         val zones: List<RoomZone>,
+        val updatedAt: Long = 0L,
     )
+
+    private fun parseRoomLayout(o: JSONObject?, fallbackId: String = "wedding"): RoomLayout? {
+        if (o == null) return null
+        val arr = o.optJSONArray("zones") ?: return null
+        val zones = buildList {
+            for (i in 0 until arr.length()) {
+                val z = arr.optJSONObject(i) ?: continue
+                add(
+                    RoomZone(
+                        id = z.optString("id"),
+                        color = z.optString("color"),
+                        shape = z.optString("shape"),
+                        x = z.optDouble("x", 0.0).toFloat(),
+                        y = z.optDouble("y", 0.0).toFloat(),
+                        w = z.optDouble("w", 0.0).toFloat(),
+                        h = z.optDouble("h", 0.0).toFloat(),
+                        cx = z.optDouble("cx", 0.0).toFloat(),
+                        cy = z.optDouble("cy", 0.0).toFloat(),
+                        r = z.optDouble("r", 0.0).toFloat(),
+                    )
+                )
+            }
+        }
+        return RoomLayout(
+            id = o.optString("id", fallbackId),
+            name = o.optString("name", fallbackId),
+            zones = zones,
+            updatedAt = o.optLong("updatedAt", 0L),
+        )
+    }
 
     suspend fun fetchRoomLayout(roomId: String): RoomLayout = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/room-layouts/${roomId.trim()}")
-        val lay = json.optJSONObject("layout") ?: JSONObject()
-        val arr = lay.optJSONArray("zones")
-        val zones = buildList {
-            if (arr != null) {
-                for (i in 0 until arr.length()) {
-                    val z = arr.optJSONObject(i) ?: continue
-                    add(
-                        RoomZone(
-                            id = z.optString("id"),
-                            color = z.optString("color"),
-                            shape = z.optString("shape"),
-                            x = z.optDouble("x", 0.0).toFloat(),
-                            y = z.optDouble("y", 0.0).toFloat(),
-                            w = z.optDouble("w", 0.0).toFloat(),
-                            h = z.optDouble("h", 0.0).toFloat(),
-                            cx = z.optDouble("cx", 0.0).toFloat(),
-                            cy = z.optDouble("cy", 0.0).toFloat(),
-                            r = z.optDouble("r", 0.0).toFloat(),
-                        )
-                    )
-                }
-            }
-        }
-        RoomLayout(
-            id = lay.optString("id", roomId),
-            name = lay.optString("name", roomId),
-            zones = zones,
-        )
+        parseRoomLayout(json.optJSONObject("layout"), roomId)
+            ?: RoomLayout(id = roomId, name = roomId, zones = emptyList())
     }
 
     suspend fun fetchCeremony(): CeremonyBundle = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/me/marriage/ceremony")
         CeremonyBundle(
             marriage = parseMarriageInfo(json.optJSONObject("marriage")),
-            ceremony = parseCeremonyInfo(json.optJSONObject("ceremony"))
+            ceremony = parseCeremonyInfo(json.optJSONObject("ceremony")),
+            roomLayout = parseRoomLayout(json.optJSONObject("roomLayout")),
         )
     }
 

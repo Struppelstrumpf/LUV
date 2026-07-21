@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.69",
+            listOf(
+                "Hochzeit: Admin-Raum-Layout gilt sofort im Trausaal (Laufen, Stopp, Sitze)",
+            )
+        ),
+        Entry(
             "2.2.68",
             listOf(
                 "Hochzeit: begehbare und blockierte Bereiche sowie Sitzplätze aus dem Admin-Raum-Editor",

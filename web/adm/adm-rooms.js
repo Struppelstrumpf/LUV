@@ -52,7 +52,7 @@
     root.innerHTML = `
       <div class="panel">
         <h3>Räume</h3>
-        <p class="help">Bereiche für Sonder-Räume einzeichnen. Gespeicherte Layouts nutzt die App live.</p>
+        <p class="help">Bereiche einzeichnen und speichern — das Hochzeits-System in der App nutzt sie sofort (laufen, blockieren, setzen).</p>
         <div class="room-list">
           ${rooms
             .map(
@@ -360,7 +360,7 @@
         });
         zones = (res.layout?.zones || zones).map((z) => ({ ...z }));
         dirty = false;
-        setStatus("Gespeichert");
+        setStatus(res.message || "Gespeichert — gilt sofort im Hochzeits-Trausaal");
         paintList();
         draw();
       } catch (e) {
