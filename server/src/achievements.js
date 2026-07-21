@@ -726,7 +726,10 @@ function userHasRewardItem(user, kind, itemId) {
   const inv = user?.inventory;
   if (!inv) return false;
   const id = String(itemId || "").trim();
-  if (kind === "pets") return Array.isArray(inv.pets) && inv.pets.includes(id);
+  if (kind === "pets") {
+    if (Array.isArray(inv.pets)) return inv.pets.includes(id);
+    return (Number(inv.pets?.[id]) || 0) > 0;
+  }
   if (kind === "themes") return Array.isArray(inv.themes) && inv.themes.includes(id);
   if (kind === "stickers") return (Number(inv.stickers?.[id]) || 0) >= 1;
   if (kind === "emojis") return (Number(inv.emojis?.[id]) || 0) >= 1;

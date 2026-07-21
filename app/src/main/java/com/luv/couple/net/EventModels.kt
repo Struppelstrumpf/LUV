@@ -191,6 +191,33 @@ data class EventContestInfo(
     }
 }
 
+data class EventShopPet(
+    val itemId: String,
+    val emoji: String,
+    val label: String,
+    val priceCoins: Int,
+    val year: Int,
+    val hasImage: Boolean = false,
+    val imageUrl: String? = null,
+) {
+    companion object {
+        fun fromJson(o: JSONObject?): EventShopPet? {
+            if (o == null) return null
+            val itemId = o.optString("itemId").trim()
+            if (itemId.isEmpty()) return null
+            return EventShopPet(
+                itemId = itemId,
+                emoji = o.optString("emoji", "🎁"),
+                label = o.optString("label", "Event-Begleiter"),
+                priceCoins = o.optInt("priceCoins", 200).coerceAtLeast(0),
+                year = o.optInt("year", 0),
+                hasImage = o.optBoolean("hasImage", false),
+                imageUrl = o.optCleanString("imageUrl"),
+            )
+        }
+    }
+}
+
 data class SeasonEvent(
     val id: String,
     val title: String,
@@ -213,8 +240,11 @@ data class SeasonEvent(
     val lobbyEnabled: Boolean = false,
     val contestEnabled: Boolean = false,
     val canCreateLobby: Boolean = false,
+    val lobbyCreated: Boolean = false,
+    val lobbyCode: String? = null,
     val eventPrompt: String? = null,
     val contest: EventContestInfo? = null,
+    val shopPet: EventShopPet? = null,
 ) {
     companion object {
         fun fromJson(o: JSONObject): SeasonEvent {
@@ -249,8 +279,12 @@ data class SeasonEvent(
             lobbyEnabled = o.optJSONObject("lobby")?.optBoolean("enabled", false) == true,
             contestEnabled = o.optJSONObject("contest")?.optBoolean("enabled", false) == true,
             canCreateLobby = o.optBoolean("canCreateLobby", false),
+            lobbyCreated = o.optBoolean("lobbyCreated", false),
+            lobbyCode = o.optCleanString("lobbyCode")
+                ?: o.optJSONObject("contest")?.optCleanString("lobbyCode"),
             eventPrompt = o.optCleanString("eventPrompt"),
             contest = EventContestInfo.fromJson(o.optJSONObject("contest")),
+            shopPet = EventShopPet.fromJson(o.optJSONObject("shopPet")),
             )
         }
     }

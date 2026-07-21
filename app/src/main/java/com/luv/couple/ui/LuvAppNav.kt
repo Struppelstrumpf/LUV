@@ -244,8 +244,24 @@ fun LuvAppNav() {
 
     fun shareInviteLink(lobby: Lobby) {
         scope.launch {
-            // Momentaufnahme jetzt hochladen → WhatsApp zeigt die aktuelle Leinwand
-            runCatching { CanvasMemoryKeeper.uploadSnapshot(lobby) }
+            CanvasStore.setActiveLobby(lobby.id)
+            PairConnectionService.startAll(context)
+            // History vom Server abwarten, falls lokal noch leer (Home → Teilen)
+            if (CanvasStore.snapshot(lobby.id).isEmpty()) {
+                for (i in 0 until 12) {
+                    kotlinx.coroutines.delay(250)
+                    if (CanvasStore.snapshot(lobby.id).isNotEmpty()) break
+                }
+            }
+            var uploaded = runCatching {
+                CanvasMemoryKeeper.uploadSnapshot(lobby, allowEmpty = false)
+            }.getOrDefault(false)
+            if (!uploaded && CanvasStore.snapshot(lobby.id).isNotEmpty()) {
+                kotlinx.coroutines.delay(400)
+                uploaded = runCatching {
+                    CanvasMemoryKeeper.uploadSnapshot(lobby, allowEmpty = false)
+                }.getOrDefault(false)
+            }
             shareText(inviteMessage(lobby))
             inviteLobby = null
         }
@@ -460,20 +476,24 @@ fun LuvAppNav() {
     fun createEventLobby(event: com.luv.couple.net.SeasonEvent) {
         if (busy) return
         if (!requireGoogleOrToast()) return
-        if (!event.canCreateLobby) {
-            Toast.makeText(
-                context,
-                "Für dieses Event hast du schon eine Event-Lobby erstellt.",
-                Toast.LENGTH_SHORT
-            ).show()
-            return
-        }
         scope.launch {
             busy = true
             joinError = null
             try {
                 val snap = prefs.snapshot()
-                if (snap.lobbies.size >= PeerPalette.MAX_LOBBIES) {
+                val existing = snap.lobbies.firstOrNull {
+                    it.eventId.asCleanJsonString() == event.id
+                }
+                if (existing != null) {
+                    context.startActivity(
+                        Intent(context, LockDrawActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            putExtra(LockDrawActivity.EXTRA_LOBBY_ID, existing.id)
+                        }
+                    )
+                    return@launch
+                }
+                if (snap.lobbies.size >= PeerPalette.MAX_LOBBIES && event.canCreateLobby) {
                     joinError = "Maximal ${PeerPalette.MAX_LOBBIES} Lobbys."
                     return@launch
                 }
@@ -501,9 +521,8 @@ fun LuvAppNav() {
                     hostColorSide = hostColorSide,
                     createdByMe = true,
                     eventId = (room.eventId ?: event.id).asCleanJsonString(),
-                    eventPrompt = (
-                        room.eventPrompt ?: event.eventPrompt ?: event.contest?.promptHint
-                    ).asCleanJsonString(),
+                    eventPrompt = room.eventPrompt.asCleanJsonString(),
+                    eventPromptChoices = room.eventPromptChoices,
                     eventEndsAt = room.eventEndsAt.asCleanJsonString(),
                 )
                 prefs.upsertLobby(lobby)
@@ -526,6 +545,24 @@ fun LuvAppNav() {
                 if (e is LuvApiException && e.isNoCoins) {
                     showNoCoins = true
                     joinError = null
+                } else if (e is LuvApiException && e.error == "event_lobby_exists") {
+                    val again = prefs.snapshot().lobbies.firstOrNull {
+                        it.eventId.asCleanJsonString() == event.id
+                    }
+                    if (again != null) {
+                        context.startActivity(
+                            Intent(context, LockDrawActivity::class.java).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                putExtra(LockDrawActivity.EXTRA_LOBBY_ID, again.id)
+                            }
+                        )
+                    } else {
+                        Toast.makeText(
+                            context,
+                            e.message ?: "Event-Lobby existiert bereits.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                 } else {
                     joinError = when (e) {
                         is LuvApiException -> e.message
@@ -878,6 +915,7 @@ fun LuvAppNav() {
             createdByMe = false,
             eventId = room.eventId,
             eventPrompt = room.eventPrompt,
+            eventPromptChoices = room.eventPromptChoices,
             eventEndsAt = room.eventEndsAt,
         )
         prefs.upsertLobby(lobby)
@@ -1051,6 +1089,7 @@ fun LuvAppNav() {
                 createdByMe = false,
                 eventId = room.eventId,
                 eventPrompt = room.eventPrompt,
+                eventPromptChoices = room.eventPromptChoices,
                 eventEndsAt = room.eventEndsAt,
             )
             prefs.resetInventoryToStarter()
@@ -1992,11 +2031,7 @@ fun LuvAppNav() {
                             onLogout = { logoutAccount() },
                             onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                             onOpenRedeem = { navController.navigate(Routes.REDEEM) },
-                            onReplayTutorial = {
-                                joinError = null
-                                tutorialReplay = true
-                                navController.navigate(Routes.TUTORIAL)
-                            },
+                            onOpenHelp = { navController.navigate(Routes.HELP) },
                             onOpenAdmin = {
                                 navController.navigate(Routes.ADMIN)
                             }
@@ -2124,7 +2159,6 @@ fun LuvAppNav() {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 onOpenQuietHours = { navController.navigate(Routes.QUIET_HOURS) },
-                onOpenHelp = { navController.navigate(Routes.HELP) },
                 onDeleteAccount = { deleteAccountCompletely() }
             )
         }

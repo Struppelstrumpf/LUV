@@ -85,8 +85,8 @@ fun AccountHomeScreen(
     message: String?,
     onOpenSettings: () -> Unit,
     onOpenRedeem: () -> Unit,
+    onOpenHelp: () -> Unit,
     onOpenAdmin: () -> Unit,
-    onReplayTutorial: () -> Unit = {},
     googleEnabled: Boolean = false,
     googleBusy: Boolean = false,
     onGoogleConnect: () -> Unit = {},
@@ -167,7 +167,7 @@ fun AccountHomeScreen(
 
             MenuButton("Einstellungen", BgSoft, onOpenSettings, bordered = true)
             MenuButton("Code einlösen", BgSoft, onOpenRedeem, bordered = true)
-            MenuButton("Tutorial ansehen", BgSoft, onReplayTutorial, bordered = true)
+            MenuButton("Hilfe", BgSoft, onOpenHelp, bordered = true)
             if (account?.isStaff == true || account?.isAdmin == true) {
                 MenuButton(
                     if (account?.isAdmin == true) "Admin" else "Moderator",
@@ -361,9 +361,6 @@ E-Mail: info@reineke.pro
 Tel: 015561 048098
 
 Verantwortlich für den Inhalt der App LUV.
-
-Hinweis zu Käufen / Konto:
-Coins und sonstige kostenpflichtige Inhalte sind an dein App-Konto gebunden. Mit optionaler Google-Anmeldung kannst du dein Konto geräteübergreifend wiederherstellen. Ohne Google-Verknüpfung kann bei Deinstallation, Gerätewechsel oder Löschen der App-Daten Guthaben verloren gehen.
 """.trimIndent()
 
 private val AGB_TEXT = """
@@ -373,7 +370,7 @@ Allgemeine Geschäftsbedingungen für LUV (digitale Inhalte)
 Reineke GbR, Matthias und Jane Reineke, Elisabethstraße 31, 49201 Dissen (info@reineke.pro).
 
 2. Leistungsbeschreibung
-LUV ermöglicht gemeinsames Zeichnen in Lobbys. Kostenlose Funktionen (u. a. Daily Coins, freie Sessions) und optionale Coin-Pakete können angeboten werden. Technische Verfügbarkeit kann schwanken.
+LUV ermöglicht gemeinsames Zeichnen in Lobbys. Kostenlose Funktionen (u. a. Daily Coins) und optionale Coin-Pakete können angeboten werden. Das Zeichnen in deinen Lobbys ist kostenlos; Kosten können z. B. für das Erstellen zusätzlicher Lobbys, Spiele oder Shop-Inhalte anfallen. Technische Verfügbarkeit kann schwanken.
 
 3. Käufe / Coins
 Käufe von Coin-Paketen erfolgen ausschließlich über Google Play (In-App-Käufe). Mit Abschluss der Zahlung erwirbst du digitale Guthaben-/Nutzungsrechte (Coins) in der App. Preise werden vor dem Kauf in der Google-Play-Oberfläche angezeigt. Es gelten die Nutzungsbedingungen und Zahlungsbedingungen von Google Play.
@@ -384,8 +381,8 @@ In der App können Lootboxen gegen Coins erworben werden. Der Inhalt einer Lootb
 4. Widerruf
 Bei digitalen Inhalten, deren Ausführung mit ausdrücklicher Zustimmung vor Ablauf der Widerrufsfrist begonnen hat und bei denen du zur Kenntnis genommen hast, dass du dein Widerrufsrecht verlierst, kann das Widerrufsrecht entfallen (§ 356 Abs. 5 BGB). Details dazu werden im Checkout-Prozess berücksichtigt, soweit anwendbar.
 
-5. Konto, Google-Anmeldung und Verlust
-Du kannst dein LUV-Konto optional mit einem Google-Konto verknüpfen. Dabei werden zur Anmeldung die von Google bereitgestellten Basisdaten (insbesondere Google-Nutzer-ID, ggf. Name/E-Mail) an unsere Server übermittelt und zur Kontowiederherstellung genutzt. Ohne Google-Verknüpfung sind Coins und Fortschritt an die lokale App-Installation gebunden; bei Deinstallation, Datenlöschen oder Gerätewechsel ohne Wiederherstellung kann Guthaben verloren gehen. Mit erfolgreicher Google-Anmeldung auf einem neuen Gerät kann das bestehende Konto wiederhergestellt werden, soweit technisch verfügbar.
+5. Konto, Google-Anmeldung und Wiederherstellung
+Zur Nutzung von LUV ist eine Anmeldung mit einem Google-Konto erforderlich. Dabei werden zur Anmeldung die von Google bereitgestellten Basisdaten (insbesondere Google-Nutzer-ID, ggf. Name/E-Mail) an unsere Server übermittelt und zur Kontowiederherstellung genutzt. Coins und Fortschritt sind an dein LUV-Konto gebunden und können mit erfolgreicher Google-Anmeldung auf einem neuen Gerät wiederhergestellt werden, soweit technisch verfügbar.
 
 6. Missbrauch, Cheating und Echtgeldhandel
 Manipulation der App oder API (u. a. Mod-APKs, gefälschte Requests, Umgehung von Limits), Mehrfach-Konten zur Umgehung von Limits oder Missbrauch des Shops können zur Sperrung führen. Bereits gezahlte Beträge werden in solchen Fällen nicht erstattet, soweit gesetzlich zulässig.

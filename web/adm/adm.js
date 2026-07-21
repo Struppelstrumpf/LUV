@@ -649,6 +649,11 @@
               : "Lootbox: aus — klicken zum Freigeben"
           }">${it.lootboxEligible !== false ? "🎁" : "⛔"}</button>`;
       const shopOff = shop && shop.enabled === false;
+      const eventBadge = shop?.eventId
+        ? `<span class="badge" title="Event-Begleiter">🎉 ${esc(shop.eventId)}${
+            shop.eventYear ? " · " + shop.eventYear : ""
+          }</span>`
+        : "";
       const achLinks = (it.achievements || [])
         .map(
           (a) =>
@@ -663,6 +668,7 @@
         </div>
         <div class="shop-card-body">
           <strong class="shop-card-title">${esc(it.label || it.itemId)}</strong>
+          ${eventBadge}
           <div class="muted mono shop-card-id">${esc(it.itemId)}</div>
           <div class="shop-card-price-row">${price}
             ${shopOff ? '<span class="badge off">Shop aus</span>' : ""}
@@ -700,6 +706,11 @@
               <p class="help" style="margin:0.2rem 0 0">${cat.hint}</p>
             </div>
             <button type="button" class="btn teal" data-new-kind="${cat.id}">＋ Neu</button>
+          ${
+            cat.id === "pets"
+              ? `<button type="button" class="btn secondary" data-new-kind="event_pets">🎉 Event-Begleiter</button>`
+              : ""
+          }
           </header>
           <p class="help">Keine Einträge für diesen Filter.</p>
         </section>`;
@@ -712,6 +723,11 @@
             <p class="help" style="margin:0.2rem 0 0">${cat.hint} · ${items.length} Items</p>
           </div>
           <button type="button" class="btn teal" data-new-kind="${cat.id}">＋ Neu</button>
+          ${
+            cat.id === "pets"
+              ? `<button type="button" class="btn secondary" data-new-kind="event_pets">🎉 Event-Begleiter</button>`
+              : ""
+          }
         </header>
         <div class="shop-card-grid">${items.map(cardHtml).join("")}</div>
       </section>`;
@@ -1911,9 +1927,31 @@
     });
   }
 
-  function itemFormFields(it = {}, stepHint = "") {
+  function itemFormFields(it = {}, stepHint = "", eventOptions = []) {
     const fromLocal = toLocalInput(it.availableFrom);
     const untilLocal = toLocalInput(it.availableUntil);
+    const eventSelect =
+      it.kind === "pets"
+        ? `<label class="field">Event-Begleiter (optional)
+          <select name="eventId">
+            <option value="">— kein Event —</option>
+            ${(eventOptions || [])
+              .map(
+                (ev) =>
+                  `<option value="${esc(ev.id)}" ${
+                    it.eventId === ev.id ? "selected" : ""
+                  }>${esc(ev.emoji || "🎉")} ${esc(ev.title)} (${ev.year})</option>`
+              )
+              .join("")}
+          </select>
+          <span class="tip">Wenn gesetzt: Shop nur im Event-Zeitraum, Anzeige im Event-Popup</span>
+        </label>
+        <label class="field">Event-Jahr
+          <input name="eventYear" type="number" min="2020" max="2100" value="${esc(
+            it.eventYear ?? ""
+          )}" placeholder="z.B. 2026" />
+        </label>`
+        : "";
     return `
       ${stepHint}
       <div class="grid-2">
@@ -1939,6 +1977,7 @@
           <input name="searchText" value="${esc(it.searchText || "")}" placeholder="herz heart liebe" />
           <span class="tip">Damit Nutzer in der App danach suchen können</span>
         </label>
+        ${eventSelect}
         <label class="field">Listenpreis (Coins)
           <input name="priceCoins" type="number" min="1" max="100000" value="${esc(it.listPrice ?? it.priceCoins ?? 10)}" />
         </label>
@@ -1951,7 +1990,7 @@
         </label>
         <label class="field">Verfügbar ab (optional)
           <input name="availableFrom" type="datetime-local" value="${fromLocal}" />
-          <span class="tip">Vorher unsichtbar im Shop</span>
+          <span class="tip">Vorher unsichtbar im Shop — bei Event-Begleiter automatisch</span>
         </label>
         <label class="field">Verfügbar bis (optional)
           <input name="availableUntil" type="datetime-local" value="${untilLocal}" />
@@ -1978,6 +2017,7 @@
     };
     const from = String(fd.get("availableFrom") || "").trim();
     const until = String(fd.get("availableUntil") || "").trim();
+    const eventId = String(fd.get("eventId") || "").trim();
     return {
       kind: String(fd.get("kind") || "").trim(),
       itemId: String(fd.get("itemId") || "").trim(),
@@ -1991,14 +2031,25 @@
       maxTotalSales: numOrNull("maxTotalSales"),
       maxPerUser: numOrNull("maxPerUser"),
       enabled: form.querySelector('[name="enabled"]').checked,
+      eventId: eventId || "",
+      eventYear: numOrNull("eventYear"),
     };
   }
 
-  function openEditItem(it) {
+  async function openEditItem(it) {
+    let eventOptions = [];
+    if (it.kind === "pets") {
+      try {
+        const evData = await api("/admin/shop/event-options");
+        eventOptions = evData.events || [];
+      } catch (_) {
+        eventOptions = [];
+      }
+    }
     openModal(`
       <h3 style="font-family:var(--display);margin:0 0 0.5rem">Item bearbeiten</h3>
       <p class="help">Änderungen sind sofort für alle Spieler sichtbar. Nur den Namen ändern? Nutze „Name“ auf der Karte — ohne Shop-Seiteneffekte.</p>
-      <form id="editForm">${itemFormFields(it)}
+      <form id="editForm">${itemFormFields(it, "", eventOptions)}
         <div class="actions" style="margin-top:1rem">
           <button type="submit" class="btn">Speichern</button>
           <button type="button" class="btn ghost" id="cancelModal">Abbrechen</button>
@@ -2075,25 +2126,64 @@
     });
   }
 
-  function openWizard(preKind) {
+  async function openWizard(preKind) {
     let step = 0;
+    let eventOptions = [];
+    try {
+      const evData = await api("/admin/shop/event-options");
+      eventOptions = evData.events || [];
+    } catch (_) {
+      eventOptions = [];
+    }
     const draft = {
-      kind: preKind || "emojis",
+      kind: preKind === "event_pets" ? "pets" : preKind || "emojis",
+      isEventPet: preKind === "event_pets",
+      eventId: "",
+      eventYear: null,
+      availableFrom: null,
       itemId: "💖",
       label: "Herz",
       searchText: "herz heart liebe",
-      priceCoins: 40,
+      priceCoins: preKind === "event_pets" ? 200 : 40,
       salePrice: null,
       compareAtPrice: null,
       availableUntil: null,
       maxTotalSales: null,
       maxPerUser: null,
       enabled: true,
-      source: "emoji", // emoji | custom
+      source: preKind === "event_pets" ? "custom" : "emoji",
       imageDataUrl: null,
       visualConfig: null,
+      previewEmoji: "",
     };
+    if (preKind === "event_pets") {
+      draft.label = "Event-Begleiter";
+      draft.searchText = "event begleiter";
+      draft.itemId = "";
+    }
     const steps = ["Kategorie", "Gestalten", "Preis", "Angebot & Timer", "Limits", "Fertig"];
+
+    function applyEventChoice(evId) {
+      const ev = eventOptions.find((e) => e.id === evId);
+      draft.eventId = evId || "";
+      if (!ev) {
+        draft.eventYear = null;
+        draft.availableFrom = null;
+        draft.availableUntil = null;
+        return;
+      }
+      draft.eventYear = ev.year;
+      draft.availableFrom = ev.availableFrom;
+      draft.availableUntil = ev.availableUntil;
+      draft.itemId = ev.suggestedItemId;
+      draft.label = ev.suggestedLabel;
+      draft.previewEmoji = ev.emoji || "🎁";
+      draft.searchText = `${ev.emoji || ""} ${ev.title || ""} begleiter event ${ev.year}`.trim();
+      if (!draft.priceCoins || draft.priceCoins < 1) draft.priceCoins = 200;
+      draft.source = "custom";
+      draft.isEventPet = true;
+      draft.kind = "pets";
+    }
 
     function paint() {
       openModal(`
@@ -2116,7 +2206,7 @@
       if (modalCard) {
         modalCard.classList.toggle(
           "wide",
-          step === 1 && (draft.source === "custom" || draft.kind === "themes")
+          step === 1 && (draft.source === "custom" || draft.kind === "themes" || draft.isEventPet)
         );
       }
       $("cancelModal").onclick = closeModal;
@@ -2135,8 +2225,14 @@
           paint();
         };
       wireDesignStep();
+      const eventSel = $("eventPetSelect");
+      if (eventSel) {
+        eventSel.onchange = () => {
+          applyEventChoice(String(eventSel.value || "").trim());
+          paint();
+        };
+      }
       const form = $("wizForm");
-      // Enter in Suchworte/Name darf den Wizard NICHT speichern/schließen
       form.addEventListener("keydown", (e) => {
         if (e.key !== "Enter") return;
         const tag = (e.target && e.target.tagName) || "";
@@ -2150,7 +2246,6 @@
       });
       form.onsubmit = async (e) => {
         e.preventDefault();
-        // Nur auf dem letzten Schritt wirklich anlegen (Enter auf früheren Steps = weiter)
         if (step < steps.length - 1) {
           if (!saveStep()) return;
           step++;
@@ -2158,6 +2253,10 @@
           return;
         }
         if (!saveStep()) return;
+        if (draft.isEventPet && !draft.eventId) {
+          alert("Bitte ein Event für den Event-Begleiter wählen.");
+          return;
+        }
         if (draft.kind === "themes") ensureThemeId();
         const body = {
           kind: draft.kind,
@@ -2167,11 +2266,19 @@
           priceCoins: draft.priceCoins,
           salePrice: draft.salePrice,
           compareAtPrice: draft.compareAtPrice,
+          availableFrom: draft.availableFrom,
           availableUntil: draft.availableUntil,
           maxTotalSales: draft.maxTotalSales,
           maxPerUser: draft.maxPerUser,
           enabled: draft.enabled,
         };
+        if (draft.isEventPet && draft.eventId) {
+          body.eventId = draft.eventId;
+          body.eventYear = draft.eventYear;
+          body.previewEmoji = draft.previewEmoji || "";
+          body.rotationLocked = true;
+          if (!body.priceCoins || body.priceCoins < 1) body.priceCoins = 200;
+        }
         if (draft.kind === "themes" && draft.visualConfig) {
           body.visualConfig = draft.visualConfig;
           body.emoji = (draft.visualConfig.emojis && draft.visualConfig.emojis[0]) || "🖼️";
@@ -2180,37 +2287,39 @@
         if (draft.source === "custom" && draft.imageDataUrl) {
           body.petSource = "image";
           body.imageDataUrl = draft.imageDataUrl;
-          // Stabile Bild-ID — nie img_new (sonst überschreiben sich alle Bilder)
           const S = Studio();
-          if (!S?.isStableImageItemId?.(draft.itemId)) {
+          if (!draft.isEventPet && !S?.isStableImageItemId?.(draft.itemId)) {
             draft.itemId = S?.newImageItemId?.() || `img_${Date.now().toString(36)}`;
           }
           body.itemId = draft.itemId;
+        } else if (draft.isEventPet) {
+          alert("Event-Begleiter braucht ein Bild (Chromakey / Composer).");
+          return;
         }
-        const created = await api("/admin/shop/items", {
-          method: "POST",
-          body: JSON.stringify(body),
-        });
-        if (created?.item?.itemId) draft.itemId = created.item.itemId;
-        closeModal();
-        renderShop();
+        try {
+          const created = await api("/admin/shop/items", {
+            method: "POST",
+            body: JSON.stringify(body),
+          });
+          if (created?.item?.itemId) draft.itemId = created.item.itemId;
+          closeModal();
+          renderShop();
+        } catch (err) {
+          alert(err?.message || "Anlegen fehlgeschlagen");
+        }
       };
     }
 
     function ensureCustomImageId() {
+      if (draft.isEventPet && draft.itemId && /^img_event_/i.test(draft.itemId)) return;
       const S = Studio();
       if (!S?.isStableImageItemId?.(draft.itemId)) {
         draft.itemId = S?.newImageItemId?.() || `img_${Date.now().toString(36)}`;
       }
     }
 
-    function isStableThemeId(id) {
-      const s = String(id || "").trim();
-      return /^theme_[a-z0-9]{4,24}$/i.test(s);
-    }
-
     function ensureThemeId() {
-      if (isStableThemeId(draft.itemId)) return;
+      if (/^theme_[a-z0-9]{4,24}$/i.test(String(draft.itemId || ""))) return;
       const bytes = new Uint8Array(4);
       if (crypto && crypto.getRandomValues) crypto.getRandomValues(bytes);
       else for (let i = 0; i < 4; i++) bytes[i] = (Math.random() * 256) | 0;
@@ -2220,24 +2329,19 @@
     }
 
     function wireDesignStep() {
-      const setSrc = (src) => {
-        draft.source = src;
-        if (src === "custom") {
-          ensureCustomImageId();
-        } else if (src === "emoji") {
-          // Bild-ID nicht als Emoji-ID weiterverwenden
-          if (/^img_/i.test(String(draft.itemId || ""))) {
-            draft.itemId = "💖";
-            draft.imageDataUrl = null;
-          }
-        }
-        paint();
-      };
       const srcEmoji = $("srcEmoji");
       const srcCustom = $("srcCustom");
-      if (srcEmoji) srcEmoji.onclick = () => setSrc("emoji");
-      if (srcCustom) srcCustom.onclick = () => setSrc("custom");
-
+      if (srcEmoji)
+        srcEmoji.onclick = () => {
+          if (draft.isEventPet) return;
+          draft.source = "emoji";
+          paint();
+        };
+      if (srcCustom)
+        srcCustom.onclick = () => {
+          draft.source = "custom";
+          paint();
+        };
       const pickEmoji = $("pickEmoji");
       if (pickEmoji)
         pickEmoji.onclick = () => {
@@ -2253,17 +2357,15 @@
         };
 
       const focusWizardLabel = () => {
-        requestAnimationFrame(() => {
-          const label = document.querySelector('#wizForm [name="label"]');
-          if (label && typeof label.focus === "function") {
-            try {
-              label.focus();
-              if (typeof label.select === "function") label.select();
-            } catch (_) {
-              /* ignore */
-            }
+        const label = document.querySelector('#wizForm input[name="label"]');
+        if (label) {
+          try {
+            label.focus();
+            if (typeof label.select === "function") label.select();
+          } catch (_) {
+            /* ignore */
           }
-        });
+        }
       };
 
       const openGlyph = $("openGlyph");
@@ -2319,13 +2421,41 @@
       if (!form) return true;
       const fd = new FormData(form);
       if (step === 0) {
-        draft.kind = String(fd.get("kind") || "emojis");
-        if (draft.kind === "themes") draft.source = "custom";
+        const kindRaw = String(fd.get("kind") || "emojis");
+        if (kindRaw === "event_pets") {
+          draft.kind = "pets";
+          draft.isEventPet = true;
+          draft.source = "custom";
+          if (!draft.priceCoins || draft.priceCoins === 40) draft.priceCoins = 200;
+          if (!draft.label || draft.label === "Herz") draft.label = "Event-Begleiter";
+        } else {
+          draft.kind = kindRaw;
+          draft.isEventPet = false;
+          draft.eventId = "";
+          draft.eventYear = null;
+          if (draft.kind === "themes") draft.source = "custom";
+        }
       }
       if (step === 1) {
         draft.label = String(fd.get("label") || draft.label || "").trim();
         draft.searchText = String(fd.get("searchText") || "").trim();
-        if (draft.kind === "themes") {
+        if (draft.isEventPet) {
+          const evId = String(fd.get("eventId") || draft.eventId || "").trim();
+          if (!evId) {
+            alert("Bitte ein Event wählen.");
+            return false;
+          }
+          const keepLabel = draft.label;
+          const keepSearch = draft.searchText;
+          applyEventChoice(evId);
+          if (keepLabel) draft.label = keepLabel;
+          if (keepSearch) draft.searchText = keepSearch;
+          if (!draft.imageDataUrl) {
+            alert("Bitte Begleiter-Bild gestalten oder freistellen.");
+            return false;
+          }
+          ensureCustomImageId();
+        } else if (draft.kind === "themes") {
           if (!draft.visualConfig) {
             alert("Bitte zuerst den Hintergrund-Designer öffnen.");
             return false;
@@ -2360,8 +2490,10 @@
         draft.salePrice = sp === "" ? null : Number(sp);
         const cp = String(fd.get("compareAtPrice") || "").trim();
         draft.compareAtPrice = cp === "" ? null : Number(cp);
-        const until = String(fd.get("availableUntil") || "").trim();
-        draft.availableUntil = until ? new Date(until).getTime() : null;
+        if (!draft.isEventPet) {
+          const until = String(fd.get("availableUntil") || "").trim();
+          draft.availableUntil = until ? new Date(until).getTime() : null;
+        }
       }
       if (step === 4) {
         const mt = String(fd.get("maxTotalSales") || "").trim();
@@ -2377,18 +2509,66 @@
       return `<div class="pet-preview-row"><div class="pet-preview-circle"><img src="${draft.imageDataUrl}" alt="" /></div><span class="muted">Vorschau</span></div>`;
     }
 
+    function eventOptionsHtml() {
+      if (!eventOptions.length) {
+        return `<p class="help">Keine Events geladen — unter „Events“ prüfen.</p>`;
+      }
+      return `<label class="field">Event
+        <select name="eventId" id="eventPetSelect" required>
+          <option value="">— Event wählen —</option>
+          ${eventOptions
+            .map((ev) => {
+              const when =
+                [ev.windowStart, ev.windowEnd].filter(Boolean).join(" – ") || "Zeitfenster offen";
+              const mark = ev.hasPetForYear ? " · schon Begleiter" : "";
+              const act = ev.active ? " · aktiv" : "";
+              return `<option value="${esc(ev.id)}" ${
+                draft.eventId === ev.id ? "selected" : ""
+              }>${esc(ev.emoji || "🎉")} ${esc(ev.title)} (${ev.year}) — ${esc(
+                when
+              )}${mark}${act}</option>`;
+            })
+            .join("")}
+        </select>
+        <span class="tip">Nur während diesem Event-Zeitraum im Itemshop &amp; Event-Popup.</span>
+      </label>`;
+    }
+
     function stepBody() {
       if (step === 0)
         return `<label class="field">Kategorie
           <select name="kind">
-            <option value="emojis" ${draft.kind === "emojis" ? "selected" : ""}>😊 Emoji (Reaktion)</option>
-            <option value="stickers" ${draft.kind === "stickers" ? "selected" : ""}>🏷️ Sticker</option>
-            <option value="themes" ${draft.kind === "themes" ? "selected" : ""}>🖼️ Hintergrund</option>
-            <option value="pets" ${draft.kind === "pets" ? "selected" : ""}>🐾 Begleiter</option>
+            <option value="emojis" ${!draft.isEventPet && draft.kind === "emojis" ? "selected" : ""}>😊 Emoji (Reaktion)</option>
+            <option value="stickers" ${!draft.isEventPet && draft.kind === "stickers" ? "selected" : ""}>🏷️ Sticker</option>
+            <option value="themes" ${!draft.isEventPet && draft.kind === "themes" ? "selected" : ""}>🖼️ Hintergrund</option>
+            <option value="pets" ${!draft.isEventPet && draft.kind === "pets" ? "selected" : ""}>🐾 Begleiter</option>
+            <option value="event_pets" ${draft.isEventPet ? "selected" : ""}>🎉 Event-Begleiter</option>
           </select>
-          <span class="tip">Neue Items landen in der Lootbox (Seltenheit nach Preis).</span>
+          <span class="tip">Event-Begleiter: nur im Event-Fenster im Shop, danach weg — Besitz bleibt.</span>
         </label>`;
       if (step === 1) {
+        if (draft.isEventPet) {
+          return `
+            ${eventOptionsHtml()}
+            <div class="panel" style="margin-top:0.75rem">
+              <p class="help" style="margin:0 0 0.65rem">
+                Chromakey-Bild oder Composer — feste ID pro Event-Jahr
+                ${draft.itemId ? `(<code>${esc(draft.itemId)}</code>)` : ""}.
+              </p>
+              <div class="actions">
+                <button type="button" class="btn teal" id="openGlyph">✨ Composer öffnen</button>
+                <button type="button" class="btn secondary" id="openPetImage">Bild + Pipette</button>
+                ${draft.imageDataUrl ? `<button type="button" class="btn ghost" id="clearPetImage">Verwerfen</button>` : ""}
+              </div>
+              ${glyphPreviewHtml()}
+            </div>
+            <label class="field" style="margin-top:0.75rem">Name
+              <input name="label" value="${esc(draft.label)}" />
+            </label>
+            <label class="field" style="margin-top:0.6rem">Suchworte
+              <input name="searchText" value="${esc(draft.searchText)}" placeholder="event begleiter" />
+            </label>`;
+        }
         if (draft.kind === "themes") {
           const vc = draft.visualConfig;
           return `
@@ -2456,9 +2636,30 @@
       if (step === 2)
         return `<label class="field">Listenpreis in Coins
           <input name="priceCoins" type="number" min="1" value="${draft.priceCoins}" />
-          <span class="tip">Lootbox-Seltenheit folgt dem Preis.</span>
+          <span class="tip">${
+            draft.isEventPet
+              ? "Standard für Event-Begleiter: 200 Coins."
+              : "Lootbox-Seltenheit folgt dem Preis."
+          }</span>
         </label>`;
-      if (step === 3)
+      if (step === 3) {
+        if (draft.isEventPet) {
+          const from = draft.availableFrom
+            ? new Date(draft.availableFrom).toLocaleString("de-DE")
+            : "—";
+          const until = draft.availableUntil
+            ? new Date(draft.availableUntil).toLocaleString("de-DE")
+            : "—";
+          return `<div class="panel">
+            <p class="help" style="margin:0">Zeitraum kommt automatisch vom Event:</p>
+            <p style="margin:0.5rem 0 0"><strong>${esc(from)}</strong> → <strong>${esc(until)}</strong></p>
+            <p class="muted" style="margin:0.5rem 0 0">Im Shop nur in diesem Fenster; danach verschwindet der Eintrag (Besitz bleibt).</p>
+          </div>
+          <div class="grid-2" style="margin-top:0.75rem">
+            <label class="field">Angebotspreis<input name="salePrice" type="number" value="${draft.salePrice ?? ""}" placeholder="optional" /></label>
+            <label class="field">Durchgestrichener Preis<input name="compareAtPrice" type="number" value="${draft.compareAtPrice ?? ""}" placeholder="optional" /></label>
+          </div>`;
+        }
         return `<div class="grid-2">
           <label class="field">Angebotspreis<input name="salePrice" type="number" value="${draft.salePrice ?? ""}" placeholder="optional" /></label>
           <label class="field">Durchgestrichener Preis<input name="compareAtPrice" type="number" value="${draft.compareAtPrice ?? ""}" placeholder="optional" /></label>
@@ -2467,6 +2668,7 @@
           }" /></label>
         </div>
         <p class="help">Leer = dauerhaft. Mit Datum = Countdown in der App.</p>`;
+      }
       if (step === 4)
         return `<div class="grid-2">
           <label class="field">Max. Verkäufe gesamt<input name="maxTotalSales" type="number" value="${draft.maxTotalSales ?? ""}" placeholder="∞" /></label>
@@ -2477,8 +2679,15 @@
           draft.source === "custom" && draft.imageDataUrl
             ? "✨ Eigenes Design"
             : esc(draft.itemId)
-        }</strong> · ${esc(draft.kind)}</p>
+        }</strong> · ${esc(draft.isEventPet ? "Event-Begleiter" : draft.kind)}</p>
         ${glyphPreviewHtml()}
+        ${
+          draft.isEventPet
+            ? `<p class="muted">Event: ${esc(draft.eventId || "—")} · Jahr ${esc(
+                String(draft.eventYear || "—")
+              )}</p>`
+            : ""
+        }
         ${
           draft.visualConfig
             ? `<div class="theme-mini-preview" style="background:linear-gradient(160deg,${esc(
@@ -2488,7 +2697,11 @@
         }
         <p>${esc(draft.label)} — ${draft.priceCoins} Coins</p>
         <p class="muted">Suche: ${esc(draft.searchText || "—")}</p>
-        <p class="muted">→ landet in der Lootbox</p>
+        <p class="muted">${
+          draft.isEventPet
+            ? "→ Event-Shop + Itemshop im Zeitfenster"
+            : "→ landet in der Lootbox"
+        }</p>
       </div>`;
     }
 

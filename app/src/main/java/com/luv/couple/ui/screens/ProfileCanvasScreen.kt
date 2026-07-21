@@ -173,7 +173,9 @@ fun ProfileCanvasScreen(
     var ownedThemes by remember {
         mutableStateOf(listOf(ProfileCatalog.DEFAULT_THEME_ID))
     }
-    var ownedPets by remember { mutableStateOf(listOf(com.luv.couple.shop.ShopCatalog.DEFAULT_PET)) }
+    var ownedPets by remember {
+        mutableStateOf(mapOf(com.luv.couple.shop.ShopCatalog.DEFAULT_PET to 1))
+    }
     var confirmDiscard by remember { mutableStateOf(false) }
     var displayCoins by remember { mutableIntStateOf(myCoins) }
     var tipPopIds by remember { mutableStateOf<List<Long>>(emptyList()) }
@@ -1582,8 +1584,8 @@ fun ProfileCanvasScreen(
             ProfileChestDialog(
                 ownedStickers = if (editable) ownedStickers else emptyMap(),
                 ownedThemes = if (editable) ownedThemes else listOf(state.themeId),
-                ownedPets = if (editable) ownedPets else listOf(
-                    state.companionEmoji.ifBlank { peerPetEmoji }
+                ownedPets = if (editable) ownedPets else mapOf(
+                    (state.companionEmoji.ifBlank { peerPetEmoji }) to 1
                 ),
                 placedStickers = if (editable) stickerCounts(state.layout) else emptyMap(),
                 emojiBar = if (editable) emojiBar else emptyList(),

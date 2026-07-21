@@ -245,8 +245,10 @@ const DAILY_COINS = 12;
 /** Max. Coins, die ein Profil pro Tag (0:00 Europe/Berlin) ins Münzglas bekommen kann (alle Spender zusammen). */
 const GLASS_TIP_DAILY_MAX = 10;
 const STARTING_COINS = 25;
+/** Legacy-API-Feld — Zeichnen ist in allen Lobbys frei (Lobby erstellen kostet schon). */
 const FREE_SESSIONS_PER_DAY = 5;
-const SESSION_COST = 1;
+/** Zeichnen kostet keine Coins mehr (früher 1 Coin nach freien Tages-Slots). */
+const SESSION_COST = 0;
 const CLEAR_COST = 1;
 const GAME_COST = 1;
 const LOBBY_CREATE_COST = 4;
@@ -655,7 +657,8 @@ function isKnownInventoryItem(kind, itemId) {
       id === DEFAULT_PET ||
       id === marriage.MARRIAGE_PET ||
       PET_SHOP_PRICES[id] != null ||
-      petImages.hasImage(id)
+      petImages.hasImage(id) ||
+      isEventShopPetId(id)
     );
   }
   if (kind === "themes") return id === "meadow" || THEME_SHOP_PRICES[id] != null;
@@ -711,12 +714,14 @@ function purgeShopItemEverywhere(kind, itemId) {
         delete inv.stickers[id];
         changed = true;
       }
-      if (k === "pets" && Array.isArray(inv.pets)) {
-        const before = inv.pets.length;
-        inv.pets = inv.pets.filter((p) => !sameId(p));
-        if (inv.pets.length !== before) changed = true;
+      if (k === "pets") {
+        normalizePetsMap(inv);
+        if (inv.pets[id] != null) {
+          delete inv.pets[id];
+          changed = true;
+        }
         if (sameId(inv.equippedPet)) {
-          if (!inv.pets.includes(DEFAULT_PET)) inv.pets.push(DEFAULT_PET);
+          if (petCount(inv, DEFAULT_PET) < 1) addPetCount(inv, DEFAULT_PET, 1);
           inv.equippedPet = DEFAULT_PET;
           changed = true;
         }
@@ -759,10 +764,10 @@ function purgeShopItemEverywhere(kind, itemId) {
         changed = true;
       }
       if (k === "pets" && sameId(pc.companionEmoji)) {
-        const pets = Array.isArray(user.inventory?.pets) ? user.inventory.pets : [];
-        pc.companionEmoji = pets.includes(DEFAULT_PET)
+        const invPets = user.inventory ? normalizePetsMap(user.inventory) : {};
+        pc.companionEmoji = petOwned(user.inventory || { pets: invPets }, DEFAULT_PET)
           ? DEFAULT_PET
-          : pets[0] || DEFAULT_PET;
+          : Object.keys(invPets)[0] || DEFAULT_PET;
         changed = true;
       }
       // Nur passende Layout-Elemente mit exakt dieser emoji-ID entfernen
@@ -978,6 +983,61 @@ function normalizePetId(raw) {
   return String(raw || "").trim().slice(0, PET_ID_MAX);
 }
 
+/** Begleiter stapelbar (Map id→count), wie Sticker — Array-Altbestand wird migriert. */
+function normalizePetsMap(inv) {
+  if (!inv) return {};
+  if (Array.isArray(inv.pets)) {
+    const next = {};
+    for (const p of inv.pets) {
+      const id = expandTruncatedPetId(String(p || "").trim()).slice(0, PET_ID_MAX);
+      if (!id) continue;
+      next[id] = Math.min(999, (Number(next[id]) || 0) + 1);
+    }
+    inv.pets = next;
+  } else if (!inv.pets || typeof inv.pets !== "object") {
+    inv.pets = {};
+  }
+  return inv.pets;
+}
+
+function petCount(inv, id) {
+  const key = expandTruncatedPetId(String(id || "").trim()).slice(0, PET_ID_MAX);
+  if (!key) return 0;
+  return Math.max(0, Math.floor(Number(normalizePetsMap(inv)[key]) || 0));
+}
+
+function petOwned(inv, id) {
+  return petCount(inv, id) > 0;
+}
+
+function addPetCount(inv, id, n = 1) {
+  const pets = normalizePetsMap(inv);
+  const key = expandTruncatedPetId(String(id || "").trim()).slice(0, PET_ID_MAX);
+  if (!key) return 0;
+  const add = Math.max(0, Math.floor(Number(n) || 0));
+  pets[key] = Math.min(999, (Number(pets[key]) || 0) + add);
+  return pets[key];
+}
+
+function petReservedSlots(user, inv, id) {
+  const key = expandTruncatedPetId(String(id || "").trim()).slice(0, PET_ID_MAX);
+  if (!key) return 0;
+  let reserved = 0;
+  if (String(inv.equippedPet || "") === key) reserved = 1;
+  const companion = String(user?.profileCanvas?.companionEmoji || "").trim();
+  if (companion === key) reserved = Math.max(reserved, 1);
+  return reserved;
+}
+
+function petFreeStock(user, id) {
+  const inv = ensureInventory(user);
+  return Math.max(0, petCount(inv, id) - petReservedSlots(user, inv, id));
+}
+
+function isEventShopPetId(id) {
+  return /^img_event_[a-z0-9_]+_\d{4}$/i.test(String(id || "").trim());
+}
+
 /** Durch slice(0,8) gekürzte img_*-IDs anhand Katalog wiederherstellen. */
 function expandTruncatedPetId(raw, kindHint = null) {
   const id = normalizePetId(raw);
@@ -1038,12 +1098,16 @@ function allocateImageItemId(db, kind) {
  * Nur IDs normalisieren / Zähler säubern — Ownership bleibt stabil.
  */
 function scrubInventoryCatalog(inv) {
-  inv.pets = (inv.pets || [])
-    .map((p) => expandTruncatedPetId(p))
-    .map((p) => String(p || "").trim().slice(0, PET_ID_MAX))
-    .filter((p) => p.length > 0);
-  // Duplikate entfernen, Reihenfolge behalten
-  inv.pets = inv.pets.filter((p, i, a) => a.indexOf(p) === i);
+  const pets = normalizePetsMap(inv);
+  const nextPets = {};
+  for (const [k0, rawN] of Object.entries(pets)) {
+    const n = Math.min(999, Math.max(0, Math.floor(Number(rawN) || 0)));
+    if (n <= 0) continue;
+    const k = expandTruncatedPetId(String(k0 || "").trim()).slice(0, PET_ID_MAX);
+    if (!k) continue;
+    nextPets[k] = Math.min(999, (Number(nextPets[k]) || 0) + n);
+  }
+  inv.pets = nextPets;
   if (inv.equippedPet) {
     inv.equippedPet = expandTruncatedPetId(inv.equippedPet);
   }
@@ -1101,7 +1165,10 @@ function ensureInventory(user) {
   if (!inv.emojis || typeof inv.emojis !== "object") inv.emojis = {};
   if (!Array.isArray(inv.themes)) inv.themes = [];
   if (!inv.stickers || typeof inv.stickers !== "object") inv.stickers = {};
-  if (!Array.isArray(inv.pets)) inv.pets = [];
+  // Pets: Map — Array wird in scrubInventoryCatalog migriert
+  if (!inv.pets || (typeof inv.pets !== "object" && !Array.isArray(inv.pets))) {
+    inv.pets = {};
+  }
   // Nur normalisieren — niemals Besitz löschen
   scrubInventoryCatalog(inv);
   // Starter
@@ -1109,13 +1176,13 @@ function ensureInventory(user) {
     if (!inv.emojis[e] || inv.emojis[e] < 1) inv.emojis[e] = 1;
   }
   if (!inv.themes.includes("meadow")) inv.themes.push("meadow");
-  if (!inv.pets.includes(DEFAULT_PET)) inv.pets.push(DEFAULT_PET);
+  if (petCount(inv, DEFAULT_PET) < 1) addPetCount(inv, DEFAULT_PET, 1);
   // Tutorial-Starter-Sticker (nicht equipped) — einmalig mindestens 1
   if (!inv.stickers["🐕"] || Number(inv.stickers["🐕"]) < 1) {
     inv.stickers["🐕"] = Math.max(1, Number(inv.stickers["🐕"]) || 0);
   }
   // WICHTIG: Keine Shop-Items aus profileCanvas „schenken“ — sonst Inventar-Bypass per PUT /profile
-  if (!inv.equippedPet || !inv.pets.includes(inv.equippedPet)) {
+  if (!inv.equippedPet || !petOwned(inv, inv.equippedPet)) {
     inv.equippedPet = DEFAULT_PET;
   }
   user.inventory = inv;
@@ -1134,7 +1201,7 @@ function clampProfileToInventory(user, profile) {
   if (!inv.themes.includes(themeId)) themeId = "meadow";
   let companionEmoji =
     expandTruncatedPetId(profile.companionEmoji || DEFAULT_PET) || DEFAULT_PET;
-  if (!inv.pets.includes(companionEmoji)) companionEmoji = DEFAULT_PET;
+  if (!petOwned(inv, companionEmoji)) companionEmoji = DEFAULT_PET;
   const myM = marriage.findMarriageForUser(getDb(), user.id);
   const canSpouse = myM && myM.status === "married";
   const canEngaged =
@@ -1178,10 +1245,10 @@ function userOwnsCanvasEmoji(user, emoji) {
   return false;
 }
 
-/** Unique Shop-Items (Theme/Pet): schon im Besitz → kein zweiter Kauf/Tausch. */
+/** Unique Shop-Items (nur Themes): schon im Besitz → kein zweiter Kauf/Tausch. Pets stapeln. */
 function userAlreadyOwnsUnique(user, kind, itemId) {
   if (!user) return false;
-  if (kind !== "pets" && kind !== "themes") return false;
+  if (kind !== "themes") return false;
   return market.userOwnsItem(user, ensureInventory, kind, itemId);
 }
 
@@ -1218,12 +1285,8 @@ function marketItemEquippedLock(user, kind, itemId) {
   const inv = ensureInventory(user);
   const id = String(itemId).trim();
   if (kind === "pets") {
-    if (String(inv.equippedPet || "") === id) {
-      return "Begleiter ist ausgerüstet — zuerst einen anderen wählen.";
-    }
-    const companion = String(user.profileCanvas?.companionEmoji || "").trim();
-    if (companion && companion === id) {
-      return "Begleiter ist auf dem Profil — zuerst wechseln.";
+    if (petFreeStock(user, id) < 1) {
+      return "Begleiter ist ausgerüstet — zuerst einen anderen wählen oder Extra verkaufen.";
     }
     return null;
   }
@@ -1258,11 +1321,15 @@ function cleanupProfileAfterItemRemoved(user, kind, itemId) {
   const id = String(itemId).trim();
   const inv = ensureInventory(user);
   if (kind === "pets") {
-    if (String(inv.equippedPet || "") === id || !inv.pets.includes(inv.equippedPet)) {
+    if (petCount(inv, id) < 1) {
+      if (String(inv.equippedPet || "") === id || !petOwned(inv, inv.equippedPet)) {
+        inv.equippedPet = DEFAULT_PET;
+      }
+      if (user.profileCanvas && String(user.profileCanvas.companionEmoji || "") === id) {
+        user.profileCanvas.companionEmoji = inv.equippedPet || DEFAULT_PET;
+      }
+    } else if (!petOwned(inv, inv.equippedPet)) {
       inv.equippedPet = DEFAULT_PET;
-    }
-    if (user.profileCanvas && String(user.profileCanvas.companionEmoji || "") === id) {
-      user.profileCanvas.companionEmoji = inv.equippedPet || DEFAULT_PET;
     }
   }
   if (kind === "themes" && user.profileCanvas) {
@@ -1436,11 +1503,14 @@ function mergeInventory(target, source) {
   for (const t of b.themes || []) {
     if (t && !a.themes.includes(t)) a.themes.push(t);
   }
-  for (const p of b.pets || []) {
-    if (p && !a.pets.includes(p)) a.pets.push(p);
+  for (const [p, n] of Object.entries(b.pets || {})) {
+    if (!p || !String(p).trim()) continue;
+    const add = Math.max(0, Math.floor(Number(n) || 0));
+    if (add < 1) continue;
+    a.pets[p] = Math.min(999, Math.max(Number(a.pets[p]) || 0, add));
   }
-  if (!a.equippedPet || !a.pets.includes(a.equippedPet)) {
-    a.equippedPet = b.equippedPet && a.pets.includes(b.equippedPet)
+  if (!a.equippedPet || !petOwned(a, a.equippedPet)) {
+    a.equippedPet = b.equippedPet && petOwned(a, b.equippedPet)
       ? b.equippedPet
       : DEFAULT_PET;
   }
@@ -2391,6 +2461,9 @@ function serializeRoom(code, room) {
     marriageId: room.marriageId || null,
     eventId: room.eventId ? String(room.eventId).slice(0, 64) : null,
     eventPrompt: room.eventPrompt ? String(room.eventPrompt).slice(0, 80) : null,
+    eventPromptChoices: Array.isArray(room.eventPromptChoices)
+      ? room.eventPromptChoices.map((p) => String(p || "").trim().slice(0, 80)).filter(Boolean).slice(0, 5)
+      : null,
     eventEndsAt: room.eventEndsAt ? String(room.eventEndsAt).slice(0, 40) : null,
     invitesAllowed: room.invitesAllowed !== false,
     publicShare:
@@ -2481,6 +2554,12 @@ function restoreRoomsFromDisk() {
       marriageId: data.marriageId || null,
       eventId: data.eventId ? String(data.eventId).slice(0, 64) : null,
       eventPrompt: data.eventPrompt ? String(data.eventPrompt).slice(0, 80) : null,
+      eventPromptChoices: Array.isArray(data.eventPromptChoices)
+        ? data.eventPromptChoices
+            .map((p) => String(p || "").trim().slice(0, 80))
+            .filter(Boolean)
+            .slice(0, 5)
+        : null,
       eventEndsAt: data.eventEndsAt ? String(data.eventEndsAt).slice(0, 40) : null,
       invitesAllowed: data.invitesAllowed !== false,
       publicShare:
@@ -2509,7 +2588,8 @@ const STROKES_DIR = path.join(DATA_DIR, "strokes");
 const MEMORY_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_STROKES_PER_ROOM = 5000;
 const MAX_STICKERS_PER_ROOM = 80;
-const MAX_POINTS_PER_STROKE = 420;
+/** Lange Füllstriche (z. B. Wolke ausmalen) brauchen deutlich mehr als kurze Linien. */
+const MAX_POINTS_PER_STROKE = 2000;
 const STROKE_HISTORY_CHUNK = 35;
 const strokeSaveTimers = new Map();
 const stickerSaveTimers = new Map();
@@ -3183,6 +3263,12 @@ function hydrateRoom(code, data, tokenOverride) {
     marriageId: data.marriageId || null,
     eventId: data.eventId ? String(data.eventId).slice(0, 64) : null,
     eventPrompt: data.eventPrompt ? String(data.eventPrompt).slice(0, 80) : null,
+    eventPromptChoices: Array.isArray(data.eventPromptChoices)
+      ? data.eventPromptChoices
+          .map((p) => String(p || "").trim().slice(0, 80))
+          .filter(Boolean)
+          .slice(0, 5)
+      : null,
     eventEndsAt: data.eventEndsAt ? String(data.eventEndsAt).slice(0, 40) : null,
     invitesAllowed: data.invitesAllowed !== false,
     publicShare:
@@ -3735,6 +3821,9 @@ function publicRoom(room, code) {
     memberList: roster,
     eventId: room.eventId || null,
     eventPrompt: room.eventPrompt || null,
+    eventPromptChoices: Array.isArray(room.eventPromptChoices)
+      ? room.eventPromptChoices
+      : null,
     eventEndsAt: room.eventEndsAt || null,
     invitesAllowed: room.invitesAllowed !== false,
     hasDrawing: Boolean(hasDrawing),
@@ -4222,8 +4311,6 @@ function rewardPublicShare(room, code, proposalId) {
 function publicUser(user) {
   const dailyGrantedJustNow = ensureDailyGrant(user);
   ensureStaffFields(user);
-  const day = todayKey();
-  const freeLeft = Math.max(0, FREE_SESSIONS_PER_DAY - (user.sessionsByDay?.[day] || 0));
   const canCreateFree = evaluateCanCreateFreeLobby(user);
   const role = user.role || "user";
   return {
@@ -4238,7 +4325,8 @@ function publicUser(user) {
     googleEmail: user.googleEmail || null,
     banned: Boolean(user.banned),
     publicDeletedCount: Math.max(0, Number(user.publicDeletedCount) || 0),
-    freeSessionsLeft: freeLeft,
+    // Legacy: Malen ist frei — Felder bleiben für alte Clients
+    freeSessionsLeft: FREE_SESSIONS_PER_DAY,
     freeSessionsPerDay: FREE_SESSIONS_PER_DAY,
     dailyCoins: DAILY_COINS,
     sessionCost: SESSION_COST,
@@ -4313,7 +4401,7 @@ function grantLootboxReward(user, entry) {
   const kind = String(entry.kind || "");
   const itemId = String(entry.itemId || "");
   const shopPrice = Math.max(1, Number(entry.shopPrice) || LOOTBOX_PRICE);
-  const unique = kind === "themes" || kind === "pets";
+  const unique = kind === "themes";
   if (unique && market.userOwnsItem(user, ensureInventory, kind, itemId)) {
     const refund = Math.max(1, Math.min(shopPrice, Math.floor(shopPrice * 0.5)));
     applyLedger(user.id, refund, "lootbox_duplicate", `${kind}:${itemId}`);
@@ -4390,10 +4478,16 @@ function syncAchInventoryMetrics(user) {
   const ledger = (uid, d, r, ref) => applyLedger(uid, d, r, ref);
   const day = todayKey();
   const inv = ensureInventory(user);
-  ach.setMetricAtLeast(user, "pets_owned", (inv.pets || []).length, day, ledger);
+  ach.setMetricAtLeast(
+    user,
+    "pets_owned",
+    Object.keys(normalizePetsMap(inv)).filter((k) => petCount(inv, k) > 0).length,
+    day,
+    ledger
+  );
   ach.setMetricAtLeast(user, "friends", (ensureFriends(user).list || []).length, day, ledger);
-  if ((inv.pets || []).includes("🦉")) ach.setMetricAtLeast(user, "pet_owl", 1, day, ledger);
-  if ((inv.pets || []).includes("🐯")) ach.setMetricAtLeast(user, "pet_tiger", 1, day, ledger);
+  if (petOwned(inv, "🦉")) ach.setMetricAtLeast(user, "pet_owl", 1, day, ledger);
+  if (petOwned(inv, "🐯")) ach.setMetricAtLeast(user, "pet_tiger", 1, day, ledger);
   if (user.googleSub) ach.setMetricAtLeast(user, "google_linked", 1, day, ledger);
   if (user.nickname && String(user.nickname).toLowerCase() !== "luv") {
     ach.setMetricAtLeast(user, "nickname_set", 1, day, ledger);
@@ -4841,6 +4935,10 @@ function publicHostedLobbies(user) {
     createdByMe: room ? isRoomCreator(user.id, room) : true,
     eventId: meta?.eventId || room?.eventId || null,
     eventPrompt: meta?.eventPrompt || room?.eventPrompt || null,
+    eventPromptChoices:
+      (Array.isArray(meta?.eventPromptChoices) && meta.eventPromptChoices) ||
+      (Array.isArray(room?.eventPromptChoices) && room.eventPromptChoices) ||
+      null,
     eventEndsAt: meta?.eventEndsAt || room?.eventEndsAt || null,
   };
   });
@@ -5396,7 +5494,8 @@ function userFromSessionToken(sessionToken) {
   return db.users[session.userId] || null;
 }
 
-/** First draw in a lobby today: free slot or 1 coin. */
+/** Malen freischalten: Trial prüfen; sonst in allen Lobbys kostenlos.
+ *  drawLocks nur noch für Erfolge (1× pro Lobby/Tag zählen), ohne Coin-Abzug. */
 function consumeDrawSession(user, lobbyCode) {
   if (user?.isTrial) {
     const roomOk =
@@ -5412,26 +5511,13 @@ function consumeDrawSession(user, lobbyCode) {
   }
   const day = todayKey();
   if (!user.drawLocks) user.drawLocks = {};
-  if (!user.sessionsByDay) user.sessionsByDay = {};
   const key = `${day}:${lobbyCode}`;
   if (user.drawLocks[key]) {
     return { ok: true, charged: false, already: true };
   }
-  const used = user.sessionsByDay[day] || 0;
-  if (used < FREE_SESSIONS_PER_DAY) {
-    user.sessionsByDay[day] = used + 1;
-    user.drawLocks[key] = "free";
-    scheduleSave();
-    return { ok: true, charged: false, free: true };
-  }
-  ensureDailyGrant(user);
-  if ((user.coins || 0) < SESSION_COST) {
-    return { ok: false, error: "no_coins" };
-  }
-  applyLedger(user.id, -SESSION_COST, "session", key);
-  user.drawLocks[key] = "paid";
+  user.drawLocks[key] = "free";
   scheduleSave();
-  return { ok: true, charged: true, free: false };
+  return { ok: true, charged: false, free: true };
 }
 
 /** WS-Send ohne den Relay-Loop bei einem toten Socket abzubrechen. */
@@ -7310,7 +7396,7 @@ app.put("/v1/me/profile", (req, res) => {
   const inv = ensureInventory(ctx.user);
   // Begleiter auf Leinwand ↔ ausgerüstetes Pet synchron halten
   const companion = normalizePetId(profile.companionEmoji || "");
-  if (companion && inv.pets.includes(companion)) {
+  if (companion && petOwned(inv, companion)) {
     inv.equippedPet = companion;
   }
   scheduleSave();
@@ -8526,8 +8612,13 @@ app.post("/v1/economy/draw-session", (req, res) => {
   const result = consumeDrawSession(ctx.user, lobbyCode);
   if (!result.ok) {
     return res.status(402).json({
-      error: "no_coins",
-      message: `Keine freien Sessions und keine Coins mehr. Morgen gibt’s wieder ${DAILY_COINS} — oder Shop.`,
+      error: result.error || "draw_blocked",
+      message:
+        result.error === "trial_expired"
+          ? "Probezeit vorbei — melde dich mit Google an."
+          : result.error === "trial_room"
+            ? "Probezeichnen gilt nur für die eingeladene Lobby."
+            : "Zeichnen gerade nicht möglich.",
       user: publicUser(ctx.user),
     });
   }
@@ -9089,12 +9180,15 @@ app.get("/v1/admin/users/:userId", (req, res) => {
     },
     inventory: {
       equippedPet: inv.equippedPet || null,
-      pets: Array.isArray(inv.pets) ? inv.pets : [],
+      pets: inv.pets && typeof inv.pets === "object" && !Array.isArray(inv.pets) ? inv.pets : {},
       themes: Array.isArray(inv.themes) ? inv.themes : [],
       stickers: inv.stickers && typeof inv.stickers === "object" ? inv.stickers : {},
       emojis: inv.emojis && typeof inv.emojis === "object" ? inv.emojis : {},
       stickerCount: Object.values(inv.stickers || {}).reduce((n, v) => n + (Number(v) || 0), 0),
       emojiCount: Object.values(inv.emojis || {}).reduce((n, v) => n + (Number(v) || 0), 0),
+      petCount: Object.values(
+        inv.pets && typeof inv.pets === "object" && !Array.isArray(inv.pets) ? inv.pets : {}
+      ).reduce((n, v) => n + (Number(v) || 0), 0),
     },
     friends: {
       count: Array.isArray(user.friends?.list) ? user.friends.list.length : 0,
@@ -9261,7 +9355,7 @@ app.post("/v1/admin/users/:userId/gift", (req, res) => {
     });
   }
   let qty = Math.floor(Number(req.body?.qty ?? req.body?.quantity ?? 1) || 1);
-  if (kind === "pets" || kind === "themes") qty = 1;
+  if (kind === "themes") qty = 1;
   qty = Math.max(1, Math.min(50, qty));
 
   ensureInventory(target);
@@ -9334,7 +9428,7 @@ app.post("/v1/admin/users/:userId/gift", (req, res) => {
     notice,
     given: { kind, itemId, qty: given, label, emoji: emojiGlyph },
     inventory: {
-      pets: inv.pets || [],
+      pets: inv.pets && typeof inv.pets === "object" && !Array.isArray(inv.pets) ? inv.pets : {},
       themes: inv.themes || [],
       stickerCount: Object.keys(inv.stickers || {}).length,
       emojiCount: Object.keys(inv.emojis || {}).length,
@@ -10238,6 +10332,11 @@ function seedShopCatalogIfNeeded() {
     stickerPrices: STICKER_SHOP_PRICES,
   });
   shopCatalogSeeded = true;
+  try {
+    seasonEvents.syncEventShopPets(getDb());
+  } catch (_) {
+    /* ignore */
+  }
 }
 
 function resolveShopPrice(kind, itemId) {
@@ -10420,6 +10519,7 @@ app.post("/v1/shop/buy-pet", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   seedShopCatalogIfNeeded();
+  seasonEvents.syncEventShopPets(getDb());
   const emoji = normalizePetId(req.body?.emoji);
   if (!emoji) {
     return res.status(400).json({ error: "unknown_item", message: "Begleiter unbekannt." });
@@ -10428,26 +10528,6 @@ app.post("/v1/shop/buy-pet", (req, res) => {
     return res.status(400).json({ error: "unknown_item", message: "Begleiter unbekannt." });
   }
   const inv = ensureInventory(ctx.user);
-  if (inv.pets.includes(emoji)) {
-    return res.json({ ok: true, emoji, alreadyOwned: true, user: publicUser(ctx.user) });
-  }
-  {
-    const listings = market.ensureMarket(getDb());
-    const listed = Object.values(listings).some(
-      (e) =>
-        e &&
-        e.status === "open" &&
-        e.sellerId === ctx.user.id &&
-        e.kind === "pets" &&
-        String(e.itemId) === emoji
-    );
-    if (listed) {
-      return res.status(400).json({
-        error: "listed",
-        message: "Dieser Begleiter liegt noch als Angebot auf dem Markt.",
-      });
-    }
-  }
   const check = shopCatalog.canBuy(getDb(), ctx.user, "pets", emoji);
   if (!check.ok) {
     if (check.error !== "unknown_item" || PET_SHOP_PRICES[emoji] == null) {
@@ -10473,13 +10553,13 @@ app.post("/v1/shop/buy-pet", (req, res) => {
     }
     trackAch(ctx.user, "coins_spent", price);
   }
-  inv.pets.push(emoji);
+  const owned = addPetCount(inv, emoji, 1);
   bumpShopPurchase("pets", emoji);
   shopCatalog.recordSale(getDb(), ctx.user, "pets", emoji);
   trackAch(ctx.user, "pets_bought", 1);
   syncAchInventoryMetrics(ctx.user);
   scheduleSave();
-  return res.json({ ok: true, emoji, price, user: publicUser(ctx.user) });
+  return res.json({ ok: true, emoji, owned, price, user: publicUser(ctx.user) });
 });
 
 app.post("/v1/me/equip-pet", (req, res) => {
@@ -10487,7 +10567,7 @@ app.post("/v1/me/equip-pet", (req, res) => {
   if (!ctx) return;
   const emoji = normalizePetId(req.body?.emoji);
   const inv = ensureInventory(ctx.user);
-  if (!emoji || !inv.pets.includes(emoji)) {
+  if (!emoji || !petOwned(inv, emoji)) {
     return res.status(400).json({ error: "not_owned" });
   }
   inv.equippedPet = emoji;
@@ -11255,6 +11335,51 @@ app.post("/v1/admin/shop/items", (req, res) => {
   const body = { ...(req.body || {}) };
   let itemId = String(body.itemId || "").trim();
   const kind = String(body.kind || "").trim();
+  const eventId = String(body.eventId || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .slice(0, 40);
+  let eventYear = Math.floor(Number(body.eventYear) || 0);
+
+  // Event-Begleiter: an Event-Jahr + Fenster binden
+  if (kind === "pets" && eventId) {
+    const db = getDb();
+    const cfg = seasonEvents.ensureEventsConfig(db);
+    const ev = (cfg.events || []).find((e) => String(e.id) === eventId);
+    if (!ev) {
+      return res.status(400).json({
+        error: "bad_event",
+        message: "Event nicht gefunden.",
+      });
+    }
+    if (!eventYear || eventYear < 2020) {
+      eventYear = seasonEvents.shopPetYearForEvent
+        ? seasonEvents.shopPetYearForEvent(ev)
+        : new Date().getFullYear();
+    }
+    // Prefer stabile Jahres-ID, falls frei
+    const preferred = seasonEvents.eventShopPetId(eventId, eventYear);
+    if (!shopCatalog.getItem(db, "pets", preferred)) {
+      itemId = preferred;
+    }
+    body.itemId = itemId;
+    body.eventId = eventId;
+    body.eventYear = eventYear;
+    body.rotationLocked = true;
+    if (body.priceCoins == null || Number(body.priceCoins) < 1) body.priceCoins = 200;
+    const win = seasonEvents.windowMsForEventYear(ev, eventYear);
+    if (win) {
+      body.availableFrom = win.from;
+      body.availableUntil = win.until;
+    }
+    const pub = seasonEvents.publicEvent(ev);
+    if (!body.previewEmoji) body.previewEmoji = pub?.emoji || "🎁";
+    if (!String(body.searchText || "").trim()) {
+      body.searchText = `${body.previewEmoji} ${pub?.title || eventId} begleiter event ${eventYear}`;
+    }
+  }
+
   // Custom-Bild (Begleiter / Emoji / Sticker): stabile, eindeutige ID
   const imageKinds = new Set(["pets", "emojis", "stickers"]);
   if (
@@ -11262,10 +11387,17 @@ app.post("/v1/admin/shop/items", (req, res) => {
     (body.petSource === "image" || body.imageBase64 || body.imageDataUrl)
   ) {
     const db = getDb();
+    // Event-Pet: preferred ID behalten wenn gesetzt und frei/eigen
+    const keepEventId =
+      kind === "pets" &&
+      eventId &&
+      /^img_event_/i.test(itemId) &&
+      (!shopCatalog.getItem(db, kind, itemId) ||
+        String(shopCatalog.getItem(db, kind, itemId)?.eventId || "") === eventId);
     // img_new / Emoji / Kollision → immer neue ID (sonst falsches Bild für alle)
     if (
-      !isStableImageItemId(itemId) ||
-      shopCatalog.getItem(db, kind, itemId)
+      !keepEventId &&
+      (!isStableImageItemId(itemId) || shopCatalog.getItem(db, kind, itemId))
     ) {
       itemId = allocateImageItemId(db, kind);
     }
@@ -11295,6 +11427,11 @@ app.post("/v1/admin/shop/items", (req, res) => {
   if (!result.ok) {
     return res.status(400).json({ error: result.error, message: result.message });
   }
+  try {
+    seasonEvents.syncEventShopPets(getDb());
+  } catch (_) {
+    /* ignore */
+  }
   scheduleSave();
   return res.json({
     ok: true,
@@ -11311,6 +11448,39 @@ app.put("/v1/admin/shop/items/:kind/:itemId", (req, res) => {
   const kind = String(req.params.kind || "").trim();
   const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
   const body = { ...(req.body || {}), kind, itemId };
+  const eventId = String(body.eventId || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .slice(0, 40);
+  if (kind === "pets" && eventId) {
+    const db = getDb();
+    const cfg = seasonEvents.ensureEventsConfig(db);
+    const ev = (cfg.events || []).find((e) => String(e.id) === eventId);
+    if (!ev) {
+      return res.status(400).json({
+        error: "bad_event",
+        message: "Event nicht gefunden.",
+      });
+    }
+    let eventYear = Math.floor(Number(body.eventYear) || 0);
+    if (!eventYear || eventYear < 2020) {
+      eventYear = seasonEvents.shopPetYearForEvent(ev);
+    }
+    body.eventId = eventId;
+    body.eventYear = eventYear;
+    body.rotationLocked = true;
+    const win = seasonEvents.windowMsForEventYear(ev, eventYear);
+    if (win) {
+      body.availableFrom = win.from;
+      body.availableUntil = win.until;
+    }
+    const pub = seasonEvents.publicEvent(ev);
+    if (!body.previewEmoji) body.previewEmoji = pub?.emoji || "🎁";
+  } else if (kind === "pets" && body.eventId === "") {
+    body.eventId = null;
+    body.eventYear = null;
+  }
   const imageKindsPut = new Set(["pets", "emojis", "stickers"]);
   if (imageKindsPut.has(kind) && (body.imageBase64 || body.imageDataUrl)) {
     const imgResult = applyPetImageFromBody(body, itemId);
@@ -11325,8 +11495,22 @@ app.put("/v1/admin/shop/items/:kind/:itemId", (req, res) => {
   if (!result.ok) {
     return res.status(400).json({ error: result.error, message: result.message });
   }
+  try {
+    seasonEvents.syncEventShopPets(getDb());
+  } catch (_) {
+    /* ignore */
+  }
   scheduleSave();
   return res.json({ ok: true, item: result.item });
+});
+
+app.get("/v1/admin/shop/event-options", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  return res.json({
+    ok: true,
+    events: seasonEvents.shopEventOptions(getDb()),
+  });
 });
 
 /** Begleiter-Bild (PNG mit Alpha). Öffentlich lesbar für Shop/Inventar. */
@@ -12342,6 +12526,7 @@ app.post("/v1/rooms", (req, res) => {
   const rawEventId = String(req.body?.eventId || "").trim().slice(0, 64);
   let eventId = null;
   let eventPrompt = null;
+  let eventPromptChoices = null;
   let eventEndsAt = null;
   let eventLobbyCfg = null;
   if (rawEventId) {
@@ -12363,6 +12548,72 @@ app.post("/v1/rooms", (req, res) => {
     }
     const prog = require("./event_engine").ensureUserProgress(ctx.user, rawEventId);
     if (prog.lobbyCreated) {
+      const existingCode = String(prog.lobbyCode || "")
+        .toUpperCase()
+        .replace(/^LUV-/, "");
+      let existing = existingCode ? rooms.get(existingCode) : null;
+      if (!existing && existingCode) {
+        const saved = getDb().rooms?.[existingCode];
+        if (saved && typeof saved === "object") {
+          existing = hydrateRoom(existingCode, saved);
+          rooms.set(existingCode, existing);
+        }
+      }
+      if (!existing && existingCode) {
+        ensureHostedRooms(ctx.user);
+        const meta = ctx.user.hostedRooms?.[existingCode];
+        if (meta && typeof meta === "object") {
+          existing = hydrateRoom(existingCode, {
+            token: meta.token,
+            createdAt: meta.createdAt,
+            hostUserId: ctx.user.id,
+            createdByUserId: ctx.user.id,
+            name: meta.name || "Event",
+            hostNickname: ctx.user.nickname || "Host",
+            isFree: true,
+            capacity: 1,
+            hostColorSide: meta.hostColorSide,
+            colorByUserId: meta.colorByUserId || {
+              [ctx.user.id]: hostColorIndex(meta.hostColorSide),
+            },
+            memberUserIds: [ctx.user.id],
+            eventId: meta.eventId || rawEventId,
+            eventPrompt: meta.eventPrompt || prog.eventPrompt || null,
+            eventPromptChoices: meta.eventPromptChoices || prog.eventPromptChoices || null,
+            eventEndsAt: meta.eventEndsAt || null,
+            invitesAllowed: false,
+          });
+          rooms.set(existingCode, existing);
+          persistRooms();
+        }
+      }
+      if (existing && existing.eventId === rawEventId) {
+        const side = normalizeHostColorSide(existing.hostColorSide);
+        return res.status(200).json({
+          token: existing.token,
+          maxPeers: MAX_PEERS,
+          capacity: roomCapacity(existing),
+          isFree: true,
+          name: existing.name || "Event",
+          hostNickname: ctx.user.nickname || existing.hostNickname || "Host",
+          hostColorSide: side,
+          suggestedColorIndex:
+            existing.colorByUserId?.[ctx.user.id] ?? hostColorIndex(side),
+          charged: 0,
+          eventId: existing.eventId,
+          eventPrompt: existing.eventPrompt || prog.eventPrompt || null,
+          eventPromptChoices: Array.isArray(existing.eventPromptChoices)
+            ? existing.eventPromptChoices
+            : Array.isArray(prog.eventPromptChoices)
+              ? prog.eventPromptChoices
+              : null,
+          eventEndsAt: existing.eventEndsAt || null,
+          reused: true,
+          palette: lobbyCfg.palette || null,
+          user: publicUser(ctx.user),
+          ...inviteFor(existingCode),
+        });
+      }
       return res.status(400).json({
         error: "event_lobby_exists",
         message: "Für dieses Event hast du schon eine Event-Lobby erstellt.",
@@ -12372,7 +12623,8 @@ app.post("/v1/rooms", (req, res) => {
     eventId = rawEventId;
     eventLobbyCfg = lobbyCfg;
     const engine = require("./event_engine");
-    eventPrompt = engine.pickEventPrompt(lobbyCfg, pub.title);
+    eventPromptChoices = engine.sampleEventPrompts(lobbyCfg, 3, pub.title);
+    eventPrompt = null;
     const enriched = engine.enrichEvent(ev);
     if (enriched.schedule?.mode === "absolute" && enriched.schedule.absoluteUntil) {
       eventEndsAt = String(enriched.schedule.absoluteUntil);
@@ -12449,6 +12701,7 @@ app.post("/v1/rooms", (req, res) => {
     publicProposal: null,
     eventId,
     eventPrompt,
+    eventPromptChoices,
     eventEndsAt,
     invitesAllowed: eventId ? false : true,
     strokes: [],
@@ -12465,6 +12718,7 @@ app.post("/v1/rooms", (req, res) => {
     colorByUserId: { [ctx.user.id]: hostIdx },
     eventId,
     eventPrompt,
+    eventPromptChoices,
     eventEndsAt,
   };
   if (eventId) {
@@ -12472,6 +12726,7 @@ app.post("/v1/rooms", (req, res) => {
     prog.lobbyCreated = true;
     prog.lobbyCode = code;
     prog.eventPrompt = eventPrompt;
+    prog.eventPromptChoices = eventPromptChoices;
     prog.eventLobbyOpens = (prog.eventLobbyOpens || 0) + 1;
   }
   persistRooms();
@@ -12497,6 +12752,7 @@ app.post("/v1/rooms", (req, res) => {
     charged,
     eventId,
     eventPrompt,
+    eventPromptChoices,
     eventEndsAt,
     palette: eventLobbyCfg?.palette || null,
     user: publicUser(ctx.user),
@@ -12582,14 +12838,24 @@ app.post("/v1/rooms/:code/slots", (req, res) => {
   }
   room.capacity = capacity + 1;
   touchRoom(room);
-  if (room.hostUserId) {
-    const host = getDb().users[room.hostUserId];
-    if (host) {
-      ensureHostedRooms(host);
-      if (host.hostedRooms[code]) {
-        host.hostedRooms[code].capacity = room.capacity;
-        scheduleSave();
-      }
+  const dbUsers = getDb().users || {};
+  const memberIds = new Set(
+    [
+      room.hostUserId,
+      room.createdByUserId,
+      ...(Array.isArray(room.memberUserIds) ? room.memberUserIds : []),
+    ].filter(Boolean)
+  );
+  for (const uid of memberIds) {
+    const u = dbUsers[uid];
+    if (!u) continue;
+    ensureHostedRooms(u);
+    if (u.hostedRooms?.[code]) {
+      u.hostedRooms[code].capacity = room.capacity;
+    }
+    if (!u.joinedRooms || typeof u.joinedRooms !== "object") u.joinedRooms = {};
+    if (u.joinedRooms[code]) {
+      u.joinedRooms[code].capacity = room.capacity;
     }
   }
   persistRooms();
@@ -12685,6 +12951,78 @@ app.post("/v1/rooms/:code/leave", (req, res) => {
   scheduleSave();
 
   return res.json({ ok: true });
+});
+
+/** Event-Lobby: Begriff aus den 3 Vorschlägen wählen (nur einmal). */
+app.post("/v1/rooms/:code/event-prompt", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const code = String(req.params.code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  const token = String(req.body?.token || "").trim();
+  const picked = String(req.body?.prompt || "").trim().slice(0, 80);
+  if (!picked) {
+    return res.status(400).json({ error: "invalid_prompt", message: "Bitte ein Wort wählen." });
+  }
+  let room = rooms.get(code);
+  if (!room) {
+    const saved = getDb().rooms?.[code];
+    if (saved && typeof saved === "object") {
+      room = hydrateRoom(code, saved);
+      rooms.set(code, room);
+    }
+  }
+  if (!room || !room.eventId) {
+    return res.status(404).json({ error: "not_found", message: "Keine Event-Lobby." });
+  }
+  const isHost =
+    room.hostUserId === ctx.user.id || room.createdByUserId === ctx.user.id;
+  const isMember =
+    isHost ||
+    (Array.isArray(room.memberUserIds) && room.memberUserIds.includes(ctx.user.id)) ||
+    Boolean(ctx.user.hostedRooms?.[code]);
+  if (!isMember && token && room.token !== token) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  if (!isMember) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  if (room.eventPrompt) {
+    return res.json({
+      ok: true,
+      already: true,
+      eventPrompt: room.eventPrompt,
+      eventPromptChoices: null,
+    });
+  }
+  const choices = Array.isArray(room.eventPromptChoices)
+    ? room.eventPromptChoices.map((p) => String(p || "").trim()).filter(Boolean)
+    : [];
+  if (choices.length && !choices.includes(picked)) {
+    return res.status(400).json({
+      error: "invalid_prompt",
+      message: "Bitte eines der vorgeschlagenen Wörter wählen.",
+      eventPromptChoices: choices,
+    });
+  }
+  room.eventPrompt = picked;
+  room.eventPromptChoices = null;
+  ensureHostedRooms(ctx.user);
+  if (ctx.user.hostedRooms?.[code]) {
+    ctx.user.hostedRooms[code].eventPrompt = picked;
+    ctx.user.hostedRooms[code].eventPromptChoices = null;
+  }
+  const prog = require("./event_engine").ensureUserProgress(ctx.user, room.eventId);
+  prog.eventPrompt = picked;
+  prog.eventPromptChoices = null;
+  persistRooms();
+  scheduleSave();
+  return res.json({
+    ok: true,
+    eventPrompt: picked,
+    eventPromptChoices: null,
+  });
 });
 
 /** Event-Lobby: Snapshot übernehmen und Contest schließen (Timer-Ende). */
@@ -13947,6 +14285,16 @@ app.post("/v1/rooms/:code/canvas-snapshot", (req, res) => {
   ensureSnapshotDir();
   const fileName = `${code}.png`;
   const filePath = path.join(SNAPSHOT_DIR, fileName);
+  // Fast leere PNGs dürfen gute Invite-Vorschaubilder nicht überschreiben
+  const strokeCount = ensureRoomStrokes(room, code).length;
+  if (fs.existsSync(filePath) && strokeCount > 0 && buf.length < 12_000) {
+    const mem = canvasMemories();
+    return res.json({
+      ok: true,
+      skipped: "empty_overwrite",
+      updatedAt: mem[code]?.updatedAt || Date.now(),
+    });
+  }
   fs.writeFileSync(filePath, buf);
   const mem = canvasMemories();
   const prev = mem[code] || {};
@@ -14924,7 +15272,9 @@ wss.on("connection", (socket, req) => {
             error: drawResult.error || "no_coins",
             message: trialGone
               ? "Probezeit vorbei — melde dich mit Google an, um weiterzumalen."
-              : "Keine freien Sessions/Coins — Zuschauen geht weiter.",
+              : drawResult.error === "trial_room"
+                ? "Probezeichnen gilt nur für die eingeladene Lobby."
+                : "Zeichnen gerade nicht möglich.",
             trialDrawUntil: Number(user.trialDrawUntil) || 0,
           })
         );

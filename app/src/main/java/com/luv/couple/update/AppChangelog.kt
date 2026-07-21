@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.49",
+            listOf(
+                "Event-Vorschau unter Demnächst; Event-Begleiter im Shop nur während Events; Begleiter mehrfach kaufbar wie Sticker",
+            )
+        ),
+        Entry(
             "2.2.48",
             listOf(
                 "Probezeit 30 Sekunden mit Google-Popup; Marktplatz/Itemshop beim App-Start vorgeladen; Bildschirm bleibt in der App wach",

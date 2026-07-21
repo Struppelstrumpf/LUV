@@ -186,6 +186,8 @@ class LockDrawActivity : ComponentActivity() {
     private var eventLobbyActive = false
     private var eventEndsAtMs: Long? = null
     private var eventPromptText: String? = null
+    private var eventPromptChoices: List<String> = emptyList()
+    private var eventPromptPickShown = false
     private var emojiEditorHost: FrameLayout? = null
     private var brushStudioHost: FrameLayout? = null
     private var profileHost: FrameLayout? = null
@@ -420,6 +422,7 @@ class LockDrawActivity : ComponentActivity() {
                 runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrNull()
             }
             eventPromptText = lobby?.eventPrompt.asCleanJsonString()
+            eventPromptChoices = lobby?.eventPromptChoices.orEmpty()
             lobbyTitle.text = when {
                 eventLobbyActive -> "Event"
                 else -> lobby?.name.orEmpty()
@@ -429,6 +432,7 @@ class LockDrawActivity : ComponentActivity() {
             if (eventLobbyActive) {
                 btnTemplates.visibility = View.GONE
                 setupEventLobbyUi()
+                maybeShowEventPromptPick(lobby)
             }
             weddingRetakeActive = lobby?.isWeddingRetake == true ||
                 (lobby?.isWedding == true && lobby.name.contains("Hochzeitsbild", ignoreCase = true))
@@ -829,6 +833,53 @@ class LockDrawActivity : ComponentActivity() {
                 }
                 updateEventLobbyTitle()
                 kotlinx.coroutines.delay(1000)
+            }
+        }
+    }
+
+    private fun maybeShowEventPromptPick(lobby: com.luv.couple.data.Lobby?) {
+        if (!eventLobbyActive || lobby == null) return
+        if (eventPromptPickShown) return
+        val existing = eventPromptText?.trim().orEmpty()
+        if (existing.isNotBlank()) return
+        val choices = eventPromptChoices.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        if (choices.size < 2) return
+        eventPromptPickShown = true
+        if (::drawingView.isInitialized) drawingView.inputBlocked = true
+        CanvasGameUi.showWordPick(
+            this,
+            choices,
+            title = "Wähle einen Begriff"
+        ) { word ->
+            lifecycleScope.launch {
+                val ok = withContext(Dispatchers.IO) {
+                    runCatching {
+                        LuvApiClient.setEventPrompt(lobby.code, lobby.token, word)
+                    }.getOrNull()
+                }
+                if (ok.isNullOrBlank()) {
+                    eventPromptPickShown = false
+                    Toast.makeText(
+                        this@LockDrawActivity,
+                        "Begriff konnte nicht gespeichert werden",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    maybeShowEventPromptPick(lobby)
+                    return@launch
+                }
+                eventPromptText = ok
+                eventPromptChoices = emptyList()
+                withContext(Dispatchers.IO) {
+                    LuvApp.instance.prefs.upsertLobby(
+                        lobby.copy(
+                            eventPrompt = ok,
+                            eventPromptChoices = emptyList()
+                        )
+                    )
+                }
+                if (::drawingView.isInitialized) drawingView.inputBlocked = false
+                updateEventLobbyTitle()
+                flashStatus("Begriff: $ok")
             }
         }
     }

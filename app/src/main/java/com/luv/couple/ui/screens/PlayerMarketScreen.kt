@@ -175,7 +175,7 @@ fun PlayerMarketScreen(
     )
     val ownedStickers by prefs.ownedStickersFlow.collectAsStateWithLifecycle(initialValue = emptyMap())
     val ownedPets by prefs.ownedPetsFlow.collectAsStateWithLifecycle(
-        initialValue = listOf(ShopCatalog.DEFAULT_PET)
+        initialValue = mapOf(ShopCatalog.DEFAULT_PET to 1)
     )
     val equippedPet by prefs.equippedPetFlow.collectAsStateWithLifecycle(
         initialValue = ShopCatalog.DEFAULT_PET
@@ -202,11 +202,10 @@ fun PlayerMarketScreen(
     }
 
     fun inventoryPicks(): List<InventoryPick> = buildList {
-        // Ausgerüstete / Profil-Items nicht anbieten (Server prüft zusätzlich)
-        ownedPets.filter { it != ShopCatalog.DEFAULT_PET }.forEach { pet ->
-            if (pet == equippedPet || pet == profileCompanion) return@forEach
+        // Ausgerüstete / Profil-Items: 1 reserviert, Extras verkaufbar
+        InventoryAvailability.freePets(ownedPets, equippedPet, profileCompanion).forEach { (pet, free) ->
             val label = ItemLabels.petLabel(pet)
-            add(InventoryPick("pets", pet, label, pet, 1))
+            add(InventoryPick("pets", pet, label, pet, free))
         }
         ownedThemes.filter { it != ProfileCatalog.DEFAULT_THEME_ID }.forEach { themeId ->
             if (themeId == profileThemeId) return@forEach

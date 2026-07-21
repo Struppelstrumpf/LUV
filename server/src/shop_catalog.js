@@ -454,10 +454,21 @@ function normalizeItem(raw) {
     searchText: mergeSearchText(raw.searchText, defaultSearchText(kind, itemId)),
     seeded: Boolean(raw.seeded),
     hasImage: Boolean(raw.hasImage),
+    previewEmoji: String(raw.previewEmoji || "").trim().slice(0, 8) || null,
+    eventId: String(raw.eventId || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, "_")
+      .slice(0, 40) || null,
+    eventYear: (() => {
+      const y = Math.floor(Number(raw.eventYear) || 0);
+      return y >= 2020 && y <= 2100 ? y : null;
+    })(),
     visualConfig,
     rotationPlanId: raw.rotationPlanId
       ? String(raw.rotationPlanId).trim().slice(0, 64)
       : null,
+    rotationLocked: raw.rotationLocked === true,
     createdAt: Number(raw.createdAt) || Date.now(),
     updatedAt: Date.now(),
   };
@@ -632,6 +643,9 @@ function publicItem(item, now = Date.now(), { admin = false, db = null } = {}) {
       seeded: Boolean(item.seeded),
       rotationPlanId: item.rotationPlanId || null,
       rotationLocked: item.rotationLocked === true,
+      previewEmoji: item.previewEmoji || null,
+      eventId: item.eventId || null,
+      eventYear: item.eventYear || null,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
     };
@@ -641,6 +655,11 @@ function publicItem(item, now = Date.now(), { admin = false, db = null } = {}) {
 
 function listPublicCatalog(db, { admin = false, kind = null, q = "" } = {}) {
   deactivateExpired(db);
+  try {
+    require("./events").syncEventShopPets(db);
+  } catch {
+    /* ignore */
+  }
   const cat = ensureShopCatalog(db);
   const now = Date.now();
   const query = String(q || "")

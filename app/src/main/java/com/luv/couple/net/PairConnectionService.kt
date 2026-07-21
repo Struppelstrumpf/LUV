@@ -221,9 +221,18 @@ class PairConnectionService : Service() {
         }
         if (sameCode != null) {
             val oldId = sameCode.lobby.id
-            sameCode.lobby = lobby
-            sessions.remove(oldId)
-            sessions[lobby.id] = sameCode
+            if (oldId != lobby.id) {
+                PairSessionState.migrateLobbyId(oldId, lobby.id)
+                val prevState = _lobbyStates.value[oldId]
+                sameCode.lobby = lobby
+                sessions.remove(oldId)
+                sessions[lobby.id] = sameCode
+                if (prevState != null) {
+                    _lobbyStates.value = _lobbyStates.value - oldId + (lobby.id to prevState)
+                }
+            } else {
+                sameCode.lobby = lobby
+            }
             if (sameCode.job?.isActive == true) return
             sameCode.running.set(true)
             sameCode.job = scope.launch { runLobbyLoop(sameCode) }

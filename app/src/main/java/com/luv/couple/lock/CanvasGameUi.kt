@@ -171,6 +171,7 @@ object CanvasGameUi {
     fun showWordPick(
         activity: Activity,
         options: List<String>,
+        title: String? = null,
         onPick: (String) -> Unit
     ) {
         if (options.isEmpty()) return
@@ -180,7 +181,7 @@ object CanvasGameUi {
             setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (8 * dp).toInt())
         }
         val dialog = MaterialAlertDialogBuilder(activity)
-            .setTitle(R.string.game_pick_word)
+            .setTitle(title?.takeIf { it.isNotBlank() } ?: activity.getString(R.string.game_pick_word))
             .setCancelable(false)
             .create()
         options.forEach { word ->

@@ -117,8 +117,15 @@ fun CompanionGlyph(
             modifier = modifier.size((fontSize.value * 1.15f).dp)
         )
     } else if (id.startsWith("img_", ignoreCase = true)) {
-        // Bild fehlt/lädt: stiller Platzhalter — Emoji-Pets nie als Pfote
-        Text("🐾", fontSize = fontSize, modifier = modifier)
+        // Bild fehlt/lädt: Event-Pet → Event-Emoji aus Katalog, sonst Pfote
+        val preview = LiveShopCatalog.remotePets
+            ?.firstOrNull { it.emoji == id }
+            ?.let { pet ->
+                // preview steckt ggf. im searchText als einzelnes Emoji am Anfang
+                pet.searchText?.trim()?.takeWhile { !it.isWhitespace() }
+                    ?.takeIf { it.isNotEmpty() && it.length <= 4 && !it.startsWith("img_", true) }
+            }
+        Text(preview ?: "🐾", fontSize = fontSize, modifier = modifier)
     } else {
         Text(id, fontSize = fontSize, modifier = modifier)
     }

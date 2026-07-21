@@ -29,21 +29,33 @@ object CanvasMemoryKeeper {
     private var debounceJob: Job? = null
     private var lastUploadAt = 0L
 
-    suspend fun uploadSnapshot(lobby: Lobby) = withContext(Dispatchers.IO) {
-        uploadMutex.withLock {
-            runCatching {
-                if (LuvApiClient.sessionToken.isNullOrBlank()) return@runCatching
-                val bg = CanvasStore.backgroundFor(CanvasStore.cachedColorIndex)
-                val bitmap = CanvasStore.renderBitmap(720, 1280, bg, lobby.id)
-                val stream = ByteArrayOutputStream()
-                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 88, stream)) return@runCatching
-                val b64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
-                LuvApiClient.uploadCanvasSnapshot(lobby.code, lobby.token, b64)
-                LuvApiClient.touchCanvas(lobby.code, lobby.token)
-                lastUploadAt = System.currentTimeMillis()
+    suspend fun uploadSnapshot(lobby: Lobby, allowEmpty: Boolean = false): Boolean =
+        withContext(Dispatchers.IO) {
+            uploadMutex.withLock {
+                runCatching {
+                    if (LuvApiClient.sessionToken.isNullOrBlank()) return@runCatching false
+                    val strokeCount = CanvasStore.snapshot(lobby.id).size
+                    if (!allowEmpty && strokeCount <= 0) {
+                        // Keine leere PNG über ein gutes Invite-Bild schreiben
+                        return@runCatching false
+                    }
+                    val bg = CanvasStore.backgroundFor(CanvasStore.cachedColorIndex)
+                    val bitmap = CanvasStore.renderBitmap(720, 1280, bg, lobby.id)
+                    val stream = ByteArrayOutputStream()
+                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 88, stream)) return@runCatching false
+                    val bytes = stream.toByteArray()
+                    // Fast leere Flächen (einfarbig) — nicht als OG speichern
+                    if (!allowEmpty && bytes.size < 10_000 && strokeCount < 2) {
+                        return@runCatching false
+                    }
+                    val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                    LuvApiClient.uploadCanvasSnapshot(lobby.code, lobby.token, b64)
+                    LuvApiClient.touchCanvas(lobby.code, lobby.token)
+                    lastUploadAt = System.currentTimeMillis()
+                    true
+                }.getOrDefault(false)
             }
         }
-    }
 
     /** Nach Strichen: Snapshot verzögert hochladen (Invite-Preview aktuell halten). */
     fun scheduleUploadForActiveLobby(delayMs: Long = 4_500L) {

@@ -109,6 +109,7 @@ import com.luv.couple.ui.theme.MaleBlue
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 enum class MarketPanel { Hub, Marketplace, ItemShop, CoinShop }
@@ -193,6 +194,7 @@ fun MarketScreen(
                 AlertDialog(
                     onDismissRequest = {
                         showHubLootbox = false
+                        hubLootBusy = null
                         hubLootRefresh++
                     },
                     containerColor = BgSoft,
@@ -214,6 +216,7 @@ fun MarketScreen(
                     confirmButton = {
                         TextButton(onClick = {
                             showHubLootbox = false
+                            hubLootBusy = null
                             hubLootRefresh++
                         }) {
                             Text("Schließen", color = AccentRose, fontFamily = DisplayFont)
@@ -969,7 +972,7 @@ private fun ItemShopContent(
     )
     val ownedStickers by prefs.ownedStickersFlow.collectAsStateWithLifecycle(initialValue = emptyMap())
     val ownedPets by prefs.ownedPetsFlow.collectAsStateWithLifecycle(
-        initialValue = listOf(ShopCatalog.DEFAULT_PET)
+        initialValue = mapOf(ShopCatalog.DEFAULT_PET to 1)
     )
     val equippedPet by prefs.equippedPetFlow.collectAsStateWithLifecycle(
         initialValue = ShopCatalog.DEFAULT_PET
@@ -1042,8 +1045,13 @@ private fun ItemShopContent(
         }
         val alreadyOwned = when (pending) {
             is ShopPendingBuy.Theme -> pending.item.id in ownedThemes
-            is ShopPendingBuy.Pet -> pending.item.emoji in ownedPets
+            // Begleiter stapeln wie Sticker — kein „schon besessen“-Block
+            is ShopPendingBuy.Pet -> false
             else -> false
+        }
+        val petOwnedCount = when (pending) {
+            is ShopPendingBuy.Pet -> ownedPets[pending.item.emoji] ?: 0
+            else -> 0
         }
         AlertDialog(
             onDismissRequest = { if (busyKey == null) pendingBuy = null },
@@ -1098,6 +1106,15 @@ private fun ItemShopContent(
                             lineHeight = 20.sp,
                             textAlign = TextAlign.Center
                         )
+                        if (petOwnedCount > 0) {
+                            Text(
+                                "Du hast bereits ×$petOwnedCount — Mehrfachkauf möglich.",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                         Text(
                             "Du hast ${account?.coins ?: 0} Coins.",
                             color = TextMuted,
@@ -1156,11 +1173,13 @@ private fun ItemShopContent(
                                     )
                                 }
                                 is ShopPendingBuy.Pet -> {
+                                    val next = prevPets.toMutableMap()
+                                    next[pending.item.emoji] = (next[pending.item.emoji] ?: 0) + 1
                                     prefs.applyInventorySnap(
                                         emojis = prevEmojis,
                                         themes = prevThemes,
                                         stickers = prevStickers,
-                                        pets = (prevPets + pending.item.emoji).distinct(),
+                                        pets = next,
                                         equippedPet = equippedPet
                                     )
                                 }
@@ -1586,14 +1605,14 @@ private fun ItemShopContent(
                     verticalArrangement = Arrangement.spacedBy(s(10.dp))
                 ) {
                     items(pets, key = { it.emoji }) { item ->
-                        val have = item.emoji in ownedPets
+                        val count = ownedPets[item.emoji] ?: 0
                         ShopGridCell(
                             emoji = item.emoji,
                             name = item.label,
                             price = item.priceCoins,
                             compareAtPrice = item.compareAtPrice,
                             remainingMs = item.remainingMs,
-                            ownedLabel = if (have) "✓" else null,
+                            ownedLabel = if (count > 0) "×$count" else null,
                             themeId = null,
                             enabled = busyKey == null,
                             onClick = { openBuy(ShopPendingBuy.Pet(item)) }
@@ -1752,34 +1771,36 @@ private fun LootboxTab(
         displayPending = (displayPending + qty).coerceAtLeast(qty)
         onBusy("lootbox")
         scope.launch {
-            runCatching { LuvApiClient.buyLootbox(qty) }
-                .onSuccess { result ->
-                    val all = result.pending.ifEmpty { result.purchased }
-                    val first = all.firstOrNull()
-                    if (first == null) {
-                        displayPending = beforeOpt
-                        Toast.makeText(context, "Kauf fehlgeschlagen", Toast.LENGTH_SHORT).show()
-                    } else {
-                        beginOpening(first, all.drop(1))
-                        val n = all.size
-                        Toast.makeText(
-                            context,
-                            if (n == 1) "Lootbox gekauft" else "$n Lootboxen gekauft",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    onBusy(null)
-                }
-                .onFailure {
+            try {
+                val result = LuvApiClient.buyLootbox(qty)
+                val all = result.pending.ifEmpty { result.purchased }
+                val first = all.firstOrNull()
+                if (first == null) {
                     displayPending = beforeOpt
-                    prevAccount?.let { AccountSession.setAccount(it) }
-                    onBusy(null)
+                    Toast.makeText(context, "Kauf fehlgeschlagen", Toast.LENGTH_SHORT).show()
+                } else {
+                    beginOpening(first, all.drop(1))
+                    val n = all.size
                     Toast.makeText(
                         context,
-                        it.message ?: "Kauf fehlgeschlagen",
+                        if (n == 1) "Lootbox gekauft" else "$n Lootboxen gekauft",
                         Toast.LENGTH_SHORT
                     ).show()
                 }
+                onBusy(null)
+            } catch (e: CancellationException) {
+                onBusy(null)
+                throw e
+            } catch (e: Exception) {
+                displayPending = beforeOpt
+                prevAccount?.let { AccountSession.setAccount(it) }
+                onBusy(null)
+                Toast.makeText(
+                    context,
+                    e.message ?: "Kauf fehlgeschlagen",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
     }
     fun finishTapsAndOpen() {
@@ -1790,43 +1811,56 @@ private fun LootboxTab(
         }
         onBusy("lootbox-open")
         scope.launch {
-            shake = 1f
-            kotlinx.coroutines.delay(80)
-            shake = -1f
-            kotlinx.coroutines.delay(80)
-            shake = 1f
-            kotlinx.coroutines.delay(80)
-            shake = 0f
-            flash = 1f
-            runCatching { LuvApiClient.openLootbox(id) }
-                .onSuccess { reward ->
-                    revealedReward = reward
-                    phase = "reveal"
-                    activePendingId = null
-                    displayPending = queue.size + 1
-                    onBusy(null)
-                    // Inventar im Hintergrund — Chance/Reveal sofort zeigen
-                    scope.launch { runCatching { onRefresh() } }
+            try {
+                shake = 1f
+                kotlinx.coroutines.delay(80)
+                shake = -1f
+                kotlinx.coroutines.delay(80)
+                shake = 1f
+                kotlinx.coroutines.delay(80)
+                shake = 0f
+                flash = 1f
+                val reward = LuvApiClient.openLootbox(id)
+                revealedReward = reward
+                phase = "reveal"
+                activePendingId = null
+                displayPending = queue.size + 1
+                onBusy(null)
+                // Inventar im Hintergrund — Chance/Reveal sofort zeigen
+                scope.launch {
+                    try {
+                        onRefresh()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                    }
                 }
-                .onFailure {
-                    Toast.makeText(
-                        context,
-                        it.message ?: "Öffnen fehlgeschlagen",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    // Pending bleibt serverseitig — Queue neu laden
-                    runCatching { LuvApiClient.pendingLootboxes() }
-                        .onSuccess { list ->
-                            queue = list
-                            val first = list.firstOrNull()
-                            if (first != null) beginOpening(first, list.drop(1))
-                            else phase = "idle"
-                        }
-                        .onFailure { phase = "idle" }
+                kotlinx.coroutines.delay(220)
+                flash = 0f
+                onBusy(null)
+            } catch (e: CancellationException) {
+                onBusy(null)
+                throw e
+            } catch (e: Exception) {
+                Toast.makeText(
+                    context,
+                    e.message ?: "Öffnen fehlgeschlagen",
+                    Toast.LENGTH_SHORT
+                ).show()
+                try {
+                    val list = LuvApiClient.pendingLootboxes()
+                    queue = list
+                    val first = list.firstOrNull()
+                    if (first != null) beginOpening(first, list.drop(1))
+                    else phase = "idle"
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    phase = "idle"
                 }
-            kotlinx.coroutines.delay(220)
-            flash = 0f
-            onBusy(null)
+                flash = 0f
+                onBusy(null)
+            }
         }
     }
     fun afterRevealDismiss() {
@@ -1841,15 +1875,17 @@ private fun LootboxTab(
             activePendingId = null
             displayPending = 0
             scope.launch {
-                runCatching { LuvApiClient.pendingLootboxes() }
-                    .onSuccess { list ->
-                        if (phase != "idle" || revealedReward != null) return@onSuccess
-                        displayPending = list.size
-                        // Restbestände öffnen; wenn leer → idle bleibt tippbar zum Kaufen
-                        if (list.isNotEmpty()) {
-                            beginOpening(list.first(), list.drop(1))
-                        }
+                try {
+                    val list = LuvApiClient.pendingLootboxes()
+                    if (phase != "idle" || revealedReward != null) return@launch
+                    displayPending = list.size
+                    if (list.isNotEmpty()) {
+                        beginOpening(list.first(), list.drop(1))
                     }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
             }
         }
     }
@@ -2523,7 +2559,7 @@ fun InventoryScreen(
     )
     val ownedStickersMap by prefs.ownedStickersFlow.collectAsStateWithLifecycle(initialValue = emptyMap())
     val ownedPets by prefs.ownedPetsFlow.collectAsStateWithLifecycle(
-        initialValue = listOf(ShopCatalog.DEFAULT_PET)
+        initialValue = mapOf(ShopCatalog.DEFAULT_PET to 1)
     )
     val equippedPet by prefs.equippedPetFlow.collectAsStateWithLifecycle(
         initialValue = ShopCatalog.DEFAULT_PET
@@ -2563,8 +2599,8 @@ fun InventoryScreen(
                 ownedThemesLatest.value.forEach { id ->
                     id.trim().takeIf { it.isNotBlank() }?.let { add("themes:$it") }
                 }
-                ownedPetsLatest.value.forEach { pet ->
-                    pet.trim().takeIf { it.isNotBlank() }?.let { add("pets:$it") }
+                ownedPetsLatest.value.forEach { (pet, n) ->
+                    if (pet.isNotBlank() && n > 0) add("pets:$pet")
                 }
                 ownedEmojisLatest.value.forEach { (k, v) ->
                     if (k.isNotBlank() && v > 0) add("emojis:$k")

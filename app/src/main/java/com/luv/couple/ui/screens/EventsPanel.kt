@@ -191,8 +191,15 @@ fun EventsPanel(
                         fontFamily = DisplayFont,
                         fontSize = 16.sp
                     )
+                    var previewEvent by remember { mutableStateOf<SeasonEvent?>(null) }
                     upcoming.forEach { ev ->
-                        UpcomingEventRow(ev)
+                        UpcomingEventRow(ev, onClick = { previewEvent = ev })
+                    }
+                    previewEvent?.let { ev ->
+                        UpcomingEventPreviewDialog(
+                            event = ev,
+                            onDismiss = { previewEvent = null }
+                        )
                     }
                 }
             }
@@ -377,6 +384,23 @@ private fun EventHeroCard(
             ) {
                 Text(
                     "Event-Lobby erstellen",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        } else if (event.lobbyEnabled && (event.lobbyCreated || !event.eventPrompt.isNullOrBlank())) {
+            TextButton(
+                onClick = onCreateLobby,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(accent.copy(0.22f))
+            ) {
+                Text(
+                    "Event-Lobby öffnen",
                     color = TextPrimary,
                     fontFamily = DisplayFont,
                     fontSize = 15.sp,
@@ -855,12 +879,22 @@ private fun ContestWinnerPopup(
 }
 
 @Composable
-private fun UpcomingEventRow(event: SeasonEvent) {
+private fun UpcomingEventRow(event: SeasonEvent, onClick: () -> Unit) {
+    val accent = remember(event.decor.accentHex) {
+        runCatching { Color(android.graphics.Color.parseColor(event.decor.accentHex)) }
+            .getOrDefault(AccentRose)
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(BgSoft)
+            .background(
+                Brush.horizontalGradient(
+                    listOf(accent.copy(0.22f), BgSoft)
+                )
+            )
+            .border(1.dp, accent.copy(0.35f), RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -880,6 +914,173 @@ private fun UpcomingEventRow(event: SeasonEvent) {
                 .joinToString(" – ")
                 .ifBlank { "bald" }
             Text(whenLabel, color = TextMuted, fontFamily = BodyFont, fontSize = 11.sp)
+        }
+        Text("›", color = accent, fontFamily = DisplayFont, fontSize = 18.sp)
+    }
+}
+
+@Composable
+private fun UpcomingEventPreviewDialog(
+    event: SeasonEvent,
+    onDismiss: () -> Unit,
+) {
+    val accent = remember(event.decor.accentHex) {
+        runCatching { Color(android.graphics.Color.parseColor(event.decor.accentHex)) }
+            .getOrDefault(AccentRose)
+    }
+    val ornament = when (event.decor.ornaments) {
+        "wreath" -> "🎄"
+        "hearts" -> "💕"
+        "spark" -> "✨"
+        else -> event.emoji.takeIf { it.isNotBlank() } ?: "🎉"
+    }
+    val body = when {
+        event.description.isNotBlank() -> event.description
+        event.hint.isNotBlank() -> event.hint
+        else -> "Bald startet dieses Event — Farben und Atmosphäre siehst du hier schon."
+    }
+    val reward = event.rewardItem
+    val shopPet = event.shopPet
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(accent.copy(0.42f), BgSoft, BgDeep.copy(0.55f))
+                    )
+                )
+                .border(1.dp, accent.copy(0.45f), RoundedCornerShape(22.dp))
+        ) {
+            com.luv.couple.ui.MenuAmbientBackground(
+                eventDecor = event.decor,
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(RoundedCornerShape(22.dp))
+            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(event.emoji, fontSize = 32.sp)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            event.title,
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 22.sp
+                        )
+                        val whenLabel = listOfNotNull(event.windowStart, event.windowEnd)
+                            .distinct()
+                            .joinToString(" – ")
+                        if (whenLabel.isNotBlank()) {
+                            Text(whenLabel, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
+                        }
+                    }
+                    Text(ornament, fontSize = 22.sp)
+                }
+                event.decor.bannerText.takeIf { it.isNotBlank() }?.let { banner ->
+                    Text(
+                        banner,
+                        color = accent,
+                        fontFamily = DisplayFont,
+                        fontSize = 15.sp
+                    )
+                }
+                Text(
+                    body,
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+                if (reward != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(BgDeep.copy(0.55f))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(reward.emoji.ifBlank { "🎁" }, fontSize = 22.sp)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Event-Belohnung",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 11.sp
+                            )
+                            Text(
+                                reward.label.ifBlank { reward.itemId },
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+                if (shopPet != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(accent.copy(0.18f))
+                            .border(1.dp, accent.copy(0.35f), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (shopPet.hasImage || shopPet.itemId.startsWith("img_")) {
+                            com.luv.couple.ui.ItemGlyph(
+                                id = shopPet.itemId,
+                                fontSize = 28.sp
+                            )
+                        } else {
+                            Text(shopPet.emoji.ifBlank { event.emoji }, fontSize = 26.sp)
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Event-Begleiter",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 11.sp
+                            )
+                            Text(
+                                shopPet.label,
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                "Nur während dem Event · ${shopPet.priceCoins} Coins · danach weg aus dem Shop",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+                }
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("Schließen", color = accent, fontFamily = DisplayFont)
+                }
+            }
         }
     }
 }

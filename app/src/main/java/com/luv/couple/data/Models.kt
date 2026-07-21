@@ -192,6 +192,8 @@ data class Lobby(
     val createdByMe: Boolean = false,
     val eventId: String? = null,
     val eventPrompt: String? = null,
+    /** Bis zu 3 Vorschläge — leer nach Wahl / wenn schon gesetzt. */
+    val eventPromptChoices: List<String> = emptyList(),
     /** ISO-8601 Ende des Event-Fensters (Server). */
     val eventEndsAt: String? = null,
 ) {

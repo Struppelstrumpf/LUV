@@ -112,7 +112,7 @@ fun ProfileInventoryPanel(
     ownedStickers: Map<String, Int>,
     ownedEmojis: Map<String, Int> = emptyMap(),
     ownedThemes: List<String> = listOf(ProfileCatalog.DEFAULT_THEME_ID),
-    ownedPets: List<String> = listOf("🐣"),
+    ownedPets: Map<String, Int> = mapOf("🐣" to 1),
     /** Auf Profil platzierte Sticker (emoji → Anzahl) — reduziert freie Anzeige */
     placedStickers: Map<String, Int> = emptyMap(),
     /** Emojis in der Reaktionsleiste — je 1× als in Verwendung */
@@ -231,7 +231,7 @@ fun ProfileInventoryPanel(
             }
     }
     val petItems = remember(ownedPets, searchQuery, labelsEpoch) {
-        ownedPets.map { it.trim() }.filter { it.isNotEmpty() }.distinct().ifEmpty {
+        ownedPets.keys.map { it.trim() }.filter { it.isNotEmpty() }.ifEmpty {
             if (readOnly) listOf("🐣") else emptyList()
         }.filter { id ->
             val label = ItemLabels.petLabel(id)
@@ -675,6 +675,7 @@ fun ProfileInventoryPanel(
                         @Composable
                         fun PetCell(emoji: String, dimmed: Boolean) {
                             val equipped = emoji == currentCompanion
+                            val count = ownedPets[emoji] ?: 0
                             val itemKey = "pets:$emoji"
                             ItemNewGlowBorder(
                                 active = itemKey in highlightKeys,
@@ -699,6 +700,17 @@ fun ProfileInventoryPanel(
                                         petId = emoji,
                                         fontSize = ts(28.sp)
                                     )
+                                    if (count > 1) {
+                                        Text(
+                                            "×$count",
+                                            color = TextMuted,
+                                            fontFamily = BodyFont,
+                                            fontSize = ts(10.sp),
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(s(4.dp))
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -897,7 +909,7 @@ private fun LazyGridScope.invDimmedGap(show: Boolean, height: Dp) {
 fun ProfileChestDialog(
     ownedStickers: Map<String, Int>,
     ownedThemes: List<String> = listOf(ProfileCatalog.DEFAULT_THEME_ID),
-    ownedPets: List<String> = listOf("🐣"),
+    ownedPets: Map<String, Int> = mapOf("🐣" to 1),
     placedStickers: Map<String, Int> = emptyMap(),
     emojiBar: Collection<String> = emptyList(),
     currentThemeId: String,

@@ -33,6 +33,13 @@ object ItemLabels {
         ShopCatalog.PETS.firstOrNull { it.emoji == id }?.label
             ?.takeIf { it.isNotBlank() && it != id }
             ?.let { return it }
+        if (id.startsWith("img_event_")) {
+            val titlePart = id.removePrefix("img_event_").substringBeforeLast("_")
+                .replace('_', ' ')
+                .trim()
+            return if (titlePart.isNotBlank()) "${titlePart.replaceFirstChar { it.uppercase() }}-Begleiter"
+            else "Event-Begleiter"
+        }
         if (isImagePetId(id)) return "Bild-Begleiter"
         return EmojiNamesDe.name(id)
     }

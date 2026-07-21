@@ -152,7 +152,7 @@ class PrefsRepository(private val context: Context) {
         parseOwnedStickers(prefs[ownedStickersKey])
     }
 
-    val ownedPetsFlow: Flow<List<String>> = context.dataStore.data.map { prefs ->
+    val ownedPetsFlow: Flow<Map<String, Int>> = context.dataStore.data.map { prefs ->
         parseOwnedPets(prefs[ownedPetsKey])
     }
 
@@ -322,9 +322,9 @@ class PrefsRepository(private val context: Context) {
                 listOf(com.luv.couple.profile.ProfileCatalog.DEFAULT_THEME_ID)
             ).toString()
             prefs.remove(ownedStickersKey)
-            prefs[ownedPetsKey] = JSONArray(
-                listOf(com.luv.couple.shop.ShopCatalog.DEFAULT_PET)
-            ).toString()
+            prefs[ownedPetsKey] = JSONObject().apply {
+                put(com.luv.couple.shop.ShopCatalog.DEFAULT_PET, 1)
+            }.toString()
             prefs[equippedPetKey] = com.luv.couple.shop.ShopCatalog.DEFAULT_PET
             prefs.remove(profileCanvasKey)
             prefs.remove(inventorySeenKey)
@@ -426,6 +426,11 @@ class PrefsRepository(private val context: Context) {
                     createdByMe = r.createdByMe || (prev?.createdByMe == true),
                     eventId = remoteEventId,
                     eventPrompt = if (remoteEventId == null) null else remotePrompt,
+                    eventPromptChoices = if (remoteEventId == null) {
+                        emptyList()
+                    } else {
+                        r.eventPromptChoices.ifEmpty { prev?.eventPromptChoices.orEmpty() }
+                    },
                     eventEndsAt = if (remoteEventId == null) null else remoteEnds,
                 )
             }
@@ -437,11 +442,14 @@ class PrefsRepository(private val context: Context) {
             for (r in hosted) upsert(r, Role.HOST)
             for (r in joined) {
                 val code = r.code.uppercase()
-                if (byCode[code]?.role == Role.HOST) continue
+                // Server führt dich noch als Host → Join-Eintrag ignorieren
+                if (code in hostedCodes) continue
+                // Sonst Server-JOIN gewinnt (auch wenn lokal fälschlich HOST nach Failover)
                 upsert(r, Role.JOIN)
             }
             // Nur Event-Hosts ohne Server-Eintrag entfernen (geschlossen).
-            // Normale Freund-Hosts bleiben immer lokal.
+            // Normale Freund-Hosts bleiben lokal, außer Server listet denselben Code als Join
+            // (dann hat upsert schon Role.JOIN gesetzt).
             for (code in byCode.keys.toList()) {
                 val lobby = byCode[code] ?: continue
                 if (lobby.role != Role.HOST) continue
@@ -829,6 +837,11 @@ class PrefsRepository(private val context: Context) {
                     id = prev.id,
                     peakPeers = maxOf(prev.peakPeers, clean.peakPeers, 1),
                     eventPrompt = clean.eventPrompt ?: prev.eventPrompt.asCleanJsonString(),
+                    eventPromptChoices = when {
+                        clean.eventPrompt.asCleanJsonString() != null -> emptyList()
+                        clean.eventPromptChoices.isNotEmpty() -> clean.eventPromptChoices
+                        else -> prev.eventPromptChoices
+                    },
                     eventEndsAt = clean.eventEndsAt ?: prev.eventEndsAt.asCleanJsonString(),
                     eventId = clean.eventId ?: prev.eventId.asCleanJsonString(),
                 )
@@ -1084,7 +1097,7 @@ class PrefsRepository(private val context: Context) {
         return parseOwnedStickers(prefs[ownedStickersKey])
     }
 
-    suspend fun ownedPets(): List<String> {
+    suspend fun ownedPets(): Map<String, Int> {
         val prefs = context.dataStore.data.first()
         return parseOwnedPets(prefs[ownedPetsKey])
     }
@@ -1108,7 +1121,7 @@ class PrefsRepository(private val context: Context) {
         emojis: Map<String, Int>,
         themes: List<String>,
         stickers: Map<String, Int>,
-        pets: List<String>,
+        pets: Map<String, Int>,
         equippedPet: String
     ) {
         context.dataStore.edit { prefs ->
@@ -1125,18 +1138,22 @@ class PrefsRepository(private val context: Context) {
                 if (k.isNotBlank() && v > 0) so.put(k, v)
             }
             prefs[ownedStickersKey] = so.toString()
-            val petList = pets.map { it.trim() }.filter { it.isNotBlank() }.distinct()
-                .ifEmpty { listOf(com.luv.couple.shop.ShopCatalog.DEFAULT_PET) }
-            prefs[ownedPetsKey] = JSONArray(petList).toString()
+            val petMap = pets
+                .mapKeys { it.key.trim() }
+                .filter { it.key.isNotBlank() && it.value > 0 }
+                .ifEmpty { mapOf(com.luv.couple.shop.ShopCatalog.DEFAULT_PET to 1) }
+            val po = JSONObject()
+            petMap.forEach { (k, v) -> po.put(k, v) }
+            prefs[ownedPetsKey] = po.toString()
             val eq = equippedPet.trim().take(32)
             prefs[equippedPetKey] =
-                if (eq.isNotBlank() && petList.contains(eq)) eq
+                if (eq.isNotBlank() && (petMap[eq] ?: 0) > 0) eq
                 else com.luv.couple.shop.ShopCatalog.DEFAULT_PET
 
             val currentKeys = buildSet {
                 stickers.forEach { (k, v) -> if (k.isNotBlank() && v > 0) add("stickers:$k") }
                 themes.map { it.trim() }.filter { it.isNotBlank() }.forEach { add("themes:$it") }
-                petList.forEach { add("pets:$it") }
+                petMap.keys.forEach { add("pets:$it") }
                 emojis.forEach { (k, v) -> if (k.isNotBlank() && v > 0) add("emojis:$k") }
             }
             val seen = parseStringSet(prefs[inventorySeenKey])
@@ -1330,6 +1347,14 @@ class PrefsRepository(private val context: Context) {
                                 ),
                                 eventId = o.optCleanString("eventId"),
                                 eventPrompt = o.optCleanString("eventPrompt"),
+                                eventPromptChoices = o.optJSONArray("eventPromptChoices")?.let { arr ->
+                                    buildList {
+                                        for (i in 0 until arr.length()) {
+                                            val s = arr.optString(i).trim()
+                                            if (s.isNotBlank() && s != "null") add(s.take(80))
+                                        }
+                                    }
+                                }.orEmpty(),
                                 eventEndsAt = o.optCleanString("eventEndsAt"),
                             )
                         )
@@ -1362,6 +1387,10 @@ class PrefsRepository(private val context: Context) {
                         .put("createdByMe", lobby.createdByMe)
                         .put("eventId", lobby.eventId.asCleanJsonString() ?: "")
                         .put("eventPrompt", lobby.eventPrompt.asCleanJsonString() ?: "")
+                        .put(
+                            "eventPromptChoices",
+                            JSONArray(lobby.eventPromptChoices.filter { it.isNotBlank() })
+                        )
                         .put("eventEndsAt", lobby.eventEndsAt.asCleanJsonString() ?: "")
                 )
             }
@@ -1538,23 +1567,35 @@ class PrefsRepository(private val context: Context) {
             }.getOrDefault(emptyMap())
         }
 
-        fun parseOwnedPets(raw: String?): List<String> {
-            val starter = listOf(com.luv.couple.shop.ShopCatalog.DEFAULT_PET)
+        fun parseOwnedPets(raw: String?): Map<String, Int> {
+            val starter = mapOf(com.luv.couple.shop.ShopCatalog.DEFAULT_PET to 1)
             if (raw.isNullOrBlank()) return starter
             return runCatching {
-                val arr = JSONArray(raw)
-                buildList {
-                    for (i in 0 until arr.length()) {
-                        arr.optString(i).trim().takeIf { it.isNotBlank() }?.let { add(it) }
-                    }
-                }.distinct().ifEmpty { starter }
+                val trimmed = raw.trim()
+                if (trimmed.startsWith("{")) {
+                    val o = JSONObject(trimmed)
+                    buildMap {
+                        o.keys().forEach { key ->
+                            val n = o.optInt(key, 0)
+                            if (key.isNotBlank() && n > 0) put(key, n)
+                        }
+                    }.ifEmpty { starter }
+                } else {
+                    val arr = JSONArray(trimmed)
+                    buildMap {
+                        for (i in 0 until arr.length()) {
+                            val id = arr.optString(i).trim()
+                            if (id.isNotBlank()) put(id, (get(id) ?: 0) + 1)
+                        }
+                    }.ifEmpty { starter }
+                }
             }.getOrDefault(starter)
         }
 
         fun parseEquippedPet(equippedRaw: String?, petsRaw: String?): String {
             val pets = parseOwnedPets(petsRaw)
             val eq = equippedRaw?.trim().orEmpty()
-            return if (eq.isNotBlank() && pets.contains(eq)) eq
+            return if (eq.isNotBlank() && (pets[eq] ?: 0) > 0) eq
             else com.luv.couple.shop.ShopCatalog.DEFAULT_PET
         }
 
@@ -1701,6 +1742,12 @@ private fun sanitizeEventLobbyFields(lobby: Lobby): Lobby {
     return lobby.copy(
         eventId = lobby.eventId.asCleanJsonString(),
         eventPrompt = lobby.eventPrompt.asCleanJsonString(),
+        eventPromptChoices = lobby.eventPromptChoices
+            .map { it.trim() }
+            .filter { it.isNotBlank() && it != "null" }
+            .map { it.take(80) }
+            .distinct()
+            .take(5),
         eventEndsAt = lobby.eventEndsAt.asCleanJsonString(),
     )
 }

@@ -37,6 +37,7 @@ data class RoomSession(
     val role: String? = null,
     val eventId: String? = null,
     val eventPrompt: String? = null,
+    val eventPromptChoices: List<String> = emptyList(),
     val eventEndsAt: String? = null,
     val trialDrawUntil: Long? = null,
     val sessionToken: String? = null,
@@ -137,6 +138,7 @@ data class RemoteLobby(
     val createdByMe: Boolean = false,
     val eventId: String? = null,
     val eventPrompt: String? = null,
+    val eventPromptChoices: List<String> = emptyList(),
     val eventEndsAt: String? = null,
 )
 
@@ -544,10 +546,21 @@ object LuvApiClient {
                 createdByMe = o.optBoolean("createdByMe", false),
                 eventId = o.optCleanString("eventId"),
                 eventPrompt = o.optCleanString("eventPrompt"),
+                eventPromptChoices = parseStringList(o.optJSONArray("eventPromptChoices")),
                 eventEndsAt = o.optCleanString("eventEndsAt"),
             )
         }
         return out
+    }
+
+    private fun parseStringList(arr: org.json.JSONArray?): List<String> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val s = arr.optString(i).trim()
+                if (s.isNotBlank() && s != "null") add(s.take(80))
+            }
+        }
     }
 
     private fun parseCloudSettings(o: JSONObject?): CloudSettings? {
@@ -1390,7 +1403,7 @@ object LuvApiClient {
         val emojis: Map<String, Int>,
         val themes: List<String>,
         val stickers: Map<String, Int>,
-        val pets: List<String>,
+        val pets: Map<String, Int>,
         val equippedPet: String
     )
 
@@ -1422,12 +1435,12 @@ object LuvApiClient {
         user to json.optInt("owned", 1)
     }
 
-    suspend fun buyPet(emoji: String): AccountInfo = withContext(Dispatchers.IO) {
+    suspend fun buyPet(emoji: String): Pair<AccountInfo, Int> = withContext(Dispatchers.IO) {
         val body = JSONObject().put("emoji", emoji.trim().take(32)).toString()
         val json = authedPost("/v1/shop/buy-pet", body)
         val user = AccountInfo.fromApi(json.getJSONObject("user"))
         AccountSession.setAccount(user)
-        user
+        user to json.optInt("owned", 1)
     }
 
     suspend fun equipPet(emoji: String): String = withContext(Dispatchers.IO) {
@@ -1617,14 +1630,23 @@ object LuvApiClient {
                 if (key.isNotBlank() && n > 0) put(key, n)
             }
         }
-        val pets = buildList {
-            val arr = json.optJSONArray("pets")
-            if (arr != null) {
-                for (i in 0 until arr.length()) {
-                    arr.optString(i).trim().takeIf { it.isNotBlank() }?.let { add(it) }
+        val pets = buildMap {
+            val o = json.optJSONObject("pets")
+            if (o != null) {
+                o.keys().forEach { key ->
+                    val n = o.optInt(key, 0)
+                    if (key.isNotBlank() && n > 0) put(key, n)
+                }
+            } else {
+                val arr = json.optJSONArray("pets")
+                if (arr != null) {
+                    for (i in 0 until arr.length()) {
+                        val id = arr.optString(i).trim()
+                        if (id.isNotBlank()) put(id, (get(id) ?: 0) + 1)
+                    }
                 }
             }
-        }.distinct()
+        }.ifEmpty { mapOf(com.luv.couple.shop.ShopCatalog.DEFAULT_PET to 1) }
         val equipped = json.optString("equippedPet", com.luv.couple.shop.ShopCatalog.DEFAULT_PET)
             .trim().ifBlank { com.luv.couple.shop.ShopCatalog.DEFAULT_PET }
         InventoryBag(
@@ -1766,11 +1788,24 @@ object LuvApiClient {
                             arr.optString(i).trim().takeIf { it.isNotBlank() }?.let { add(it) }
                         }
                     }.distinct()
+                    fun petCounts(): Map<String, Int> {
+                        val o = invJson.optJSONObject("pets")
+                        if (o != null) return counts(o)
+                        val arr = invJson.optJSONArray("pets") ?: return mapOf(
+                            com.luv.couple.shop.ShopCatalog.DEFAULT_PET to 1
+                        )
+                        return buildMap {
+                            for (i in 0 until arr.length()) {
+                                val id = arr.optString(i).trim()
+                                if (id.isNotBlank()) put(id, (get(id) ?: 0) + 1)
+                            }
+                        }.ifEmpty { mapOf(com.luv.couple.shop.ShopCatalog.DEFAULT_PET to 1) }
+                    }
                     InventoryBag(
                         emojis = counts(invJson.optJSONObject("emojis")),
                         themes = list(invJson.optJSONArray("themes")),
                         stickers = counts(invJson.optJSONObject("stickers")),
-                        pets = list(invJson.optJSONArray("pets")),
+                        pets = petCounts(),
                         equippedPet = invJson.optString(
                             "equippedPet",
                             com.luv.couple.shop.ShopCatalog.DEFAULT_PET
@@ -3528,6 +3563,30 @@ object LuvApiClient {
         }
     }
 
+    /** Event-Lobby: einen der 3 Begriffsvorschläge setzen. */
+    suspend fun setEventPrompt(code: String, token: String, prompt: String): String =
+        withContext(Dispatchers.IO) {
+            val clean = normalizeCode(code) ?: throw LuvApiException("Ungültiger Code.")
+            val body = JSONObject()
+                .put("token", token)
+                .put("prompt", prompt.trim().take(80))
+                .toString()
+                .toRequestBody(jsonMedia)
+            val request = authedRequestBuilder("/v1/rooms/$clean/event-prompt").post(body).build()
+            http.newCall(request).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                if (!response.isSuccessful) {
+                    throw LuvApiException(
+                        message = json?.optString("message")?.takeIf { it.isNotBlank() }
+                            ?: "Begriff konnte nicht gesetzt werden.",
+                        error = json?.optString("error")
+                    )
+                }
+                json?.optCleanString("eventPrompt") ?: prompt.trim().take(80)
+            }
+        }
+
     @Deprecated("Use leaveRoom — abandon kicked everyone")
     suspend fun abandonRoom(code: String) = leaveRoom(code)
 
@@ -3698,7 +3757,8 @@ object LuvApiClient {
                         "no_coins" -> "Nicht genug Coins."
                         "insufficient_coins" -> "Nicht genug Coins."
                         "capacity_full" -> "Maximal ${PeerPalette.MAX_PEERS} Personen."
-                        "not_host" -> "Nur der Host kann Plätze freischalten."
+                        "not_host" -> "Nur Lobby-Mitglieder können Plätze freischalten."
+                        "not_member" -> "Nur Lobby-Mitglieder können Plätze freischalten."
                         "event_lobby_exists" -> msg
                             ?: "Du hast schon eine Event-Lobby für dieses Event."
                         "unauthorized" -> "Bitte neu anmelden."
@@ -3746,6 +3806,7 @@ object LuvApiClient {
                 role = parsed.optString("role").takeIf { it.isNotBlank() },
                 eventId = parsed.optCleanString("eventId"),
                 eventPrompt = parsed.optCleanString("eventPrompt"),
+                eventPromptChoices = parseStringList(parsed.optJSONArray("eventPromptChoices")),
                 eventEndsAt = parsed.optCleanString("eventEndsAt"),
                 trialDrawUntil = trialUntil,
                 sessionToken = sess,

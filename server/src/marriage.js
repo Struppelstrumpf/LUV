@@ -543,9 +543,26 @@ function stripSpouseFromProfile(user) {
   });
 }
 
+function ensurePetsCountMap(inv) {
+  if (!inv) return {};
+  if (Array.isArray(inv.pets)) {
+    const next = {};
+    for (const p of inv.pets) {
+      const id = String(p || "").trim();
+      if (!id) continue;
+      next[id] = Math.min(999, (Number(next[id]) || 0) + 1);
+    }
+    inv.pets = next;
+  } else if (!inv.pets || typeof inv.pets !== "object") {
+    inv.pets = {};
+  }
+  return inv.pets;
+}
+
 function clearMarriageItem(user) {
   if (!user?.inventory?.pets) return;
-  user.inventory.pets = user.inventory.pets.filter((p) => p !== MARRIAGE_PET);
+  const pets = ensurePetsCountMap(user.inventory);
+  delete pets[MARRIAGE_PET];
   if (user.inventory.equippedPet === MARRIAGE_PET) {
     user.inventory.equippedPet = "🐣";
     if (user.profileCanvas) {
@@ -557,9 +574,9 @@ function clearMarriageItem(user) {
 function grantMarriageItem(user) {
   if (!user) return;
   if (!user.inventory) user.inventory = {};
-  if (!Array.isArray(user.inventory.pets)) user.inventory.pets = [];
-  if (!user.inventory.pets.includes(MARRIAGE_PET)) {
-    user.inventory.pets.push(MARRIAGE_PET);
+  const pets = ensurePetsCountMap(user.inventory);
+  if ((Number(pets[MARRIAGE_PET]) || 0) < 1) {
+    pets[MARRIAGE_PET] = 1;
   }
   if (!user.inventory.stickers || typeof user.inventory.stickers !== "object") {
     user.inventory.stickers = {};

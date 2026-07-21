@@ -401,9 +401,42 @@ function listOffersForItem(db, viewerId, { kind, itemId, mode }) {
   };
 }
 
+/** Begleiter als Zähl-Map (wie Sticker) — Array-Altbestand → Map. */
+function asPetMap(inv) {
+  if (!inv) return {};
+  if (Array.isArray(inv.pets)) {
+    const next = {};
+    for (const p of inv.pets) {
+      const id = String(p || "").trim();
+      if (!id) continue;
+      next[id] = Math.min(999, (Number(next[id]) || 0) + 1);
+    }
+    inv.pets = next;
+  } else if (!inv.pets || typeof inv.pets !== "object") {
+    inv.pets = {};
+  }
+  return inv.pets;
+}
+
+function petCountOf(inv, itemId) {
+  const id = String(itemId || "").trim();
+  if (!id) return 0;
+  return Math.max(0, Math.floor(Number(asPetMap(inv)[id]) || 0));
+}
+
+function petReserved(user, inv, itemId) {
+  const id = String(itemId || "").trim();
+  if (!id) return 0;
+  let reserved = 0;
+  if (String(inv.equippedPet || "") === id) reserved = 1;
+  const companion = String(user?.profileCanvas?.companionEmoji || "").trim();
+  if (companion === id) reserved = Math.max(reserved, 1);
+  return reserved;
+}
+
 function userOwnsItem(user, ensureInventory, kind, itemId) {
   const inv = ensureInventory(user);
-  if (kind === "pets") return (inv.pets || []).includes(itemId);
+  if (kind === "pets") return petCountOf(inv, itemId) > 0;
   if (kind === "themes") return (inv.themes || []).includes(itemId);
   if (kind === "stickers") return (Number(inv.stickers?.[itemId]) || 0) > 0;
   if (kind === "emojis") return (Number(inv.emojis?.[itemId]) || 0) > 0;
@@ -414,11 +447,13 @@ function takeItemFromUser(user, ensureInventory, kind, itemId) {
   const inv = ensureInventory(user);
   if (kind === "pets") {
     if (itemId === "🐣") return false; // Starter nicht verkaufen
-    // Ausgerüstet → nicht entnehmen (Caller muss vorher prüfen)
-    if (inv.equippedPet === itemId) return false;
-    const i = inv.pets.indexOf(itemId);
-    if (i < 0) return false;
-    inv.pets.splice(i, 1);
+    const pets = asPetMap(inv);
+    const owned = petCountOf(inv, itemId);
+    if (owned < 1) return false;
+    // Freier Bestand = owned − 1 wenn ausgerüstet/Profil (wie Sticker)
+    if (owned - petReserved(user, inv, itemId) < 1) return false;
+    pets[itemId] = owned - 1;
+    if (pets[itemId] <= 0) delete pets[itemId];
     return true;
   }
   if (kind === "themes") {
@@ -466,8 +501,11 @@ function takeItemFromUser(user, ensureInventory, kind, itemId) {
 function giveItemToUser(user, ensureInventory, kind, itemId) {
   const inv = ensureInventory(user);
   if (kind === "pets") {
-    if (!inv.pets.includes(itemId)) inv.pets.push(itemId);
-    return true; // schon besessen = idempotent ok (Cancel/Expire)
+    const pets = asPetMap(inv);
+    const id = String(itemId || "").trim();
+    if (!id) return false;
+    pets[id] = Math.min(999, (Number(pets[id]) || 0) + 1);
+    return true;
   }
   if (kind === "themes") {
     if (!inv.themes.includes(itemId)) inv.themes.push(itemId);

@@ -309,7 +309,11 @@ fun LobbiesScreen(
     val accent = EventSession.menuAccentOrNull() ?: PeerPalette.menuAccent()
     val eventGlyph = EventSession.menuGlyphOrNull()
     val primaryEvent = EventSession.primaryActiveEvent()
-    val eventLobby = EventSession.primaryEventForLobby()?.takeIf { it.canCreateLobby }
+    val eventLobby = EventSession.primaryEventForLobby()?.takeIf { it.lobbyEnabled }
+    val hasLocalEventLobby = lobbies.any { lobby ->
+        val eid = lobby.eventId.asCleanJsonString()
+        eid != null && (eventLobby == null || eid == eventLobby.id)
+    }
     // eventsUi: hält Compose reaktiv auf EventSession
     @Suppress("UNUSED_VARIABLE")
     val eventsUi by EventSession.state.collectAsStateWithLifecycle()
@@ -583,7 +587,10 @@ fun LobbiesScreen(
                     )
                     if (eventLobby != null) {
                         PrimaryButton(
-                            label = "Event Lobby",
+                            label = when {
+                                eventLobby.canCreateLobby && !hasLocalEventLobby -> "Event Lobby"
+                                else -> "Event Lobby öffnen"
+                            },
                             color = accent,
                             onClick = {
                                 showLobbyPlusDialog = false
@@ -1252,9 +1259,9 @@ private fun LobbyCard(
                     occupied = occupied,
                     nicknames = nicknames,
                     accent = accent,
-                    // Mitglieder dürfen einladen; Plätze kaufen nur Host
+                    // Mitglieder dürfen einladen und Plätze kaufen (Server erlaubt beides)
                     canInvite = true,
-                    canBuySlots = lobby.role == Role.HOST,
+                    canBuySlots = true,
                     onInvite = onInviteSeat,
                     onBuy = onBuySeat,
                     onFirstInviteSeatPositioned = if (reportCoachTargets) {

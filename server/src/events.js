@@ -945,7 +945,217 @@ function progressFor(user, eventId, seasonKey = null) {
   return p;
 }
 
+function eventShopPetId(eventId, year) {
+  const id = String(eventId || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .slice(0, 18);
+  const y = Math.floor(Number(year) || new Date().getFullYear());
+  return `img_event_${id}_${y}`.slice(0, 32);
+}
+
+function shopPetYearForEvent(ev, now = new Date()) {
+  const bp = berlinParts(now);
+  if (isActiveAtPatched(ev, now)) {
+    for (const y of [bp.year - 1, bp.year, bp.year + 1]) {
+      const w = windowForYear(ev, y);
+      if (w && now.getTime() >= w.start.getTime() && now.getTime() < w.end.getTime()) {
+        return y;
+      }
+    }
+    const enriched = engine.enrichEvent(ev);
+    if (enriched.schedule?.mode === "absolute") {
+      const fromMs = Date.parse(enriched.schedule.absoluteFrom || "");
+      if (Number.isFinite(fromMs)) return berlinParts(new Date(fromMs)).year;
+    }
+  }
+  const occ = nextOccurrence(ev, now);
+  if (occ?.start) {
+    const m = String(occ.start).match(/^(\d{4})/);
+    if (m) return Number(m[1]);
+  }
+  return bp.year;
+}
+
+function activeEventWindowMs(ev, now = new Date()) {
+  const bp = berlinParts(now);
+  for (const y of [bp.year - 1, bp.year, bp.year + 1]) {
+    const w = windowForYear(ev, y);
+    if (w && now.getTime() >= w.start.getTime() && now.getTime() < w.end.getTime()) {
+      return { from: w.start.getTime(), until: w.end.getTime(), year: y };
+    }
+  }
+  const enriched = engine.enrichEvent(ev);
+  if (enriched.schedule?.mode === "absolute") {
+    const fromMs = Date.parse(enriched.schedule.absoluteFrom || "");
+    const untilMs = Date.parse(enriched.schedule.absoluteUntil || "");
+    if (
+      Number.isFinite(fromMs) &&
+      Number.isFinite(untilMs) &&
+      now.getTime() >= fromMs &&
+      now.getTime() < untilMs
+    ) {
+      return { from: fromMs, until: untilMs, year: berlinParts(new Date(fromMs)).year };
+    }
+  }
+  return null;
+}
+
+/** Fenster für ein bestimmtes Event-Jahr (Admin-Anlage / Sync). */
+function windowMsForEventYear(ev, year) {
+  if (!ev) return null;
+  const y = Math.floor(Number(year) || 0);
+  if (y < 2020 || y > 2100) return null;
+  const enriched = engine.enrichEvent(ev);
+  if (enriched.schedule?.mode === "absolute") {
+    const fromMs = Date.parse(enriched.schedule.absoluteFrom || "");
+    const untilMs = Date.parse(enriched.schedule.absoluteUntil || "");
+    if (Number.isFinite(fromMs) && Number.isFinite(untilMs)) {
+      return { from: fromMs, until: untilMs, year: berlinParts(new Date(fromMs)).year };
+    }
+  }
+  const w = windowForYear(ev, y);
+  if (!w) return null;
+  return { from: w.start.getTime(), until: w.end.getTime(), year: y };
+}
+
+function findCatalogEventPet(db, eventId, year) {
+  if (!db) return null;
+  let shopCatalog;
+  try {
+    shopCatalog = require("./shop_catalog");
+  } catch {
+    return null;
+  }
+  const cat = shopCatalog.ensureShopCatalog(db);
+  const eid = String(eventId || "").trim();
+  if (!eid) return null;
+  const y = Math.floor(Number(year) || 0);
+  const pets = Object.values(cat.items || {}).filter(
+    (i) => i && i.kind === "pets" && String(i.eventId || "") === eid
+  );
+  if (!pets.length) return null;
+  let hit = y ? pets.find((i) => Number(i.eventYear) === y) : null;
+  if (!hit && y) hit = pets.find((i) => String(i.itemId || "").endsWith(`_${y}`));
+  if (!hit) {
+    hit = pets.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+  }
+  return hit || null;
+}
+
+function shopPetPublic(db, ev, now = new Date()) {
+  if (!ev) return null;
+  const year = shopPetYearForEvent(ev, now);
+  const pub = publicEvent(ev);
+  const item = findCatalogEventPet(db, ev.id, year);
+  if (!item) return null;
+  let shopCatalog;
+  try {
+    shopCatalog = require("./shop_catalog");
+  } catch {
+    shopCatalog = null;
+  }
+  const price =
+    shopCatalog && typeof shopCatalog.effectivePrice === "function"
+      ? shopCatalog.effectivePrice(item)
+      : Math.max(0, Number(item.priceCoins) || 200);
+  const hasImage = Boolean(item.hasImage);
+  return {
+    itemId: item.itemId,
+    kind: "pets",
+    emoji: item.previewEmoji || pub.emoji || "🎁",
+    label: String(item.label || `${pub.title}-Begleiter`).slice(0, 40),
+    priceCoins: price > 0 ? price : 200,
+    year,
+    hasImage,
+    imageUrl: hasImage
+      ? `/luv/v1/shop/pet-image/${encodeURIComponent(item.itemId)}`
+      : null,
+  };
+}
+
+/**
+ * Event-Begleiter aus dem Admin-Katalog: Fenster an Event-Jahr anpassen.
+ * Keine Auto-Platzhalter mehr — Anlage nur über Itemshop (eventId).
+ */
+function syncEventShopPets(db, now = new Date()) {
+  if (!db) return;
+  let shopCatalog;
+  try {
+    shopCatalog = require("./shop_catalog");
+  } catch {
+    return;
+  }
+  const cfg = ensureEventsConfig(db);
+  const cat = shopCatalog.ensureShopCatalog(db);
+  const byId = new Map((cfg.events || []).map((e) => [String(e.id), e]));
+  for (const item of Object.values(cat.items || {})) {
+    if (!item || item.kind !== "pets" || !item.eventId) continue;
+    const ev = byId.get(String(item.eventId));
+    if (!ev || ev.enabled === false) continue;
+    const year =
+      Number(item.eventYear) ||
+      shopPetYearForEvent(ev, now) ||
+      berlinParts(now).year;
+    if (!item.eventYear) item.eventYear = year;
+    const win = windowMsForEventYear(ev, year);
+    if (!win) continue;
+    const same =
+      Number(item.availableFrom) === win.from &&
+      Number(item.availableUntil) === win.until &&
+      item.rotationLocked === true;
+    if (same) continue;
+    shopCatalog.upsertItem(db, {
+      ...item,
+      kind: "pets",
+      itemId: item.itemId,
+      availableFrom: win.from,
+      availableUntil: win.until,
+      rotationLocked: true,
+      eventId: item.eventId,
+      eventYear: year,
+      enabled: item.enabled !== false,
+    });
+  }
+}
+
+/** Admin: Event-Liste inkl. nächstes Fenster für Shop-Wizard. */
+function shopEventOptions(db, now = new Date()) {
+  const cfg = ensureEventsConfig(db);
+  return (cfg.events || [])
+    .filter((e) => e && e.enabled !== false)
+    .map((e) => {
+      const pub = publicEvent(e);
+      const occ = nextOccurrence(e, now);
+      const year = shopPetYearForEvent(e, now);
+      const win = windowMsForEventYear(e, year);
+      const existing = findCatalogEventPet(db, e.id, year);
+      return {
+        id: pub.id,
+        title: pub.title,
+        emoji: pub.emoji,
+        year,
+        windowStart: occ?.start || null,
+        windowEnd: occ?.end || null,
+        availableFrom: win?.from || null,
+        availableUntil: win?.until || null,
+        suggestedItemId: eventShopPetId(e.id, year),
+        suggestedLabel: `${pub.title}-Begleiter`.slice(0, 40),
+        hasPetForYear: Boolean(existing),
+        existingItemId: existing?.itemId || null,
+        active: isActiveAtPatched(e, now),
+      };
+    })
+    .sort((a, b) => String(a.windowStart || "").localeCompare(String(b.windowStart || "")));
+}
+
 function meEventsPayload(db, user, dayKey, now = new Date()) {
+  try {
+    syncEventShopPets(db, now);
+  } catch {
+    /* ignore */
+  }
   const cfg = ensureEventsConfig(db);
   const active = [];
   const upcoming = [];
@@ -981,6 +1191,7 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
       claimedMilestone: prog.claimedMilestone,
       itemGranted: prog.itemGranted,
       canCollect: false,
+      shopPet: shopPetPublic(db, e, now),
     };
     const activeNow = isActiveAtPatched(e, now);
     if (user && pub.contest?.enabled) {
@@ -1002,6 +1213,7 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
       const ep = engine.ensureUserProgress(user, e.id);
       row.eventPrompt = ep.eventPrompt || null;
       row.lobbyCreated = Boolean(ep.lobbyCreated);
+      row.lobbyCode = ep.lobbyCode || null;
       row.canCreateLobby = Boolean(
         activeNow && pub.lobby?.enabled && !ep.lobbyCreated
       );
@@ -1179,4 +1391,11 @@ module.exports = {
   isEventOnlyItem,
   publicEvent,
   nextOccurrence,
+  syncEventShopPets,
+  shopPetPublic,
+  eventShopPetId,
+  shopPetYearForEvent,
+  shopEventOptions,
+  windowMsForEventYear,
+  findCatalogEventPet,
 };

@@ -537,7 +537,14 @@
 
           <div class="panel">
             <h3>Inventar</h3>
-            <p class="help">Begleiter: ${(inv.pets || []).map((p) => esc(p)).join(" ") || "—"}
+            <p class="help">Begleiter: ${
+              inv.pets && typeof inv.pets === "object" && !Array.isArray(inv.pets)
+                ? Object.entries(inv.pets)
+                    .filter(([, n]) => Number(n) > 0)
+                    .map(([p, n]) => esc(p) + (Number(n) > 1 ? `×${n}` : ""))
+                    .join(" ") || "—"
+                : (inv.pets || []).map((p) => esc(p)).join(" ") || "—"
+            }
               · Themes: ${(inv.themes || []).length} · Sticker: ${inv.stickerCount || 0} · Emojis: ${inv.emojiCount || 0}
               · ausgerüstet: ${esc(inv.equippedPet || "—")}</p>
           </div>

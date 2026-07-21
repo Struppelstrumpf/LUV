@@ -67,12 +67,25 @@ function defaultContestPlaces() {
 }
 
 function pickEventPrompt(lobbyCfg, eventTitle) {
+  const picks = sampleEventPrompts(lobbyCfg, 1, eventTitle);
+  return String(picks[0] || "Herz").slice(0, 80);
+}
+
+/** Bis zu [count] unterschiedliche Wörter aus der Event-Wortliste (Zufallsreihenfolge). */
+function sampleEventPrompts(lobbyCfg, count = 3, eventTitle) {
+  void eventTitle;
   const fromCfg = Array.isArray(lobbyCfg?.prompts)
     ? lobbyCfg.prompts.map((p) => String(p || "").trim()).filter(Boolean)
     : [];
-  const pool = fromCfg.length ? fromCfg : DEFAULT_EVENT_PROMPTS;
-  const i = Math.floor(Math.random() * pool.length);
-  return String(pool[i] || "Herz").slice(0, 80);
+  const pool = [...new Set(fromCfg.length ? fromCfg : DEFAULT_EVENT_PROMPTS)];
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = pool[i];
+    pool[i] = pool[j];
+    pool[j] = tmp;
+  }
+  const n = Math.max(1, Math.min(5, Math.floor(Number(count) || 3)));
+  return pool.slice(0, Math.min(n, pool.length)).map((p) => String(p).slice(0, 80));
 }
 
 function slugId(raw) {
@@ -360,6 +373,7 @@ function ensureUserProgress(user, eventId) {
       lobbyCreated: false,
       lobbyCode: null,
       eventPrompt: null,
+      eventPromptChoices: null,
       claimablePrize: null,
       prizeClaimed: false,
     };
@@ -986,6 +1000,7 @@ module.exports = {
   contestPublicForUser,
   noteEventLobbyStroke,
   pickEventPrompt,
+  sampleEventPrompts,
   defaultContestPlaces,
   voteWindowOpen,
   resolveVoteBounds,

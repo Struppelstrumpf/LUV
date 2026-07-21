@@ -22,7 +22,10 @@ function snapshotFile(snapshotDir, code) {
 
 function hasInviteSnapshot(snapshotDir, code) {
   try {
-    return fs.existsSync(snapshotFile(snapshotDir, code));
+    const file = snapshotFile(snapshotDir, code);
+    if (!fs.existsSync(file)) return false;
+    // Einfarbige / leere PNGs sind klein — zählen nicht als Zeichnung für OG
+    return fs.statSync(file).size >= 10_000;
   } catch {
     return false;
   }

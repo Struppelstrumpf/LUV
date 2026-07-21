@@ -36,7 +36,26 @@ object InventoryAvailability {
         return owned.map { it.trim() }.filter { it.isNotEmpty() && it != active }.distinct()
     }
 
-    /** Pets: ausgerüsteter Begleiter gilt als in Verwendung. */
+    /** Pets: freier Bestand = owned − 1 wenn ausgerüstet / Profil-Begleiter. */
+    fun freePets(
+        owned: Map<String, Int>,
+        equippedPet: String,
+        profileCompanion: String = equippedPet,
+    ): Map<String, Int> {
+        val reserved = buildSet {
+            equippedPet.trim().takeIf { it.isNotEmpty() }?.let { add(it) }
+            profileCompanion.trim().takeIf { it.isNotEmpty() }?.let { add(it) }
+        }
+        return owned.mapNotNull { (id, total) ->
+            val key = id.trim()
+            if (key.isEmpty() || key == ShopCatalog.DEFAULT_PET) return@mapNotNull null
+            val used = if (key in reserved) 1 else 0
+            val free = (total - used).coerceAtLeast(0)
+            if (free > 0) key to free else null
+        }.toMap()
+    }
+
+    @Deprecated("Use freePets(Map, …)", ReplaceWith("freePets(owned.associateWith { 1 }, equippedPet)"))
     fun freePets(
         owned: Collection<String>,
         equippedPet: String

@@ -38,6 +38,27 @@ object PairSessionState {
     fun capacity(lobbyId: String): StateFlow<Int> =
         capacities.getOrPut(lobbyId) { MutableStateFlow(0) }.asStateFlow()
 
+    /** Lobby-ID gewechselt (gleicher Code) — Peers/Capacity mitnehmen, kein „alleine“-Flash. */
+    fun migrateLobbyId(fromId: String, toId: String) {
+        if (fromId.isBlank() || toId.isBlank() || fromId == toId) return
+        peersByLobby[fromId]?.let { flow ->
+            peersByLobby[toId] = flow
+            peersByLobby.remove(fromId)
+        }
+        peerCounts[fromId]?.let { flow ->
+            peerCounts[toId] = flow
+            peerCounts.remove(fromId)
+        }
+        capacities[fromId]?.let { flow ->
+            capacities[toId] = flow
+            capacities.remove(fromId)
+        }
+        goneSinceByLobby[fromId]?.let { ts ->
+            goneSinceByLobby[toId] = ts
+            goneSinceByLobby.remove(fromId)
+        }
+    }
+
     fun anyonePresent(lobbyId: String): Boolean =
         peersByLobby[lobbyId]?.value?.values?.any { it.active } == true
 
