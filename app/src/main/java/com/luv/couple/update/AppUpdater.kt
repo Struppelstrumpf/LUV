@@ -234,11 +234,18 @@ object AppUpdater {
         }
         try {
             if (isInstalledFromPlay(context)) {
-                // Play In-App zuerst; falls Play nichts meldet → version.json als Pflicht-Hinweis
-                checkPlayUpdate(context, installed, notify)
-                    ?: checkManifestThenPlayStore(context, installed, notify)
+                // Nur anzeigen, wenn Google Play das Update wirklich ausliefert
+                // (nicht schon bei Deploy / version.json, solange Review/Rollout läuft).
+                val play = checkPlayUpdate(context, installed, notify)
+                if (play != null) return@withContext play
+                if (_state.value !is UpdateUiState.Downloading &&
+                    _state.value !is UpdateUiState.Ready
+                ) {
+                    _state.value = UpdateUiState.UpToDate
+                }
+                null
             } else {
-                // Sideload / alte Website-APK: Version über Manifest, Update nur über Play Store
+                // Sideload: version.json → Hinweis, Update über Play Store
                 checkManifestThenPlayStore(context, installed, notify)
             }
         } catch (t: Throwable) {
@@ -264,7 +271,7 @@ object AppUpdater {
         val info = try {
             manager.requestAppUpdateInfo()
         } catch (_: Throwable) {
-            // Play Services / Simulator — Caller fällt auf Manifest zurück
+            // Play Services / Simulator — kein Update erzwingen
             return null
         }
         cachedPlayUpdateInfo = info
@@ -281,7 +288,7 @@ object AppUpdater {
             return release
         }
 
-        // Pflicht-Popup sobald Play ein Update kennt — nicht nur bei IMMEDIATE
+        // Nur wenn Play das Update wirklich anbietet (Review/Rollout fertig)
         if (availability == UpdateAvailability.UPDATE_AVAILABLE && remoteCode > installed) {
             val release = playRelease(info, installed)
             if (_state.value !is UpdateUiState.Downloading &&
