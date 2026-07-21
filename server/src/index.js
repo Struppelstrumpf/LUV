@@ -14498,7 +14498,7 @@ app.post("/v1/rooms/:code/space/stand", (req, res) => {
 app.post("/v1/rooms/:code/space/react", (req, res) => {
   const pack = requireCustomRoomMember(req, res);
   if (!pack) return;
-  const emoji = String(req.body?.emoji || "").trim().slice(0, 8);
+  const emoji = clipCanvasEmojiId(req.body?.emoji);
   if (!emoji) return res.status(400).json({ error: "bad_emoji" });
   const space = ensureRoomSpace(pack.room);
   space.reactions[pack.ctx.user.id] = { emoji, until: Date.now() + 2000 };
