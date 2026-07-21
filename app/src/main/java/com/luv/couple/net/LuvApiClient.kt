@@ -2810,6 +2810,7 @@ object LuvApiClient {
 
     data class SpaceMoveResult(
         val space: RoomSpaceInfo,
+        val enteredPortal: Boolean = false,
         val portalId: String? = null,
         val actionId: String? = null,
         val actionType: String? = null,
@@ -2822,6 +2823,8 @@ object LuvApiClient {
             val json = authedPost("/v1/rooms/$c/space/move", body)
             SpaceMoveResult(
                 space = parseRoomSpace(json.optJSONObject("space")) ?: RoomSpaceInfo(),
+                enteredPortal = json.optBoolean("enteredPortal", false) ||
+                    json.optString("portalId").isNotBlank(),
                 portalId = json.optString("portalId").takeIf { it.isNotBlank() },
                 actionId = json.optString("actionId").takeIf { it.isNotBlank() },
                 actionType = json.optString("actionType").takeIf { it.isNotBlank() },

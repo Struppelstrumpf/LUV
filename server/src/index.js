@@ -14361,6 +14361,7 @@ function ensureRoomSpace(room) {
       positions: {},
       seated: {},
       reactions: {},
+      portalCooldown: {},
       lastMoveAt: 0,
       lastMoveBy: null,
     };
@@ -14368,6 +14369,7 @@ function ensureRoomSpace(room) {
   if (!room.space.positions) room.space.positions = {};
   if (!room.space.seated) room.space.seated = {};
   if (!room.space.reactions) room.space.reactions = {};
+  if (!room.space.portalCooldown) room.space.portalCooldown = {};
   return room.space;
 }
 
@@ -14521,13 +14523,56 @@ app.post("/v1/rooms/:code/space/move", (req, res) => {
   space.lastMoveAt = Date.now();
   space.lastMoveBy = uid;
   pack.room.lastActiveAt = Date.now();
-  const portal = roomLayouts.findPortalAt(layout, finalPos.x, finalPos.y);
-  const action = roomLayouts.findActionAt(layout, finalPos.x, finalPos.y);
+
+  // Portal-Cooldown: nicht sofort wieder auslösen (Spawn oft nahe Eingang)
+  const now = Date.now();
+  if (!space.portalCooldown) space.portalCooldown = {};
+  const cooled = Number(space.portalCooldown[uid]) || 0;
+  let enteredPortal = false;
+  let portal = null;
+  let action = roomLayouts.findActionAt(layout, finalPos.x, finalPos.y);
+  if (now >= cooled) {
+    portal = roomLayouts.findPortalAt(layout, finalPos.x, finalPos.y);
+    if (portal) {
+      const target = roomLayouts.getLayout(db, portal.targetRoomId);
+      if (target && target.hasImage) {
+        delete space.seated[uid];
+        const spawn = target.spawn || { x: 0.5, y: 0.85 };
+        space.positions[uid] = {
+          x: spawn.x,
+          y: spawn.y,
+          layoutId: target.id,
+        };
+        roomLayouts.ensureSpawnPosition(target, space.positions, uid);
+        if (space.positions[uid]) {
+          space.positions[uid].layoutId = target.id;
+          // Spawn leicht vom Portal wegschieben
+          const landed = space.positions[uid];
+          const backHit = roomLayouts.findPortalAt(target, landed.x, landed.y);
+          if (backHit) {
+            landed.y = Math.max(0.05, landed.y - 0.08);
+            if (!roomLayouts.isWalkable(target, landed.x, landed.y)) {
+              const sp = target.spawn || spawn;
+              landed.x = sp.x;
+              landed.y = Math.max(0.05, (sp.y || 0.8) - 0.1);
+            }
+          }
+        }
+        space.portalCooldown[uid] = now + 2500;
+        enteredPortal = true;
+        action = null;
+      } else {
+        portal = null;
+      }
+    }
+  }
+
   persistRooms();
   return res.json({
     ok: true,
     blocked: Boolean(clamped.blocked),
-    portalId: portal?.id || null,
+    enteredPortal,
+    portalId: enteredPortal ? portal?.id || null : null,
     actionId: action?.id || null,
     actionType: action?.actionType || null,
     space: publicRoomSpace(pack.room, db, uid),
@@ -14549,7 +14594,14 @@ app.post("/v1/rooms/:code/space/enter-portal", (req, res) => {
     const pos = normalizeSpacePos(space.positions[uid], hubId, layout?.spawn);
     portal = roomLayouts.findPortalAt(layout, pos.x, pos.y);
   }
-  if (!portal) return res.status(400).json({ error: "no_portal" });
+  if (!portal) {
+    // Idempotent: schon woanders / kein Portal — kein Fehler-Toast nötig
+    return res.json({
+      ok: true,
+      enteredPortal: false,
+      space: publicRoomSpace(pack.room, db, uid),
+    });
+  }
   const target = roomLayouts.getLayout(db, portal.targetRoomId);
   if (!target || !target.hasImage) {
     return res.status(400).json({ error: "bad_target" });
@@ -14562,13 +14614,22 @@ app.post("/v1/rooms/:code/space/enter-portal", (req, res) => {
     layoutId: target.id,
   };
   roomLayouts.ensureSpawnPosition(target, space.positions, uid);
-  if (space.positions[uid]) space.positions[uid].layoutId = target.id;
+  if (space.positions[uid]) {
+    space.positions[uid].layoutId = target.id;
+    const landed = space.positions[uid];
+    if (roomLayouts.findPortalAt(target, landed.x, landed.y)) {
+      landed.y = Math.max(0.05, landed.y - 0.08);
+    }
+  }
+  if (!space.portalCooldown) space.portalCooldown = {};
+  space.portalCooldown[uid] = Date.now() + 2500;
   space.lastMoveAt = Date.now();
   space.lastMoveBy = uid;
   pack.room.lastActiveAt = Date.now();
   persistRooms();
   return res.json({
     ok: true,
+    enteredPortal: true,
     space: publicRoomSpace(pack.room, db, uid),
   });
 });

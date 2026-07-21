@@ -502,18 +502,6 @@ fun CustomRoomScreen(
             )
         }
 
-        suspend fun enterPortal(portalId: String) {
-            runCatching { LuvApiClient.spaceEnterPortal(code, portalId) }
-                .onSuccess { applyEnteredSpace(it) }
-                .onFailure {
-                    Toast.makeText(
-                        context,
-                        it.message ?: "Portal fehlgeschlagen",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
-        }
-
         suspend fun walkTo(tx: Float, ty: Float, zns: List<LuvApiClient.RoomZone>, aR: Float): Boolean {
             val crowd = spaceRef.value?.people.orEmpty()
                 .filter { it.userId != myId && !it.isMe }
@@ -534,24 +522,22 @@ fun CustomRoomScreen(
             val nudged = nudgeAwayFromOthers(myX, myY, crowd, aR)
             myX = nudged.first
             myY = nudged.second
-            // Server nur informieren — Position lokal behalten (außer Portal-Wechsel)
+            // Server: Move (+ ggf. Portal-Wechsel in einem Request)
             runCatching { LuvApiClient.spaceMove(code, myX, myY) }
                 .onSuccess { result ->
                     val s = result.space
-                    space = s.copy(
-                        people = s.people.map { p ->
-                            if (p.userId == myId || p.isMe) p.copy(x = myX, y = myY) else p
-                        },
-                    )
-                    val portalId = result.portalId
-                    if (!portalId.isNullOrBlank()) {
-                        enterPortal(portalId)
-                    } else if (result.actionType == "cook") {
-                        cookOpen = true
+                    if (result.enteredPortal || s.activeLayoutId != null &&
+                        s.activeLayoutId != layout?.id
+                    ) {
+                        applyEnteredSpace(s)
                     } else {
-                        val hitPortal = portalsRef.value.firstOrNull { portalContains(it, myX, myY) }
-                        if (hitPortal != null) {
-                            enterPortal(hitPortal.id)
+                        space = s.copy(
+                            people = s.people.map { p ->
+                                if (p.userId == myId || p.isMe) p.copy(x = myX, y = myY) else p
+                            },
+                        )
+                        if (result.actionType == "cook") {
+                            cookOpen = true
                         } else {
                             val hitCook = actionsRef.value.firstOrNull {
                                 it.actionType.equals("cook", ignoreCase = true) &&
@@ -559,6 +545,15 @@ fun CustomRoomScreen(
                             }
                             if (hitCook != null) cookOpen = true
                         }
+                    }
+                }
+                .onFailure {
+                    // Stille Netzwerk-Glitches; nur echte inhaltliche Fehler zeigen
+                    val msg = it.message.orEmpty()
+                    if (!msg.contains("no_portal", ignoreCase = true) &&
+                        !msg.contains("API-Fehler", ignoreCase = true)
+                    ) {
+                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                     }
                 }
             return true

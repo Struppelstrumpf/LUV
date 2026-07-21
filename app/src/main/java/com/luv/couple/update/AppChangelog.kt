@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.83",
+            listOf(
+                "Haus/Portal: kein API-Fehler-Spam mehr beim Betreten",
+            )
+        ),
+        Entry(
             "2.2.82",
             listOf(
                 "Haus betreten: Crash bei kleiner Kamera-/Kartengröße behoben",
