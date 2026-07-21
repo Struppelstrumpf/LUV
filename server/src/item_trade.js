@@ -64,20 +64,34 @@ function getMarketSellable(db, kind, itemId, sources, ctx) {
 function defaultLootboxEligible(kind, itemId, sources, ctx) {
   if (isLockedStarter(kind, itemId, ctx || {})) return false;
   const src = sources || [];
-  // Ehe-Items nicht in Lootbox; Rest standardmäßig ja (auch wenn gerade nicht im Shop)
-  if (src.includes("marriage")) return false;
+  // Ehe- / Event-Items nicht in Lootbox
+  if (src.includes("marriage") || src.includes("event")) return false;
+  try {
+    const seasonEvents = require("./events");
+    if (seasonEvents.isEventOnlyItem(kind, itemId)) return false;
+    if (seasonEvents.isEventShopBoundItem(ctx?.db || null, kind, itemId)) return false;
+  } catch {
+    /* ignore */
+  }
   return true;
 }
 
 function getLootboxEligible(db, kind, itemId, sources, ctx) {
   if (isLockedStarter(kind, itemId, ctx || {})) return false;
+  try {
+    const seasonEvents = require("./events");
+    if (seasonEvents.isEventOnlyItem(kind, itemId)) return false;
+    if (seasonEvents.isEventShopBoundItem(db, kind, itemId)) return false;
+  } catch {
+    /* ignore */
+  }
   const flags = ensureTradeFlags(db);
   const key = itemKey(kind, itemId);
   const entry = flags[key];
   if (entry && typeof entry.lootboxEligible === "boolean") {
     return entry.lootboxEligible;
   }
-  return defaultLootboxEligible(kind, itemId, sources, ctx);
+  return defaultLootboxEligible(kind, itemId, sources, { ...(ctx || {}), db });
 }
 
 function patchTradeFlags(db, kind, itemId, patch, ctx) {
@@ -193,6 +207,12 @@ function listItemUniverse(db, ctx) {
         priceCoins: it.priceCoins,
         inShopCatalog: true,
       });
+      if (it.eventId) {
+        addSource(map, it.kind, it.itemId, "event", {
+          label: it.label,
+          emoji: it.emoji,
+        });
+      }
     }
   }
 

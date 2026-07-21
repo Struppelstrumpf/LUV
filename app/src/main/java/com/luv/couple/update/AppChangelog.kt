@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.52",
+            listOf(
+                "Event-Items sind fest von der Lootbox ausgeschlossen",
+            )
+        ),
+        Entry(
             "2.2.51",
             listOf(
                 "Event-Shop-Kachel mit allen Event-Items; Admin: Event-Sticker/Emoji/Hintergrund; Hintergrund-Animationen bleiben beim Ausrüsten",

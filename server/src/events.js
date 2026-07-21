@@ -63,6 +63,27 @@ function isEventOnlyItem(kind, itemId) {
   return false;
 }
 
+/**
+ * Shop-Items mit Event-Bindung (Begleiter/Sticker/Emoji/Hintergrund) —
+ * im Event-Fenster kaufbar, aber nie in der Lootbox.
+ */
+function isEventShopBoundItem(db, kind, itemId) {
+  const k = String(kind || "").trim();
+  const id = String(itemId || "").trim();
+  if (!k || !id) return false;
+  if (/^img_ev_/i.test(id) || /^img_event_/i.test(id)) return true;
+  if (k === "themes" && /^theme_[a-z0-9_]+_t\d{4}$/i.test(id)) return true;
+  if (!db) return false;
+  try {
+    const shopCatalog = require("./shop_catalog");
+    const item = shopCatalog.getItem(db, k, id);
+    if (item && String(item.eventId || "").trim()) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
 /** Builtin-Events — Admin kann Felder überschreiben, fehlende IDs werden nachgezogen. */
 const BUILTIN_EVENTS = [
   {
@@ -1479,6 +1500,7 @@ module.exports = {
   isActiveAt,
   isActiveAtPatched,
   isEventOnlyItem,
+  isEventShopBoundItem,
   publicEvent,
   nextOccurrence,
   syncEventShopPets,

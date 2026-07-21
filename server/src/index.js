@@ -904,7 +904,9 @@ function catalogLootboxExtras() {
   return Object.values(cat.items || {})
     .filter(Boolean)
     .filter((i) => {
+      if (i.eventId) return false;
       if (seasonEvents.isEventOnlyItem(i.kind, i.itemId)) return false;
+      if (seasonEvents.isEventShopBoundItem(db, i.kind, i.itemId)) return false;
       const price = shopCatalog.effectivePrice(i);
       if (price < 1 && i.kind !== "themes") return false;
       return itemTrade.getLootboxEligible(db, i.kind, i.itemId, ["shop"], lockCtx);
@@ -929,8 +931,11 @@ function isBoundInventoryItem(kind, itemId) {
 function marketSellableFor(kind, itemId) {
   const id = String(itemId || "").trim();
   const sources = [];
-  if (shopCatalog.isShopKnown(getDb(), kind, id)) sources.push("shop");
-  if (seasonEvents.isEventOnlyItem(kind, id)) sources.push("event");
+  const db = getDb();
+  if (shopCatalog.isShopKnown(db, kind, id)) sources.push("shop");
+  if (seasonEvents.isEventOnlyItem(kind, id) || seasonEvents.isEventShopBoundItem(db, kind, id)) {
+    sources.push("event");
+  }
   if (ach.isAchievementRewardItem(kind, id) || (kind === "stickers" && isAchievementSticker(id))) {
     sources.push("achievement");
   }
@@ -4392,13 +4397,19 @@ function buildLootboxPoolForUser(user) {
     petPrices: PET_SHOP_PRICES,
     stickerPrices: STICKER_SHOP_PRICES,
     isKnown: (kind, id) =>
-      isKnownInventoryItem(kind, id) && !seasonEvents.isEventOnlyItem(kind, id),
+      isKnownInventoryItem(kind, id) &&
+      !seasonEvents.isEventOnlyItem(kind, id) &&
+      !seasonEvents.isEventShopBoundItem(getDb(), kind, id),
     defaultPet: DEFAULT_PET,
     starterEmojis: STARTER_EMOJIS,
     extraItems: catalogLootboxExtras(),
   });
   lootboxPoolCache = { at: now, pool };
   return pool;
+}
+
+function invalidateLootboxPoolCache() {
+  lootboxPoolCache = { at: 0, pool: null };
 }
 
 /** Lootbox-Belohnung gutschreiben. Duplikat-Theme/Pet → Coins statt leerem Treffer. */
@@ -11134,6 +11145,12 @@ function applyItemLootboxEligible(req, res) {
   if (!ctx) return;
   const kind = String(req.params.kind || "").trim();
   const itemId = clipMarketItemId(req.params.itemId);
+  if (seasonEvents.isEventShopBoundItem(getDb(), kind, itemId) || seasonEvents.isEventOnlyItem(kind, itemId)) {
+    return res.status(400).json({
+      error: "event_item",
+      message: "Event-Items sind fest von der Lootbox ausgeschlossen.",
+    });
+  }
   const want = Boolean(req.body?.lootboxEligible ?? req.body?.eligible ?? true);
   const result = itemTrade.setLootboxEligible(getDb(), kind, itemId, want, {
     defaultPet: DEFAULT_PET,
@@ -11142,6 +11159,7 @@ function applyItemLootboxEligible(req, res) {
   if (!result.ok) {
     return res.status(400).json({ error: result.error, message: result.message });
   }
+  invalidateLootboxPoolCache();
   flushSave();
   staffAudit(ctx.user, "item_lootbox", { kind, itemId, lootboxEligible: want });
   return res.json({ ok: true, ...result });
@@ -11483,11 +11501,19 @@ app.post("/v1/admin/shop/items", (req, res) => {
   } catch (_) {
     /* ignore */
   }
+  // Event-Items: fest von Lootbox ausschließen
+  if (eventId && result.item?.itemId) {
+    itemTrade.setLootboxEligible(getDb(), kind, result.item.itemId, false, {
+      defaultPet: DEFAULT_PET,
+      starterEmojis: STARTER_EMOJIS,
+    });
+  }
+  invalidateLootboxPoolCache();
   scheduleSave();
   return res.json({
     ok: true,
     item: result.item,
-    lootbox: true,
+    lootbox: !eventId,
     chromaKey: petImages.CHROMA_KEY_HEX,
   });
 });
@@ -11559,6 +11585,13 @@ app.put("/v1/admin/shop/items/:kind/:itemId", (req, res) => {
   } catch (_) {
     /* ignore */
   }
+  if (eventId) {
+    itemTrade.setLootboxEligible(getDb(), kind, itemId, false, {
+      defaultPet: DEFAULT_PET,
+      starterEmojis: STARTER_EMOJIS,
+    });
+  }
+  invalidateLootboxPoolCache();
   scheduleSave();
   return res.json({ ok: true, item: result.item });
 });

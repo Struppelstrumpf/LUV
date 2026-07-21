@@ -637,17 +637,21 @@
           }" title="${
             it.marketSellable ? "Marktplatz: handelbar — klicken zum Sperren" : "Marktplatz: gesperrt — klicken zum Freigeben"
           }">${it.marketSellable ? "🏪" : "🚫"}</button>`;
+      const isEventItem =
+        Boolean(shop?.eventId) || (it.sources || []).includes("event");
       const lootBtn = it.marketLocked
         ? ""
-        : `<button type="button" class="btn-loot ${
-            it.lootboxEligible !== false ? "is-on" : "is-off"
-          }" data-loot="${esc(it.kind)}|${esc(it.itemId)}|${
-            it.lootboxEligible !== false ? "0" : "1"
-          }" title="${
-            it.lootboxEligible !== false
-              ? "Lootbox: erhältlich — klicken zum Ausschließen"
-              : "Lootbox: aus — klicken zum Freigeben"
-          }">${it.lootboxEligible !== false ? "🎁" : "⛔"}</button>`;
+        : isEventItem
+          ? `<button type="button" class="btn-loot is-off" disabled title="Event-Items sind fest von der Lootbox ausgeschlossen">⛔</button>`
+          : `<button type="button" class="btn-loot ${
+              it.lootboxEligible !== false ? "is-on" : "is-off"
+            }" data-loot="${esc(it.kind)}|${esc(it.itemId)}|${
+              it.lootboxEligible !== false ? "0" : "1"
+            }" title="${
+              it.lootboxEligible !== false
+                ? "Lootbox: erhältlich — klicken zum Ausschließen"
+                : "Lootbox: aus — klicken zum Freigeben"
+            }">${it.lootboxEligible !== false ? "🎁" : "⛔"}</button>`;
       const shopOff = shop && shop.enabled === false;
       const eventBadge = shop?.eventId
         ? `<span class="badge" title="Event-Item">🎉 ${esc(shop.eventId)}${
@@ -2639,7 +2643,7 @@
             <option value="event_emojis" ${draft.isEventItem && draft.kind === "emojis" ? "selected" : ""}>🎉 Event-Emoji</option>
             <option value="event_themes" ${draft.isEventItem && draft.kind === "themes" ? "selected" : ""}>🎉 Event-Hintergrund</option>
           </select>
-          <span class="tip">Event-Items: nur im Event-Fenster im Shop (1× pro Kategorie/Jahr), Besitz bleibt.</span>
+          <span class="tip">Event-Items: nur im Event-Fenster im Shop (1× pro Kategorie/Jahr), Besitz bleibt — nicht in der Lootbox.</span>
         </label>`;
       if (step === 1) {
         if (draft.isEventItem) {
@@ -2849,7 +2853,7 @@
         <p class="muted">Suche: ${esc(draft.searchText || "—")}</p>
         <p class="muted">${
           draft.isEventItem
-            ? "→ Event-Shop + Itemshop im Zeitfenster"
+            ? "→ Event-Shop + Itemshop im Zeitfenster · nicht in der Lootbox"
             : "→ landet in der Lootbox"
         }</p>
       </div>`;
