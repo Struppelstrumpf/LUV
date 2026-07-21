@@ -1495,9 +1495,17 @@
             ${esc(date)}${filterKind ? ` · ${esc(KIND_LABEL[filterKind] || filterKind)}` : ""} · Shop-Tag
           </h3>
           <p class="help" style="margin:0 0 0.5rem">
-            ${items.length} Items · Fenster 03:00→03:00 Berlin
+            ${items.length} Items${filterKind ? "" : ` (gesamt ${allItems.length})`} · Fenster 03:00→03:00 Berlin
             ${shopFrom ? ` (${esc(fmtWhen(shopFrom))} – ${esc(fmtWhen(shopUntil))})` : ""}
           </p>
+          ${
+            allItems.length === 0
+              ? `<p class="help" style="margin:0 0 0.65rem">
+                  An diesem Tag ist noch nichts geplant. Mit <strong>+</strong> Items für genau diesen Shop-Tag setzen —
+                  oder unter <strong>Rotation → Neu mischen</strong> die Fenster neu berechnen.
+                </p>`
+              : ""
+          }
           <div class="shop-cats" id="calInvKinds" style="margin:0 0 0.45rem">
             <button type="button" class="shop-cat ${!filterKind ? "on" : ""}" data-inv-kind="">Alle</button>
             ${["stickers", "themes", "pets", "emojis"]
@@ -1561,230 +1569,109 @@
 
     function dayPanelHtml() {
       return `<div class="cal-side panel">
-        <h4 style="margin:0 0 0.4rem">Tag-Inventar</h4>
-        <p class="help">Tippe einen Tag oder eine Kategorie (S/H/B/E) im Kalender — es öffnet sich ein Inventar-Popup. Zyklus steuerst du im <strong>Katalog</strong>.</p>
-        <p class="help" style="margin-top:0.55rem">Shop-Wechsel immer um <strong>03:00 Europe/Berlin</strong>.</p>
-        <div class="cal-plan-preview">
-          <h4 style="margin:0.8rem 0 0.35rem">Aktive Rotation</h4>
-          ${
-            plans.length
-              ? plans
-                  .map((p) => {
-                    const actList = p.activeNow || [];
-                    const act =
-                      actList.length > 0
-                        ? actList
-                            .map((a) => `${a.emoji || ""} ${a.label || a.itemId}`)
-                            .join(", ")
-                        : "Details im Tab „Rotation“";
-                    return `<div class="cal-plan-mini ${p.enabled ? "" : "is-off"}">
-                      <strong>${esc(p.label)}</strong>
-                      <div class="muted" style="font-size:0.8rem">${p.itemCount || 0} Items${
-                      p.activeSharePct != null ? ` · Ziel ~${p.activeSharePct} %` : ""
-                    }</div>
-                      <div style="margin-top:0.25rem">${esc(act)}</div>
-                    </div>`;
-                  })
-                  .join("")
-              : `<p class="help">Noch keine Rotationspläne — Tab „Rotation“.</p>`
-          }
-        </div>
+        <h4 style="margin:0 0 0.4rem">Was bedeuten die Zahlen?</h4>
+        <p class="help" style="margin:0 0 0.55rem">
+          Jede Zelle = ein Shop-Tag (03:00→03:00 Berlin).<br />
+          Die große Zahl = wie viele Items an dem Tag im Shop sind.<br />
+          <strong>S / H / B / E</strong> = Sticker / Hintergründe / Begleiter / Emojis.
+        </p>
+        <p class="help" style="margin:0 0 0.55rem">
+          Klick auf Tag oder Buchstaben → Inventar. Dort kannst du fehlende Items mit <strong>+</strong> hinzufügen.
+        </p>
+        <p class="help" style="margin:0">
+          Rotation steuern: Tab <strong>Rotation</strong> oder im Katalog den Button <strong>Zyklus</strong>.
+        </p>
       </div>`;
     }
 
     function plansHtml() {
-      const fmtWin = (ms) => {
-        if (!ms) return "—";
-        try {
-          return new Date(ms).toLocaleDateString("de-DE", { day: "2-digit", month: "short" });
-        } catch {
-          return "—";
-        }
-      };
-      return `<div class="cal-plans">
-        <div class="panel cal-rot-explain">
-          <h4 style="margin:0 0 0.5rem">So funktioniert die Rotation</h4>
-          <ol class="cal-rot-steps">
-            <li><strong>Alle Items</strong> (außer Starter wie Wiese / Basis-Emojis) rotieren.</li>
-            <li><strong>Zufällig im Shop:</strong> 3–14 Tage, dann Pause 7 Tage bis max. 3 Monate.</li>
-            <li><strong>~50 % gleichzeitig</strong> im Shop — Starts sind versetzt.</li>
-            <li>Jedes Item kommt regelmäßig wieder; nichts bleibt ewig ohne Pause (außer Starter).</li>
-          </ol>
-          <p class="help" style="margin:0.6rem 0 0">
-            Im Monatskalender siehst du die Shop-Tage (03:00 Berlin). Einzelne Items nimmst du im
-            <strong>Katalog → Zyklus</strong> aus der Rotation oder nimmst sie wieder auf.
+      const plan = plans.find((p) => p.enabled !== false) || plans[0] || null;
+      const activeNow = (plan?.activeNow || []).slice().sort((a, b) =>
+        String(a.label || a.itemId).localeCompare(String(b.label || b.itemId), "de")
+      );
+      const activeCount = plan?.activeCount ?? activeNow.length;
+      const total = plan?.itemCount || 0;
+      const rows = activeNow
+        .slice(0, 120)
+        .map((m) => {
+          const until = m.availableUntil
+            ? new Date(m.availableUntil).toLocaleString("de-DE", {
+                day: "2-digit",
+                month: "short",
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+            : "—";
+          return `<tr>
+            <td class="cal-mem-emoji">${esc(m.emoji || "·")}</td>
+            <td>
+              <strong>${esc(m.label || m.itemId)}</strong>
+              <div class="muted" style="font-size:0.75rem">${esc(m.kind || "")}</div>
+            </td>
+            <td class="muted" style="white-space:nowrap">bis ${esc(until)}</td>
+            <td>
+              <button type="button" class="btn secondary btn-xs" data-leave-rot="${esc(m.kind)}|${esc(m.itemId)}" title="Bleibt dann dauerhaft im Shop">
+                Fest im Shop
+              </button>
+            </td>
+          </tr>`;
+        })
+        .join("");
+
+      return `<div class="cal-plans cal-plans-simple">
+        <div class="panel">
+          <h3 style="margin:0 0 0.5rem;font-family:var(--display)">Shop-Rotation — kurz erklärt</h3>
+          <div class="cal-rot-plain">
+            <p><strong>1.</strong> Jede Nacht um <strong>03:00</strong> (Berlin) wechselt der Shop.</p>
+            <p><strong>2.</strong> Ungefähr die <strong>Hälfte</strong> aller Items ist im Shop, der Rest macht Pause.</p>
+            <p><strong>3.</strong> Ein Item bleibt ein paar Tage (ca. 3–14), dann Pause — später kommt es wieder.</p>
+            <p><strong>4.</strong> Starter (z. B. Wiese, Basis-Emojis) bleiben <strong>immer</strong> im Shop.</p>
+          </div>
+          <p class="help" style="margin:0.75rem 0 0">
+            Einzelne Items steuerst du im <strong>Katalog → Zyklus</strong> (raus = fest im Shop, rein = wieder rotieren).
           </p>
         </div>
+
         <div class="panel">
-          <h4 style="margin:0 0 0.35rem">Aktive Pläne</h4>
-          <div class="cal-plan-list">
-            ${
-              plans.length
-                ? plans
-                    .map((p) => {
-                      const act = (p.activeNow || [])
-                        .slice(0, 24)
-                        .map((a) => esc(a.emoji || a.itemId))
-                        .join(" ");
-                      const members = p.members || [];
-                      const memberRows = members
-                        .slice(0, 40)
-                        .map((m) => {
-                          const key = `${m.kind}:${m.itemId}`;
-                          return `<tr>
-                            <td class="cal-mem-emoji">${esc(m.emoji || "·")}</td>
-                            <td><strong>${esc(m.label || m.itemId)}</strong>
-                              <div class="muted mono" style="font-size:0.72rem">${esc(key)}</div></td>
-                            <td>${m.active ? '<span class="badge cal-st-window">jetzt im Shop</span>' : '<span class="badge cal-st-scheduled">Pause</span>'}</td>
-                            <td class="muted" style="white-space:nowrap">${fmtWin(m.availableFrom)} → ${fmtWin(m.availableUntil)}</td>
-                            <td><button type="button" class="btn secondary btn-xs" data-leave-rot="${esc(m.kind)}|${esc(m.itemId)}">Raus</button></td>
-                          </tr>`;
-                        })
-                        .join("");
-                      return `<article class="cal-plan-card ${p.enabled ? "" : "is-off"}">
-                        <div class="cal-plan-head">
-                          <strong>${esc(p.label)}</strong>
-                          <span class="badge ${p.enabled ? "cal-st-window" : "cal-st-off"}">${p.enabled ? "an" : "aus"}</span>
-                        </div>
-                        <p class="cal-plan-explain">${esc(p.explain || "")}</p>
-                        <div class="cal-plan-stats">
-                          <div><span class="muted">Items</span><strong>${p.itemCount || 0}</strong></div>
-                          <div><span class="muted">Jetzt im Shop</span><strong>${p.activeCount ?? (p.activeNow || []).length}</strong></div>
-                          <div><span class="muted">Anteil</span><strong>${p.activeSharePct ?? "—"} %</strong></div>
-                          <div><span class="muted">Auswahl</span><strong>${
-                            p.mode === "price" ? `Preis ≥ ${p.priceMin ?? 0}` : "Manuell"
-                          }</strong></div>
-                        </div>
-                        <div class="cal-plan-now" title="Gerade im Shop">${act || "<span class='muted'>gerade keines</span>"}</div>
-                        ${
-                          memberRows
-                            ? `<details class="cal-mem-details" ${p.id === "expensive_3m_week" ? "open" : ""}>
-                          <summary>Alle Items in diesem Plan (${members.length})</summary>
-                          <div class="cal-mem-scroll">
-                            <table class="cal-mem-table">
-                              <thead><tr><th></th><th>Item</th><th>Status</th><th>Fenster</th><th></th></tr></thead>
-                              <tbody>${memberRows}</tbody>
-                            </table>
-                          </div>
-                          ${
-                            members.length > 40
-                              ? `<p class="help">Erste 40 von ${members.length} — Rest unter Tab „Items“.</p>`
-                              : ""
-                          }
-                        </details>`
-                            : ""
-                        }
-                        <div class="actions" style="margin-top:0.55rem">
-                          <button type="button" class="btn secondary" data-plan-edit="${esc(p.id)}">Bearbeiten</button>
-                          <button type="button" class="btn secondary" data-plan-apply="${esc(p.id)}">Neu berechnen</button>
-                          ${
-                            p.id === "expensive_3m_week"
-                              ? ""
-                              : `<button type="button" class="btn danger" data-plan-del="${esc(p.id)}">Löschen</button>`
-                          }
-                        </div>
-                      </article>`;
-                    })
-                    .join("")
-                : `<p class="help">Keine Pläne.</p>`
-            }
+          <div class="cal-plan-head" style="align-items:flex-start">
+            <div>
+              <h3 style="margin:0;font-family:var(--display)">${esc(plan?.label || "Shop-Rotation")}</h3>
+              <p class="muted" style="margin:0.35rem 0 0">
+                Gerade im Shop: <strong>${activeCount}</strong>
+                ${total ? ` von ${total}` : ""} Items
+                ${plan?.activeSharePct != null ? ` · Ziel ~${plan.activeSharePct} %` : ""}
+              </p>
+            </div>
+            <div class="actions" style="margin:0;flex-wrap:wrap">
+              ${
+                plan?.id
+                  ? `<button type="button" class="btn" data-plan-apply="${esc(plan.id)}">Jetzt neu mischen</button>`
+                  : ""
+              }
+            </div>
           </div>
-        </div>
-        <div class="panel" id="calPlanEditor">
-          <h4 style="margin:0 0 0.35rem">Plan erstellen / bearbeiten</h4>
-          <p class="help">Zufallsmodell: 3–14 Tage im Shop, 7–90 Tage Pause, Zielanteil ca. 50 %.</p>
-          <form id="calPlanForm">
-            <input type="hidden" name="id" value="" />
-            <label class="field">Name
-              <input name="label" required maxlength="60" placeholder="z. B. Shop-Rotation" />
-            </label>
-            <input type="hidden" name="model" value="independent" />
-            <div class="grid-2">
-              <label class="field">Min. Tage im Shop
-                <input name="onDaysMin" type="number" min="1" max="30" value="3" />
-              </label>
-              <label class="field">Max. Tage im Shop
-                <input name="onDaysMax" type="number" min="1" max="60" value="14" />
-              </label>
-            </div>
-            <div class="grid-2">
-              <label class="field">Min. Tage Pause
-                <input name="offDaysMin" type="number" min="1" max="180" value="7" />
-              </label>
-              <label class="field">Max. Tage Pause
-                <input name="offDaysMax" type="number" min="1" max="180" value="90" />
-              </label>
-            </div>
-            <div class="grid-2">
-              <label class="field">Ziel-Anteil im Shop (%)
-                <input name="targetSharePct" type="number" min="10" max="90" value="50" />
-              </label>
-              <label class="field">Chance lange Pause (%)
-                <input name="longPauseChancePct" type="number" min="0" max="60" value="12" />
-              </label>
-            </div>
-            <div class="grid-2" hidden>
-              <label class="field">Pause / Zyklus-Länge
-                <input name="cycleLength" type="number" min="1" max="36" value="3" />
-              </label>
-              <label class="field">Einheit
-                <select name="cycleUnit">
-                  <option value="day">Tage</option>
-                  <option value="week">Wochen</option>
-                  <option value="month" selected>Monate</option>
-                </select>
-              </label>
-            </div>
-            <div class="grid-2" hidden>
-              <label class="field">Kurze Shop-Dauer (Tage)
-                <input name="shortDays" type="number" min="1" max="14" value="3" />
-              </label>
-              <label class="field">Lange Shop-Dauer (Tage)
-                <input name="longDays" type="number" min="1" max="30" value="14" />
-              </label>
-            </div>
-            <div class="grid-2" hidden>
-              <label class="field">Im Shop (Länge, Legacy)
-                <input name="activeLength" type="number" min="1" max="90" value="1" />
-              </label>
-              <label class="field">Im Shop (Einheit, Legacy)
-                <select name="activeUnit">
-                  <option value="day">Tage</option>
-                  <option value="week" selected>Wochen</option>
-                  <option value="month">Monate</option>
-                </select>
-              </label>
-            </div>
-            <div class="grid-2">
-              <label class="field">Auswahl
-                <select name="mode">
-                  <option value="price" selected>Nach Preis</option>
-                  <option value="manual">Manuelle Liste</option>
-                </select>
-              </label>
-              <label class="field">Gleichzeitig (nur Warteschlange)
-                <input name="concurrent" type="number" min="1" max="50" value="1" />
-              </label>
-            </div>
-            <div class="grid-2">
-              <label class="field">Preis min.
-                <input name="priceMin" type="number" min="0" value="0" />
-              </label>
-              <label class="field">Preis max. (leer = ∞)
-                <input name="priceMax" type="number" min="0" placeholder="optional" />
-              </label>
-            </div>
-            <label class="field">Manuelle Keys (kind:id, Komma)
-              <textarea name="itemKeys" rows="2" placeholder="emojis:💎, themes:aurora"></textarea>
-            </label>
-            <label class="field" style="flex-direction:row;align-items:center;gap:0.5rem">
-              <input type="checkbox" name="enabled" checked /> Plan aktiv
-            </label>
-            <div class="actions" style="margin-top:0.65rem">
-              <button type="submit" class="btn">Plan speichern</button>
-              <button type="button" class="btn secondary" id="calPlanReset">Neu</button>
-            </div>
-          </form>
+          <p class="help" style="margin:0.65rem 0 0.35rem">
+            „Neu mischen“ setzt neue Zeitfenster für die Rotation. Nutze das sparsam (z. B. nach großen Katalog-Änderungen).
+          </p>
+          <input type="search" id="calRotQ" class="ev-pick-search" placeholder="Jetzt im Shop suchen…" />
+          <div class="cal-mem-scroll" style="max-height:28rem;margin-top:0.55rem">
+            <table class="cal-mem-table" id="calRotTable">
+              <thead>
+                <tr><th></th><th>Item</th><th>Im Shop bis</th><th></th></tr>
+              </thead>
+              <tbody id="calRotBody">
+                ${
+                  rows ||
+                  `<tr><td colspan="4" class="muted">Gerade keine rotierenden Items aktiv — „Neu mischen“ oder Katalog prüfen.</td></tr>`
+                }
+              </tbody>
+            </table>
+          </div>
+          ${
+            activeNow.length > 120
+              ? `<p class="help">Erste 120 von ${activeNow.length} — Suche filtert in der Liste.</p>`
+              : ""
+          }
         </div>
       </div>`;
     }
@@ -1901,9 +1788,8 @@
           <div>
             <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">Itemshop-Kalender</h3>
             <p class="help" style="margin:0.4rem 0 0;max-width:52rem">
-              <strong>Rotation:</strong> alle Shop-Items (außer Starter) rotieren zufällig —
-              3–14 Tage rein, 7 Tage bis 3 Monate raus, ca. 50 % gleichzeitig im Shop.
-              Tab „Rotation“ erklärt Details; Items können rausgenommen werden.
+              Übersicht der Shop-Tage. Klick auf einen Tag zeigt die Items.
+              Rotation (= was wann im Shop ist) erklärst du dir unter dem Tab <strong>Rotation</strong>.
             </p>
           </div>
         </div>
@@ -2089,12 +1975,6 @@
           if (planForm.querySelector('[name="longPauseChancePct"]')) {
             planForm.querySelector('[name="longPauseChancePct"]').value = p.longPauseChancePct ?? 12;
           }
-          if (planForm.querySelector('[name="shortDays"]')) {
-            planForm.querySelector('[name="shortDays"]').value = p.shortDays || 3;
-          }
-          if (planForm.querySelector('[name="longDays"]')) {
-            planForm.querySelector('[name="longDays"]').value = p.longDays || 14;
-          }
           planForm.querySelector('[name="concurrent"]').value = p.concurrent || 1;
           planForm.querySelector('[name="mode"]').value = p.mode || "price";
           planForm.querySelector('[name="priceMin"]').value = p.priceMin ?? 0;
@@ -2104,108 +1984,89 @@
           planForm.scrollIntoView({ behavior: "smooth", block: "start" });
         };
       });
-      content.querySelectorAll("[data-plan-apply]").forEach((btn) => {
-        btn.onclick = async () => {
-          const id = btn.getAttribute("data-plan-apply");
-          try {
-            await api(`/admin/shop/rotation-plans/${encodeURIComponent(id)}/apply`, {
-              method: "POST",
-              body: "{}",
-            });
-            renderShopCalendar();
-          } catch (err) {
-            alert(err?.message || "Anwenden fehlgeschlagen");
-          }
-        };
-      });
-      content.querySelectorAll("[data-plan-del]").forEach((btn) => {
-        btn.onclick = async () => {
-          const id = btn.getAttribute("data-plan-del");
-          if (!confirm("Rotationsplan löschen?")) return;
-          try {
-            await api(`/admin/shop/rotation-plans/${encodeURIComponent(id)}`, {
-              method: "DELETE",
-            });
-            renderShopCalendar();
-          } catch (err) {
-            alert(err?.message || "Löschen fehlgeschlagen");
-          }
-        };
-      });
-      content.querySelectorAll("[data-leave-rot]").forEach((btn) => {
-        btn.onclick = async () => {
-          const raw = btn.getAttribute("data-leave-rot") || "";
-          const [kind, ...rest] = raw.split("|");
-          const itemId = rest.join("|");
-          if (!kind || !itemId) return;
-          if (!confirm("Item aus der Rotation nehmen? Es bleibt dann dauerhaft im Shop.")) return;
-          try {
-            await api(
-              `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/leave-rotation`,
-              { method: "POST", body: "{}" }
-            );
-            renderShopCalendar();
-          } catch (err) {
-            alert(err?.message || "Entfernen fehlgeschlagen");
-          }
-        };
-      });
-      content.querySelectorAll("[data-rejoin-rot]").forEach((btn) => {
-        btn.onclick = async () => {
-          const raw = btn.getAttribute("data-rejoin-rot") || "";
-          const [kind, ...rest] = raw.split("|");
-          const itemId = rest.join("|");
-          if (!kind || !itemId) return;
-          try {
-            await api(
-              `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/rejoin-rotation`,
-              { method: "POST", body: "{}" }
-            );
-            renderShopCalendar();
-          } catch (err) {
-            alert(err?.message || "Aufnehmen fehlgeschlagen");
-          }
-        };
-      });
     }
 
-    // Leave/rejoin auch außerhalb Plan-Form (Items-Tab)
-    if (!planForm) {
-      content.querySelectorAll("[data-leave-rot]").forEach((btn) => {
-        btn.onclick = async () => {
-          const raw = btn.getAttribute("data-leave-rot") || "";
-          const [kind, ...rest] = raw.split("|");
-          const itemId = rest.join("|");
-          if (!kind || !itemId) return;
-          if (!confirm("Item aus der Rotation nehmen? Es bleibt dann dauerhaft im Shop.")) return;
-          try {
-            await api(
-              `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/leave-rotation`,
-              { method: "POST", body: "{}" }
-            );
-            renderShopCalendar();
-          } catch (err) {
-            alert(err?.message || "Entfernen fehlgeschlagen");
-          }
-        };
-      });
-      content.querySelectorAll("[data-rejoin-rot]").forEach((btn) => {
-        btn.onclick = async () => {
-          const raw = btn.getAttribute("data-rejoin-rot") || "";
-          const [kind, ...rest] = raw.split("|");
-          const itemId = rest.join("|");
-          if (!kind || !itemId) return;
-          try {
-            await api(
-              `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/rejoin-rotation`,
-              { method: "POST", body: "{}" }
-            );
-            renderShopCalendar();
-          } catch (err) {
-            alert(err?.message || "Aufnehmen fehlgeschlagen");
-          }
-        };
-      });
+    content.querySelectorAll("[data-plan-apply]").forEach((btn) => {
+      btn.onclick = async () => {
+        const id = btn.getAttribute("data-plan-apply");
+        if (
+          !confirm(
+            "Shop-Fenster jetzt neu mischen? Das ändert, welche Items in den nächsten Tagen im Shop sind."
+          )
+        ) {
+          return;
+        }
+        try {
+          await api(`/admin/shop/rotation-plans/${encodeURIComponent(id)}/apply`, {
+            method: "POST",
+            body: "{}",
+          });
+          alert("Rotation neu gemischt.");
+          renderShopCalendar();
+        } catch (err) {
+          alert(err?.message || "Anwenden fehlgeschlagen");
+        }
+      };
+    });
+    content.querySelectorAll("[data-plan-del]").forEach((btn) => {
+      btn.onclick = async () => {
+        const id = btn.getAttribute("data-plan-del");
+        if (!confirm("Rotationsplan löschen?")) return;
+        try {
+          await api(`/admin/shop/rotation-plans/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+          });
+          renderShopCalendar();
+        } catch (err) {
+          alert(err?.message || "Löschen fehlgeschlagen");
+        }
+      };
+    });
+    content.querySelectorAll("[data-leave-rot]").forEach((btn) => {
+      btn.onclick = async () => {
+        const raw = btn.getAttribute("data-leave-rot") || "";
+        const [kind, ...rest] = raw.split("|");
+        const itemId = rest.join("|");
+        if (!kind || !itemId) return;
+        if (!confirm("Item fest in den Shop legen? Es rotiert dann nicht mehr.")) return;
+        try {
+          await api(
+            `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/leave-rotation`,
+            { method: "POST", body: "{}" }
+          );
+          renderShopCalendar();
+        } catch (err) {
+          alert(err?.message || "Entfernen fehlgeschlagen");
+        }
+      };
+    });
+    content.querySelectorAll("[data-rejoin-rot]").forEach((btn) => {
+      btn.onclick = async () => {
+        const raw = btn.getAttribute("data-rejoin-rot") || "";
+        const [kind, ...rest] = raw.split("|");
+        const itemId = rest.join("|");
+        if (!kind || !itemId) return;
+        try {
+          await api(
+            `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/rejoin-rotation`,
+            { method: "POST", body: "{}" }
+          );
+          renderShopCalendar();
+        } catch (err) {
+          alert(err?.message || "Aufnehmen fehlgeschlagen");
+        }
+      };
+    });
+
+    const rotQ = $("calRotQ");
+    if (rotQ) {
+      rotQ.oninput = () => {
+        const q = String(rotQ.value || "").trim().toLowerCase();
+        document.querySelectorAll("#calRotBody tr").forEach((tr) => {
+          const hay = (tr.textContent || "").toLowerCase();
+          tr.style.display = !q || hay.includes(q) ? "" : "none";
+        });
+      };
     }
 
     content.querySelectorAll("#calKinds [data-cal-kind]").forEach((btn) => {

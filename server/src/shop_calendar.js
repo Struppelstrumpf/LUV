@@ -930,6 +930,23 @@ function itemActiveOnDay(item, dayStart, dayEnd) {
   return from < dayEnd && until > dayStart;
 }
 
+/**
+ * Was an einem Shop-Tag wirklich sichtbar ist:
+ * 1) echte availableFrom/Until (wie der Shop),
+ * 2) sonst theoretische Rotation (noch nie angewendet).
+ */
+function itemOnShopDay(item, plansMap, dayStart, dayEnd) {
+  if (!item || item.enabled === false) return false;
+  if (item.availableFrom != null || item.availableUntil != null) {
+    return itemActiveOnDay(item, dayStart, dayEnd);
+  }
+  const plan = item.rotationPlanId ? plansMap[item.rotationPlanId] : null;
+  if (plan && plan.enabled !== false && (plan.model || "independent") !== "queue") {
+    return itemActiveOnDayForPlan(plan, item.itemId, dayStart, dayEnd);
+  }
+  return false;
+}
+
 /** Anzeige-Glyph für Kalenderzellen — nie raw img_*-IDs (werden zu □). */
 function calendarGlyph(it) {
   if (!it) return "·";
@@ -973,12 +990,7 @@ function monthGrid(db, year, month /* 1-12 */) {
     const byKind = { stickers: 0, themes: 0, pets: 0, emojis: 0, other: 0 };
     const preview = [];
     for (const it of all) {
-      const plan = it.rotationPlanId ? plansMap[it.rotationPlanId] : null;
-      const on =
-        plan && plan.enabled !== false && (plan.model || "independent") !== "queue"
-          ? itemActiveOnDayForPlan(plan, it.itemId, dayStart, dayEnd)
-          : itemActiveOnDay(it, dayStart, dayEnd);
-      if (!on) continue;
+      if (!itemOnShopDay(it, plansMap, dayStart, dayEnd)) continue;
       count += 1;
       if (byKind[it.kind] != null) byKind[it.kind] += 1;
       else byKind.other += 1;
@@ -1048,12 +1060,7 @@ function dayInventory(db, dateStr) {
   const items = [];
   const byKind = { stickers: 0, themes: 0, pets: 0, emojis: 0, other: 0 };
   for (const it of all) {
-    const plan = it.rotationPlanId ? plansMap[it.rotationPlanId] : null;
-    const on =
-      plan && plan.enabled !== false && (plan.model || "independent") !== "queue"
-        ? itemActiveOnDayForPlan(plan, it.itemId, dayStart, dayEnd)
-        : itemActiveOnDay(it, dayStart, dayEnd);
-    if (!on) continue;
+    if (!itemOnShopDay(it, plansMap, dayStart, dayEnd)) continue;
     if (byKind[it.kind] != null) byKind[it.kind] += 1;
     else byKind.other += 1;
     items.push({
