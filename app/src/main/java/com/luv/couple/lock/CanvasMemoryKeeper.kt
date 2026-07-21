@@ -106,15 +106,22 @@ object CanvasMemoryKeeper {
     }
 
     fun absoluteImageUrl(pathOrUrl: String): String {
-        val base = if (pathOrUrl.startsWith("http")) {
-            pathOrUrl
-        } else {
-            LuvApiClient.baseUrl().trimEnd('/') + pathOrUrl
+        val raw = pathOrUrl.trim()
+        val apiBase = LuvApiClient.baseUrl().trimEnd('/') // z.B. https://reineke.pro/luv
+        val absolute = when {
+            raw.startsWith("http://") || raw.startsWith("https://") -> raw
+            // Site-Pfade unter /luv/… — nicht an apiBase anhängen (sonst /luv/luv/…)
+            raw.startsWith("/luv/") || raw == "/luv" -> {
+                val origin = apiBase.removeSuffix("/luv").trimEnd('/')
+                if (origin.isBlank()) raw else origin + raw
+            }
+            raw.startsWith("/") -> apiBase + raw
+            else -> "$apiBase/$raw"
         }
         val tok = LuvApiClient.sessionToken?.trim().orEmpty()
-        if (tok.isEmpty()) return base
-        if (base.contains("session=")) return base
-        val sep = if (base.contains('?')) "&" else "?"
-        return base + sep + "session=" + java.net.URLEncoder.encode(tok, Charsets.UTF_8.name())
+        if (tok.isEmpty()) return absolute
+        if (absolute.contains("session=")) return absolute
+        val sep = if (absolute.contains('?')) "&" else "?"
+        return absolute + sep + "session=" + java.net.URLEncoder.encode(tok, Charsets.UTF_8.name())
     }
 }

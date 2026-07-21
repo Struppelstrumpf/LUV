@@ -166,6 +166,7 @@ function mergeGreenZones(zones) {
 
 function imagePublicUrl(roomId, ver) {
   const v = ver ? `?v=${ver}` : "";
+  // Site-Pfad (Browser/Admin). App: CanvasMemoryKeeper.absoluteImageUrl entdoppelt /luv.
   return `/luv/v1/room-layouts/${encodeURIComponent(roomId)}/image${v}`;
 }
 
