@@ -460,6 +460,7 @@ function runNightlyJob(db, {
   shopCatalog,
   flushSaveSync,
   beforeShop,
+  processShopQueue,
   now = Date.now(),
 } = {}) {
   const st = ensureState(db);
@@ -509,6 +510,30 @@ function runNightlyJob(db, {
       message: e?.message || String(e),
       recommendation: "Shop-Seed vor Zyklus fehlgeschlagen — Katalog ggf. prüfen.",
     });
+  }
+
+  // Zuerst Admin-Warteschlange (neue Items / Edits), dann Rotation neu schreiben
+  if (typeof processShopQueue === "function") {
+    try {
+      const qResult = processShopQueue();
+      const n = Number(qResult?.processed) || 0;
+      const fail = Number(qResult?.failCount) || 0;
+      entries.push({
+        level: fail ? "warn" : "info",
+        code: "SHOP_QUEUE",
+        message: `Warteschlange: ${n} Job(s) verarbeitet, Fehler=${fail}.`,
+        recommendation: fail
+          ? "Fehlgeschlagene Jobs unter Itemshop → Warteschlange prüfen."
+          : null,
+      });
+    } catch (e) {
+      entries.push({
+        level: "error",
+        code: "SHOP_QUEUE_FAILED",
+        message: e?.message || String(e),
+        recommendation: "Warteschlange manuell prüfen / Jobs stornieren.",
+      });
+    }
   }
 
   const shop = runShopCycle(db, shopCalendar, shopCatalog);

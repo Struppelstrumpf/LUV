@@ -33,6 +33,7 @@ const shopCalendar = require("./shop_calendar");
 const seasonEvents = require("./events");
 const adminWebAuth = require("./admin_web_auth");
 const maintenance = require("./maintenance");
+const shopChangeQueue = require("./shop_change_queue");
 ach.bindGetDb(getDb);
 const {
   STICKER_SHOP_PRICES,
@@ -6521,22 +6522,7 @@ setInterval(() => {
     console.error("tickMarriages", e);
   }
 }, 60_000).unref();
-setInterval(() => {
-  try {
-    const db = getDb();
-    // Während Wartungsfenster: Nightly-Job zuerst (Full-Apply); danach leichter Tag-Tick
-    if (maintenance.isMaintenanceActive()) {
-      const st = db.maintenance;
-      if (st && st.jobDone !== true) return;
-    }
-    seedShopCatalogIfNeeded();
-    // Tagsüber: kein Full-Apply — nur fällige Fenster + Expiry (Nacht macht Full-Apply)
-    const tick = shopCalendar.tickDaytimeShopWindows(db, shopCatalog);
-    if ((tick.refreshed || 0) > 0 || (tick.expired || 0) > 0) scheduleSave();
-  } catch (e) {
-    console.error("[shop] daytime tick failed", e);
-  }
-}, 2 * 60_000).unref();
+// Shop-Rotation: nur in der Nachtwartung (≈03:00 Berlin) + Boot/Admin — kein Tagestick
 setInterval(() => {
   try {
     const db = getDb();
@@ -6547,6 +6533,10 @@ setInterval(() => {
       shopCatalog,
       flushSaveSync,
       beforeShop: () => seedShopCatalogIfNeeded(),
+      processShopQueue: () =>
+        shopChangeQueue.processPending(db, buildShopQueueHandlers(), {
+          byUserId: null,
+        }),
     });
     if (result?.job?.ran) {
       console.log("[maintenance] nightly job done", result.job.report?.id || "");
@@ -11387,6 +11377,23 @@ app.post("/v1/admin/shop/rotation-plans/:id/apply", (req, res) => {
   const ctx = requireStaff(req, res, "market.settings");
   if (!ctx) return;
   const id = String(req.params.id || "").trim();
+  if (shopChangeQueue.parseSchedule(req.body, req.query) === "maintenance") {
+    const enq = shopChangeQueue.enqueue(getDb(), {
+      action: "rotation_apply",
+      payload: { id },
+      byUserId: ctx.user.id,
+      label: `Rotation neu mischen · ${id}`,
+    });
+    if (!enq.ok) return res.status(400).json(enq);
+    scheduleSave();
+    staffAudit(ctx.user, "shop_queue", { action: "rotation_apply", jobId: enq.job.id });
+    return res.json({
+      ok: true,
+      queued: true,
+      job: enq.job,
+      message: "Für nächste Wartung (≈03:00 Berlin) eingeplant.",
+    });
+  }
   const plans = shopCalendar.ensureRotationPlans(getDb());
   const plan = plans[id];
   if (!plan) {
@@ -11399,12 +11406,116 @@ app.post("/v1/admin/shop/rotation-plans/:id/apply", (req, res) => {
   return res.json({ ok: true, ...result });
 });
 
+/** Shop-Änderungs-Warteschlange (bis ≈03:00 Berlin). */
+function buildShopQueueHandlers() {
+  return {
+    leave_rotation: (payload, ctx) =>
+      shopCalendar.removeItemFromRotation(getDb(), payload.kind, payload.itemId, {
+        byUserId: ctx.byUserId,
+      }),
+    rejoin_rotation: (payload, ctx) =>
+      shopCalendar.rejoinRotationPool(getDb(), payload.kind, payload.itemId, {
+        byUserId: ctx.byUserId,
+      }),
+    calendar_batch: (payload, ctx) =>
+      shopCalendar.batchAvailability(getDb(), payload, { byUserId: ctx.byUserId }),
+    calendar_update: (payload, ctx) =>
+      shopCalendar.updateAvailability(getDb(), payload.kind, payload.itemId, payload.patch || {}, {
+        byUserId: ctx.byUserId,
+      }),
+    item_enable: (payload, ctx) =>
+      shopCatalog.setEnabled(getDb(), payload.kind, payload.itemId, true, {
+        byUserId: ctx.byUserId,
+      }),
+    item_disable: (payload, ctx) =>
+      shopCatalog.setEnabled(getDb(), payload.kind, payload.itemId, false, {
+        byUserId: ctx.byUserId,
+      }),
+    item_upsert: (payload, ctx) => {
+      const body = { ...(payload || {}) };
+      delete body.schedule;
+      delete body.imageBase64;
+      delete body.imageDataUrl;
+      const result = shopCatalog.upsertItem(getDb(), body, { byUserId: ctx.byUserId });
+      if (result.ok) {
+        try {
+          seasonEvents.syncEventShopPets(getDb());
+        } catch (_) {
+          /* ignore */
+        }
+        invalidateLootboxPoolCache();
+      }
+      return result;
+    },
+    rotation_apply: (payload, ctx) => {
+      const id = String(payload?.id || "").trim();
+      const plans = shopCalendar.ensureRotationPlans(getDb());
+      const plan = plans[id];
+      if (!plan) return { ok: false, error: "not_found", message: "Plan nicht gefunden." };
+      return shopCalendar.applyRotationPlan(getDb(), plan, { byUserId: ctx.byUserId });
+    },
+  };
+}
+
+app.get("/v1/admin/shop/change-queue", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const includeDone = String(req.query?.all || "") === "1";
+  return res.json({
+    ok: true,
+    jobs: shopChangeQueue.listJobs(getDb(), { includeDone }),
+    pending: shopChangeQueue.listJobs(getDb()).length,
+  });
+});
+
+app.delete("/v1/admin/shop/change-queue/:id", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const result = shopChangeQueue.cancelJob(getDb(), req.params.id);
+  if (!result.ok) {
+    return res.status(400).json(result);
+  }
+  scheduleSave();
+  return res.json(result);
+});
+
+/** Warteschlange sofort abarbeiten (ohne auf 03:00 zu warten). */
+app.post("/v1/admin/shop/change-queue/flush", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  seedShopCatalogIfNeeded();
+  const result = shopChangeQueue.processPending(getDb(), buildShopQueueHandlers(), {
+    byUserId: ctx.user.id,
+  });
+  flushSave();
+  staffAudit(ctx.user, "shop_queue_flush", { processed: result.processed });
+  return res.json(result);
+});
+
 app.post("/v1/admin/shop/calendar/:kind/:itemId/leave-rotation", (req, res) => {
   const ctx = requireStaff(req, res, "market.settings");
   if (!ctx) return;
   seedShopCatalogIfNeeded();
   const kind = String(req.params.kind || "").trim();
   const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
+  const payload = { kind, itemId };
+  if (shopChangeQueue.parseSchedule(req.body, req.query) === "maintenance") {
+    const enq = shopChangeQueue.enqueue(getDb(), {
+      action: "leave_rotation",
+      payload,
+      byUserId: ctx.user.id,
+      label: `Zyklus raus · ${kind}:${itemId}`,
+    });
+    if (!enq.ok) return res.status(400).json(enq);
+    scheduleSave();
+    staffAudit(ctx.user, "shop_queue", { action: "leave_rotation", jobId: enq.job.id });
+    return res.json({
+      ok: true,
+      queued: true,
+      job: enq.job,
+      message: "Für nächste Wartung (≈03:00 Berlin) eingeplant.",
+    });
+  }
   const result = shopCalendar.removeItemFromRotation(getDb(), kind, itemId, {
     byUserId: ctx.user?.id || null,
   });
@@ -11422,6 +11533,24 @@ app.post("/v1/admin/shop/calendar/:kind/:itemId/rejoin-rotation", (req, res) => 
   seedShopCatalogIfNeeded();
   const kind = String(req.params.kind || "").trim();
   const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
+  const payload = { kind, itemId };
+  if (shopChangeQueue.parseSchedule(req.body, req.query) === "maintenance") {
+    const enq = shopChangeQueue.enqueue(getDb(), {
+      action: "rejoin_rotation",
+      payload,
+      byUserId: ctx.user.id,
+      label: `Zyklus rein · ${kind}:${itemId}`,
+    });
+    if (!enq.ok) return res.status(400).json(enq);
+    scheduleSave();
+    staffAudit(ctx.user, "shop_queue", { action: "rejoin_rotation", jobId: enq.job.id });
+    return res.json({
+      ok: true,
+      queued: true,
+      job: enq.job,
+      message: "Für nächste Wartung (≈03:00 Berlin) eingeplant.",
+    });
+  }
   const result = shopCalendar.rejoinRotationPool(getDb(), kind, itemId, {
     byUserId: ctx.user?.id || null,
   });
@@ -11437,7 +11566,26 @@ app.post("/v1/admin/shop/calendar/batch", (req, res) => {
   const ctx = requireStaff(req, res, "market.settings");
   if (!ctx) return;
   seedShopCatalogIfNeeded();
-  const result = shopCalendar.batchAvailability(getDb(), req.body || {}, {
+  const body = { ...(req.body || {}) };
+  delete body.schedule;
+  if (shopChangeQueue.parseSchedule(req.body, req.query) === "maintenance") {
+    const enq = shopChangeQueue.enqueue(getDb(), {
+      action: "calendar_batch",
+      payload: body,
+      byUserId: ctx.user.id,
+      label: `Kalender-Batch (${(body.itemKeys || body.items || []).length || "?"} Items)`,
+    });
+    if (!enq.ok) return res.status(400).json(enq);
+    scheduleSave();
+    staffAudit(ctx.user, "shop_queue", { action: "calendar_batch", jobId: enq.job.id });
+    return res.json({
+      ok: true,
+      queued: true,
+      job: enq.job,
+      message: "Für nächste Wartung (≈03:00 Berlin) eingeplant.",
+    });
+  }
+  const result = shopCalendar.batchAvailability(getDb(), body, {
     byUserId: ctx.user?.id || null,
   });
   flushSave();
@@ -11451,7 +11599,26 @@ app.put("/v1/admin/shop/calendar/:kind/:itemId", (req, res) => {
   seedShopCatalogIfNeeded();
   const kind = String(req.params.kind || "").trim();
   const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
-  const result = shopCalendar.updateAvailability(getDb(), kind, itemId, req.body || {}, {
+  const body = { ...(req.body || {}) };
+  delete body.schedule;
+  if (shopChangeQueue.parseSchedule(req.body, req.query) === "maintenance") {
+    const enq = shopChangeQueue.enqueue(getDb(), {
+      action: "calendar_update",
+      payload: { kind, itemId, patch: body },
+      byUserId: ctx.user.id,
+      label: `Fenster · ${kind}:${itemId}`,
+    });
+    if (!enq.ok) return res.status(400).json(enq);
+    scheduleSave();
+    staffAudit(ctx.user, "shop_queue", { action: "calendar_update", jobId: enq.job.id });
+    return res.json({
+      ok: true,
+      queued: true,
+      job: enq.job,
+      message: "Für nächste Wartung (≈03:00 Berlin) eingeplant.",
+    });
+  }
+  const result = shopCalendar.updateAvailability(getDb(), kind, itemId, body, {
     byUserId: ctx.user?.id || null,
   });
   if (!result.ok) {
@@ -11613,6 +11780,34 @@ app.post("/v1/admin/shop/items", (req, res) => {
     }
     body.itemId = itemId;
   }
+
+  // Bild-Uploads nie in die Queue (zu groß) — sonst optional Warteschlange bis ≈03:00
+  const hasImgPayload = Boolean(body.imageBase64 || body.imageDataUrl);
+  if (
+    !hasImgPayload &&
+    shopChangeQueue.parseSchedule(req.body, req.query) === "maintenance"
+  ) {
+    const payload = { ...body };
+    delete payload.schedule;
+    delete payload.imageBase64;
+    delete payload.imageDataUrl;
+    const enq = shopChangeQueue.enqueue(getDb(), {
+      action: "item_upsert",
+      payload,
+      byUserId: ctx.user.id,
+      label: `Neu · ${kind}:${payload.itemId || "?"}`,
+    });
+    if (!enq.ok) return res.status(400).json(enq);
+    scheduleSave();
+    staffAudit(ctx.user, "shop_queue", { action: "item_upsert", jobId: enq.job.id });
+    return res.json({
+      ok: true,
+      queued: true,
+      job: enq.job,
+      message: "Für nächste Wartung (≈03:00 Berlin) eingeplant.",
+    });
+  }
+
   const result = shopCatalog.upsertItem(getDb(), body, { byUserId: ctx.user?.id || null });
   if (!result.ok) {
     return res.status(400).json({ error: result.error, message: result.message });
@@ -11636,6 +11831,11 @@ app.post("/v1/admin/shop/items", (req, res) => {
     item: result.item,
     lootbox: !eventId,
     chromaKey: petImages.CHROMA_KEY_HEX,
+    ...(hasImgPayload && shopChangeQueue.parseSchedule(req.body, req.query) === "maintenance"
+      ? {
+          note: "Bild-Items werden immer sofort angelegt (nicht queuebar).",
+        }
+      : {}),
   });
 });
 
@@ -11697,6 +11897,33 @@ app.put("/v1/admin/shop/items/:kind/:itemId", (req, res) => {
   } else if (imageKindsPut.has(kind) && petImages.hasImage(itemId)) {
     body.hasImage = true;
   }
+
+  const hasImgPayloadPut = Boolean(req.body?.imageBase64 || req.body?.imageDataUrl);
+  if (
+    !hasImgPayloadPut &&
+    shopChangeQueue.parseSchedule(req.body, req.query) === "maintenance"
+  ) {
+    const payload = { ...body };
+    delete payload.schedule;
+    delete payload.imageBase64;
+    delete payload.imageDataUrl;
+    const enq = shopChangeQueue.enqueue(getDb(), {
+      action: "item_upsert",
+      payload,
+      byUserId: ctx.user.id,
+      label: `Edit · ${kind}:${itemId}`,
+    });
+    if (!enq.ok) return res.status(400).json(enq);
+    scheduleSave();
+    staffAudit(ctx.user, "shop_queue", { action: "item_upsert", jobId: enq.job.id });
+    return res.json({
+      ok: true,
+      queued: true,
+      job: enq.job,
+      message: "Für nächste Wartung (≈03:00 Berlin) eingeplant.",
+    });
+  }
+
   const result = shopCatalog.upsertItem(getDb(), body, { byUserId: ctx.user?.id || null });
   if (!result.ok) {
     return res.status(400).json({ error: result.error, message: result.message });
@@ -11714,7 +11941,13 @@ app.put("/v1/admin/shop/items/:kind/:itemId", (req, res) => {
   }
   invalidateLootboxPoolCache();
   scheduleSave();
-  return res.json({ ok: true, item: result.item });
+  return res.json({
+    ok: true,
+    item: result.item,
+    ...(hasImgPayloadPut && shopChangeQueue.parseSchedule(req.body, req.query) === "maintenance"
+      ? { note: "Bild-Upload wird immer sofort gespeichert." }
+      : {}),
+  });
 });
 
 app.get("/v1/admin/shop/event-options", (req, res) => {
@@ -11751,6 +11984,22 @@ app.post("/v1/admin/shop/items/:kind/:itemId/disable", (req, res) => {
   if (!ctx) return;
   const kind = String(req.params.kind || "").trim();
   const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
+  if (shopChangeQueue.parseSchedule(req.body, req.query) === "maintenance") {
+    const enq = shopChangeQueue.enqueue(getDb(), {
+      action: "item_disable",
+      payload: { kind, itemId },
+      byUserId: ctx.user.id,
+      label: `Shop aus · ${kind}:${itemId}`,
+    });
+    if (!enq.ok) return res.status(400).json(enq);
+    scheduleSave();
+    return res.json({
+      ok: true,
+      queued: true,
+      job: enq.job,
+      message: "Für nächste Wartung (≈03:00 Berlin) eingeplant.",
+    });
+  }
   const result = shopCatalog.setEnabled(getDb(), kind, itemId, false, {
     byUserId: ctx.user?.id || null,
   });
@@ -11764,6 +12013,22 @@ app.post("/v1/admin/shop/items/:kind/:itemId/enable", (req, res) => {
   if (!ctx) return;
   const kind = String(req.params.kind || "").trim();
   const itemId = decodeURIComponent(String(req.params.itemId || "")).trim();
+  if (shopChangeQueue.parseSchedule(req.body, req.query) === "maintenance") {
+    const enq = shopChangeQueue.enqueue(getDb(), {
+      action: "item_enable",
+      payload: { kind, itemId },
+      byUserId: ctx.user.id,
+      label: `Shop an · ${kind}:${itemId}`,
+    });
+    if (!enq.ok) return res.status(400).json(enq);
+    scheduleSave();
+    return res.json({
+      ok: true,
+      queued: true,
+      job: enq.job,
+      message: "Für nächste Wartung (≈03:00 Berlin) eingeplant.",
+    });
+  }
   const result = shopCatalog.setEnabled(getDb(), kind, itemId, true, {
     byUserId: ctx.user?.id || null,
   });

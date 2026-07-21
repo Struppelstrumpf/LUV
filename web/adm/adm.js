@@ -15,7 +15,8 @@
     shopQ: "",
     shopSource: "",
     shopUniverse: [],
-    shopView: "katalog", // katalog | events | kalender
+    shopView: "katalog", // katalog | events | kalender | queue
+    shopSchedule: "now", // now | maintenance
     calOpenInv: null,
     calKind: "",
     calQ: "",
@@ -41,6 +42,12 @@
     state.user = JSON.parse(localStorage.getItem(USER_KEY) || "null");
   } catch {
     state.user = null;
+  }
+  try {
+    const sched = localStorage.getItem("luv_adm_shop_schedule");
+    if (sched === "maintenance" || sched === "now") state.shopSchedule = sched;
+  } catch {
+    /* ignore */
   }
 
   const $ = (id) => document.getElementById(id);
@@ -113,6 +120,75 @@
       throw new Error(msg);
     }
     return json;
+  }
+
+  function setShopSchedule(mode) {
+    state.shopSchedule = mode === "maintenance" ? "maintenance" : "now";
+    try {
+      localStorage.setItem("luv_adm_shop_schedule", state.shopSchedule);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function withSchedule(obj = {}) {
+    return { ...obj, schedule: state.shopSchedule === "maintenance" ? "maintenance" : "now" };
+  }
+
+  function scheduleBarHtml() {
+    const m = state.shopSchedule === "maintenance";
+    return `<div class="panel" style="margin:0.65rem 0 0;padding:0.6rem 0.8rem">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.55rem;justify-content:space-between">
+        <div style="min-width:12rem;flex:1">
+          <strong>Änderungsmodus</strong>
+          <p class="help" style="margin:0.15rem 0 0">
+            Rotation nur ≈03:00 Berlin. Tagsüber keine Shop-Wechsel.
+            ${m ? "Neue Edits landen in der Warteschlange." : "Edits gelten sofort."}
+          </p>
+        </div>
+        <div class="shop-cats" id="shopScheduleMode" style="margin:0">
+          <button type="button" class="shop-cat ${!m ? "on" : ""}" data-sched="now">Sofort</button>
+          <button type="button" class="shop-cat ${m ? "on" : ""}" data-sched="maintenance">Warteschlange</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function wireScheduleBar() {
+    content.querySelectorAll("#shopScheduleMode [data-sched]").forEach((btn) => {
+      btn.onclick = () => {
+        setShopSchedule(btn.getAttribute("data-sched"));
+        content.querySelectorAll("#shopScheduleMode [data-sched]").forEach((b) => {
+          b.classList.toggle("on", b.getAttribute("data-sched") === state.shopSchedule);
+        });
+        const help = content.querySelector("#shopScheduleMode")?.closest(".panel")?.querySelector(".help");
+        if (help) {
+          help.textContent =
+            "Rotation nur ≈03:00 Berlin. Tagsüber keine Shop-Wechsel. " +
+            (state.shopSchedule === "maintenance"
+              ? "Neue Edits landen in der Warteschlange."
+              : "Edits gelten sofort.");
+        }
+      };
+    });
+  }
+
+  function shopViewsHtml(active) {
+    return `<div class="shop-cats" id="shopViews">
+      <button type="button" class="shop-cat ${active === "katalog" ? "on" : ""}" data-shop-view="katalog">Katalog</button>
+      <button type="button" class="shop-cat ${active === "events" ? "on" : ""}" data-shop-view="events">Event-Katalog</button>
+      <button type="button" class="shop-cat ${active === "kalender" ? "on" : ""}" data-shop-view="kalender">Kalender</button>
+      <button type="button" class="shop-cat ${active === "queue" ? "on" : ""}" data-shop-view="queue">Warteschlange</button>
+    </div>`;
+  }
+
+  function noteQueued(res) {
+    if (res?.queued) {
+      alert(res.message || "In Warteschlange für nächste Wartung (≈03:00 Berlin) gelegt.");
+      return true;
+    }
+    if (res?.note) alert(res.note);
+    return false;
   }
 
   function setSession(token, user) {
@@ -517,6 +593,7 @@
       if (id === "overview") await renderOverview();
       else if (id === "shop") {
         if (state.shopView === "kalender") await renderShopCalendar();
+        else if (state.shopView === "queue") await renderShopChangeQueue();
         else await renderShop();
       }
       else if (id === "events") await window.LuvAdmPanels.renderEvents();
@@ -783,11 +860,12 @@
         leave.onclick = async () => {
           if (!confirm("Aus dem Zyklus nehmen? Item bleibt dann dauerhaft im Shop (Fix).")) return;
           try {
-            await api(
+            const res = await api(
               `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/leave-rotation`,
-              { method: "POST", body: "{}" }
+              { method: "POST", body: JSON.stringify(withSchedule()) }
             );
             closeModal();
+            noteQueued(res);
             renderShop();
           } catch (err) {
             alert(err?.message || "Fehlgeschlagen");
@@ -798,11 +876,12 @@
       if (rejoin) {
         rejoin.onclick = async () => {
           try {
-            await api(
+            const res = await api(
               `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/rejoin-rotation`,
-              { method: "POST", body: "{}" }
+              { method: "POST", body: JSON.stringify(withSchedule()) }
             );
             closeModal();
+            noteQueued(res);
             renderShop();
           } catch (err) {
             alert(err?.message || "Fehlgeschlagen");
@@ -951,7 +1030,9 @@
           <button type="button" class="shop-cat ${!eventMode ? "on" : ""}" data-shop-view="katalog">Katalog</button>
           <button type="button" class="shop-cat ${eventMode ? "on" : ""}" data-shop-view="events">Event-Katalog</button>
           <button type="button" class="shop-cat" data-shop-view="kalender">Kalender</button>
+          <button type="button" class="shop-cat" data-shop-view="queue">Warteschlange</button>
         </div>
+        ${scheduleBarHtml()}
 
         <div class="shop-cats" id="shopCats">
           <button type="button" class="shop-cat ${!activeKind ? "on" : ""}" data-kind="">Alle</button>
@@ -990,6 +1071,13 @@
         }
       </div>`;
 
+    content.querySelectorAll("#shopViews [data-shop-view]").forEach((btn) => {
+      btn.onclick = () => {
+        state.shopView = btn.getAttribute("data-shop-view") || "katalog";
+        loadTab("shop");
+      };
+    });
+    wireScheduleBar();
     $("shopWizard").onclick = () => {
       if (eventMode) openNewEventChooser();
       else openWizard();
@@ -1104,7 +1192,8 @@
           mode === "off"
             ? `/admin/shop/items/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/disable`
             : `/admin/shop/items/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/enable`;
-        await api(path, { method: "POST", body: "{}" });
+        const res = await api(path, { method: "POST", body: JSON.stringify(withSchedule()) });
+        noteQueued(res);
         renderShop();
       };
     });
@@ -1143,6 +1232,130 @@
         } catch (err) {
           alert(err?.message || "Löschen fehlgeschlagen.");
           btn.disabled = false;
+        }
+      };
+    });
+  }
+
+  async function renderShopChangeQueue() {
+    const data = await api("/admin/shop/change-queue?all=1");
+    const jobs = data.jobs || [];
+    const pending = jobs.filter((j) => j.status === "pending");
+    const done = jobs.filter((j) => j.status !== "pending").slice(0, 30);
+    const fmt = (ms) => {
+      try {
+        return new Date(ms).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
+      } catch {
+        return "—";
+      }
+    };
+    const row = (j) => {
+      const st =
+        j.status === "pending"
+          ? `<span class="badge">offen</span>`
+          : j.status === "done"
+            ? `<span class="badge" style="background:rgba(80,180,120,0.25)">fertig</span>`
+            : j.status === "cancelled"
+              ? `<span class="badge">storniert</span>`
+              : `<span class="badge" style="background:rgba(220,80,80,0.2)">fehler</span>`;
+      return `<tr>
+        <td>${st}</td>
+        <td><strong>${esc(j.label || j.action)}</strong>
+          <div class="muted mono" style="font-size:0.72rem">${esc(j.action)} · ${esc(j.id)}</div>
+          ${j.error ? `<div class="error" style="font-size:0.78rem">${esc(j.error)}</div>` : ""}
+        </td>
+        <td class="muted" style="white-space:nowrap">${esc(fmt(j.createdAt))}</td>
+        <td>
+          ${
+            j.status === "pending"
+              ? `<button type="button" class="btn ghost btn-xs" data-q-cancel="${esc(j.id)}">Stornieren</button>`
+              : ""
+          }
+        </td>
+      </tr>`;
+    };
+    content.innerHTML = `
+      <div class="panel shop-hero">
+        <div class="shop-top">
+          <div>
+            <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">Warteschlange</h3>
+            <p class="help" style="margin:0.4rem 0 0;max-width:48rem">
+              Offene Jobs werden in der Nachtwartung (≈03:00 Berlin) vor dem Shop-Zyklus ausgeführt —
+              oder jetzt mit „Jetzt ausführen“.
+            </p>
+          </div>
+          <div class="actions" style="margin:0">
+            <button type="button" class="btn" id="qFlush" ${pending.length ? "" : "disabled"}>Jetzt ausführen (${pending.length})</button>
+          </div>
+        </div>
+        ${shopViewsHtml("queue")}
+        ${scheduleBarHtml()}
+      </div>
+      <div class="panel">
+        <h3 style="margin:0 0 0.5rem;font-family:var(--display)">Offen (${pending.length})</h3>
+        <div class="cal-mem-scroll" style="max-height:22rem">
+          <table class="cal-mem-table">
+            <thead><tr><th></th><th>Job</th><th>Erstellt</th><th></th></tr></thead>
+            <tbody>
+              ${
+                pending.map(row).join("") ||
+                `<tr><td colspan="4" class="muted">Keine offenen Jobs.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <h3 style="margin:0 0 0.5rem;font-family:var(--display)">Zuletzt</h3>
+        <div class="cal-mem-scroll" style="max-height:16rem">
+          <table class="cal-mem-table">
+            <thead><tr><th></th><th>Job</th><th>Erstellt</th><th></th></tr></thead>
+            <tbody>
+              ${
+                done.map(row).join("") ||
+                `<tr><td colspan="4" class="muted">Noch keine Historie.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+    content.querySelectorAll("#shopViews [data-shop-view]").forEach((btn) => {
+      btn.onclick = () => {
+        state.shopView = btn.getAttribute("data-shop-view") || "katalog";
+        loadTab("shop");
+      };
+    });
+    wireScheduleBar();
+    const flush = $("qFlush");
+    if (flush) {
+      flush.onclick = async () => {
+        if (!pending.length) return;
+        if (!confirm(`${pending.length} Job(s) jetzt ausführen (ohne auf 03:00 zu warten)?`)) return;
+        flush.disabled = true;
+        try {
+          const res = await api("/admin/shop/change-queue/flush", {
+            method: "POST",
+            body: "{}",
+          });
+          alert(`Erledigt: ${res.okCount || 0} ok, ${res.failCount || 0} Fehler.`);
+          renderShopChangeQueue();
+        } catch (err) {
+          alert(err?.message || "Flush fehlgeschlagen");
+          flush.disabled = false;
+        }
+      };
+    }
+    content.querySelectorAll("[data-q-cancel]").forEach((btn) => {
+      btn.onclick = async () => {
+        const id = btn.getAttribute("data-q-cancel");
+        if (!confirm("Job stornieren?")) return;
+        try {
+          await api(`/admin/shop/change-queue/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+          });
+          renderShopChangeQueue();
+        } catch (err) {
+          alert(err?.message || "Stornieren fehlgeschlagen");
         }
       };
     });
@@ -1423,14 +1636,19 @@
             try {
               await api("/admin/shop/calendar/batch", {
                 method: "POST",
-                body: JSON.stringify({
-                  itemKeys: [key],
-                  availableFrom: from,
-                  availableUntil: until,
-                  enabled: true,
-                }),
+                body: JSON.stringify(
+                  withSchedule({
+                    itemKeys: [key],
+                    availableFrom: from,
+                    availableUntil: until,
+                    enabled: true,
+                  })
+                ),
               });
               closeModal();
+              if (state.shopSchedule === "maintenance") {
+                alert("Für nächste Wartung (≈03:00 Berlin) eingeplant.");
+              }
               state.calOpenInv = { date, kindFilter };
               renderShopCalendar();
             } catch (err) {
@@ -1622,13 +1840,14 @@
         <div class="panel">
           <h3 style="margin:0 0 0.5rem;font-family:var(--display)">Shop-Rotation — kurz erklärt</h3>
           <div class="cal-rot-plain">
-            <p><strong>1.</strong> Jede Nacht um <strong>03:00</strong> (Berlin) wechselt der Shop.</p>
-            <p><strong>2.</strong> Ungefähr die <strong>Hälfte</strong> aller Items ist im Shop, der Rest macht Pause.</p>
-            <p><strong>3.</strong> Ein Item bleibt ein paar Tage (ca. 3–14), dann Pause — später kommt es wieder.</p>
-            <p><strong>4.</strong> Starter (z. B. Wiese, Basis-Emojis) bleiben <strong>immer</strong> im Shop.</p>
+            <p><strong>1.</strong> Jede Nacht um <strong>03:00</strong> (Berlin) wechseln ablaufende Items raus und neue rein — tagsüber passiert nichts.</p>
+            <p><strong>2.</strong> Danach wird die Rotation neu gemischt und die Admin-Warteschlange abgearbeitet.</p>
+            <p><strong>3.</strong> Ungefähr die <strong>Hälfte</strong> aller Items ist im Shop, der Rest macht Pause.</p>
+            <p><strong>4.</strong> Ein Item bleibt ein paar Tage (ca. 3–14), dann Pause — später kommt es wieder.</p>
+            <p><strong>5.</strong> Starter (z. B. Wiese, Basis-Emojis) bleiben <strong>immer</strong> im Shop.</p>
           </div>
           <p class="help" style="margin:0.75rem 0 0">
-            Einzelne Items steuerst du im <strong>Katalog → Zyklus</strong> (raus = fest im Shop, rein = wieder rotieren).
+            Einzelne Items: Katalog → <strong>Zyklus</strong>. Edits: oben <strong>Sofort</strong> oder <strong>Warteschlange</strong>.
           </p>
         </div>
 
@@ -1645,13 +1864,13 @@
             <div class="actions" style="margin:0;flex-wrap:wrap">
               ${
                 plan?.id
-                  ? `<button type="button" class="btn" data-plan-apply="${esc(plan.id)}">Jetzt neu mischen</button>`
+                  ? `<button type="button" class="btn" data-plan-apply="${esc(plan.id)}">Neu mischen</button>`
                   : ""
               }
             </div>
           </div>
           <p class="help" style="margin:0.65rem 0 0.35rem">
-            „Neu mischen“ setzt neue Zeitfenster für die Rotation. Nutze das sparsam (z. B. nach großen Katalog-Änderungen).
+            „Neu mischen“ setzt neue Zeitfenster. Mit Modus <strong>Warteschlange</strong> erst in der nächsten Nachtwartung.
           </p>
           <input type="search" id="calRotQ" class="ev-pick-search" placeholder="Jetzt im Shop suchen…" />
           <div class="cal-mem-scroll" style="max-height:28rem;margin-top:0.55rem">
@@ -1797,7 +2016,9 @@
           <button type="button" class="shop-cat" data-shop-view="katalog">Katalog</button>
           <button type="button" class="shop-cat" data-shop-view="events">Event-Katalog</button>
           <button type="button" class="shop-cat on" data-shop-view="kalender">Kalender</button>
+          <button type="button" class="shop-cat" data-shop-view="queue">Warteschlange</button>
         </div>
+        ${scheduleBarHtml()}
         <div class="shop-cats" id="calTabs">
           <button type="button" class="shop-cat ${state.calTab === "month" ? "on" : ""}" data-cal-tab="month">Monat</button>
           <button type="button" class="shop-cat ${state.calTab === "plans" ? "on" : ""}" data-cal-tab="plans">Rotation</button>
@@ -1823,6 +2044,7 @@
         loadTab("shop");
       };
     });
+    wireScheduleBar();
     content.querySelectorAll("#calTabs [data-cal-tab]").forEach((btn) => {
       btn.onclick = () => {
         state.calTab = btn.getAttribute("data-cal-tab") || "month";
@@ -1989,19 +2211,22 @@
     content.querySelectorAll("[data-plan-apply]").forEach((btn) => {
       btn.onclick = async () => {
         const id = btn.getAttribute("data-plan-apply");
+        const queued = state.shopSchedule === "maintenance";
         if (
           !confirm(
-            "Shop-Fenster jetzt neu mischen? Das ändert, welche Items in den nächsten Tagen im Shop sind."
+            queued
+              ? "Neu mischen in die Warteschlange legen (nächste Wartung ≈03:00)?"
+              : "Shop-Fenster jetzt neu mischen? Das ändert, welche Items in den nächsten Tagen im Shop sind."
           )
         ) {
           return;
         }
         try {
-          await api(`/admin/shop/rotation-plans/${encodeURIComponent(id)}/apply`, {
+          const res = await api(`/admin/shop/rotation-plans/${encodeURIComponent(id)}/apply`, {
             method: "POST",
-            body: "{}",
+            body: JSON.stringify(withSchedule()),
           });
-          alert("Rotation neu gemischt.");
+          noteQueued(res) || alert("Rotation neu gemischt.");
           renderShopCalendar();
         } catch (err) {
           alert(err?.message || "Anwenden fehlgeschlagen");
@@ -2030,10 +2255,11 @@
         if (!kind || !itemId) return;
         if (!confirm("Item fest in den Shop legen? Es rotiert dann nicht mehr.")) return;
         try {
-          await api(
+          const res = await api(
             `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/leave-rotation`,
-            { method: "POST", body: "{}" }
+            { method: "POST", body: JSON.stringify(withSchedule()) }
           );
+          noteQueued(res);
           renderShopCalendar();
         } catch (err) {
           alert(err?.message || "Entfernen fehlgeschlagen");
@@ -2047,10 +2273,11 @@
         const itemId = rest.join("|");
         if (!kind || !itemId) return;
         try {
-          await api(
+          const res = await api(
             `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/rejoin-rotation`,
-            { method: "POST", body: "{}" }
+            { method: "POST", body: JSON.stringify(withSchedule()) }
           );
+          noteQueued(res);
           renderShopCalendar();
         } catch (err) {
           alert(err?.message || "Aufnehmen fehlgeschlagen");
@@ -2126,10 +2353,11 @@
           enabled: form.querySelector('[name="enabled"]').checked,
         };
         try {
-          await api(
+          const res = await api(
             `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`,
-            { method: "PUT", body: JSON.stringify(body) }
+            { method: "PUT", body: JSON.stringify(withSchedule(body)) }
           );
+          noteQueued(res);
           renderShopCalendar();
         } catch (err) {
           alert(err?.message || "Speichern fehlgeschlagen");
@@ -2261,7 +2489,9 @@
     }
     openModal(`
       <h3 style="font-family:var(--display);margin:0 0 0.5rem">Item bearbeiten</h3>
-      <p class="help">Änderungen sind sofort für alle Spieler sichtbar. Nur den Namen ändern? Nutze „Name“ auf der Karte — ohne Shop-Seiteneffekte.</p>
+      <p class="help">Modus oben im Itemshop: <strong>${
+        state.shopSchedule === "maintenance" ? "Warteschlange (≈03:00)" : "Sofort"
+      }</strong>. Bild-Uploads immer sofort.</p>
       <form id="editForm">${itemFormFields(it, "", eventOptions)}
         <div class="actions" style="margin-top:1rem">
           <button type="submit" class="btn">Speichern</button>
@@ -2279,10 +2509,11 @@
           { method: "PUT", body: JSON.stringify({ label: body.label }) }
         );
       }
-      await api(
+      const res = await api(
         `/admin/shop/items/${encodeURIComponent(body.kind)}/${encodeURIComponent(body.itemId)}`,
-        { method: "PUT", body: JSON.stringify(body) }
+        { method: "PUT", body: JSON.stringify(withSchedule(body)) }
       );
+      noteQueued(res);
       closeModal();
       renderShop();
     };
@@ -2554,9 +2785,10 @@
         try {
           const created = await api("/admin/shop/items", {
             method: "POST",
-            body: JSON.stringify(body),
+            body: JSON.stringify(withSchedule(body)),
           });
           if (created?.item?.itemId) draft.itemId = created.item.itemId;
+          noteQueued(created);
           closeModal();
           renderShop();
         } catch (err) {
