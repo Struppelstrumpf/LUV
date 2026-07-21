@@ -478,7 +478,15 @@ data class ShopPet(
  */
 object LiveShopCatalog {
     @Volatile var remoteEmojis: List<ShopEmoji>? = null
+        set(value) {
+            field = value
+            bumpCatalog()
+        }
     @Volatile var remoteStickers: List<ShopEmoji>? = null
+        set(value) {
+            field = value
+            bumpCatalog()
+        }
     @Volatile var remoteThemes: List<ShopTheme>? = null
         set(value) {
             field = value
@@ -488,8 +496,16 @@ object LiveShopCatalog {
             }
         }
     @Volatile var remotePets: List<ShopPet>? = null
+        set(value) {
+            field = value
+            bumpCatalog()
+        }
     /** True nach erfolgreichem Catalog-Fetch — dann Remote als Wahrheit (auch leere Listen). */
     @Volatile var remoteCatalogLoaded: Boolean = false
+        set(value) {
+            field = value
+            bumpCatalog()
+        }
     /** Steigt bei Theme-/Katalog-Updates — Compose recomposed Backdrop. */
     @Volatile var catalogEpoch: Int = 0
         private set
@@ -550,7 +566,9 @@ object LiveShopCatalog {
         val base = if (remoteCatalogLoaded && remote != null) remote else mergeEmojiLists(ShopCatalog.EMOJIS, remote)
         return ShopEventRewards.filterShopList(
             base.map { e -> displayLabel("emojis", e.emoji)?.let { e.copy(label = it) } ?: e }
-        , "emojis") { it.emoji }
+                .sortedWith(compareBy({ it.priceCoins }, { it.emoji })),
+            "emojis"
+        ) { it.emoji }
     }
 
     fun stickers(): List<ShopEmoji> {
@@ -558,7 +576,9 @@ object LiveShopCatalog {
         val base = if (remoteCatalogLoaded && remote != null) remote else mergeEmojiLists(ShopCatalog.STICKERS, remote)
         return ShopEventRewards.filterShopList(
             base.map { e -> displayLabel("stickers", e.emoji)?.let { e.copy(label = it) } ?: e }
-        , "stickers") { it.emoji }
+                .sortedWith(compareBy({ it.priceCoins }, { it.emoji })),
+            "stickers"
+        ) { it.emoji }
     }
 
     fun themes(): List<ShopTheme> {

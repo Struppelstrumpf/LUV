@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.64",
+            listOf(
+                "Itemshop: eigene Fix-Items und günstige Sticker wieder sichtbar und nach Preis sortiert",
+            )
+        ),
+        Entry(
             "2.2.63",
             listOf(
                 "Itemshop: Fix-Items (z. B. selbst angelegte Emojis) erscheinen wieder in der Liste, nicht nur über Suche",
