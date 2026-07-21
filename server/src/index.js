@@ -6524,17 +6524,17 @@ setInterval(() => {
 setInterval(() => {
   try {
     const db = getDb();
-    // Während Wartungsfenster: Nightly-Job zuerst; danach weiter ticken (kein Leerlauf bis 03:09)
+    // Während Wartungsfenster: Nightly-Job zuerst (Full-Apply); danach leichter Tag-Tick
     if (maintenance.isMaintenanceActive()) {
       const st = db.maintenance;
       if (st && st.jobDone !== true) return;
     }
     seedShopCatalogIfNeeded();
-    shopCalendar.applyAllRotationPlans(db);
-    shopCatalog.deactivateExpired(db);
-    scheduleSave();
+    // Tagsüber: kein Full-Apply — nur fällige Fenster + Expiry (Nacht macht Full-Apply)
+    const tick = shopCalendar.tickDaytimeShopWindows(db, shopCatalog);
+    if ((tick.refreshed || 0) > 0 || (tick.expired || 0) > 0) scheduleSave();
   } catch (e) {
-    console.error("[shop] rotation tick failed", e);
+    console.error("[shop] daytime tick failed", e);
   }
 }, 2 * 60_000).unref();
 setInterval(() => {
@@ -10425,8 +10425,7 @@ app.get("/v1/shop/catalog", (req, res) => {
   if (!ctx) return;
   seedShopCatalogIfNeeded();
   const db = getDb();
-  shopCalendar.applyAllRotationPlans(db);
-  shopCatalog.deactivateExpired(db);
+  // Reiner Lese-Pfad — keine Rotation/Expiry hier (Tick + Nacht pflegen Fenster)
   const kind = String(req.query?.kind || "").trim() || null;
   const q = String(req.query?.q || "").trim().slice(0, 40);
   const items = shopCatalog.listPublicCatalog(db, { kind: kind || undefined, q });

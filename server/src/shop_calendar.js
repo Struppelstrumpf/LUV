@@ -657,6 +657,98 @@ function applyAllRotationPlans(db, { now = Date.now(), byUserId = null } = {}) {
   return { ok: true, touched, plans: results };
 }
 
+/**
+ * Nur fällige Rotations-Fenster erneuern (abgelaufen / fehlend).
+ * Gültige oder zukünftig geplante Fenster bleiben unberührt.
+ * Verhindert Shop-Leerlauf tagsüber ohne teuren Full-Apply.
+ */
+function refreshDueRotationWindows(db, { now = Date.now(), byUserId = null } = {}) {
+  const plans = ensureRotationPlans(db);
+  const cat = shopCatalog.ensureShopCatalog(db);
+  let refreshed = 0;
+  for (const item of Object.values(cat.items || {})) {
+    if (!item || item.rotationLocked === true) continue;
+    const planId = item.rotationPlanId;
+    if (!planId) continue;
+    const plan = plans[planId];
+    if (!plan || plan.enabled === false) continue;
+
+    const from = item.availableFrom != null ? Number(item.availableFrom) : null;
+    const until = item.availableUntil != null ? Number(item.availableUntil) : null;
+    const hasWindow = from != null || until != null;
+    const expired = until != null && now >= until;
+    const missing = !hasWindow;
+    // Noch im Fenster oder erst geplant → nicht anfassen
+    if (!missing && !expired) continue;
+
+    const before = snapWindow(item);
+    const independent = (plan.model || "independent") !== "queue";
+    let wFrom;
+    let wUntil;
+    if (independent) {
+      const w = itemWindowAt(plan, item.itemId, now);
+      wFrom = w.from;
+      wUntil = w.until;
+    } else {
+      const pool = resolvePlanItems(db, plan);
+      const idx = pool.findIndex((i) => i.kind === item.kind && i.itemId === item.itemId);
+      if (idx < 0) continue;
+      const t = planTiming(plan, now);
+      const concurrent = Math.min(pool.length, Math.max(1, plan.concurrent || 1));
+      let on = false;
+      for (let c = 0; c < concurrent; c++) {
+        if ((t.slotIndex + c) % pool.length === idx) {
+          on = true;
+          break;
+        }
+      }
+      if (on) {
+        wFrom = t.slotStart;
+        wUntil = t.slotEnd;
+      } else {
+        const nxt = nextActiveWindow(plan, idx, pool.length, now);
+        wFrom = nxt.from;
+        wUntil = nxt.until;
+      }
+    }
+
+    const wasDisabled = item.enabled === false;
+    item.enabled = true;
+    item.availableFrom = wFrom;
+    item.availableUntil = wUntil;
+    item.updatedAt = now;
+    const after = snapWindow(item);
+    if (windowChanged(before, after)) {
+      appendAvailabilityLog(db, {
+        kind: item.kind,
+        itemId: item.itemId,
+        before,
+        after,
+        reason: "rotation_refresh",
+        byUserId,
+      });
+      refreshed += 1;
+    } else if (wasDisabled) {
+      // Fenster unverändert, aber nach expire_auto wieder aktiv
+      refreshed += 1;
+    }
+  }
+  return { ok: true, refreshed };
+}
+
+/**
+ * Tagsüber-Tick: fällige Fenster erneuern, dann abgelaufene deaktivieren.
+ * Full-Apply: Nacht (Wartung), Boot, Admin „Neu mischen“.
+ */
+function tickDaytimeShopWindows(db, shopCatalogMod, { now = Date.now() } = {}) {
+  const refresh = refreshDueRotationWindows(db, { now });
+  let expired = 0;
+  if (shopCatalogMod && typeof shopCatalogMod.deactivateExpired === "function") {
+    expired = shopCatalogMod.deactivateExpired(db, now) || 0;
+  }
+  return { ok: true, refreshed: refresh.refreshed || 0, expired };
+}
+
 /** Preview active items without persisting (pure). */
 function previewPlanActive(db, plan, now = Date.now()) {
   const items = resolvePlanItems(db, plan);
@@ -1285,6 +1377,8 @@ module.exports = {
   deleteRotationPlan,
   applyRotationPlan,
   applyAllRotationPlans,
+  refreshDueRotationWindows,
+  tickDaytimeShopWindows,
   ensureDefaultExpensiveRotation,
   monthGrid,
   dayInventory,

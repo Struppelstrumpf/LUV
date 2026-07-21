@@ -669,7 +669,8 @@ function publicItem(item, now = Date.now(), { admin = false, db = null } = {}) {
 }
 
 function listPublicCatalog(db, { admin = false, kind = null, q = "" } = {}) {
-  deactivateExpired(db);
+  // Kein apply/deactivate auf dem Lese-Pfad — Wartung + 2-Min-Tick pflegen Fenster.
+  // isWithinWindow filtert abgelaufene trotzdem korrekt heraus.
   try {
     require("./events").syncEventShopPets(db);
   } catch {
