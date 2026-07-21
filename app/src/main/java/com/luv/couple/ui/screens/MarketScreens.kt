@@ -15,18 +15,26 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.mandatorySystemGestures
+import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemGestures
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -1850,6 +1858,7 @@ private fun LootboxVisual(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun LootboxTab(
     coins: Int,
     busy: Boolean,
@@ -2156,15 +2165,23 @@ private fun LootboxTab(
             }
         )
     }
+    // Dialog (decorFitsSystemWindows=false): normale navigationBarsPadding oft 0 —
+    // Gesten-/Nav-Insets explizit + Mindestabstand, sonst sitzt der Footer unterm Home-Balken.
+    val lootboxSafeInsets = WindowInsets.safeDrawing.union(
+        WindowInsets.navigationBarsIgnoringVisibility
+            .union(WindowInsets.mandatorySystemGestures)
+            .union(WindowInsets.systemGestures)
+            .only(WindowInsetsSides.Bottom)
+    )
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
+            .windowInsetsPadding(lootboxSafeInsets)
+            .padding(bottom = 20.dp)
     ) {
         val reveal = revealedReward?.takeIf { phase == "reveal" }
         // Unterer Block (Switch + Hinweis) fest reservieren — nicht unter den Bildschirm schieben
-        val bottomReserve = if (reveal == null) 132.dp else 8.dp
+        val bottomReserve = if (reveal == null) 148.dp else 8.dp
         val headerReserve = 64.dp
         val middleAvail = (maxHeight - headerReserve - bottomReserve - 16.dp).coerceAtLeast(120.dp)
         val giftSize = minOf(maxWidth * 0.48f, middleAvail * 0.58f, 260.dp)
@@ -2174,7 +2191,7 @@ private fun LootboxTab(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 18.dp)
-                .padding(top = 8.dp, bottom = 10.dp),
+                .padding(top = 8.dp, bottom = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(
@@ -2390,10 +2407,10 @@ private fun LootboxTab(
             if (reveal == null) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = bottomReserve)
+                        .padding(top = 8.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),

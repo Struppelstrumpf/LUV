@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.65",
+            listOf(
+                "Lootbox: Kauf-Bestätigen und Schalter wieder oberhalb der Navigationsleiste",
+            )
+        ),
+        Entry(
             "2.2.64",
             listOf(
                 "Itemshop: eigene Fix-Items und günstige Sticker wieder sichtbar und nach Preis sortiert",
