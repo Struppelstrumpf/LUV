@@ -34,8 +34,8 @@ fun walkableAt(
 ): Boolean {
     if (zones.none { it.isWalk }) return false
     if (!pointInGreen(zones, x, y)) return false
-    val blockPad = (avatarR * 0.45f).coerceAtLeast(0.006f)
-    if (zones.any { it.isBlock && zoneContains(it, x, y, blockPad) }) return false
+    // Nur echte Überlappung mit Rot (kein großer Sicherheitsradius — sonst „unsichtbare Wände“)
+    if (zones.any { it.isBlock && zoneContains(it, x, y, 0f) }) return false
     return true
 }
 

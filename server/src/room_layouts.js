@@ -432,10 +432,9 @@ function isWalkable(layout, x, y) {
   const r = layout?.avatarR != null ? layout.avatarR : avatarRadius(zones);
   const greens = zones.filter((z) => z.color === "green");
   if (!greens.length) return false;
-  // Wie App: Mittelpunkt in Grün, leichtes Rot-Padding (nicht ganzer Kreis)
+  // Wie App: Mittelpunkt in Grün, Rot nur bei echter Überlappung
   if (!pointInGreen(zones, x, y)) return false;
-  const blockPad = Math.max(0.006, r * 0.45);
-  return !zones.some((z) => z.color === "red" && zoneContains(z, x, y, blockPad));
+  return !zones.some((z) => z.color === "red" && zoneContains(z, x, y, 0));
 }
 
 function isBlocked(layout, x, y) {

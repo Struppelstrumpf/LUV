@@ -26,10 +26,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredHeight
-import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
@@ -48,13 +45,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -68,7 +63,6 @@ import com.luv.couple.ui.clipItemId
 import com.luv.couple.ui.isImagePetId
 import com.luv.couple.ui.theme.LuvTheme
 import kotlin.math.hypot
-import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -76,8 +70,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 
 /**
- * Custom-Lobby-Raum (Vogelperspektive) — Layout + Space-API, kein Paint.
- * Weiß = Karte, Schwarz = Kamera-Fenster mit Edge-Scroll.
+ * Custom-Lobby-Raum — ganze Karte auf dem Screen (stabil).
+ * Eigene Position ist lokal maßgeblich (kein Server-Zucken).
  */
 class CustomRoomActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -105,8 +99,7 @@ class CustomRoomActivity : ComponentActivity() {
     }
 }
 
-private const val DEFAULT_AVATAR_R = 0.028f
-private const val CAMERA_EDGE = 0.22f
+private const val DEFAULT_AVATAR_R = 0.022f
 
 private fun vibrateShort(context: Context, ms: Long = 80L) {
     runCatching {
@@ -144,7 +137,6 @@ fun CustomRoomScreen(
     val roomToken = token
 
     val context = LocalContext.current
-    val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val myId = AccountSession.account.value?.id.orEmpty()
 
@@ -160,69 +152,20 @@ fun CustomRoomScreen(
     var lastBellMoveAt by remember { mutableLongStateOf(0L) }
     var reactionExpanded by remember { mutableStateOf(false) }
     var emojiBar by remember { mutableStateOf(ShopCatalog.DEFAULT_BAR) }
-    // Kamera in Karten-Lokalcoords (0–1 innerhalb viewRect)
-    var camLX by remember { mutableFloatStateOf(0f) }
-    var camLY by remember { mutableFloatStateOf(0f) }
-    var camInited by remember { mutableStateOf(false) }
 
     val zones = layout?.zones.orEmpty()
     val avatarR = layout?.avatarR?.takeIf { it > 0f } ?: DEFAULT_AVATAR_R
     val viewRect = layout?.viewRect ?: LuvApiClient.RoomViewRect()
-    val cameraRect = layout?.cameraRect ?: LuvApiClient.RoomCameraRect(viewRect.w, viewRect.h)
-    val camFracW = (cameraRect.w / viewRect.w.coerceAtLeast(0.01f)).coerceIn(0.12f, 1f)
-    val camFracH = (cameraRect.h / viewRect.h.coerceAtLeast(0.01f)).coerceIn(0.12f, 1f)
     val sitZones = remember(zones) { zones.filter { it.isGuestSeat } }
 
-    fun toLocalX(ix: Float): Float =
+    fun imageToViewX(ix: Float): Float =
         ((ix - viewRect.x) / viewRect.w.coerceAtLeast(0.01f)).coerceIn(0f, 1f)
 
-    fun toLocalY(iy: Float): Float =
+    fun imageToViewY(iy: Float): Float =
         ((iy - viewRect.y) / viewRect.h.coerceAtLeast(0.01f)).coerceIn(0f, 1f)
 
-    fun fromLocalX(lx: Float): Float = viewRect.x + lx * viewRect.w
-    fun fromLocalY(ly: Float): Float = viewRect.y + ly * viewRect.h
-
-    fun clampCam(nx: Float, ny: Float): Pair<Float, Float> {
-        val maxX = (1f - camFracW).coerceAtLeast(0f)
-        val maxY = (1f - camFracH).coerceAtLeast(0f)
-        return nx.coerceIn(0f, maxX) to ny.coerceIn(0f, maxY)
-    }
-
-    fun centerCameraOn(ax: Float, ay: Float) {
-        val (nx, ny) = clampCam(toLocalX(ax) - camFracW * 0.5f, toLocalY(ay) - camFracH * 0.5f)
-        camLX = nx
-        camLY = ny
-    }
-
-    /** Kamera folgt nur, wenn Avatar nahe am Bildschirmrand ist. */
-    fun applyCameraEdge(ax: Float, ay: Float, smooth: Boolean = true) {
-        if (camFracW >= 0.999f && camFracH >= 0.999f) {
-            camLX = 0f
-            camLY = 0f
-            return
-        }
-        val lx = toLocalX(ax)
-        val ly = toLocalY(ay)
-        var nx = camLX
-        var ny = camLY
-        val sx = (lx - camLX) / camFracW
-        val sy = (ly - camLY) / camFracH
-        if (sx < CAMERA_EDGE) nx -= (CAMERA_EDGE - sx) * camFracW
-        if (sx > 1f - CAMERA_EDGE) nx += (sx - (1f - CAMERA_EDGE)) * camFracW
-        if (sy < CAMERA_EDGE) ny -= (CAMERA_EDGE - sy) * camFracH
-        if (sy > 1f - CAMERA_EDGE) ny += (sy - (1f - CAMERA_EDGE)) * camFracH
-        val (tx, ty) = clampCam(nx, ny)
-        if (smooth) {
-            camLX += (tx - camLX) * 0.18f
-            camLY += (ty - camLY) * 0.18f
-        } else {
-            camLX = tx
-            camLY = ty
-        }
-    }
-
-    fun screenFracX(ix: Float): Float = (toLocalX(ix) - camLX) / camFracW
-    fun screenFracY(iy: Float): Float = (toLocalY(iy) - camLY) / camFracH
+    fun viewToImageX(vx: Float): Float = viewRect.x + vx * viewRect.w
+    fun viewToImageY(vy: Float): Float = viewRect.y + vy * viewRect.h
 
     LaunchedEffect(Unit) {
         emojiBar = withContext(Dispatchers.IO) {
@@ -243,6 +186,7 @@ fun CustomRoomScreen(
                         myX = lay.spawnX
                         myY = lay.spawnY
                         spawned = true
+                        seated = s.people.find { it.userId == myId || it.isMe }?.seatedSeatId != null
                     }
                 } else if (!s.customRoomId.isNullOrBlank()) {
                     runCatching { LuvApiClient.fetchRoomLayout(s.customRoomId) }
@@ -255,19 +199,10 @@ fun CustomRoomScreen(
                             }
                         }
                 }
-                val me = s.people.find { it.userId == myId || it.isMe }
-                if (me != null && !walking) {
-                    if (me.seatedSeatId != null) seated = true
-                    if (!seated || hypot(me.x - myX, me.y - myY) > 0.08f) {
-                        myX = me.x
-                        myY = me.y
-                    }
-                    spawned = true
-                }
                 lastBellMoveAt = s.lastMoveAt
             }
         while (true) {
-            delay(1200)
+            delay(1500)
             runCatching { LuvApiClient.fetchRoomSpace(code) }
                 .onSuccess { s ->
                     if (spaceBell &&
@@ -279,20 +214,17 @@ fun CustomRoomScreen(
                         vibrateShort(context, 80)
                     }
                     if (s.lastMoveAt > 0L) lastBellMoveAt = s.lastMoveAt
-                    space = s
+                    // Layout/Zonen aktualisieren, eigene Position NIE vom Poll überschreiben
                     if (s.layout != null) layout = s.layout
-                    val me = s.people.find { it.userId == myId || it.isMe }
-                    if (me != null && !walking) {
-                        seated = me.seatedSeatId != null
-                        // Nur bei größerer Abweichung syncen — sonst Zucken nach jedem Move
-                        if (seated) {
-                            myX = me.x
-                            myY = me.y
-                        } else if (hypot(me.x - myX, me.y - myY) > 0.14f) {
-                            myX = me.x
-                            myY = me.y
-                        }
-                    }
+                    space = s.copy(
+                        people = s.people.map { p ->
+                            if (p.userId == myId || p.isMe) {
+                                p.copy(x = myX, y = myY, seatedSeatId = if (seated) p.seatedSeatId else null)
+                            } else {
+                                p
+                            }
+                        },
+                    )
                 }
         }
     }
@@ -319,90 +251,68 @@ fun CustomRoomScreen(
         roomBitmap = loaded
     }
 
-    LaunchedEffect(spawned, layout?.cameraRect, layout?.viewRect, myX, myY) {
-        if (!spawned || layout == null) return@LaunchedEffect
-        if (!camInited) {
-            centerCameraOn(myX, myY)
-            camInited = true
-        }
-    }
-
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF1A1520))
             .statusBarsPadding()
             .navigationBarsPadding()
-            .clipToBounds()
     ) {
-        val worldW = maxWidth / camFracW
-        val worldH = maxHeight / camFracH
-        val mapOffsetX = with(density) { (-camLX * worldW.toPx()).roundToInt().toDp() }
-        val mapOffsetY = with(density) { (-camLY * worldH.toPx()).roundToInt().toDp() }
-
         val bmp = roomBitmap
         if (bmp != null) {
             Image(
                 bitmap = bmp.asImageBitmap(),
                 contentDescription = layout?.name ?: "Raum",
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .requiredWidth(worldW)
-                    .requiredHeight(worldH)
-                    .offset(mapOffsetX, mapOffsetY),
+                modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.FillBounds,
             )
         }
 
-        val avatarDp = (maxWidth * ((avatarR * 2f) / cameraRect.w.coerceAtLeast(0.01f))).let { s ->
+        val avatarDp = (maxWidth * (avatarR * 2f / viewRect.w.coerceAtLeast(0.01f))).let { s ->
             when {
                 s < 22.dp -> 22.dp
-                s > 72.dp -> 72.dp
+                s > 64.dp -> 64.dp
                 else -> s
             }
         }
 
-        space?.people?.forEach { p ->
-            val ax = if (p.userId == myId || p.isMe) myX else p.x
-            val ay = if (p.userId == myId || p.isMe) myY else p.y
-            val sx = screenFracX(ax)
-            val sy = screenFracY(ay)
-            if (sx < -0.15f || sx > 1.15f || sy < -0.15f || sy > 1.15f) return@forEach
+        // Andere Spieler + ich (meine Position nur lokal)
+        val others = space?.people.orEmpty().filter { it.userId != myId && !it.isMe }
+        others.forEach { p ->
+            val vx = imageToViewX(p.x)
+            val vy = imageToViewY(p.y)
             val petId = clipItemId(p.petEmoji).ifBlank { "🐣" }
-            Box(
+            AvatarBubble(
+                petId = petId,
+                reaction = p.reaction?.takeIf { p.reactionUntil > System.currentTimeMillis() },
+                avatarDp = avatarDp,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(
-                        start = maxWidth * sx - avatarDp / 2,
-                        top = maxHeight * sy - avatarDp / 2,
-                    )
-                    .size(avatarDp)
-                    .clip(CircleShape)
-                    .background(
-                        if (isImagePetId(petId)) Color.White.copy(0.92f)
-                        else Color(0xFF4A3728)
-                    )
-                    .border(2.dp, Color.White.copy(0.7f), CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                val showReact = when {
-                    (p.userId == myId || p.isMe) && myReaction != null -> myReaction
-                    p.reaction != null && p.reactionUntil > System.currentTimeMillis() -> p.reaction
-                    else -> null
-                }
-                val glyphSize = (avatarDp.value * 0.68f).sp
-                if (showReact != null) {
-                    ItemGlyph(id = clipItemId(showReact), fontSize = glyphSize)
-                } else {
-                    ItemGlyph(id = petId, fontSize = glyphSize)
-                }
-            }
+                        start = maxWidth * vx - avatarDp / 2,
+                        top = maxHeight * vy - avatarDp / 2,
+                    ),
+            )
+        }
+        run {
+            val vx = imageToViewX(myX)
+            val vy = imageToViewY(myY)
+            val petId = clipItemId(
+                space?.people?.find { it.userId == myId || it.isMe }?.petEmoji
+            ).ifBlank { "🐣" }
+            AvatarBubble(
+                petId = petId,
+                reaction = myReaction,
+                avatarDp = avatarDp,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(
+                        start = maxWidth * vx - avatarDp / 2,
+                        top = maxHeight * vy - avatarDp / 2,
+                    ),
+            )
         }
 
-        val camLXRef = rememberUpdatedState(camLX)
-        val camLYRef = rememberUpdatedState(camLY)
-        val camFWRef = rememberUpdatedState(camFracW)
-        val camFHRef = rememberUpdatedState(camFracH)
         val viewRef = rememberUpdatedState(viewRect)
         val zonesRef = rememberUpdatedState(zones)
         val avatarRRef = rememberUpdatedState(avatarR)
@@ -410,7 +320,7 @@ fun CustomRoomScreen(
         val seatedRef = rememberUpdatedState(seated)
         val spaceRef = rememberUpdatedState(space)
 
-        suspend fun walkAndSync(tx: Float, ty: Float, zns: List<LuvApiClient.RoomZone>, aR: Float): Boolean {
+        suspend fun walkTo(tx: Float, ty: Float, zns: List<LuvApiClient.RoomZone>, aR: Float): Boolean {
             val path = findPath(zns, myX, myY, tx, ty, aR)
             if (path.isEmpty()) return false
             walkAlongPath(
@@ -418,42 +328,35 @@ fun CustomRoomScreen(
                 { x, y -> myX = x; myY = y },
                 { myX },
                 { myY },
-                onStep = { applyCameraEdge(myX, myY, smooth = true) },
             )
-            applyCameraEdge(myX, myY, smooth = true)
+            // Server nur informieren — Position lokal behalten
             runCatching { LuvApiClient.spaceMove(code, myX, myY) }
                 .onSuccess { s ->
-                    space = s
-                    // Server-Position nur übernehmen wenn nah — kein Zurückzucken
-                    val me = s.people.find { it.userId == myId || it.isMe }
-                    if (me != null && hypot(me.x - myX, me.y - myY) < 0.06f) {
-                        myX = me.x
-                        myY = me.y
-                    }
+                    space = s.copy(
+                        people = s.people.map { p ->
+                            if (p.userId == myId || p.isMe) p.copy(x = myX, y = myY) else p
+                        },
+                    )
                 }
             return true
         }
 
-        // Volle Fläche — gleiche Maße wie Avatar/Kamera (kein bottom-padding, sonst falsch am Rand)
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(code) {
                     detectTapGestures { offset ->
+                        if (walking) return@detectTapGestures
                         val w = size.width.coerceAtLeast(1)
                         val h = size.height.coerceAtLeast(1)
                         val vr = viewRef.value
-                        val cW = camFWRef.value.coerceAtLeast(0.01f)
-                        val cH = camFHRef.value.coerceAtLeast(0.01f)
-                        val screenX = (offset.x / w).coerceIn(0f, 1f)
-                        val screenY = (offset.y / h).coerceIn(0f, 1f)
-                        val tapLocalX = camLXRef.value + screenX * cW
-                        val tapLocalY = camLYRef.value + screenY * cH
-                        val rawX = vr.x + tapLocalX * vr.w
-                        val rawY = vr.y + tapLocalY * vr.h
+                        val viewX = (offset.x / w).coerceIn(0.005f, 0.995f)
+                        val viewY = (offset.y / h).coerceIn(0.005f, 0.995f)
+                        val rawX = vr.x + viewX * vr.w
+                        val rawY = vr.y + viewY * vr.h
                         val zns = zonesRef.value
                         val aR = avatarRRef.value
-                        val hitR = (aR * 3.2f).coerceAtLeast(0.055f)
+                        val hitR = (aR * 3.5f).coerceAtLeast(0.06f)
 
                         if (zns.none { it.isWalk }) {
                             scope.launch {
@@ -471,37 +374,37 @@ fun CustomRoomScreen(
                                 walking = true
                                 runCatching { LuvApiClient.spaceStand(code) }
                                     .onSuccess {
-                                        space = it
                                         seated = false
+                                        space = it
                                     }
-                                walkAndSync(rawX, rawY, zns, aR)
+                                walkTo(rawX, rawY, zns, aR)
                                 walking = false
                             }
                             return@detectTapGestures
                         }
 
                         val hitSit = sitRef.value.firstOrNull { z ->
-                            val taken = spaceRef.value?.people?.any { it.seatedSeatId == z.id } == true
+                            val taken = spaceRef.value?.people?.any {
+                                it.seatedSeatId == z.id && it.userId != myId && !it.isMe
+                            } == true
                             !taken && (
-                                zoneContains(z, rawX, rawY, 0.045f) ||
+                                zoneContains(z, rawX, rawY, 0.05f) ||
                                     hypot(rawX - z.sitX, rawY - z.sitY) < hitR
                                 )
                         }
                         if (hitSit != null) {
                             scope.launch {
                                 walking = true
-                                // Sitze liegen oft auf Rot → erst daneben laufen, dann setzen
                                 val approach = nearestWalkablePoint(
                                     zns, hitSit.sitX, hitSit.sitY, aR
                                 ) ?: (hitSit.sitX to hitSit.sitY)
-                                walkAndSync(approach.first, approach.second, zns, aR)
+                                walkTo(approach.first, approach.second, zns, aR)
                                 runCatching { LuvApiClient.spaceSit(code, hitSit.id) }
                                     .onSuccess {
-                                        space = it
                                         seated = true
                                         myX = hitSit.sitX
                                         myY = hitSit.sitY
-                                        applyCameraEdge(myX, myY, smooth = true)
+                                        space = it
                                     }
                                     .onFailure {
                                         Toast.makeText(
@@ -517,7 +420,7 @@ fun CustomRoomScreen(
 
                         scope.launch {
                             walking = true
-                            walkAndSync(rawX, rawY, zns, aR)
+                            walkTo(rawX, rawY, zns, aR)
                             walking = false
                         }
                     }
@@ -609,6 +512,33 @@ fun CustomRoomScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun AvatarBubble(
+    petId: String,
+    reaction: String?,
+    avatarDp: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(avatarDp)
+            .clip(CircleShape)
+            .background(
+                if (isImagePetId(petId)) Color.White.copy(0.92f)
+                else Color(0xFF4A3728)
+            )
+            .border(2.dp, Color.White.copy(0.7f), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        val glyphSize = (avatarDp.value * 0.68f).sp
+        if (reaction != null) {
+            ItemGlyph(id = clipItemId(reaction), fontSize = glyphSize)
+        } else {
+            ItemGlyph(id = petId, fontSize = glyphSize)
         }
     }
 }

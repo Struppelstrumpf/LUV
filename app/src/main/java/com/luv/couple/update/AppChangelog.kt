@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.78",
+            listOf(
+                "Neuer Raum: stabiles Laufen ohne Avatar-Zucken, freiere Wiese",
+            )
+        ),
+        Entry(
             "2.2.77",
             listOf(
                 "Neuer Raum: weicheres Laufen, Sitzen und Erreichen enger Bereiche",
