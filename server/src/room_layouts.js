@@ -432,15 +432,10 @@ function isWalkable(layout, x, y) {
   const r = layout?.avatarR != null ? layout.avatarR : avatarRadius(zones);
   const greens = zones.filter((z) => z.color === "green");
   if (!greens.length) return false;
-  const samples = [[x, y]];
-  for (let i = 0; i < 12; i++) {
-    const a = (i / 12) * Math.PI * 2;
-    samples.push([x + Math.cos(a) * r, y + Math.sin(a) * r]);
-  }
-  for (const [px, py] of samples) {
-    if (!pointInGreen(zones, px, py)) return false;
-  }
-  return !zones.some((z) => z.color === "red" && zoneContains(z, x, y, r));
+  // Wie App: Mittelpunkt in Grün, leichtes Rot-Padding (nicht ganzer Kreis)
+  if (!pointInGreen(zones, x, y)) return false;
+  const blockPad = Math.max(0.006, r * 0.45);
+  return !zones.some((z) => z.color === "red" && zoneContains(z, x, y, blockPad));
 }
 
 function isBlocked(layout, x, y) {

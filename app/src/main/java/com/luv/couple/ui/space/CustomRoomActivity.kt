@@ -106,7 +106,7 @@ class CustomRoomActivity : ComponentActivity() {
 }
 
 private const val DEFAULT_AVATAR_R = 0.028f
-private const val CAMERA_EDGE = 0.30f
+private const val CAMERA_EDGE = 0.22f
 
 private fun vibrateShort(context: Context, ms: Long = 80L) {
     runCatching {
@@ -213,8 +213,8 @@ fun CustomRoomScreen(
         if (sy > 1f - CAMERA_EDGE) ny += (sy - (1f - CAMERA_EDGE)) * camFracH
         val (tx, ty) = clampCam(nx, ny)
         if (smooth) {
-            camLX += (tx - camLX) * 0.42f
-            camLY += (ty - camLY) * 0.42f
+            camLX += (tx - camLX) * 0.18f
+            camLY += (ty - camLY) * 0.18f
         } else {
             camLX = tx
             camLY = ty
@@ -284,10 +284,11 @@ fun CustomRoomScreen(
                     val me = s.people.find { it.userId == myId || it.isMe }
                     if (me != null && !walking) {
                         seated = me.seatedSeatId != null
-                        if (!seated && hypot(me.x - myX, me.y - myY) > 0.08f) {
+                        // Nur bei größerer Abweichung syncen — sonst Zucken nach jedem Move
+                        if (seated) {
                             myX = me.x
                             myY = me.y
-                        } else if (seated) {
+                        } else if (hypot(me.x - myX, me.y - myY) > 0.14f) {
                             myX = me.x
                             myY = me.y
                         }
@@ -409,9 +410,9 @@ fun CustomRoomScreen(
         val seatedRef = rememberUpdatedState(seated)
         val spaceRef = rememberUpdatedState(space)
 
-        suspend fun walkAndSync(tx: Float, ty: Float, zns: List<LuvApiClient.RoomZone>, aR: Float) {
+        suspend fun walkAndSync(tx: Float, ty: Float, zns: List<LuvApiClient.RoomZone>, aR: Float): Boolean {
             val path = findPath(zns, myX, myY, tx, ty, aR)
-            if (path.isEmpty()) return
+            if (path.isEmpty()) return false
             walkAlongPath(
                 path,
                 { x, y -> myX = x; myY = y },
@@ -419,9 +420,18 @@ fun CustomRoomScreen(
                 { myY },
                 onStep = { applyCameraEdge(myX, myY, smooth = true) },
             )
-            applyCameraEdge(myX, myY, smooth = false)
+            applyCameraEdge(myX, myY, smooth = true)
             runCatching { LuvApiClient.spaceMove(code, myX, myY) }
-                .onSuccess { space = it }
+                .onSuccess { s ->
+                    space = s
+                    // Server-Position nur übernehmen wenn nah — kein Zurückzucken
+                    val me = s.people.find { it.userId == myId || it.isMe }
+                    if (me != null && hypot(me.x - myX, me.y - myY) < 0.06f) {
+                        myX = me.x
+                        myY = me.y
+                    }
+                }
+            return true
         }
 
         // Volle Fläche — gleiche Maße wie Avatar/Kamera (kein bottom-padding, sonst falsch am Rand)
@@ -443,7 +453,7 @@ fun CustomRoomScreen(
                         val rawY = vr.y + tapLocalY * vr.h
                         val zns = zonesRef.value
                         val aR = avatarRRef.value
-                        val hitR = (aR * 2.2f).coerceAtLeast(0.04f)
+                        val hitR = (aR * 3.2f).coerceAtLeast(0.055f)
 
                         if (zns.none { it.isWalk }) {
                             scope.launch {
@@ -473,21 +483,25 @@ fun CustomRoomScreen(
                         val hitSit = sitRef.value.firstOrNull { z ->
                             val taken = spaceRef.value?.people?.any { it.seatedSeatId == z.id } == true
                             !taken && (
-                                zoneContains(z, rawX, rawY, 0.03f) ||
+                                zoneContains(z, rawX, rawY, 0.045f) ||
                                     hypot(rawX - z.sitX, rawY - z.sitY) < hitR
                                 )
                         }
                         if (hitSit != null) {
                             scope.launch {
                                 walking = true
-                                walkAndSync(hitSit.sitX, hitSit.sitY, zns, aR)
+                                // Sitze liegen oft auf Rot → erst daneben laufen, dann setzen
+                                val approach = nearestWalkablePoint(
+                                    zns, hitSit.sitX, hitSit.sitY, aR
+                                ) ?: (hitSit.sitX to hitSit.sitY)
+                                walkAndSync(approach.first, approach.second, zns, aR)
                                 runCatching { LuvApiClient.spaceSit(code, hitSit.id) }
                                     .onSuccess {
                                         space = it
                                         seated = true
                                         myX = hitSit.sitX
                                         myY = hitSit.sitY
-                                        applyCameraEdge(myX, myY, smooth = false)
+                                        applyCameraEdge(myX, myY, smooth = true)
                                     }
                                     .onFailure {
                                         Toast.makeText(
@@ -503,7 +517,6 @@ fun CustomRoomScreen(
 
                         scope.launch {
                             walking = true
-                            // Tip auf Rot/außerhalb → nächstes Grün (findPath); Tip auf Grün → dorthin
                             walkAndSync(rawX, rawY, zns, aR)
                             walking = false
                         }
