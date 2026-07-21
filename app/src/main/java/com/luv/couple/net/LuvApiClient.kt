@@ -1337,12 +1337,14 @@ object LuvApiClient {
             val id = o.optString("id").trim()
             val message = o.optString("message").trim()
             if (id.isBlank() || message.isBlank()) return null
+            val sev = o.optString("severity", "warn")
             return StaffWarning(
                 id = id,
                 message = message,
-                severity = o.optString("severity", "warn"),
+                severity = sev,
                 at = o.optLong("at", System.currentTimeMillis()),
-                byNick = o.optString("authorNickname").ifBlank { o.optString("byNick") }.ifBlank { "Team" },
+                // Nie Mitarbeiternamen — immer Team
+                byNick = "Team",
                 seen = o.optBoolean("seen", false)
             )
         }

@@ -1560,7 +1560,11 @@ fun StaffWarningPopup() {
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                "Von ${current.byNick.ifBlank { "Team" }} · bleibt unter Sozial · Freunde sichtbar",
+                if (current.severity == "gift") {
+                    "Vom Team"
+                } else {
+                    "Vom Team · bleibt unter Sozial · Freunde sichtbar"
+                },
                 color = TextMuted,
                 fontFamily = BodyFont,
                 fontSize = 12.sp

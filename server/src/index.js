@@ -9151,6 +9151,8 @@ app.post("/v1/admin/users/:userId/gift", (req, res) => {
     (noteExtra ? ` — ${noteExtra}` : "") +
     " · liegt jetzt in deinem Inventar.";
 
+  // Geschenk: nur einmaliges Popup — nicht dauerhaft unter Sozial · Freunde.
+  // Admin-Historie behält den Eintrag (staffWarnings), die App filtert gifts raus.
   if (!Array.isArray(target.staffWarnings)) target.staffWarnings = [];
   const notice = {
     id: newId("gift"),
@@ -9160,7 +9162,7 @@ app.post("/v1/admin/users/:userId/gift", (req, res) => {
     gift: { kind, itemId, qty: given, label, emoji: emojiGlyph },
     at: Date.now(),
     by: ctx.user.id,
-    byNick: staffDisplayName(ctx.user),
+    byNick: "Team",
     seen: false,
   };
   target.staffWarnings.push(notice);
@@ -9172,7 +9174,7 @@ app.post("/v1/admin/users/:userId/gift", (req, res) => {
     message: notice.message,
     severity: "gift",
     at: notice.at,
-    authorNickname: notice.byNick,
+    authorNickname: "Team",
     gift: notice.gift,
   };
 
@@ -9204,9 +9206,23 @@ app.get("/v1/me/staff-notices", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   const user = ctx.user;
-  const pending = user.pendingStaffNotice || null;
+  let pending = user.pendingStaffNotice || null;
+  // Geschenke: nie Team-Namen nach außen; Verwarnungen behalten Autor nur intern
+  if (pending && (pending.severity === "gift" || pending.kind === "gift")) {
+    pending = { ...pending, authorNickname: "Team", byNick: "Team" };
+  }
+  // Inbox unter Sozial · Freunde: nur echte Verwarnungen (keine Geschenke)
   const warnings = Array.isArray(user.staffWarnings)
-    ? user.staffWarnings.slice(-20).reverse()
+    ? user.staffWarnings
+        .filter((w) => w && w.severity !== "gift" && w.kind !== "gift")
+        .slice(-20)
+        .reverse()
+        .map((w) => ({
+          ...w,
+          // Keine Mitarbeiternamen in der App
+          byNick: "Team",
+          authorNickname: "Team",
+        }))
     : [];
   return res.json({ ok: true, pending, warnings });
 });
@@ -9220,8 +9236,11 @@ app.post("/v1/me/staff-notices/:id/ack", (req, res) => {
     user.pendingStaffNotice = null;
   }
   if (Array.isArray(user.staffWarnings)) {
-    for (const w of user.staffWarnings) {
-      if (w && w.id === id) w.seen = true;
+    const hit = user.staffWarnings.find((w) => w && w.id === id);
+    if (hit) hit.seen = true;
+    // Geschenk nach Bestätigung aus Nutzer-Liste entfernen (Admin-Audit bleibt im Staff-Log)
+    if (hit && (hit.severity === "gift" || hit.kind === "gift")) {
+      user.staffWarnings = user.staffWarnings.filter((x) => x && x.id !== id);
     }
   }
   scheduleSave();

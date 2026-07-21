@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.42",
+            listOf(
+                "Team-Geschenke nur einmal als Hinweis — nicht dauerhaft unter Freunde; Absender immer „Team“",
+            )
+        ),
+        Entry(
             "2.2.41",
             listOf(
                 "Tutorial näher am echten Malen/Profil; „Ich habe ein Konto“; Freunde nach Google-Login wiederhergestellt",

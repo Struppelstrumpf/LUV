@@ -304,7 +304,9 @@ private fun FriendsPanel(
             ),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        if (staffInbox.isNotEmpty()) {
+        // Nur Verwarnungen — Geschenke sind einmaliges Popup, nicht dauerhaft hier
+        val warnInbox = staffInbox.filter { it.severity != "gift" }
+        if (warnInbox.isNotEmpty()) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "Hinweise vom Team",
@@ -312,28 +314,22 @@ private fun FriendsPanel(
                     fontFamily = DisplayFont,
                     fontSize = 18.sp
                 )
-                staffInbox.take(5).forEach { w ->
-                    val isGift = w.severity == "gift"
+                warnInbox.take(5).forEach { w ->
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(16.dp))
                             .background(
-                                when {
-                                    isGift -> Color(0x224CAF50)
-                                    w.severity == "final" -> Color(0x33FF6B7A)
+                                when (w.severity) {
+                                    "final" -> Color(0x33FF6B7A)
                                     else -> Color(0x22E94E77)
                                 }
                             )
                             .padding(12.dp)
                     ) {
                         Text(
-                            when {
-                                isGift -> "Geschenk vom Team"
-                                w.severity == "final" -> "Letzte Verwarnung"
-                                else -> "Verwarnung"
-                            },
-                            color = if (isGift) Color(0xFF81C784) else AccentRose,
+                            if (w.severity == "final") "Letzte Verwarnung" else "Verwarnung",
+                            color = AccentRose,
                             fontFamily = DisplayFont,
                             fontSize = 13.sp
                         )
@@ -345,7 +341,7 @@ private fun FriendsPanel(
                             modifier = Modifier.padding(top = 4.dp)
                         )
                         Text(
-                            "Von ${w.byNick.ifBlank { "Team" }}",
+                            "Vom Team",
                             color = TextMuted,
                             fontFamily = BodyFont,
                             fontSize = 12.sp,

@@ -5,7 +5,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Team-Verwarnungen (Admin): einmalig als Popup + dauerhaft unter Sozial · Freunde.
+ * Team-Hinweise (Admin): Popup einmalig.
+ * Verwarnungen zusätzlich unter Sozial · Freunde; Geschenke nur Popup.
  */
 object StaffWarningBus {
     private val _pending = MutableStateFlow<LuvApiClient.StaffWarning?>(null)
@@ -15,7 +16,7 @@ object StaffWarningBus {
     val inbox: StateFlow<List<LuvApiClient.StaffWarning>> = _inbox.asStateFlow()
 
     fun offer(pending: LuvApiClient.StaffWarning?, warnings: List<LuvApiClient.StaffWarning>) {
-        _inbox.value = warnings
+        _inbox.value = warnings.filter { it.severity != "gift" }
         if (pending != null && pending.id.isNotBlank() && pending.message.isNotBlank()) {
             if (_pending.value?.id != pending.id) {
                 _pending.value = pending
