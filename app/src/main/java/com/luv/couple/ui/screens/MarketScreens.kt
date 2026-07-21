@@ -22,8 +22,11 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -2179,17 +2182,26 @@ private fun LootboxTab(
             }
         )
     }
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val giftSize = minOf(maxWidth, maxHeight) * 0.52f
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+    ) {
         val reveal = revealedReward?.takeIf { phase == "reveal" }
+        // Unterer Block (Switch + Hinweis) fest reservieren — nicht unter den Bildschirm schieben
+        val bottomReserve = if (reveal == null) 132.dp else 8.dp
+        val headerReserve = 64.dp
+        val middleAvail = (maxHeight - headerReserve - bottomReserve - 16.dp).coerceAtLeast(120.dp)
+        val giftSize = minOf(maxWidth * 0.48f, middleAvail * 0.58f, 260.dp)
         val showBox = phase == "idle" || phase == "tapping" || phase == "opening" ||
             (phase == "reveal" && explodeAnim.value < 0.95f)
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 18.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+                .padding(horizontal = 18.dp)
+                .padding(top = 8.dp, bottom = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2218,12 +2230,12 @@ private fun LootboxTab(
             }
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.Center,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
+                    .heightIn(max = middleAvail)
             ) {
-                Spacer(modifier = Modifier.weight(0.18f))
                 val waiting = maxOf(
                     displayPending,
                     queue.size + if (phase == "tapping" || phase == "opening" || phase == "reveal") 1 else 0
@@ -2240,7 +2252,8 @@ private fun LootboxTab(
                         },
                         color = MaleBlue,
                         fontFamily = BodyFont,
-                        fontSize = 13.sp
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(bottom = 8.dp)
                     )
                 }
                 Box(
@@ -2305,10 +2318,12 @@ private fun LootboxTab(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .padding(top = 10.dp)
                             .clip(RoundedCornerShape(18.dp))
                             .background(BgSoft)
                             .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(18.dp))
-                            .padding(horizontal = 16.dp, vertical = 14.dp)
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .verticalScroll(rememberScrollState())
                     ) {
                         Text(
                             "Lootbox geöffnet",
@@ -2393,16 +2408,18 @@ private fun LootboxTab(
                         color = TextPrimary,
                         fontFamily = DisplayFont,
                         fontSize = 16.sp,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 12.dp)
                     )
                 }
-                Spacer(modifier = Modifier.weight(0.22f))
             }
             if (reveal == null) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = bottomReserve)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -2441,20 +2458,15 @@ private fun LootboxTab(
                         )
                     }
                     Text(
-                        "Meist etwas um $price Coins Wert; teure und sehr günstige Items sind seltener. " +
-                            "Gleiche Items können mehrfach kommen (Emojis/Sticker stapeln; " +
-                            "bereits besessene Hintergründe/Begleiter werden in Coins umgewandelt). " +
-                            "Gekaufte Lootboxen bleiben gespeichert, bis du sie öffnest. " +
-                            "Nicht erstattungsfähig — Details in den AGB.",
+                        "Zufälliger Inhalt · Duplikate möglich · nicht erstattungsfähig — Details in den AGB.",
                         color = TextMuted.copy(alpha = 0.85f),
                         fontFamily = BodyFont,
                         fontSize = 11.sp,
-                        lineHeight = 15.sp,
-                        textAlign = TextAlign.Center
+                        lineHeight = 14.sp,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2
                     )
                 }
-            } else {
-                Spacer(modifier = Modifier.height(8.dp))
             }
         }
     }

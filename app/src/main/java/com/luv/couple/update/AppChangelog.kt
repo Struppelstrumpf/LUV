@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.59",
+            listOf(
+                "Lootbox-Popup: Kauf-bestätigen-Schalter bleibt sichtbar (nicht unter dem Bildschirm)",
+            )
+        ),
+        Entry(
             "2.2.58",
             listOf(
                 "Bug melden (+10 Coins bei hilfreichen Meldungen) unter Konto — Abholen unter Sozial → Freunde",
