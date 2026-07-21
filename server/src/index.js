@@ -1382,6 +1382,60 @@ function mergeFriends(target, source) {
       a.outgoing.push(id);
     }
   }
+  // Level / Claim-Fortschritt übernehmen
+  marriage.ensureFriendLevels(a);
+  marriage.ensureFriendLevels(b);
+  for (const [oid, lv] of Object.entries(b.levels || {})) {
+    if (!oid || oid === target.id) continue;
+    a.levels[oid] = Math.max(Number(a.levels[oid]) || 0, Number(lv) || 0);
+  }
+  if (!a.levelRewardClaimed || typeof a.levelRewardClaimed !== "object") {
+    a.levelRewardClaimed = {};
+  }
+  for (const [oid, n] of Object.entries(b.levelRewardClaimed || {})) {
+    if (!oid || oid === target.id) continue;
+    a.levelRewardClaimed[oid] = Math.max(
+      Number(a.levelRewardClaimed[oid]) || 0,
+      Number(n) || 0
+    );
+  }
+}
+
+/**
+ * Nach Konto-Merge: Freundeslisten anderer Nutzer von fromId → toId umhängen.
+ * Ohne das bricht die Mutual-Prüfung und alle Freunde verschwinden.
+ */
+function remapFriendRefs(db, fromId, toId) {
+  if (!fromId || !toId || fromId === toId) return;
+  for (const other of Object.values(db.users || {})) {
+    if (!other?.id || other.id === fromId || other.id === toId) continue;
+    const f = ensureFriends(other);
+    for (const key of ["list", "incoming", "outgoing"]) {
+      if (!Array.isArray(f[key])) continue;
+      f[key] = [
+        ...new Set(f[key].map((id) => (id === fromId ? toId : id)).filter(Boolean)),
+      ];
+    }
+    if (Array.isArray(f.petKraulTargets)) {
+      f.petKraulTargets = [
+        ...new Set(
+          f.petKraulTargets.map((id) => (id === fromId ? toId : id)).filter(Boolean)
+        ),
+      ];
+    }
+    marriage.ensureFriendLevels(f);
+    if (f.levels && f.levels[fromId] != null) {
+      f.levels[toId] = Math.max(Number(f.levels[toId]) || 0, Number(f.levels[fromId]) || 0);
+      delete f.levels[fromId];
+    }
+    if (f.levelRewardClaimed && f.levelRewardClaimed[fromId] != null) {
+      f.levelRewardClaimed[toId] = Math.max(
+        Number(f.levelRewardClaimed[toId]) || 0,
+        Number(f.levelRewardClaimed[fromId]) || 0
+      );
+      delete f.levelRewardClaimed[fromId];
+    }
+  }
 }
 
 function profileRichness(p) {
@@ -4350,13 +4404,21 @@ function absorbUserInto(target, source) {
   source.googleEmail = null;
 
   // Profil / Inventar / Freunde / Settings / Joins zusammenführen
-  if (profileRichness(source.profileCanvas) > profileRichness(target.profileCanvas)) {
-    target.profileCanvas = source.profileCanvas;
-  } else if (!target.profileCanvas && source.profileCanvas) {
-    target.profileCanvas = source.profileCanvas;
+  // Default-Layout (Avatar+Name ≈ 2) nicht über ein bestehendes Profil stülpen
+  {
+    const tRich = profileRichness(target.profileCanvas);
+    const sRich = profileRichness(source.profileCanvas);
+    if (!target.profileCanvas && source.profileCanvas) {
+      target.profileCanvas = source.profileCanvas;
+    } else if (sRich > tRich && tRich <= 2 && sRich > 2) {
+      target.profileCanvas = source.profileCanvas;
+    } else if (sRich > tRich + 1) {
+      target.profileCanvas = source.profileCanvas;
+    }
   }
   mergeInventory(target, source);
   mergeFriends(target, source);
+  remapFriendRefs(db, source.id, target.id);
   mergeSettings(target, source);
   ach.mergeAchievements(target, source);
   // Tagesbonus / Sessions: nicht durchs Zusammenführen neu claimbar machen
@@ -6557,42 +6619,49 @@ app.post("/v1/auth/google", async (req, res) => {
       });
     }
     if (existingByGoogle && existingByGoogle.id !== authed.user.id) {
-      // Google hing an einem anderen LUV-Konto → zusammenführen in das aktuelle.
-      // Coins, Lobbys und Spitzname bleiben erhalten (aktueller Nick hat Vorrang).
-      absorbUserInto(authed.user, existingByGoogle);
-    }
-    authed.user.googleSub = profile.sub;
-    authed.user.googleEmail = profile.email;
-    applySuperAdmin(authed.user);
-    // Trial → echtes Konto: Probezeichnen-Flags weg, Start-Coins falls leer
-    if (authed.user.isTrial) {
-      delete authed.user.isTrial;
-      delete authed.user.trialRoomCode;
-      delete authed.user.trialDrawUntil;
-      ensureCoinBuckets(authed.user);
-      if ((Number(authed.user.coins) || 0) < 1) {
-        authed.user.dailyBalance = STARTING_COINS;
-        syncCoinTotal(authed.user);
-        db.ledger.push({
-          id: newId("led"),
-          userId: authed.user.id,
-          delta: STARTING_COINS,
-          reason: "signup_grant",
-          refId: null,
-          at: Date.now(),
-          balance: authed.user.coins,
-          note: "trial_upgrade",
-        });
+      // Bekanntes Google-Konto behalten — Temp/Tutorial-Session einsaugen.
+      // (Früher andersherum → Nick überschrieben, Freunde/Ehe durch ID-Bruch weg.)
+      absorbUserInto(existingByGoogle, authed.user);
+      user = existingByGoogle;
+      if (profile.email) user.googleEmail = profile.email;
+      applySuperAdmin(user);
+      linked = true;
+      scheduleSave();
+      destroySession(authed.token);
+    } else {
+      authed.user.googleSub = profile.sub;
+      authed.user.googleEmail = profile.email;
+      applySuperAdmin(authed.user);
+      // Trial → echtes Konto: Probezeichnen-Flags weg, Start-Coins falls leer
+      if (authed.user.isTrial) {
+        delete authed.user.isTrial;
+        delete authed.user.trialRoomCode;
+        delete authed.user.trialDrawUntil;
+        ensureCoinBuckets(authed.user);
+        if ((Number(authed.user.coins) || 0) < 1) {
+          authed.user.dailyBalance = STARTING_COINS;
+          syncCoinTotal(authed.user);
+          db.ledger.push({
+            id: newId("led"),
+            userId: authed.user.id,
+            delta: STARTING_COINS,
+            reason: "signup_grant",
+            refId: null,
+            at: Date.now(),
+            balance: authed.user.coins,
+            note: "trial_upgrade",
+          });
+        }
+        if (!authed.user.nickname || authed.user.nickname === "Gast") {
+          authed.user.nickname = "Luv";
+        }
       }
-      if (!authed.user.nickname || authed.user.nickname === "Gast") {
-        authed.user.nickname = "Luv";
-      }
+      // Nickname bewusst nicht aus Google übernehmen — Nutzer wählt selbst.
+      user = authed.user;
+      linked = true;
+      scheduleSave();
+      destroySession(authed.token);
     }
-    // Nickname bewusst nicht aus Google übernehmen — Nutzer wählt selbst.
-    user = authed.user;
-    linked = true;
-    scheduleSave();
-    destroySession(authed.token);
   } else if (existingByGoogle) {
     user = existingByGoogle;
     if (profile.email) user.googleEmail = profile.email;
@@ -7253,23 +7322,40 @@ app.get("/v1/me/friends", (req, res) => {
   const listBefore = f.list.length;
   const inBefore = f.incoming.length;
   const outBefore = f.outgoing.length;
-  // Verwaiste IDs + einseitige Freundschaften bereinigen (beide Seiten nötig)
-  f.list = f.list.filter((id) => {
-    const other = db.users?.[id];
-    if (!other) return false;
+  // Aus Level-Map Freunde wiederherstellen (nach Merge/Cleanup oft nur levels übrig)
+  marriage.ensureFriendLevels(f);
+  for (const otherId of Object.keys(f.levels || {})) {
+    if (!otherId || !db.users?.[otherId] || otherId === ctx.user.id) continue;
+    if (!f.list.includes(otherId)) f.list.push(otherId);
+  }
+  // Tote IDs weg; einseitige Freundschaft heilen statt löschen
+  f.list = f.list.filter((id) => Boolean(db.users?.[id]) && id !== ctx.user.id);
+  for (const id of f.list) {
+    const other = db.users[id];
     const theirs = ensureFriends(other);
-    return theirs.list.includes(ctx.user.id);
-  });
+    if (!theirs.list.includes(ctx.user.id)) theirs.list.push(ctx.user.id);
+    const lv = Math.max(marriage.getLevel(ctx.user, id), marriage.getLevel(other, ctx.user.id));
+    if (lv > 0) marriage.setLevelBoth(ctx.user, other, lv);
+  }
   f.incoming = f.incoming.filter((id) => db.users?.[id]);
   f.outgoing = f.outgoing.filter((id) => db.users?.[id]);
-  const cleaned =
-    f.list.length !== listBefore ||
-    f.incoming.length !== inBefore ||
-    f.outgoing.length !== outBefore;
   // Verwaiste Hochzeits-/Ehe-Links nach Google-Merge reparieren
   const myMarriage =
     marriage.repairMarriageLinks(db, ctx.user, WEDDING_DIR) ||
     marriage.findMarriageForUser(db, ctx.user.id);
+  // Ehepartner immer in der Freundesliste
+  if (myMarriage && marriage.isBusyStatus(myMarriage.status)) {
+    const pid = marriage.partnerIdOf(myMarriage, ctx.user.id);
+    if (pid && db.users?.[pid] && !f.list.includes(pid)) {
+      f.list.push(pid);
+      const theirs = ensureFriends(db.users[pid]);
+      if (!theirs.list.includes(ctx.user.id)) theirs.list.push(ctx.user.id);
+    }
+  }
+  const cleaned =
+    f.list.length !== listBefore ||
+    f.incoming.length !== inBefore ||
+    f.outgoing.length !== outBefore;
   try {
     if (myMarriage) ensureWeddingImageRetake(myMarriage);
   } catch {

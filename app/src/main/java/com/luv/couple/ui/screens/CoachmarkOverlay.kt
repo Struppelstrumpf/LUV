@@ -9,7 +9,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
@@ -34,7 +33,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.TextPrimary
 import kotlin.math.roundToInt
@@ -78,10 +76,24 @@ fun CoachmarkOverlay(
     ) {
         val w = constraints.maxWidth.toFloat().coerceAtLeast(1f)
         val h = constraints.maxHeight.toFloat().coerceAtLeast(1f)
-        val cx = holeCenterXFrac.coerceIn(0.08f, 0.92f) * w
-        val cy = holeCenterYFrac.coerceIn(0.08f, 0.92f) * h
+        // Wenig clampen — sonst wandert der Kreis von echten Top-Bar-Targets weg
+        val cx = holeCenterXFrac.coerceIn(0.04f, 0.96f) * w
+        val cy = holeCenterYFrac.coerceIn(0.04f, 0.96f) * h
         val r = (holeRadiusFrac.coerceIn(0.04f, 0.22f) * minOf(w, h)) * ring
 
+        val density = LocalDensity.current
+        // Automatisch umklappen, wenn oben/unten kein Platz
+        val placeAbove = with(density) {
+            val wantAbove = labelAbove
+            val topSpace = cy - r
+            val botSpace = h - (cy + r)
+            when {
+                wantAbove && topSpace < 56.dp.toPx() -> false
+                !wantAbove && botSpace < 56.dp.toPx() -> true
+                else -> wantAbove
+            }
+        }
+        val dens = density.density
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
@@ -98,32 +110,29 @@ fun CoachmarkOverlay(
                 color = Color(0x66FFFFFF),
                 radius = r,
                 center = Offset(cx, cy),
-                style = Stroke(width = 2.5f * density)
+                style = Stroke(width = 2.5f * dens)
             )
-            // Pfeil Richtung Spotlight
-            val arrowY = if (labelAbove) cy - r - 28f * density else cy + r + 28f * density
+            val arrowY = if (placeAbove) cy - r - 28f * dens else cy + r + 28f * dens
             val path = Path().apply {
-                if (labelAbove) {
-                    moveTo(cx, cy - r - 4f * density)
-                    lineTo(cx - 10f * density, arrowY + 8f * density)
-                    lineTo(cx + 10f * density, arrowY + 8f * density)
+                if (placeAbove) {
+                    moveTo(cx, cy - r - 4f * dens)
+                    lineTo(cx - 10f * dens, arrowY + 8f * dens)
+                    lineTo(cx + 10f * dens, arrowY + 8f * dens)
                     close()
                 } else {
-                    moveTo(cx, cy + r + 4f * density)
-                    lineTo(cx - 10f * density, arrowY - 8f * density)
-                    lineTo(cx + 10f * density, arrowY - 8f * density)
+                    moveTo(cx, cy + r + 4f * dens)
+                    lineTo(cx - 10f * dens, arrowY - 8f * dens)
+                    lineTo(cx + 10f * dens, arrowY - 8f * dens)
                     close()
                 }
             }
             drawPath(path, Color(0xFFF4F1EC).copy(alpha = 0.9f))
         }
-
-        val density = LocalDensity.current
         val labelY = with(density) {
-            if (labelAbove) {
-                (cy - r - 72.dp.toPx()).coerceAtLeast(24.dp.toPx())
+            if (placeAbove) {
+                (cy - r - 56.dp.toPx()).coerceAtLeast(12.dp.toPx())
             } else {
-                (cy + r + 36.dp.toPx()).coerceAtMost(h - 80.dp.toPx())
+                (cy + r + 28.dp.toPx()).coerceAtMost(h - 64.dp.toPx())
             }
         }
         Text(
@@ -137,7 +146,7 @@ fun CoachmarkOverlay(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .offset { IntOffset(0, labelY.roundToInt()) }
-                .widthIn(max = 240.dp)
+                .widthIn(max = 260.dp)
                 .padding(horizontal = 20.dp)
         )
     }

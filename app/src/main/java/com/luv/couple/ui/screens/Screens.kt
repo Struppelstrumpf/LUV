@@ -342,9 +342,9 @@ fun LobbiesScreen(
         val cx = (centerRoot.x - coachRootOrigin.x) / coachRootW.coerceAtLeast(1f)
         val cy = (centerRoot.y - coachRootOrigin.y) / coachRootH.coerceAtLeast(1f)
         val rr = (maxOf(size.width, size.height) / 2f /
-            minOf(coachRootW, coachRootH).coerceAtLeast(1f) + 0.02f)
+            minOf(coachRootW, coachRootH).coerceAtLeast(1f) + 0.025f)
             .coerceIn(0.05f, 0.2f)
-        return Triple(cx.coerceIn(0.08f, 0.92f), cy.coerceIn(0.08f, 0.92f), rr)
+        return Triple(cx.coerceIn(0.04f, 0.96f), cy.coerceIn(0.04f, 0.96f), rr)
     }
 
     LaunchedEffect(requireGoogleLogin) {
@@ -857,7 +857,8 @@ fun LobbiesScreen(
                 holeCenterYFrac = hole.second,
                 holeRadiusFrac = hole.third,
                 label = label,
-                labelAbove = homeCoachStep < 3,
+                // Profil/Plus sitzen oben — Text darunter, sonst unsichtbar
+                labelAbove = homeCoachStep >= 2,
                 onDismiss = {
                     if (homeCoachStep >= 3) {
                         homeCoachStep = -1

@@ -109,6 +109,7 @@ import com.luv.couple.ui.screens.SocialScreen
 import com.luv.couple.ui.screens.TutorialFinishPayload
 import com.luv.couple.ui.screens.TutorialFlow
 import com.luv.couple.profile.ProfileCatalog
+import com.luv.couple.profile.ProfileElType
 import com.luv.couple.update.AppUpdater
 import com.luv.couple.update.UpdateUiState
 import kotlinx.coroutines.Dispatchers
@@ -1423,18 +1424,31 @@ fun LuvAppNav() {
                         busy = true
                         joinError = null
                         try {
-                            val nick = payload.nickname.trim().ifBlank { "Luv" }
-                            prefs.setNickname(nick)
+                            val typedNick = payload.nickname.trim().ifBlank { "Luv" }
                             val snap = prefs.snapshot()
                             val hasGoogleSession =
                                 !snap.sessionToken.isNullOrBlank() &&
                                     (account?.googleLinked == true || snap.account?.googleLinked == true)
+                            // Bekanntes Konto: eingegebenen Tutorial-Namen verwerfen
+                            val serverNick = (account?.nickname ?: snap.account?.nickname)?.trim().orEmpty()
+                            val keepServerNick = hasGoogleSession && isChosenNickname(serverNick)
+                            val nick = if (keepServerNick) serverNick else typedNick
+                            if (!keepServerNick) {
+                                prefs.setNickname(nick)
+                            } else {
+                                prefs.setNickname(serverNick)
+                            }
                             val ok = if (hasGoogleSession) {
-                                val user = LuvApiClient.updateNickname(nick)
-                                prefs.updateAccount(user)
-                                AccountSession.setAccount(user)
-                                colorIndex = prefs.snapshot().colorIndex
-                                CanvasStore.updateProfile(user.nickname, colorIndex)
+                                if (!keepServerNick) {
+                                    val user = LuvApiClient.updateNickname(nick)
+                                    prefs.updateAccount(user)
+                                    AccountSession.setAccount(user)
+                                    colorIndex = prefs.snapshot().colorIndex
+                                    CanvasStore.updateProfile(user.nickname, colorIndex)
+                                } else {
+                                    colorIndex = prefs.snapshot().colorIndex
+                                    CanvasStore.updateProfile(serverNick, colorIndex)
+                                }
                                 true
                             } else if (!googleEnabled) {
                                 ensureAuth(nick)
@@ -1443,13 +1457,23 @@ fun LuvAppNav() {
                                 false
                             }
                             if (ok) {
+                                // Tutorial-Profil nur wenn Cloud noch leer/Default
                                 if (payload.profileJson.isNotBlank()) {
-                                    prefs.setProfileCanvasJson(payload.profileJson)
-                                    runCatching {
-                                        val state = ProfileCatalog.decode(payload.profileJson, nick)
-                                        LuvApiClient.saveMyProfileCanvas(state)
-                                    }.onFailure { e ->
-                                        Log.w("LuvAppNav", "Tutorial-Profil speichern fehlgeschlagen", e)
+                                    val remoteRich = runCatching {
+                                        val (_, state) = LuvApiClient.fetchMyProfileCanvas()
+                                        state.layout.count {
+                                            it.type != ProfileElType.Avatar &&
+                                                it.type != ProfileElType.Name
+                                        }
+                                    }.getOrDefault(0)
+                                    if (remoteRich <= 0) {
+                                        prefs.setProfileCanvasJson(payload.profileJson)
+                                        runCatching {
+                                            val state = ProfileCatalog.decode(payload.profileJson, nick)
+                                            LuvApiClient.saveMyProfileCanvas(state)
+                                        }.onFailure { e ->
+                                            Log.w("LuvAppNav", "Tutorial-Profil speichern fehlgeschlagen", e)
+                                        }
                                     }
                                 }
                                 prefs.setTutorialDone(true)
@@ -1457,6 +1481,9 @@ fun LuvAppNav() {
                                 runCatching { LuvApiClient.pingAchievement("tutorial_done") }
                                 runCatching { LuvApiClient.claimDaily() }
                                 refreshAccount()
+                                if (hasGoogleSession) {
+                                    runCatching { syncCloudAccount(force = true) }
+                                }
                                 // Erstlauf: Skizze als normale Host-Lobby im Hauptmenü
                                 runCatching {
                                     createTutorialLobby(nick, payload.strokes)
