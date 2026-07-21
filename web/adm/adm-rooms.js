@@ -16,7 +16,8 @@
   }
 
   const TOOLS = [
-    { id: "view-rect", label: "Weiß Sichtbereich", color: "white", shape: "rect", hint: "Sichtbarer Raum" },
+    { id: "view-rect", label: "Weiß Karte", color: "white", shape: "rect", hint: "Gesamte Lauffläche" },
+    { id: "camera-rect", label: "Schwarz Kamera", color: "black", shape: "rect", hint: "Was auf dem Handy sichtbar ist" },
     { id: "red-rect", label: "Rot", color: "red", shape: "rect", hint: "Hindernis" },
     { id: "green-rect", label: "Grün", color: "green", shape: "rect", hint: "Laufen" },
     { id: "blue-circle", label: "Blau Sitz", color: "blue", shape: "circle", hint: "Hinsetzen" },
@@ -27,6 +28,7 @@
 
   const FILL = {
     white: "rgba(255,255,255,0.12)",
+    black: "rgba(0,0,0,0.08)",
     red: "rgba(229,57,53,0.4)",
     green: "rgba(67,160,71,0.35)",
     yellow: "rgba(255,213,79,0.45)",
@@ -36,6 +38,7 @@
   };
   const STROKE = {
     white: "#ffffff",
+    black: "#111111",
     red: "#e53935",
     green: "#43a047",
     yellow: "#ffd54f",
@@ -226,6 +229,10 @@
 
     let zones = mergeGreens((layout.zones || []).map((z) => ({ ...z })));
     let viewRect = { ...(layout.viewRect || { x: 0, y: 0, w: 1, h: 1 }) };
+    let cameraRect = {
+      w: layout.cameraRect?.w ?? viewRect.w,
+      h: layout.cameraRect?.h ?? viewRect.h,
+    };
     let tool = "view-rect";
     let selectedId = null;
     let draft = null;
@@ -244,7 +251,7 @@
               : `<button type="button" class="btn ghost danger" id="roomDel">Löschen</button>`
           }
         </div>
-        <p class="help">Weiß = sichtbarer Raum · Grün/Rot/Blau = Logik (in der App unsichtbar). Bild komplett sichtbar, ohne Scrollen.</p>
+        <p class="help">Weiß = ganze Karte · Schwarz = Kamera-Fenster (Handy zeigt nur das; am Rand scrollt die Karte) · Grün/Rot/Blau = Logik (unsichtbar).</p>
         <div class="room-tools" id="roomTools"></div>
         <div class="room-fit-wrap" id="roomFit">
           <canvas id="roomCanvas"></canvas>
@@ -299,8 +306,13 @@
       const items = [
         {
           id: "__view__",
-          label: "Sichtbereich (weiß)",
+          label: "Karte (weiß)",
           color: "white",
+        },
+        {
+          id: "__camera__",
+          label: `Kamera (schwarz) ${Math.round(cameraRect.w * 100)}×${Math.round(cameraRect.h * 100)}%`,
+          color: "black",
         },
         ...zones.map((z, i) => ({
           id: z.id,
@@ -320,7 +332,10 @@
           selectedId = li.getAttribute("data-zid");
           paintList();
           draw();
-          root.querySelector("#roomDelete").disabled = selectedId === "__view__" || !selectedId;
+          root.querySelector("#roomDelete").disabled =
+            selectedId === "__view__" ||
+            selectedId === "__camera__" ||
+            !selectedId;
         });
       });
     }
@@ -345,7 +360,7 @@
       ctx.save();
       ctx.fillStyle = FILL[col] || "rgba(255,255,255,0.15)";
       ctx.strokeStyle = highlight ? "#fff" : STROKE[col] || "#fff";
-      ctx.lineWidth = highlight ? 3 : col === "white" ? 3 : 2;
+      ctx.lineWidth = highlight ? 3 : col === "white" || col === "black" ? 3 : 2;
       if (z.shape === "circle") {
         const r = z.r * Math.min(canvas.width, canvas.height);
         ctx.beginPath();
@@ -371,6 +386,20 @@
         { shape: "rect", ...viewRect },
         selectedId === "__view__",
         "white"
+      );
+      // Schwarz = Kameragröße (zur Orientierung zentriert in der Karte)
+      const camW = Math.min(viewRect.w, Math.max(0.12, cameraRect.w || viewRect.w));
+      const camH = Math.min(viewRect.h, Math.max(0.12, cameraRect.h || viewRect.h));
+      drawZoneShape(
+        {
+          shape: "rect",
+          x: viewRect.x + (viewRect.w - camW) / 2,
+          y: viewRect.y + (viewRect.h - camH) / 2,
+          w: camW,
+          h: camH,
+        },
+        selectedId === "__camera__",
+        "black"
       );
       zones.forEach((z) => drawZoneShape(z, z.id === selectedId));
       if (draft) drawZoneShape(draft, true, draft.color);
@@ -410,8 +439,13 @@
       start = norm(ev);
       const t = currentTool();
       draft = {
-        id: t.id === "view-rect" ? "__view__" : newId(t.color),
-        color: t.color === "white" ? "white" : t.color,
+        id:
+          t.id === "view-rect"
+            ? "__view__"
+            : t.id === "camera-rect"
+              ? "__camera__"
+              : newId(t.color),
+        color: t.color,
         shape: t.shape,
         x: start.x,
         y: start.y,
@@ -445,6 +479,13 @@
         if (draft.id === "__view__" || draft.color === "white") {
           viewRect = { x: draft.x, y: draft.y, w: draft.w, h: draft.h };
           selectedId = "__view__";
+          dirty = true;
+        } else if (draft.id === "__camera__" || draft.color === "black") {
+          cameraRect = {
+            w: Math.min(viewRect.w, Math.max(0.12, draft.w)),
+            h: Math.min(viewRect.h, Math.max(0.12, draft.h)),
+          };
+          selectedId = "__camera__";
           dirty = true;
         } else if (draft.shape === "circle" && draft.r >= 0.008) {
           zones.push({
@@ -485,7 +526,7 @@
       renderRooms();
     });
     root.querySelector("#roomDelete").addEventListener("click", () => {
-      if (!selectedId || selectedId === "__view__") return;
+      if (!selectedId || selectedId === "__view__" || selectedId === "__camera__") return;
       zones = zones.filter((z) => z.id !== selectedId);
       selectedId = null;
       dirty = true;
@@ -527,6 +568,7 @@
           name: root.querySelector("#roomName").value.trim() || layout.name,
           zones,
           viewRect,
+          cameraRect,
         };
         if (pendingImage) body.imageBase64 = pendingImage;
         const res = await api(`/admin/room-layouts/${encodeURIComponent(roomId)}`, {
@@ -535,6 +577,12 @@
         });
         zones = mergeGreens((res.layout?.zones || zones).map((z) => ({ ...z })));
         viewRect = res.layout?.viewRect || viewRect;
+        if (res.layout?.cameraRect) {
+          cameraRect = {
+            w: res.layout.cameraRect.w,
+            h: res.layout.cameraRect.h,
+          };
+        }
         pendingImage = null;
         dirty = false;
         setStatus(res.message || "Gespeichert");

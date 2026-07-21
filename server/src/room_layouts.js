@@ -48,6 +48,21 @@ function sanitizeViewRect(raw) {
   return { x, y, w, h };
 }
 
+/** Kamera-Fenster (schwarz): nur Breite/Höhe in Bildkoordinaten; Position läuft in der App. */
+function sanitizeCameraRect(raw, viewRect) {
+  const vr = sanitizeViewRect(viewRect);
+  if (!raw || typeof raw !== "object") {
+    return { w: vr.w, h: vr.h };
+  }
+  let w = Number(raw.w);
+  let h = Number(raw.h);
+  if (!Number.isFinite(w) || w <= 0) w = vr.w;
+  if (!Number.isFinite(h) || h <= 0) h = vr.h;
+  w = Math.min(vr.w, Math.max(0.12, w));
+  h = Math.min(vr.h, Math.max(0.12, h));
+  return { w, h };
+}
+
 function sanitizeZone(raw, index) {
   if (!raw || typeof raw !== "object") return null;
   const color = String(raw.color || "").toLowerCase();
@@ -254,6 +269,7 @@ function getLayout(db, roomId) {
     ? mergeGreenZones(saved.zones.map((z, i) => sanitizeZone(z, i)).filter(Boolean))
     : [];
   const viewRect = sanitizeViewRect(saved?.viewRect);
+  const cameraRect = sanitizeCameraRect(saved?.cameraRect, viewRect);
   const img = findImageFile(id);
   const hasImage = Boolean(img) || builtin;
   const updatedAt = saved?.updatedAt || null;
@@ -273,6 +289,7 @@ function getLayout(db, roomId) {
     updatedAt,
     zones,
     viewRect,
+    cameraRect,
     builtin,
     hasImage,
     avatarR: avatarRadius(zones),
@@ -321,6 +338,12 @@ function saveLayout(db, roomId, body = {}) {
     prev.name = String(body.name || "").trim().slice(0, 40) || prev.name;
   }
   if (body.viewRect) prev.viewRect = sanitizeViewRect(body.viewRect);
+  if (body.cameraRect) {
+    prev.cameraRect = sanitizeCameraRect(
+      body.cameraRect,
+      body.viewRect || prev.viewRect
+    );
+  }
   if (Array.isArray(body.zones)) {
     prev.zones = mergeGreenZones(
       body.zones
@@ -331,6 +354,8 @@ function saveLayout(db, roomId, body = {}) {
   }
   prev.id = id;
   prev.updatedAt = Date.now();
+  // Kamera nicht größer als Karte
+  prev.cameraRect = sanitizeCameraRect(prev.cameraRect, prev.viewRect);
   db.roomLayouts[id] = prev;
   return { ok: true, layout: getLayout(db, id) };
 }
@@ -565,6 +590,7 @@ module.exports = {
   WEDDING,
   IMAGE_DIR,
   listRooms,
+  sanitizeCameraRect,
   getLayout,
   createRoom,
   saveLayout,

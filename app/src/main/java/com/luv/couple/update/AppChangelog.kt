@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.74",
+            listOf(
+                "Neuer Raum: Kamera-Fenster (schwarz) mit Scroll am Rand, weicheres Laufen",
+            )
+        ),
+        Entry(
             "2.2.73",
             listOf(
                 "Neuer Raum: Hintergrundbild wird wieder korrekt geladen",

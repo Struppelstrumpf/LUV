@@ -2588,6 +2588,12 @@ object LuvApiClient {
         val h: Float = 1f,
     )
 
+    /** Kamera-Fenstergröße (Bildkoordinaten); Position steuert die App. */
+    data class RoomCameraRect(
+        val w: Float = 1f,
+        val h: Float = 1f,
+    )
+
     data class RoomLayout(
         val id: String,
         val name: String,
@@ -2598,6 +2604,7 @@ object LuvApiClient {
         val spawnY: Float = 0.86f,
         val imageUrl: String = "",
         val viewRect: RoomViewRect = RoomViewRect(),
+        val cameraRect: RoomCameraRect = RoomCameraRect(),
     )
 
     data class RoomSpacePerson(
@@ -2645,7 +2652,18 @@ object LuvApiClient {
         }
         val spawn = o.optJSONObject("spawn")
         val vr = o.optJSONObject("viewRect")
+        val cr = o.optJSONObject("cameraRect")
         val orangeR = zones.firstOrNull { it.isAvatarSize }?.r
+        val view = RoomViewRect(
+            x = vr?.optDouble("x", 0.0)?.toFloat() ?: 0f,
+            y = vr?.optDouble("y", 0.0)?.toFloat() ?: 0f,
+            w = (vr?.optDouble("w", 1.0)?.toFloat() ?: 1f).coerceAtLeast(0.01f),
+            h = (vr?.optDouble("h", 1.0)?.toFloat() ?: 1f).coerceAtLeast(0.01f),
+        )
+        val camW = (cr?.optDouble("w", view.w.toDouble())?.toFloat() ?: view.w)
+            .coerceIn(0.12f, view.w)
+        val camH = (cr?.optDouble("h", view.h.toDouble())?.toFloat() ?: view.h)
+            .coerceIn(0.12f, view.h)
         return RoomLayout(
             id = o.optString("id", fallbackId),
             name = o.optString("name", fallbackId),
@@ -2663,12 +2681,8 @@ object LuvApiClient {
                 ?: zones.firstOrNull { it.isSpawn }?.cy
                 ?: 0.86f,
             imageUrl = o.optString("imageUrl", ""),
-            viewRect = RoomViewRect(
-                x = vr?.optDouble("x", 0.0)?.toFloat() ?: 0f,
-                y = vr?.optDouble("y", 0.0)?.toFloat() ?: 0f,
-                w = (vr?.optDouble("w", 1.0)?.toFloat() ?: 1f).coerceAtLeast(0.01f),
-                h = (vr?.optDouble("h", 1.0)?.toFloat() ?: 1f).coerceAtLeast(0.01f),
-            ),
+            viewRect = view,
+            cameraRect = RoomCameraRect(w = camW, h = camH),
         )
     }
 

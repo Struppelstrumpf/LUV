@@ -144,21 +144,35 @@ fun findPath(
     return emptyList()
 }
 
+/**
+ * Gleichmäßiges Laufen entlang des Pfads (kein Zuckeln in 50ms-Rasterschritten).
+ * [onStep] nach jedem Frame (z. B. Kamera nachziehen).
+ */
 suspend fun walkAlongPath(
     path: List<Pair<Float, Float>>,
     setPos: (Float, Float) -> Unit,
     getX: () -> Float,
     getY: () -> Float,
+    onStep: (() -> Unit)? = null,
+    speedPerSec: Float = 0.42f,
 ) {
+    if (path.isEmpty()) return
+    val frameMs = 16L
+    val dt = frameMs / 1000f
     for ((tx, ty) in path) {
         var guard = 0
-        while (hypot(tx - getX(), ty - getY()) > 0.012f && guard < 40) {
-            val dist = hypot(tx - getX(), ty - getY()).coerceAtLeast(0.0001f)
-            val step = 0.012f.coerceAtMost(dist)
-            setPos(getX() + (tx - getX()) / dist * step, getY() + (ty - getY()) / dist * step)
-            delay(50)
+        while (guard < 400) {
+            val dx = tx - getX()
+            val dy = ty - getY()
+            val dist = hypot(dx, dy)
+            if (dist <= 0.0035f) break
+            val step = (speedPerSec * dt).coerceAtMost(dist)
+            setPos(getX() + dx / dist * step, getY() + dy / dist * step)
+            onStep?.invoke()
+            delay(frameMs)
             guard++
         }
         setPos(tx, ty)
+        onStep?.invoke()
     }
 }

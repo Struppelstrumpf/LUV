@@ -26,7 +26,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
@@ -40,15 +43,18 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,6 +68,7 @@ import com.luv.couple.ui.clipItemId
 import com.luv.couple.ui.isImagePetId
 import com.luv.couple.ui.theme.LuvTheme
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -70,6 +77,7 @@ import okhttp3.Request
 
 /**
  * Custom-Lobby-Raum (Vogelperspektive) — Layout + Space-API, kein Paint.
+ * Weiß = Karte, Schwarz = Kamera-Fenster mit Edge-Scroll.
  */
 class CustomRoomActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -98,6 +106,7 @@ class CustomRoomActivity : ComponentActivity() {
 }
 
 private const val DEFAULT_AVATAR_R = 0.028f
+private const val CAMERA_EDGE = 0.30f
 
 private fun vibrateShort(context: Context, ms: Long = 80L) {
     runCatching {
@@ -131,11 +140,11 @@ fun CustomRoomScreen(
     spaceBell: Boolean,
     onClose: () -> Unit,
 ) {
-    // token reserved for callers / future room-token auth
     @Suppress("UNUSED_VARIABLE")
     val roomToken = token
 
     val context = LocalContext.current
+    val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val myId = AccountSession.account.value?.id.orEmpty()
 
@@ -151,11 +160,69 @@ fun CustomRoomScreen(
     var lastBellMoveAt by remember { mutableLongStateOf(0L) }
     var reactionExpanded by remember { mutableStateOf(false) }
     var emojiBar by remember { mutableStateOf(ShopCatalog.DEFAULT_BAR) }
+    // Kamera in Karten-Lokalcoords (0–1 innerhalb viewRect)
+    var camLX by remember { mutableFloatStateOf(0f) }
+    var camLY by remember { mutableFloatStateOf(0f) }
+    var camInited by remember { mutableStateOf(false) }
 
     val zones = layout?.zones.orEmpty()
     val avatarR = layout?.avatarR?.takeIf { it > 0f } ?: DEFAULT_AVATAR_R
     val viewRect = layout?.viewRect ?: LuvApiClient.RoomViewRect()
+    val cameraRect = layout?.cameraRect ?: LuvApiClient.RoomCameraRect(viewRect.w, viewRect.h)
+    val camFracW = (cameraRect.w / viewRect.w.coerceAtLeast(0.01f)).coerceIn(0.12f, 1f)
+    val camFracH = (cameraRect.h / viewRect.h.coerceAtLeast(0.01f)).coerceIn(0.12f, 1f)
     val sitZones = remember(zones) { zones.filter { it.isGuestSeat } }
+
+    fun toLocalX(ix: Float): Float =
+        ((ix - viewRect.x) / viewRect.w.coerceAtLeast(0.01f)).coerceIn(0f, 1f)
+
+    fun toLocalY(iy: Float): Float =
+        ((iy - viewRect.y) / viewRect.h.coerceAtLeast(0.01f)).coerceIn(0f, 1f)
+
+    fun fromLocalX(lx: Float): Float = viewRect.x + lx * viewRect.w
+    fun fromLocalY(ly: Float): Float = viewRect.y + ly * viewRect.h
+
+    fun clampCam(nx: Float, ny: Float): Pair<Float, Float> {
+        val maxX = (1f - camFracW).coerceAtLeast(0f)
+        val maxY = (1f - camFracH).coerceAtLeast(0f)
+        return nx.coerceIn(0f, maxX) to ny.coerceIn(0f, maxY)
+    }
+
+    fun centerCameraOn(ax: Float, ay: Float) {
+        val (nx, ny) = clampCam(toLocalX(ax) - camFracW * 0.5f, toLocalY(ay) - camFracH * 0.5f)
+        camLX = nx
+        camLY = ny
+    }
+
+    /** Kamera folgt nur, wenn Avatar nahe am Bildschirmrand ist. */
+    fun applyCameraEdge(ax: Float, ay: Float, smooth: Boolean = true) {
+        if (camFracW >= 0.999f && camFracH >= 0.999f) {
+            camLX = 0f
+            camLY = 0f
+            return
+        }
+        val lx = toLocalX(ax)
+        val ly = toLocalY(ay)
+        var nx = camLX
+        var ny = camLY
+        val sx = (lx - camLX) / camFracW
+        val sy = (ly - camLY) / camFracH
+        if (sx < CAMERA_EDGE) nx -= (CAMERA_EDGE - sx) * camFracW
+        if (sx > 1f - CAMERA_EDGE) nx += (sx - (1f - CAMERA_EDGE)) * camFracW
+        if (sy < CAMERA_EDGE) ny -= (CAMERA_EDGE - sy) * camFracH
+        if (sy > 1f - CAMERA_EDGE) ny += (sy - (1f - CAMERA_EDGE)) * camFracH
+        val (tx, ty) = clampCam(nx, ny)
+        if (smooth) {
+            camLX += (tx - camLX) * 0.42f
+            camLY += (ty - camLY) * 0.42f
+        } else {
+            camLX = tx
+            camLY = ty
+        }
+    }
+
+    fun screenFracX(ix: Float): Float = (toLocalX(ix) - camLX) / camFracW
+    fun screenFracY(iy: Float): Float = (toLocalY(iy) - camLY) / camFracH
 
     LaunchedEffect(Unit) {
         emojiBar = withContext(Dispatchers.IO) {
@@ -164,14 +231,8 @@ fun CustomRoomScreen(
         }
     }
 
-    fun imageToViewX(ix: Float): Float = ((ix - viewRect.x) / viewRect.w).coerceIn(0f, 1f)
-    fun imageToViewY(iy: Float): Float = ((iy - viewRect.y) / viewRect.h).coerceIn(0f, 1f)
-    fun viewToImageX(vx: Float): Float = viewRect.x + vx * viewRect.w
-    fun viewToImageY(vy: Float): Float = viewRect.y + vy * viewRect.h
-
     LaunchedEffect(code) {
         if (code.isBlank()) return@LaunchedEffect
-        // Layout bevorzugt aus Space; Fallback fetchRoomLayout(customRoomId)
         runCatching { LuvApiClient.fetchRoomSpace(code) }
             .onSuccess { s ->
                 space = s
@@ -257,24 +318,42 @@ fun CustomRoomScreen(
         roomBitmap = loaded
     }
 
+    LaunchedEffect(spawned, layout?.cameraRect, layout?.viewRect, myX, myY) {
+        if (!spawned || layout == null) return@LaunchedEffect
+        if (!camInited) {
+            centerCameraOn(myX, myY)
+            camInited = true
+        }
+    }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF1A1520))
             .statusBarsPadding()
             .navigationBarsPadding()
+            .clipToBounds()
     ) {
+        val worldW = maxWidth / camFracW
+        val worldH = maxHeight / camFracH
+        val mapOffsetX = with(density) { (-camLX * worldW.toPx()).roundToInt().toDp() }
+        val mapOffsetY = with(density) { (-camLY * worldH.toPx()).roundToInt().toDp() }
+
         val bmp = roomBitmap
         if (bmp != null) {
             Image(
                 bitmap = bmp.asImageBitmap(),
                 contentDescription = layout?.name ?: "Raum",
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .requiredWidth(worldW)
+                    .requiredHeight(worldH)
+                    .offset(mapOffsetX, mapOffsetY),
                 contentScale = ContentScale.FillBounds,
             )
         }
 
-        val avatarDp = (maxWidth * ((avatarR * 2f) / viewRect.w)).let { s ->
+        val avatarDp = (maxWidth * ((avatarR * 2f) / cameraRect.w.coerceAtLeast(0.01f))).let { s ->
             when {
                 s < 22.dp -> 22.dp
                 s > 72.dp -> 72.dp
@@ -285,15 +364,17 @@ fun CustomRoomScreen(
         space?.people?.forEach { p ->
             val ax = if (p.userId == myId || p.isMe) myX else p.x
             val ay = if (p.userId == myId || p.isMe) myY else p.y
-            val vx = imageToViewX(ax)
-            val vy = imageToViewY(ay)
+            val sx = screenFracX(ax)
+            val sy = screenFracY(ay)
+            // Außerhalb Kamera nicht zeichnen (leicht gepuffert)
+            if (sx < -0.15f || sx > 1.15f || sy < -0.15f || sy > 1.15f) return@forEach
             val petId = clipItemId(p.petEmoji).ifBlank { "🐣" }
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(
-                        start = maxWidth * vx - avatarDp / 2,
-                        top = maxHeight * vy - avatarDp / 2,
+                        start = maxWidth * sx - avatarDp / 2,
+                        top = maxHeight * sy - avatarDp / 2,
                     )
                     .size(avatarDp)
                     .clip(CircleShape)
@@ -318,19 +399,35 @@ fun CustomRoomScreen(
             }
         }
 
+        val camLXRef = rememberUpdatedState(camLX)
+        val camLYRef = rememberUpdatedState(camLY)
+        val camFWRef = rememberUpdatedState(camFracW)
+        val camFHRef = rememberUpdatedState(camFracH)
+        val viewRef = rememberUpdatedState(viewRect)
+        val zonesRef = rememberUpdatedState(zones)
+        val avatarRRef = rememberUpdatedState(avatarR)
+        val sitRef = rememberUpdatedState(sitZones)
+        val seatedRef = rememberUpdatedState(seated)
+        val spaceRef = rememberUpdatedState(space)
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(bottom = 64.dp)
-                .pointerInput(zones, avatarR, sitZones, seated, code) {
+                .pointerInput(code) {
                     detectTapGestures { offset ->
-                        val viewX = (offset.x / size.width).coerceIn(0.01f, 0.99f)
-                        val viewY = (offset.y / size.height).coerceIn(0.01f, 0.99f)
-                        val rawX = viewToImageX(viewX)
-                        val rawY = viewToImageY(viewY)
-                        val hitR = (avatarR * 1.8f).coerceAtLeast(0.035f)
+                        val vr = viewRef.value
+                        val cW = camFWRef.value
+                        val cH = camFHRef.value
+                        val tapLocalX = camLXRef.value + (offset.x / size.width).coerceIn(0f, 1f) * cW
+                        val tapLocalY = camLYRef.value + (offset.y / size.height).coerceIn(0f, 1f) * cH
+                        val rawX = vr.x + tapLocalX * vr.w
+                        val rawY = vr.y + tapLocalY * vr.h
+                        val zns = zonesRef.value
+                        val aR = avatarRRef.value
+                        val hitR = (aR * 1.8f).coerceAtLeast(0.035f)
 
-                        if (seated) {
+                        if (seatedRef.value) {
                             scope.launch {
                                 walking = true
                                 runCatching { LuvApiClient.spaceStand(code) }
@@ -338,9 +435,16 @@ fun CustomRoomScreen(
                                         space = it
                                         seated = false
                                     }
-                                val path = findPath(zones, myX, myY, rawX, rawY, avatarR)
+                                val path = findPath(zns, myX, myY, rawX, rawY, aR)
                                 if (path.isNotEmpty()) {
-                                    walkAlongPath(path, { x, y -> myX = x; myY = y }, { myX }, { myY })
+                                    walkAlongPath(
+                                        path,
+                                        { x, y -> myX = x; myY = y },
+                                        { myX },
+                                        { myY },
+                                        onStep = { applyCameraEdge(myX, myY, smooth = true) },
+                                    )
+                                    applyCameraEdge(myX, myY, smooth = false)
                                     runCatching { LuvApiClient.spaceMove(code, myX, myY) }
                                         .onSuccess { space = it }
                                 }
@@ -349,8 +453,8 @@ fun CustomRoomScreen(
                             return@detectTapGestures
                         }
 
-                        val hitSit = sitZones.firstOrNull { z ->
-                            val taken = space?.people?.any { it.seatedSeatId == z.id } == true
+                        val hitSit = sitRef.value.firstOrNull { z ->
+                            val taken = spaceRef.value?.people?.any { it.seatedSeatId == z.id } == true
                             !taken && (
                                 zoneContains(z, rawX, rawY, 0.02f) ||
                                     hypot(rawX - z.sitX, rawY - z.sitY) < hitR
@@ -359,10 +463,17 @@ fun CustomRoomScreen(
                         if (hitSit != null) {
                             scope.launch {
                                 walking = true
-                                val path = findPath(
-                                    zones, myX, myY, hitSit.sitX, hitSit.sitY, avatarR
-                                )
-                                walkAlongPath(path, { x, y -> myX = x; myY = y }, { myX }, { myY })
+                                val path = findPath(zns, myX, myY, hitSit.sitX, hitSit.sitY, aR)
+                                if (path.isNotEmpty()) {
+                                    walkAlongPath(
+                                        path,
+                                        { x, y -> myX = x; myY = y },
+                                        { myX },
+                                        { myY },
+                                        onStep = { applyCameraEdge(myX, myY, smooth = true) },
+                                    )
+                                    applyCameraEdge(myX, myY, smooth = false)
+                                }
                                 runCatching { LuvApiClient.spaceMove(code, myX, myY) }
                                 runCatching { LuvApiClient.spaceSit(code, hitSit.id) }
                                     .onSuccess {
@@ -370,6 +481,7 @@ fun CustomRoomScreen(
                                         seated = true
                                         myX = hitSit.sitX
                                         myY = hitSit.sitY
+                                        applyCameraEdge(myX, myY, smooth = false)
                                     }
                                     .onFailure {
                                         Toast.makeText(
@@ -383,14 +495,21 @@ fun CustomRoomScreen(
                             return@detectTapGestures
                         }
 
-                        if (!walkableAt(zones, rawX, rawY, avatarR) && zones.none { it.isWalk }) {
+                        if (!walkableAt(zns, rawX, rawY, aR) && zns.none { it.isWalk }) {
                             return@detectTapGestures
                         }
                         scope.launch {
                             walking = true
-                            val path = findPath(zones, myX, myY, rawX, rawY, avatarR)
+                            val path = findPath(zns, myX, myY, rawX, rawY, aR)
                             if (path.isNotEmpty()) {
-                                walkAlongPath(path, { x, y -> myX = x; myY = y }, { myX }, { myY })
+                                walkAlongPath(
+                                    path,
+                                    { x, y -> myX = x; myY = y },
+                                    { myX },
+                                    { myY },
+                                    onStep = { applyCameraEdge(myX, myY, smooth = true) },
+                                )
+                                applyCameraEdge(myX, myY, smooth = false)
                                 runCatching { LuvApiClient.spaceMove(code, myX, myY) }
                                     .onSuccess { space = it }
                             }
@@ -400,7 +519,6 @@ fun CustomRoomScreen(
                 },
         )
 
-        // Reaktionsleiste wie Mal-Lobby: 🙂 oben rechts, klappt nach unten
         Column(
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -449,7 +567,6 @@ fun CustomRoomScreen(
             }
         }
 
-        // Untere Leiste wie Mal-Lobby: links Zurück
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -476,7 +593,6 @@ fun CustomRoomScreen(
                         .clickable(onClick = onClose)
                         .padding(vertical = 6.dp),
                 )
-                // Dock-Slots wie Mal-Lobby (hier ohne Mal-Aktionen)
                 repeat(3) {
                     Box(
                         modifier = Modifier
