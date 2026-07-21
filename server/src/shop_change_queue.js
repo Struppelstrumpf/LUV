@@ -32,13 +32,15 @@ function enqueue(db, { action, payload, byUserId = null, label = "" } = {}) {
   if (!job.action) {
     return { ok: false, error: "bad_action", message: "Keine Aktion." };
   }
-  q.jobs.push(job);
-  const pending = q.jobs.filter((j) => j.status === "pending");
-  while (pending.length > MAX_PENDING) {
-    const old = pending.shift();
-    const idx = q.jobs.findIndex((j) => j.id === old.id);
-    if (idx >= 0) q.jobs.splice(idx, 1);
+  const pendingCount = q.jobs.filter((j) => j.status === "pending").length;
+  if (pendingCount >= MAX_PENDING) {
+    return {
+      ok: false,
+      error: "queue_full",
+      message: `Warteschlange voll (max. ${MAX_PENDING} offene Jobs). Stornieren oder „Jetzt ausführen“.`,
+    };
   }
+  q.jobs.push(job);
   return { ok: true, job };
 }
 

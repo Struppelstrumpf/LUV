@@ -1281,7 +1281,8 @@
             <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">Warteschlange</h3>
             <p class="help" style="margin:0.4rem 0 0;max-width:48rem">
               Offene Jobs werden in der Nachtwartung (≈03:00 Berlin) vor dem Shop-Zyklus ausgeführt —
-              oder jetzt mit „Jetzt ausführen“.
+              oder jetzt mit „Jetzt ausführen“. Flush remischt die Rotation nicht automatisch
+              (dafür Job „Neu mischen“ oder nächste Wartung).
             </p>
           </div>
           <div class="actions" style="margin:0">
@@ -1634,7 +1635,7 @@
               return;
             }
             try {
-              await api("/admin/shop/calendar/batch", {
+              const res = await api("/admin/shop/calendar/batch", {
                 method: "POST",
                 body: JSON.stringify(
                   withSchedule({
@@ -1646,9 +1647,7 @@
                 ),
               });
               closeModal();
-              if (state.shopSchedule === "maintenance") {
-                alert("Für nächste Wartung (≈03:00 Berlin) eingeplant.");
-              }
+              noteQueued(res);
               state.calOpenInv = { date, kindFilter };
               renderShopCalendar();
             } catch (err) {
@@ -2502,8 +2501,8 @@
     $("editForm").onsubmit = async (e) => {
       e.preventDefault();
       const body = readForm(e.target);
-      // Anzeigename separat speichern — wirkt auch ohne Katalog-Seiteneffekte
-      if (body.label) {
+      // Anzeigename: bei Warteschlange nicht vorziehen (sonst schon live, Rest erst 03:00)
+      if (body.label && state.shopSchedule !== "maintenance") {
         await api(
           `/admin/items/${encodeURIComponent(body.kind)}/${encodeURIComponent(body.itemId)}/display-label`,
           { method: "PUT", body: JSON.stringify({ label: body.label }) }

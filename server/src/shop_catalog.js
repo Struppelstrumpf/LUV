@@ -669,7 +669,7 @@ function publicItem(item, now = Date.now(), { admin = false, db = null } = {}) {
 }
 
 function listPublicCatalog(db, { admin = false, kind = null, q = "" } = {}) {
-  // Kein apply/deactivate auf dem Lese-Pfad — Wartung + 2-Min-Tick pflegen Fenster.
+  // Kein apply/deactivate auf dem Lese-Pfad — nur Nachtwartung / Admin-Aktionen.
   // isWithinWindow filtert abgelaufene trotzdem korrekt heraus.
   try {
     require("./events").syncEventShopPets(db);

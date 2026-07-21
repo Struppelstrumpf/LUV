@@ -990,18 +990,106 @@ function removeItemFromRotation(db, kind, itemId, { byUserId = null } = {}) {
   };
 }
 
-/** Item wieder in Preis-Rotation erlauben (Lock weg). */
-function rejoinRotationPool(db, kind, itemId, { byUserId = null } = {}) {
+/** Item wieder in Preis-Rotation erlauben (Lock weg) — nur dieses Item, kein Full-Apply. */
+function rejoinRotationPool(db, kind, itemId, { byUserId = null, now = Date.now() } = {}) {
   const item = shopCatalog.getItem(db, kind, itemId);
   if (!item) {
     return { ok: false, error: "not_found", message: "Item nicht im Shop-Katalog." };
   }
+  if (seasonEvents.isEventOnlyItem(kind, itemId)) {
+    return {
+      ok: false,
+      error: "event_item",
+      message: "Event-Items gehören nicht in die Shop-Rotation.",
+    };
+  }
+  const key = shopCatalog.itemKey(kind, itemId);
+  if (ALWAYS_IN_SHOP_KEYS.has(key)) {
+    return {
+      ok: false,
+      error: "always_in_shop",
+      message: "Starter bleiben dauerhaft im Shop (keine Rotation).",
+    };
+  }
+
+  ensureDefaultExpensiveRotation(db);
+  const plans = ensureRotationPlans(db);
+  let plan =
+    (item.rotationPlanId && plans[item.rotationPlanId]) ||
+    plans.expensive_3m_week ||
+    Object.values(plans).find((p) => p && p.enabled !== false) ||
+    null;
+  if (plan && plan.enabled === false) {
+    plan =
+      plans.expensive_3m_week ||
+      Object.values(plans).find((p) => p && p.enabled !== false) ||
+      null;
+  }
+  if (!plan) {
+    item.rotationLocked = false;
+    item.updatedAt = now;
+    return {
+      ok: true,
+      item: shopCatalog.publicItem(item, now, { admin: true, db }),
+      message: "Lock entfernt — kein aktiver Rotationsplan.",
+    };
+  }
+
+  const before = snapWindow(item);
   item.rotationLocked = false;
-  item.updatedAt = Date.now();
-  applyAllRotationPlans(db, { byUserId });
+  item.rotationPlanId = plan.id;
+  item.updatedAt = now;
+
+  if (plan.mode === "manual") {
+    if (!Array.isArray(plan.itemKeys)) plan.itemKeys = [];
+    if (!plan.itemKeys.includes(key)) {
+      plan.itemKeys.push(key);
+      plan.updatedAt = now;
+    }
+  }
+
+  const independent = (plan.model || "independent") !== "queue";
+  if (independent) {
+    const w = itemWindowAt(plan, item.itemId, now);
+    item.enabled = true;
+    item.availableFrom = w.from;
+    item.availableUntil = w.until;
+  } else {
+    const pool = resolvePlanItems(db, plan);
+    const idx = pool.findIndex((i) => i.kind === kind && i.itemId === itemId);
+    if (idx >= 0) {
+      const t = planTiming(plan, now);
+      const concurrent = Math.min(pool.length, Math.max(1, plan.concurrent || 1));
+      let on = false;
+      for (let c = 0; c < concurrent; c++) {
+        if ((t.slotIndex + c) % pool.length === idx) {
+          on = true;
+          break;
+        }
+      }
+      if (on) {
+        item.availableFrom = t.slotStart;
+        item.availableUntil = t.slotEnd;
+      } else {
+        const nxt = nextActiveWindow(plan, idx, pool.length, now);
+        item.availableFrom = nxt.from;
+        item.availableUntil = nxt.until;
+      }
+      item.enabled = true;
+    }
+  }
+
+  appendAvailabilityLog(db, {
+    kind,
+    itemId,
+    before,
+    after: snapWindow(item),
+    reason: "rotation_rejoin",
+    byUserId,
+  });
   return {
     ok: true,
-    item: shopCatalog.publicItem(item, Date.now(), { admin: true, db }),
+    item: shopCatalog.publicItem(item, now, { admin: true, db }),
   };
 }
 
@@ -1186,7 +1274,6 @@ function dayInventory(db, dateStr) {
 }
 
 function listCalendar(db, { kind = null, q = "", status = "", mark = "" } = {}) {
-  shopCatalog.deactivateExpired(db);
   const cat = shopCatalog.ensureShopCatalog(db);
   const now = Date.now();
   const stats = db.shopStats && typeof db.shopStats === "object" ? db.shopStats : {};

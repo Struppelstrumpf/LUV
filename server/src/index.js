@@ -11204,7 +11204,6 @@ app.get("/v1/admin/items/universe", (req, res) => {
   const ctx = requireStaff(req, res, "market.settings");
   if (!ctx) return;
   seedShopCatalogIfNeeded();
-  shopCatalog.deactivateExpired(getDb());
   const data = itemTrade.listItemUniverse(getDb(), {
     shopCatalog,
     prices: {
@@ -11273,8 +11272,6 @@ app.get("/v1/admin/shop/items", (req, res) => {
   const ctx = requireStaff(req, res, "market.settings");
   if (!ctx) return;
   seedShopCatalogIfNeeded();
-  const expired = shopCatalog.deactivateExpired(getDb());
-  if (expired) scheduleSave();
   const kind = String(req.query?.kind || "").trim() || null;
   const q = String(req.query?.q || "").trim().slice(0, 40);
   const items = shopCatalog.listPublicCatalog(getDb(), {
@@ -11436,12 +11433,54 @@ function buildShopQueueHandlers() {
       delete body.schedule;
       delete body.imageBase64;
       delete body.imageDataUrl;
+      const kind = String(body.kind || "").trim();
+      const itemId = String(body.itemId || "").trim();
+      const eventId = String(body.eventId || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, "_")
+        .slice(0, 40);
+      const eventKinds = new Set(["pets", "stickers", "emojis", "themes"]);
+      if (eventKinds.has(kind) && eventId) {
+        const db = getDb();
+        const cfg = seasonEvents.ensureEventsConfig(db);
+        const ev = (cfg.events || []).find((e) => String(e.id) === eventId);
+        if (!ev) {
+          return { ok: false, error: "bad_event", message: "Event nicht gefunden." };
+        }
+        let eventYear = Math.floor(Number(body.eventYear) || 0);
+        if (!eventYear || eventYear < 2020) {
+          eventYear = seasonEvents.shopPetYearForEvent(ev);
+        }
+        const conflict = seasonEvents.findEventKindConflict(
+          db,
+          eventId,
+          kind,
+          eventYear,
+          itemId
+        );
+        if (conflict) {
+          return {
+            ok: false,
+            error: "event_kind_taken",
+            message: `Für dieses Event gibt es in ${eventYear} schon ein ${kind}-Item (${conflict.itemId}).`,
+          };
+        }
+        body.eventYear = eventYear;
+        body.rotationLocked = true;
+      }
       const result = shopCatalog.upsertItem(getDb(), body, { byUserId: ctx.byUserId });
       if (result.ok) {
         try {
           seasonEvents.syncEventShopPets(getDb());
         } catch (_) {
           /* ignore */
+        }
+        if (eventId && result.item?.itemId) {
+          itemTrade.setLootboxEligible(getDb(), kind, result.item.itemId, false, {
+            defaultPet: DEFAULT_PET,
+            starterEmojis: STARTER_EMOJIS,
+          });
         }
         invalidateLootboxPoolCache();
       }
@@ -16137,9 +16176,9 @@ server.listen(PORT, "0.0.0.0", () => {
   }
   try {
     seedShopCatalogIfNeeded();
+    // Kein Full-Apply beim Boot — Rotation nur in der Nachtwartung (≈03:00) / Admin „Neu mischen“.
     const expired = shopCatalog.deactivateExpired(getDb());
     const rot = shopCalendar.ensureDefaultExpensiveRotation(getDb());
-    shopCalendar.applyAllRotationPlans(getDb());
     scheduleSave();
     console.log(
       `[shop] catalog items=${Object.keys(shopCatalog.ensureShopCatalog(getDb()).items).length} expiredOff=${expired} rotation=${rot.created ? "seeded" : "ok"}`
