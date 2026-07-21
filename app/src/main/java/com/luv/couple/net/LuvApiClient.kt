@@ -2688,10 +2688,14 @@ object LuvApiClient {
             w = (vr?.optDouble("w", 1.0)?.toFloat() ?: 1f).coerceAtLeast(0.01f),
             h = (vr?.optDouble("h", 1.0)?.toFloat() ?: 1f).coerceAtLeast(0.01f),
         )
-        val camW = (cr?.optDouble("w", view.w.toDouble())?.toFloat() ?: view.w)
-            .coerceIn(0.12f, view.w)
-        val camH = (cr?.optDouble("h", view.h.toDouble())?.toFloat() ?: view.h)
-            .coerceIn(0.12f, view.h)
+        // Kamera nie größer als viewRect; unteres Minimum nur wenn view groß genug ist
+        // (sonst coerceIn(0.12, view.w) → Crash bei kleinen viewRects).
+        val camWRaw = cr?.optDouble("w", view.w.toDouble())?.toFloat() ?: view.w
+        val camHRaw = cr?.optDouble("h", view.h.toDouble())?.toFloat() ?: view.h
+        val camMinW = minOf(0.12f, view.w)
+        val camMinH = minOf(0.12f, view.h)
+        val camW = camWRaw.coerceIn(camMinW, view.w.coerceAtLeast(camMinW))
+        val camH = camHRaw.coerceIn(camMinH, view.h.coerceAtLeast(camMinH))
         val portals = buildList {
             val arrP = o.optJSONArray("portals") ?: return@buildList
             for (i in 0 until arrP.length()) {
