@@ -32,6 +32,8 @@ class PrefsRepository(private val context: Context) {
     private val seenMemoriesKey = stringPreferencesKey("seen_memories_json")
     private val lastClearDayKey = stringPreferencesKey("last_clear_day")
     private val tutorialDoneKey = booleanPreferencesKey("tutorial_done")
+    private val homeCoachmarksDoneKey = booleanPreferencesKey("home_coachmarks_done")
+    private val pendingHomeCoachmarksKey = booleanPreferencesKey("pending_home_coachmarks")
     private val installIdKey = stringPreferencesKey("install_id")
     private val installSecretKey = stringPreferencesKey("install_secret")
     private val sessionTokenKey = stringPreferencesKey("session_token")
@@ -209,6 +211,35 @@ class PrefsRepository(private val context: Context) {
 
     suspend fun setTutorialDone(done: Boolean = true) {
         context.dataStore.edit { it[tutorialDoneKey] = done }
+    }
+
+    suspend fun homeCoachmarksDone(): Boolean =
+        context.dataStore.data.first()[homeCoachmarksDoneKey] ?: false
+
+    suspend fun setHomeCoachmarksDone(done: Boolean = true) {
+        context.dataStore.edit { it[homeCoachmarksDoneKey] = done }
+    }
+
+    suspend fun pendingHomeCoachmarks(): Boolean =
+        context.dataStore.data.first()[pendingHomeCoachmarksKey] ?: false
+
+    suspend fun setPendingHomeCoachmarks(pending: Boolean) {
+        context.dataStore.edit { it[pendingHomeCoachmarksKey] = pending }
+    }
+
+    /** Tutorial: Starter-Sticker freischalten ohne restliches Inventar zu löschen. */
+    suspend fun grantStarterSticker(emoji: String, count: Int = 1) {
+        val key = emoji.trim()
+        if (key.isEmpty()) return
+        val current = ownedStickers().toMutableMap()
+        current[key] = maxOf(count, current[key] ?: 0)
+        context.dataStore.edit { prefs ->
+            val so = JSONObject()
+            current.forEach { (k, v) ->
+                if (k.isNotBlank() && v > 0) so.put(k, v)
+            }
+            prefs[ownedStickersKey] = so.toString()
+        }
     }
 
     suspend fun ensureInstallCredentials(): Pair<String, String> {

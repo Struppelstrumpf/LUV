@@ -75,7 +75,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -87,6 +89,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -322,6 +325,34 @@ fun LobbiesScreen(
     var dragHoverIndex by remember { mutableIntStateOf(-1) }
     val cardHeights = remember { mutableStateMapOf<String, Int>() }
     val listGapPx = with(density) { 16.dp.toPx() }
+    var homeCoachStep by remember { mutableIntStateOf(-1) }
+    var coachRootW by remember { mutableFloatStateOf(1f) }
+    var coachRootH by remember { mutableFloatStateOf(1f) }
+    var coachRootOrigin by remember { mutableStateOf(Offset.Zero) }
+    var coachProfile by remember { mutableStateOf(Triple(0.12f, 0.12f, 0.07f)) }
+    var coachPlus by remember { mutableStateOf(Triple(0.88f, 0.12f, 0.07f)) }
+    var coachLobby by remember { mutableStateOf(Triple(0.50f, 0.42f, 0.14f)) }
+    var coachSeat by remember { mutableStateOf(Triple(0.22f, 0.58f, 0.08f)) }
+
+    fun reportCoachHole(centerRoot: Offset, size: IntSize): Triple<Float, Float, Float> {
+        val cx = (centerRoot.x - coachRootOrigin.x) / coachRootW.coerceAtLeast(1f)
+        val cy = (centerRoot.y - coachRootOrigin.y) / coachRootH.coerceAtLeast(1f)
+        val rr = (maxOf(size.width, size.height) / 2f /
+            minOf(coachRootW, coachRootH).coerceAtLeast(1f) + 0.02f)
+            .coerceIn(0.05f, 0.2f)
+        return Triple(cx.coerceIn(0.08f, 0.92f), cy.coerceIn(0.08f, 0.92f), rr)
+    }
+
+    LaunchedEffect(requireGoogleLogin) {
+        if (requireGoogleLogin) return@LaunchedEffect
+        val prefs = LuvApp.instance.prefs
+        val pending = prefs.pendingHomeCoachmarks()
+        val done = prefs.homeCoachmarksDone()
+        if (pending && !done) {
+            delay(450)
+            homeCoachStep = 0
+        }
+    }
 
     LaunchedEffect(lobbies) {
         // Während Drag lokale Reihenfolge behalten; sonst mit Prefs-Liste mergen
@@ -584,6 +615,15 @@ fun LobbiesScreen(
         )
     }
 
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onGloballyPositioned {
+                coachRootW = it.size.width.toFloat().coerceAtLeast(1f)
+                coachRootH = it.size.height.toFloat().coerceAtLeast(1f)
+                coachRootOrigin = it.positionInRoot()
+            }
+    ) {
     MenuBackdrop(includeNavigationBars = false) {
         Column(
             modifier = Modifier
@@ -592,7 +632,7 @@ fun LobbiesScreen(
                 .padding(top = 20.dp, bottom = 8.dp)
                 .verticalScroll(
                     rememberScrollState(),
-                    enabled = dragLobbyId == null
+                    enabled = dragLobbyId == null && homeCoachStep < 0
                 ),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -608,6 +648,13 @@ fun LobbiesScreen(
             ) {
                 Box(
                     modifier = Modifier
+                        .onGloballyPositioned { coords ->
+                            val p = coords.positionInRoot()
+                            coachProfile = reportCoachHole(
+                                Offset(p.x + coords.size.width / 2f, p.y + coords.size.height / 2f),
+                                coords.size
+                            )
+                        }
                         .size(44.dp)
                         .clip(CircleShape)
                         .background(accent)
@@ -661,6 +708,16 @@ fun LobbiesScreen(
                         }
                         Box(
                             modifier = Modifier
+                                .onGloballyPositioned { coords ->
+                                    val p = coords.positionInRoot()
+                                    coachPlus = reportCoachHole(
+                                        Offset(
+                                            p.x + coords.size.width / 2f,
+                                            p.y + coords.size.height / 2f
+                                        ),
+                                        coords.size
+                                    )
+                                }
                                 .fillMaxHeight()
                                 .aspectRatio(1f)
                                 .clip(CircleShape)
@@ -721,6 +778,7 @@ fun LobbiesScreen(
                 Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
             }
 
+            val firstLobbyId = orderedLobbies.firstOrNull()?.id
             orderedLobbies.forEach { lobby ->
                 key(lobby.id) {
                     val dragging = dragLobbyId == lobby.id
@@ -732,7 +790,7 @@ fun LobbiesScreen(
                         accent = if (lobby.isRandom) MaleBlue else accent,
                         dragging = dragging,
                         dragOffsetY = visualShiftFor(lobby.id),
-                        reorderEnabled = orderedLobbies.size > 1,
+                        reorderEnabled = orderedLobbies.size > 1 && homeCoachStep < 0,
                         onHeight = { cardHeights[lobby.id] = it },
                         onNameDragStart = {
                             dragLobbyId = lobby.id
@@ -777,12 +835,54 @@ fun LobbiesScreen(
                         onBuySeat = { onBuySeat(lobby) },
                         onRename = { onRenameLobby(lobby) },
                         onLeave = { onLeaveLobby(lobby) },
-                        onReconnect = { onReconnect(lobby) }
+                        onReconnect = { onReconnect(lobby) },
+                        reportCoachTargets = lobby.id == firstLobbyId,
+                        onCoachLobbyPositioned = { center, size ->
+                            coachLobby = reportCoachHole(center, size)
+                        },
+                        onCoachSeatPositioned = { center, size ->
+                            coachSeat = reportCoachHole(center, size)
+                        }
                     )
                 }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
+        }
+    }
+
+        if (homeCoachStep in 0..3 && !requireGoogleLogin) {
+            val hole = when (homeCoachStep) {
+                0 -> coachProfile
+                1 -> coachPlus
+                2 -> coachLobby
+                else -> coachSeat
+            }
+            val label = when (homeCoachStep) {
+                0 -> "Profil gestalten"
+                1 -> "Neue Lobby"
+                2 -> "Hier malen"
+                else -> "Freunde einladen"
+            }
+            CoachmarkOverlay(
+                holeCenterXFrac = hole.first,
+                holeCenterYFrac = hole.second,
+                holeRadiusFrac = hole.third,
+                label = label,
+                labelAbove = homeCoachStep < 3,
+                onDismiss = {
+                    if (homeCoachStep >= 3) {
+                        homeCoachStep = -1
+                        scope.launch {
+                            LuvApp.instance.prefs.setHomeCoachmarksDone(true)
+                            LuvApp.instance.prefs.setPendingHomeCoachmarks(false)
+                        }
+                    } else {
+                        homeCoachStep += 1
+                    }
+                },
+                modifier = Modifier.zIndex(40f)
+            )
         }
     }
 }
@@ -845,7 +945,10 @@ private fun LobbyCard(
     onBuySeat: () -> Unit,
     onRename: () -> Unit,
     onLeave: () -> Unit,
-    onReconnect: () -> Unit
+    onReconnect: () -> Unit,
+    reportCoachTargets: Boolean = false,
+    onCoachLobbyPositioned: (Offset, IntSize) -> Unit = { _, _ -> },
+    onCoachSeatPositioned: (Offset, IntSize) -> Unit = { _, _ -> }
 ) {
     val liveCapacity by PairSessionState.capacity(lobby.id).collectAsStateWithLifecycle()
     val peers by PairSessionState.peers(lobby.id).collectAsStateWithLifecycle()
@@ -1042,6 +1145,17 @@ private fun LobbyCard(
             )
             .fillMaxWidth()
             .onSizeChanged { onHeight(it.height) }
+            .then(
+                if (reportCoachTargets) {
+                    Modifier.onGloballyPositioned { coords ->
+                        val p = coords.positionInRoot()
+                        onCoachLobbyPositioned(
+                            Offset(p.x + coords.size.width / 2f, p.y + coords.size.height / 2f),
+                            coords.size
+                        )
+                    }
+                } else Modifier
+            )
     ) {
         Column(
             modifier = Modifier
@@ -1153,7 +1267,12 @@ private fun LobbyCard(
                     canInvite = true,
                     canBuySlots = lobby.role == Role.HOST,
                     onInvite = onInviteSeat,
-                    onBuy = onBuySeat
+                    onBuy = onBuySeat,
+                    onFirstInviteSeatPositioned = if (reportCoachTargets) {
+                        { center, size -> onCoachSeatPositioned(center, size) }
+                    } else {
+                        null
+                    }
                 )
             }
             if (lobby.role == Role.HOST && !lobby.isRandom && !lobby.isWedding && !lobby.isEventLobby) {
@@ -1309,7 +1428,8 @@ private fun SeatGrid(
     canInvite: Boolean,
     canBuySlots: Boolean = canInvite,
     onInvite: () -> Unit,
-    onBuy: () -> Unit
+    onBuy: () -> Unit,
+    onFirstInviteSeatPositioned: ((Offset, IntSize) -> Unit)? = null
 ) {
     var confirmBuy by remember { mutableStateOf(false) }
     if (confirmBuy) {
@@ -1373,6 +1493,9 @@ private fun SeatGrid(
                         filled -> nicknames.getOrNull(i)?.takeIf { it.isNotBlank() } ?: "…"
                         else -> "+"
                     }
+                    val isFirstInvite = !isBuyTile && unlocked && !filled &&
+                        i == occupied.coerceAtLeast(0) &&
+                        onFirstInviteSeatPositioned != null
                     SeatTile(
                         label = label,
                         filled = filled,
@@ -1381,7 +1504,22 @@ private fun SeatGrid(
                         accent = accent,
                         enabled = (isBuyTile && canBuySlots) ||
                             (!isBuyTile && !filled && unlocked && canInvite),
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .then(
+                                if (isFirstInvite) {
+                                    Modifier.onGloballyPositioned { coords ->
+                                        val p = coords.positionInRoot()
+                                        onFirstInviteSeatPositioned!!(
+                                            Offset(
+                                                p.x + coords.size.width / 2f,
+                                                p.y + coords.size.height / 2f
+                                            ),
+                                            coords.size
+                                        )
+                                    }
+                                } else Modifier
+                            ),
                         onClick = {
                             when {
                                 isBuyTile -> confirmBuy = true

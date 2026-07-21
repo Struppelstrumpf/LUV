@@ -104,7 +104,9 @@ import com.luv.couple.ui.screens.RedeemScreen
 import com.luv.couple.ui.screens.RenameLobbyScreen
 import com.luv.couple.ui.screens.SimpleBottomBar
 import com.luv.couple.ui.screens.SocialScreen
+import com.luv.couple.ui.screens.TutorialFinishPayload
 import com.luv.couple.ui.screens.TutorialFlow
+import com.luv.couple.profile.ProfileCatalog
 import com.luv.couple.update.AppUpdater
 import com.luv.couple.update.UpdateUiState
 import kotlinx.coroutines.Dispatchers
@@ -623,13 +625,14 @@ fun LuvAppNav() {
         val inTutorial = navController.currentDestination?.route == Routes.TUTORIAL
         val returning = !result.created && isChosenNickname(result.user.nickname)
         if (inTutorial && !returning) {
+            // Google am Tutorial-Ende: Auth übernehmen, Nickname/Lobby kommen via onFinished
             applyAuthResult(
                 result,
                 fromGoogle = true,
                 finishOnboarding = false,
                 applyNickname = false
             )
-            accountMessage = "Angemeldet — wie sollen wir dich nennen?"
+            accountMessage = null
             Toast.makeText(context, "Angemeldet", Toast.LENGTH_SHORT).show()
         } else {
             applyAuthResult(result, fromGoogle = true)
@@ -1306,7 +1309,7 @@ fun LuvAppNav() {
                 } else {
                     null
                 },
-                onFinished = { nick, tutorialStrokes ->
+                onFinished = { payload: TutorialFinishPayload ->
                     scope.launch {
                         if (replaying) {
                             // Replay: Zeichnung verwerfen, keine Lobby speichern
@@ -1320,6 +1323,7 @@ fun LuvAppNav() {
                         busy = true
                         joinError = null
                         try {
+                            val nick = payload.nickname.trim().ifBlank { "Luv" }
                             prefs.setNickname(nick)
                             val snap = prefs.snapshot()
                             val hasGoogleSession =
@@ -1339,13 +1343,23 @@ fun LuvAppNav() {
                                 false
                             }
                             if (ok) {
+                                if (payload.profileJson.isNotBlank()) {
+                                    prefs.setProfileCanvasJson(payload.profileJson)
+                                    runCatching {
+                                        val state = ProfileCatalog.decode(payload.profileJson, nick)
+                                        LuvApiClient.saveMyProfileCanvas(state)
+                                    }.onFailure { e ->
+                                        Log.w("LuvAppNav", "Tutorial-Profil speichern fehlgeschlagen", e)
+                                    }
+                                }
                                 prefs.setTutorialDone(true)
+                                prefs.setPendingHomeCoachmarks(true)
                                 runCatching { LuvApiClient.pingAchievement("tutorial_done") }
                                 runCatching { LuvApiClient.claimDaily() }
                                 refreshAccount()
                                 // Erstlauf: Skizze als normale Host-Lobby im Hauptmenü
                                 runCatching {
-                                    createTutorialLobby(nick, tutorialStrokes)
+                                    createTutorialLobby(nick, payload.strokes)
                                 }.onFailure { e ->
                                     Log.w("LuvAppNav", "Tutorial-Lobby fehlgeschlagen", e)
                                 }

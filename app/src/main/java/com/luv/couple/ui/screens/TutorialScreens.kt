@@ -1,6 +1,7 @@
 ﻿package com.luv.couple.ui.screens
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -16,27 +17,29 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -49,6 +52,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,47 +60,65 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
+import com.luv.couple.LuvApp
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Stroke
 import com.luv.couple.data.StrokePoint
 import com.luv.couple.lock.CanvasStore
 import com.luv.couple.lock.DrawingView
+import com.luv.couple.profile.ProfileCatalog
+import com.luv.couple.profile.ProfileElType
+import com.luv.couple.profile.ProfileLayoutEl
+import com.luv.couple.profile.ProfileState
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
-import com.luv.couple.ui.theme.FemalePurple
 import com.luv.couple.ui.theme.LuvWordmark
 import com.luv.couple.ui.theme.MaleBlue
-import com.luv.couple.ui.theme.SketchedHeart
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
 import java.util.UUID
+import kotlin.math.cos
 import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+private const val TUTORIAL_DOG = "🐕"
 
 private enum class TutPage {
-    Welcome,
     Nickname,
     Draw,
-    Vow,
-    Invite
+    Profile,
+    Celebrate,
+    Google
 }
+
+data class TutorialFinishPayload(
+    val nickname: String,
+    val strokes: List<Stroke>,
+    val profileJson: String
+)
 
 @Composable
 fun TutorialFlow(
@@ -108,13 +130,19 @@ fun TutorialFlow(
     replay: Boolean = false,
     existingNickname: String = "",
     onDismiss: (() -> Unit)? = null,
-    onFinished: (nickname: String, strokes: List<Stroke>) -> Unit
+    onFinished: (TutorialFinishPayload) -> Unit
 ) {
     val pages = remember(replay) {
         if (replay) {
-            listOf(TutPage.Welcome, TutPage.Draw, TutPage.Vow, TutPage.Invite)
+            listOf(TutPage.Draw, TutPage.Celebrate)
         } else {
-            listOf(TutPage.Welcome, TutPage.Nickname, TutPage.Draw, TutPage.Vow, TutPage.Invite)
+            listOf(
+                TutPage.Nickname,
+                TutPage.Draw,
+                TutPage.Profile,
+                TutPage.Celebrate,
+                TutPage.Google
+            )
         }
     }
     var index by remember { mutableIntStateOf(0) }
@@ -123,45 +151,65 @@ fun TutorialFlow(
     }
     var showNickConfirm by remember { mutableStateOf(false) }
     val tutorialStrokes = remember { mutableStateListOf<Stroke>() }
-    var canvasShortSide by remember { mutableFloatStateOf(1000f) }
+    var userHasDrawn by remember { mutableStateOf(false) }
+    var dogPlaced by remember { mutableStateOf(false) }
+    var dogX by remember { mutableFloatStateOf(62f) }
+    var dogY by remember { mutableFloatStateOf(58f) }
+    var profileJson by remember { mutableStateOf("") }
+    var fadeCover by remember { mutableFloatStateOf(0f) }
+    val finishLock = remember { booleanArrayOf(false) }
+    val page = pages.getOrElse(index) { pages.last() }
     val colorIndex = PeerPalette.indexFor(nickname.trim().lowercase().ifBlank { "a" })
     val color = PeerPalette.composeColor(colorIndex)
-    val page = pages.getOrElse(index) { pages.last() }
-    val lastIndex = pages.lastIndex
+    val scope = rememberCoroutineScope()
+
+    fun emitFinished(payload: TutorialFinishPayload) {
+        if (finishLock[0]) return
+        finishLock[0] = true
+        onFinished(payload)
+    }
 
     val breathe = rememberInfiniteTransition(label = "tutGlow")
     val glow by breathe.animateFloat(
-        initialValue = 0.18f,
-        targetValue = 0.48f,
+        initialValue = 0.16f,
+        targetValue = 0.42f,
         animationSpec = infiniteRepeatable(
             animation = tween(4200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "glow"
     )
-    val heartPulse by breathe.animateFloat(
-        initialValue = 0.94f,
-        targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2600, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "heart"
-    )
-    val shimmer by breathe.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(5200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "shimmer"
-    )
 
-    LaunchedEffect(googleSignedIn, replay) {
-        if (!replay && googleSignedIn && index == 0) {
-            val nickIdx = pages.indexOf(TutPage.Nickname)
-            if (nickIdx >= 0) index = nickIdx
+    // Nach Google → Onboarding abschließen
+    LaunchedEffect(googleSignedIn, page, replay) {
+        if (!replay && googleSignedIn && page == TutPage.Google) {
+            val nick = nickname.trim().ifBlank { existingNickname.trim() }.ifBlank { "Luv" }
+            val layout = ProfileCatalog.defaultLayout(nick).toMutableList()
+            if (dogPlaced) {
+                layout.add(
+                    ProfileLayoutEl(
+                        id = "stk-tutorial-dog",
+                        type = ProfileElType.Sticker,
+                        x = dogX,
+                        y = dogY,
+                        scale = 1.15f,
+                        z = 30,
+                        emoji = TUTORIAL_DOG
+                    )
+                )
+            }
+            val json = profileJson.ifBlank {
+                ProfileCatalog.encode(
+                    ProfileState(layout = layout).normalized(nick)
+                )
+            }
+            emitFinished(
+                TutorialFinishPayload(
+                    nickname = nick,
+                    strokes = tutorialStrokes.toList(),
+                    profileJson = json
+                )
+            )
         }
     }
 
@@ -170,11 +218,7 @@ fun TutorialFlow(
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    listOf(
-                        Color(0xFF0A0E14),
-                        BgDeep,
-                        Color(0xFF141018)
-                    )
+                    listOf(Color(0xFF0A0E14), BgDeep, Color(0xFF141018))
                 )
             )
     ) {
@@ -183,40 +227,9 @@ fun TutorialFlow(
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(
-                            AccentRose.copy(alpha = glow * 0.42f),
-                            Color.Transparent
-                        ),
-                        center = Offset(0.12f, 0.05f),
-                        radius = 1100f
-                    )
-                )
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            MaleBlue.copy(alpha = glow * 0.28f),
-                            Color.Transparent
-                        ),
-                        center = Offset(0.95f, 0.82f),
-                        radius = 920f
-                    )
-                )
-        )
-        // Leichter Lichtstreifen
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .align(Alignment.TopCenter)
-                .padding(top = 120.dp)
-                .alpha(0.25f + shimmer * 0.35f)
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(Color.Transparent, Color.White.copy(0.35f), Color.Transparent)
+                        colors = listOf(AccentRose.copy(alpha = glow * 0.35f), Color.Transparent),
+                        center = Offset(0.15f, 0.08f),
+                        radius = 1000f
                     )
                 )
         )
@@ -226,25 +239,21 @@ fun TutorialFlow(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .padding(horizontal = 22.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 22.dp, vertical = 12.dp)
         ) {
             TutorialProgress(index = index, total = pages.size)
+            Spacer(modifier = Modifier.height(10.dp))
 
             AnimatedContent(
                 targetState = page,
                 transitionSpec = {
-                    (fadeIn(tween(380)) + slideInVertically { it / 18 }) togetherWith
-                        (fadeOut(tween(240)) + slideOutVertically { -it / 22 })
+                    (fadeIn(tween(320)) + slideInVertically { it / 14 }) togetherWith
+                        (fadeOut(tween(220)) + slideOutVertically { -it / 18 })
                 },
                 label = "tut",
                 modifier = Modifier.weight(1f)
             ) { p ->
                 when (p) {
-                    TutPage.Welcome -> TutorialWelcome(
-                        replay = replay,
-                        heartScale = heartPulse
-                    )
                     TutPage.Nickname -> TutorialNickname(
                         nickname = nickname,
                         onNicknameChange = { nickname = it.take(18) },
@@ -254,10 +263,13 @@ fun TutorialFlow(
                         }
                     )
                     TutPage.Draw -> TutorialDrawPad(
+                        nickname = nickname.trim().ifBlank { existingNickname.trim() },
                         colorIndex = colorIndex,
                         strokes = tutorialStrokes.toList(),
-                        onStroke = { points, widthPx, shortSide ->
-                            canvasShortSide = shortSide
+                        userHasDrawn = userHasDrawn,
+                        replay = replay,
+                        onUserStroke = { points, widthPx, shortSide ->
+                            userHasDrawn = true
                             val stored = CanvasStore.toStoredWidth(widthPx, shortSide)
                             tutorialStrokes.add(
                                 Stroke(
@@ -265,8 +277,7 @@ fun TutorialFlow(
                                     points = points,
                                     width = stored,
                                     isLocal = true,
-                                    nickname = nickname.trim().ifBlank { existingNickname.trim() }
-                                        .ifBlank { null },
+                                    nickname = nickname.trim().ifBlank { null },
                                     colorIndex = colorIndex,
                                     colorLocked = true
                                 )
@@ -276,81 +287,125 @@ fun TutorialFlow(
                             if (tutorialStrokes.isNotEmpty()) {
                                 tutorialStrokes.removeAt(tutorialStrokes.lastIndex)
                             }
+                            if (tutorialStrokes.isEmpty()) userHasDrawn = false
                         },
-                        onDot = { point, widthPx, shortSide ->
-                            canvasShortSide = shortSide
-                            val stored = CanvasStore.toStoredWidth(widthPx, shortSide)
-                            tutorialStrokes.add(
-                                Stroke(
-                                    id = UUID.randomUUID().toString(),
-                                    points = listOf(point),
-                                    width = stored,
-                                    isLocal = true,
-                                    nickname = nickname.trim().ifBlank { existingNickname.trim() }
-                                        .ifBlank { null },
-                                    colorIndex = colorIndex,
-                                    colorLocked = true
-                                )
-                            )
+                        onDemoStrokes = { demo ->
+                            if (!userHasDrawn) {
+                                tutorialStrokes.clear()
+                                tutorialStrokes.addAll(demo)
+                            }
                         },
-                        replay = replay
-                    )
-                    TutPage.Vow -> TutorialVowPane(shimmer = shimmer)
-                    TutPage.Invite -> TutorialInvitePane(replay = replay)
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (!error.isNullOrBlank()) {
-                    Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
-                }
-                val needGoogle =
-                    !replay && page == TutPage.Welcome && googleEnabled && !googleSignedIn
-                if (needGoogle) {
-                    TutorialPrimaryButton(
-                        label = if (busy) "Einen Moment…" else "Mit Google anmelden",
-                        enabled = !busy,
-                        onClick = onGoogleSignIn
-                    )
-                    Text(
-                        "Damit Lobbys und Ehe geräteübergreifend bleiben.",
-                        color = TextMuted,
-                        fontFamily = BodyFont,
-                        fontSize = 12.sp,
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                        textAlign = TextAlign.Center
-                    )
-                } else {
-                    val needStroke = page == TutPage.Draw && tutorialStrokes.isEmpty() && !replay
-                    val canAdvance = when {
-                        needGoogle -> false
-                        page == TutPage.Nickname && nickname.trim().length < 2 -> false
-                        needStroke -> false
-                        else -> true
-                    }
-                    TutorialPrimaryButton(
-                        label = when {
-                            busy -> "Einen Moment…"
-                            page == TutPage.Draw && needStroke -> "Zeichne etwas…"
-                            index < lastIndex -> "Weiter"
-                            replay -> "Fertig"
-                            else -> "Los geht’s"
+                        onClearDemo = {
+                            if (!userHasDrawn) tutorialStrokes.clear()
                         },
-                        enabled = !busy && canAdvance,
-                        onClick = {
-                            when {
-                                page == TutPage.Nickname -> showNickConfirm = true
-                                index < lastIndex -> index += 1
-                                else -> onFinished(
-                                    nickname.trim().ifBlank { existingNickname.trim() },
-                                    tutorialStrokes.toList()
-                                )
+                        onProfileTap = {
+                            if (userHasDrawn || replay) {
+                                index = (pages.indexOf(TutPage.Profile)).takeIf { it >= 0 }
+                                    ?: (index + 1).coerceAtMost(pages.lastIndex)
+                                if (replay) {
+                                    index = pages.indexOf(TutPage.Celebrate).coerceAtLeast(0)
+                                }
                             }
                         }
                     )
+                    TutPage.Profile -> TutorialProfileStickerStep(
+                        nickname = nickname.trim().ifBlank { "Du" },
+                        color = color,
+                        dogPlaced = dogPlaced,
+                        dogX = dogX,
+                        dogY = dogY,
+                        onDogPlaced = { x, y ->
+                            dogX = x
+                            dogY = y
+                            dogPlaced = true
+                            val nick = nickname.trim().ifBlank { "Du" }
+                            val layout = ProfileCatalog.defaultLayout(nick).toMutableList()
+                            layout.add(
+                                ProfileLayoutEl(
+                                    id = "stk-tutorial-dog",
+                                    type = ProfileElType.Sticker,
+                                    x = x,
+                                    y = y,
+                                    scale = 1.15f,
+                                    z = 30,
+                                    emoji = TUTORIAL_DOG
+                                )
+                            )
+                            profileJson = ProfileCatalog.encode(
+                                ProfileState(layout = layout).normalized(nick)
+                            )
+                        },
+                        onContinue = {
+                            index = pages.indexOf(TutPage.Celebrate).coerceAtLeast(index + 1)
+                        }
+                    )
+                    TutPage.Celebrate -> TutorialCelebrateStep(
+                        dogPlaced = dogPlaced || replay,
+                        onDone = {
+                            scope.launch {
+                                fadeCover = 0f
+                                val anim = Animatable(0f)
+                                anim.animateTo(1f, tween(900, easing = FastOutSlowInEasing)) {
+                                    fadeCover = value
+                                }
+                                if (replay) {
+                                    emitFinished(
+                                        TutorialFinishPayload(
+                                            nickname = existingNickname.trim().ifBlank { "Luv" },
+                                            strokes = emptyList(),
+                                            profileJson = ""
+                                        )
+                                    )
+                                } else {
+                                    index = pages.indexOf(TutPage.Google).coerceAtLeast(index)
+                                    fadeCover = 0f
+                                }
+                            }
+                        }
+                    )
+                    TutPage.Google -> TutorialGoogleStep(
+                        busy = busy,
+                        googleEnabled = googleEnabled,
+                        googleSignedIn = googleSignedIn,
+                        onGoogleSignIn = onGoogleSignIn
+                    )
                 }
-                when {
-                    index > 0 -> {
+            }
+
+            if (page != TutPage.Celebrate && page != TutPage.Profile && page != TutPage.Draw) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!error.isNullOrBlank()) {
+                        Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
+                    }
+                    when (page) {
+                        TutPage.Nickname -> {
+                            TutorialPrimaryButton(
+                                label = if (busy) "…" else "Weiter",
+                                enabled = !busy && nickname.trim().length >= 2,
+                                onClick = { showNickConfirm = true }
+                            )
+                        }
+                        TutPage.Google -> {
+                            if (!googleEnabled) {
+                                TutorialPrimaryButton(
+                                    label = if (busy) "…" else "Los geht’s",
+                                    enabled = !busy,
+                                    onClick = {
+                                        val nick = nickname.trim().ifBlank { "Luv" }
+                                        emitFinished(
+                                            TutorialFinishPayload(
+                                                nickname = nick,
+                                                strokes = tutorialStrokes.toList(),
+                                                profileJson = profileJson
+                                            )
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                        else -> Unit
+                    }
+                    if (index > 0 && page == TutPage.Nickname) {
                         Text(
                             "Zurück",
                             color = TextMuted,
@@ -361,7 +416,7 @@ fun TutorialFlow(
                                 .padding(6.dp)
                         )
                     }
-                    replay && onDismiss != null -> {
+                    if (replay && onDismiss != null && index == 0) {
                         Text(
                             "Abbrechen",
                             color = TextMuted,
@@ -375,6 +430,16 @@ fun TutorialFlow(
                 }
             }
         }
+
+        if (fadeCover > 0.01f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(40f)
+                    .background(Color(0xFF0B0E14).copy(alpha = fadeCover))
+                    .scale(0.98f + 0.02f * fadeCover)
+            )
+        }
     }
 
     if (showNickConfirm) {
@@ -384,7 +449,7 @@ fun TutorialFlow(
             containerColor = BgSoft,
             title = {
                 Text(
-                    "Spitzname festlegen?",
+                    "So heißt du?",
                     fontFamily = DisplayFont,
                     fontSize = 22.sp,
                     color = TextPrimary
@@ -392,7 +457,7 @@ fun TutorialFlow(
             },
             text = {
                 Text(
-                    "„$chosen“ wird dein Name in LUV. Das lässt sich später nicht mehr ändern — bist du sicher?",
+                    "„$chosen“ — später nicht mehr änderbar.",
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 14.sp,
@@ -403,16 +468,15 @@ fun TutorialFlow(
                 TextButton(
                     onClick = {
                         showNickConfirm = false
-                        if (index < lastIndex) index += 1
-                        else onFinished(chosen, tutorialStrokes.toList())
+                        index = pages.indexOf(TutPage.Draw).coerceAtLeast(1)
                     }
                 ) {
-                    Text("Ja, so heißt ich", color = AccentRose, fontFamily = DisplayFont)
+                    Text("Ja", color = AccentRose, fontFamily = DisplayFont)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showNickConfirm = false }) {
-                    Text("Nochmal ändern", color = TextMuted, fontFamily = BodyFont)
+                    Text("Ändern", color = TextMuted, fontFamily = BodyFont)
                 }
             }
         )
@@ -421,7 +485,7 @@ fun TutorialFlow(
 
 @Composable
 private fun TutorialProgress(index: Int, total: Int) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -439,78 +503,16 @@ private fun TutorialProgress(index: Int, total: Int) {
             repeat(total) { i ->
                 Box(
                     modifier = Modifier
-                        .height(2.5.dp)
                         .weight(1f)
-                        .clip(RoundedCornerShape(99.dp))
-                        .then(
-                            if (i <= index) {
-                                Modifier.background(
-                                    Brush.horizontalGradient(
-                                        listOf(MaleBlue, AccentRose, FemalePurple)
-                                    )
-                                )
-                            } else {
-                                Modifier.background(Color.White.copy(0.1f))
-                            }
+                        .height(3.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(
+                            if (i <= index) AccentRose.copy(0.85f)
+                            else Color.White.copy(0.12f)
                         )
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun TutorialWelcome(replay: Boolean, heartScale: Float) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 20.dp, bottom = 8.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(108.dp)
-                .scale(heartScale)
-                .clip(CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        listOf(
-                            AccentRose.copy(0.4f),
-                            MaleBlue.copy(0.12f),
-                            Color.Transparent
-                        )
-                    )
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            SketchedHeart(size = 52.dp, color = Color.White.copy(0.95f))
-        }
-        Spacer(modifier = Modifier.height(28.dp))
-        LuvWordmark(fontSize = 56.sp, showHeart = false)
-        Spacer(modifier = Modifier.height(18.dp))
-        Text(
-            if (replay) "Willkommen zurück" else "Für euch beide",
-            fontFamily = DisplayFont,
-            fontSize = 28.sp,
-            color = TextPrimary,
-            textAlign = TextAlign.Center,
-            lineHeight = 34.sp
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            if (replay) {
-                "Kurz die Leinwand, die Hochzeit und das Einladen — dann bist du wieder im Menü."
-            } else {
-                "Gemeinsam zeichnen. Momente behalten. Und wenn ihr wollt: heiraten."
-            },
-            fontFamily = BodyFont,
-            color = TextMuted,
-            fontSize = 16.sp,
-            lineHeight = 24.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 8.dp)
-        )
     }
 }
 
@@ -528,15 +530,15 @@ private fun TutorialNickname(
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            "Dein Name in LUV",
+            "Wie heißt du?",
             fontFamily = DisplayFont,
-            fontSize = 30.sp,
+            fontSize = 32.sp,
             color = TextPrimary,
-            lineHeight = 36.sp
+            lineHeight = 38.sp
         )
         Spacer(modifier = Modifier.height(10.dp))
         Text(
-            "Er färbt deine Linien. Einmal gewählt — für immer.",
+            "Dein Name färbt deine Linien.",
             fontFamily = BodyFont,
             color = TextMuted,
             fontSize = 15.sp,
@@ -585,7 +587,7 @@ private fun TutorialNickname(
                     decorationBox = { inner ->
                         if (nickname.isBlank()) {
                             Text(
-                                "z. B. Emrys",
+                                "Dein Name",
                                 color = TextMuted.copy(0.7f),
                                 fontFamily = BodyFont,
                                 fontSize = 20.sp
@@ -601,112 +603,389 @@ private fun TutorialNickname(
 
 @Composable
 private fun TutorialDrawPad(
+    nickname: String,
     colorIndex: Int,
     strokes: List<Stroke>,
-    onStroke: (List<StrokePoint>, Float, Float) -> Unit,
+    userHasDrawn: Boolean,
+    replay: Boolean,
+    onUserStroke: (List<StrokePoint>, Float, Float) -> Unit,
     onUndo: () -> Unit,
-    onDot: (StrokePoint, Float, Float) -> Unit,
-    replay: Boolean
+    onDemoStrokes: (List<Stroke>) -> Unit,
+    onClearDemo: () -> Unit,
+    onProfileTap: () -> Unit
 ) {
     val density = LocalDensity.current
-    Column(
+    var promptVisible by remember { mutableStateOf(false) }
+    var showProfileCoach by remember { mutableStateOf(false) }
+    var chipFracX by remember { mutableFloatStateOf(0.18f) }
+    var chipFracY by remember { mutableFloatStateOf(0.88f) }
+    var rootW by remember { mutableFloatStateOf(1f) }
+    var rootH by remember { mutableFloatStateOf(1f) }
+    var rootOrigin by remember { mutableStateOf(Offset.Zero) }
+    val nick = nickname.ifBlank { "Du" }
+
+    LaunchedEffect(userHasDrawn, replay) {
+        if (replay) return@LaunchedEffect
+        if (userHasDrawn) {
+            promptVisible = false
+            delay(400)
+            showProfileCoach = true
+            return@LaunchedEffect
+        }
+        while (!userHasDrawn) {
+            onClearDemo()
+            delay(280)
+            onDemoStrokes(buildDemoFaceStrokes(colorIndex, nick))
+            delay(900)
+            promptVisible = true
+            delay(15_000)
+            if (userHasDrawn) break
+            promptVisible = false
+            onClearDemo()
+            delay(400)
+        }
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = 4.dp)
+            .onGloballyPositioned {
+                rootW = it.size.width.toFloat().coerceAtLeast(1f)
+                rootH = it.size.height.toFloat().coerceAtLeast(1f)
+                rootOrigin = it.positionInRoot()
+            }
     ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Text(
+                if (replay) "Kurz zeichnen" else "Deine Leinwand",
+                fontFamily = DisplayFont,
+                fontSize = 24.sp,
+                color = TextPrimary
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                if (userHasDrawn) "Tippe unten auf dich."
+                else if (promptVisible) "Jetzt bist du dran"
+                else "Schau kurz zu …",
+                fontFamily = BodyFont,
+                color = TextMuted,
+                fontSize = 14.sp,
+                maxLines = 1
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                val side = min(maxWidth.value, maxHeight.value).dp
+                Box(
+                    modifier = Modifier
+                        .size(side)
+                        .clip(RoundedCornerShape(26.dp))
+                        .border(
+                            1.5.dp,
+                            Brush.linearGradient(
+                                listOf(MaleBlue.copy(0.5f), AccentRose.copy(0.6f))
+                            ),
+                            RoundedCornerShape(26.dp)
+                        )
+                        .background(Color(0xFF0B1016))
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            DrawingView(ctx).apply {
+                                myColorIndex = colorIndex
+                                myBrushWidth = with(density) { 18.dp.toPx() }
+                                canvasBackground = 0xFF0B1016.toInt()
+                                onStrokeFinished = { pts ->
+                                    val short = min(width, height).toFloat().coerceAtLeast(1f)
+                                    onUserStroke(pts, myBrushWidth, short)
+                                }
+                                onDoubleTapUndo = onUndo
+                                onDotPlaced = { pt ->
+                                    val short = min(width, height).toFloat().coerceAtLeast(1f)
+                                    onUserStroke(listOf(pt), myBrushWidth, short)
+                                }
+                            }
+                        },
+                        update = { view ->
+                            view.myColorIndex = colorIndex
+                            view.inputBlocked = showProfileCoach && userHasDrawn
+                            view.setStrokes(strokes, animateNew = false)
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    if (promptVisible && !userHasDrawn) {
+                        Text(
+                            "Jetzt bist du dran",
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 18.sp,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 16.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.Black.copy(0.45f))
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            // Roster-Chip (eigenes Profil)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.Start
+            ) {
+                val accent = PeerPalette.composeColor(colorIndex)
+                Box(
+                    modifier = Modifier
+                        .onGloballyPositioned { coords ->
+                            val p = coords.positionInRoot()
+                            chipFracX =
+                                (p.x + coords.size.width / 2f - rootOrigin.x) / rootW
+                            chipFracY =
+                                (p.y + coords.size.height / 2f - rootOrigin.y) / rootH
+                        }
+                        .size(52.dp)
+                        .clip(CircleShape)
+                        .background(accent)
+                        .border(2.dp, Color.White.copy(0.35f), CircleShape)
+                        .clickable(enabled = userHasDrawn || replay, onClick = onProfileTap),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        nick.take(1).uppercase(),
+                        color = Color(0xFF10141C),
+                        fontFamily = DisplayFont,
+                        fontSize = 20.sp
+                    )
+                }
+                Spacer(modifier = Modifier.size(10.dp))
+                Column(modifier = Modifier.align(Alignment.CenterVertically)) {
+                    Text(nick, color = TextPrimary, fontFamily = DisplayFont, fontSize = 15.sp)
+                    Text("Mitglieder", color = TextMuted, fontFamily = BodyFont, fontSize = 11.sp)
+                }
+            }
+        }
+
+        if (showProfileCoach && userHasDrawn) {
+            CoachmarkOverlay(
+                holeCenterXFrac = chipFracX,
+                holeCenterYFrac = chipFracY,
+                holeRadiusFrac = 0.08f,
+                label = "Das bist du",
+                labelAbove = true,
+                onDismiss = onProfileTap
+            )
+        }
+    }
+}
+
+@Composable
+private fun TutorialProfileStickerStep(
+    nickname: String,
+    color: Color,
+    dogPlaced: Boolean,
+    dogX: Float,
+    dogY: Float,
+    onDogPlaced: (Float, Float) -> Unit,
+    onContinue: () -> Unit
+) {
+    var step by remember { mutableIntStateOf(0) } // 0=highlight tray, 1=place, 2=done
+    var holding by remember { mutableStateOf(false) }
+    var boardW by remember { mutableFloatStateOf(1f) }
+    var boardH by remember { mutableFloatStateOf(1f) }
+
+    LaunchedEffect(Unit) {
+        runCatching {
+            LuvApp.instance.prefs.grantStarterSticker(TUTORIAL_DOG, 1)
+        }
+    }
+
+    LaunchedEffect(dogPlaced) {
+        if (dogPlaced) {
+            step = 2
+            delay(400)
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
         Text(
-            if (replay) "Kurz zeichnen" else "Deine erste Leinwand",
+            "Dein Profil",
             fontFamily = DisplayFont,
             fontSize = 24.sp,
             color = TextPrimary
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            if (replay) {
-                "Nur zum Ausprobieren — wird nicht gespeichert."
-            } else {
-                "Ein Strich reicht. Daraus wird deine erste Lobby."
+            when (step) {
+                0 -> "Tippe auf den Sticker"
+                1 -> "Leg ihn aufs Profil"
+                else -> "Super"
             },
             fontFamily = BodyFont,
             color = TextMuted,
-            fontSize = 13.sp,
-            lineHeight = 18.sp
+            fontSize = 14.sp,
+            maxLines = 1
         )
         Spacer(modifier = Modifier.height(12.dp))
+
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f),
-            contentAlignment = Alignment.Center
+                .weight(1f)
+                .clip(RoundedCornerShape(22.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color(0xFF1A2433), Color(0xFF2A3340), Color(0xFF3D4A3A))
+                    )
+                )
+                .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(22.dp))
+                .onGloballyPositioned {
+                    boardW = it.size.width.toFloat().coerceAtLeast(1f)
+                    boardH = it.size.height.toFloat().coerceAtLeast(1f)
+                }
+                .pointerInput(step, holding) {
+                    if (step == 1 && holding) {
+                        detectTapGestures { offset ->
+                            val x = (offset.x / boardW * 100f).coerceIn(12f, 88f)
+                            val y = (offset.y / boardH * 100f).coerceIn(20f, 88f)
+                            onDogPlaced(x, y)
+                            holding = false
+                        }
+                    }
+                }
         ) {
-            val side = min(maxWidth.value, maxHeight.value).dp
+            // Avatar + Name
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = maxHeight * 0.18f),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape)
+                        .background(color),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        nickname.take(1).uppercase(),
+                        color = Color(0xFF10141C),
+                        fontFamily = DisplayFont,
+                        fontSize = 28.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(nickname, color = Color.White, fontFamily = DisplayFont, fontSize = 18.sp)
+            }
+
+            if (dogPlaced) {
+                Text(
+                    TUTORIAL_DOG,
+                    fontSize = 42.sp,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset {
+                            IntOffset(
+                                (dogX / 100f * boardW - 28.dp.toPx()).roundToInt(),
+                                (dogY / 100f * boardH - 28.dp.toPx()).roundToInt()
+                            )
+                        }
+                )
+            }
+
+            if (step == 1 && holding) {
+                Text(
+                    "Tippe hier hin",
+                    color = TextPrimary,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.Black.copy(0.4f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+        // Sticker-Tray
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Box(
                 modifier = Modifier
-                    .size(side)
-                    .clip(RoundedCornerShape(26.dp))
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.White.copy(0.06f))
                     .border(
-                        1.5.dp,
-                        Brush.linearGradient(
-                            listOf(
-                                MaleBlue.copy(0.55f),
-                                AccentRose.copy(0.65f),
-                                FemalePurple.copy(0.45f)
-                            )
-                        ),
-                        RoundedCornerShape(26.dp)
+                        width = if (step == 0) 2.dp else 1.dp,
+                        color = if (step == 0) AccentRose else Color.White.copy(0.15f),
+                        shape = RoundedCornerShape(16.dp)
                     )
-                    .background(Color(0xFF0B1016))
+                    .clickable(enabled = !dogPlaced) {
+                        holding = true
+                        step = 1
+                    },
+                contentAlignment = Alignment.Center
             ) {
-                var drawView by remember { mutableStateOf<DrawingView?>(null) }
-                AndroidView(
-                    factory = { ctx ->
-                        DrawingView(ctx).apply {
-                            myColorIndex = colorIndex
-                            myBrushWidth = with(density) { 18.dp.toPx() }
-                            canvasBackground = 0xFF0B1016.toInt()
-                            drawView = this
-                            onStrokeFinished = { pts ->
-                                val short = min(width, height).toFloat().coerceAtLeast(1f)
-                                onStroke(pts, myBrushWidth, short)
-                            }
-                            onDoubleTapUndo = onUndo
-                            onDotPlaced = { pt ->
-                                val short = min(width, height).toFloat().coerceAtLeast(1f)
-                                onDot(pt, myBrushWidth, short)
-                            }
-                        }
-                    },
-                    update = { view ->
-                        view.myColorIndex = colorIndex
-                        view.setStrokes(strokes, animateNew = false)
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-                DisposableEffect(Unit) {
-                    onDispose { drawView = null }
-                }
-                if (strokes.isEmpty()) {
+                Text(TUTORIAL_DOG, fontSize = 32.sp)
+            }
+        }
+
+        if (step == 0) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                "Tippe auf den Sticker",
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 16.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        if (dogPlaced) {
+            Spacer(modifier = Modifier.height(12.dp))
+            TutorialPrimaryButton(label = "Weiter", enabled = true, onClick = onContinue)
+        }
+    }
+}
+
+@Composable
+private fun TutorialCelebrateStep(
+    dogPlaced: Boolean,
+    onDone: () -> Unit
+) {
+    var showBubble by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(200)
+        showBubble = true
+        delay(2200)
+        onDone()
+    }
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(TUTORIAL_DOG, fontSize = 72.sp)
+            Spacer(modifier = Modifier.height(16.dp))
+            if (showBubble && dogPlaced) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color.White)
+                        .padding(horizontal = 18.dp, vertical = 12.dp)
+                ) {
                     Text(
-                        "Tippen & ziehen",
-                        color = TextMuted.copy(0.65f),
-                        fontFamily = BodyFont,
-                        fontSize = 14.sp,
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .alpha(0.9f)
-                    )
-                } else {
-                    Text(
-                        "Doppeltipp = rückgängig",
-                        color = TextMuted.copy(0.8f),
-                        fontFamily = BodyFont,
-                        fontSize = 11.sp,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 10.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color.Black.copy(0.4f))
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                        "Toll gemacht!",
+                        color = Color(0xFF1A1A1A),
+                        fontFamily = DisplayFont,
+                        fontSize = 18.sp
                     )
                 }
             }
@@ -714,233 +993,51 @@ private fun TutorialDrawPad(
     }
 }
 
-/** Ablauf Heirat + volle Hochzeitsleinwand-Vorschau (nicht zugeschnitten). */
 @Composable
-private fun TutorialVowPane(shimmer: Float) {
+private fun TutorialGoogleStep(
+    busy: Boolean,
+    googleEnabled: Boolean,
+    googleSignedIn: Boolean,
+    onGoogleSignIn: () -> Unit
+) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(top = 6.dp, bottom = 4.dp),
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            "Vom Freund zur Ehe",
-            fontFamily = DisplayFont,
-            fontSize = 26.sp,
-            color = TextPrimary,
-            textAlign = TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            "Level 100 → Antrag gratis. Dann 7 Tage warten, 7 Tage malen — erst dann verheiratet. Überspringen kostet Coins.",
-            fontFamily = BodyFont,
-            color = TextMuted,
-            fontSize = 13.sp,
-            lineHeight = 19.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 4.dp)
-        )
+        LuvWordmark(fontSize = 42.sp, showHeart = true)
         Spacer(modifier = Modifier.height(16.dp))
-
-        // Volle quadratische Hochzeitsleinwand — Fit, kein Crop
-        BoxWithConstraints(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
-            val side = min(maxWidth.value, 340f).dp
-            Box(
-                modifier = Modifier
-                    .size(side)
-                    .clip(RoundedCornerShape(22.dp))
-                    .border(
-                        1.5.dp,
-                        Brush.linearGradient(
-                            listOf(
-                                Color(0xFFFFD54F).copy(0.75f),
-                                AccentRose.copy(0.55f),
-                                Color(0xFFFFF8E7).copy(0.25f)
-                            )
-                        ),
-                        RoundedCornerShape(22.dp)
-                    )
-            ) {
-                TutorialWeddingCanvasPreview(shimmer = shimmer)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(18.dp))
-        TutorialTimelineStep("1", "Freundschaftslevel 100", "Heiratsanfrage kostenlos")
-        Spacer(modifier = Modifier.height(8.dp))
-        TutorialTimelineStep("2", "7 Tage Verlobung", "Danach öffnet die Hochzeitsleinwand")
-        Spacer(modifier = Modifier.height(8.dp))
-        TutorialTimelineStep("3", "7 Tage malen", "Gemeinsam — dann seid ihr verheiratet")
-    }
-}
-
-@Composable
-private fun TutorialWeddingCanvasPreview(shimmer: Float) {
-    val ink = Color(0xFF2A1F28)
-    val blush = Color(0xFFFFE4EC)
-    val gold = Color(0xFFFFD54F)
-    val rose = AccentRose
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val w = size.width
-        val h = size.height
-        // Gesamte Fläche sichtbar — Portrait/Square-Lobby
-        drawRect(
-            brush = Brush.verticalGradient(
-                listOf(
-                    Color(0xFFFFF8F2),
-                    blush,
-                    Color(0xFFFFF0F5)
-                )
-            )
-        )
-        // Weiches Licht
-        drawCircle(
-            brush = Brush.radialGradient(
-                listOf(gold.copy(0.22f + shimmer * 0.08f), Color.Transparent)
-            ),
-            radius = w * 0.42f,
-            center = Offset(w * 0.5f, h * 0.38f)
-        )
-        // Herz in der Mitte (vollständig im Frame)
-        val heart = Path().apply {
-            val cx = w * 0.5f
-            val cy = h * 0.42f
-            val s = min(w, h) * 0.22f
-            moveTo(cx, cy + s * 0.35f)
-            cubicTo(cx - s * 1.1f, cy - s * 0.15f, cx - s * 0.85f, cy - s * 0.95f, cx, cy - s * 0.45f)
-            cubicTo(cx + s * 0.85f, cy - s * 0.95f, cx + s * 1.1f, cy - s * 0.15f, cx, cy + s * 0.35f)
-            close()
-        }
-        drawPath(
-            heart,
-            brush = Brush.verticalGradient(listOf(rose.copy(0.85f), FemalePurple.copy(0.7f)))
-        )
-        drawPath(heart, color = gold.copy(0.55f), style = DrawStroke(width = 3.5f, cap = StrokeCap.Round))
-
-        // Zwei Ringe unten — komplett sichtbar
-        val r = min(w, h) * 0.07f
-        val yR = h * 0.72f
-        val x1 = w * 0.42f
-        val x2 = w * 0.58f
-        drawCircle(color = gold.copy(0.9f), radius = r, center = Offset(x1, yR), style = DrawStroke(5f))
-        drawCircle(color = rose.copy(0.9f), radius = r, center = Offset(x2, yR), style = DrawStroke(5f))
-
-        // Namen-Zeile
-        drawRoundRect(
-            color = ink.copy(0.08f),
-            topLeft = Offset(w * 0.18f, h * 0.84f),
-            size = Size(w * 0.64f, h * 0.07f),
-            cornerRadius = CornerRadius(20f, 20f)
-        )
-        // Dezente Randlinie der „Lobby“
-        drawRoundRect(
-            color = gold.copy(0.35f),
-            topLeft = Offset(w * 0.04f, h * 0.04f),
-            size = Size(w * 0.92f, h * 0.92f),
-            cornerRadius = CornerRadius(28f, 28f),
-            style = DrawStroke(width = 2.5f)
-        )
-    }
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.TopCenter
-    ) {
         Text(
-            "Hochzeitsleinwand",
-            color = Color(0xFF5A3040).copy(0.75f),
-            fontFamily = DisplayFont,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(top = 14.dp)
-        )
-    }
-}
-
-@Composable
-private fun TutorialTimelineStep(num: String, title: String, body: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .clip(CircleShape)
-                .background(
-                    Brush.linearGradient(listOf(Color(0xFFFFD54F).copy(0.35f), AccentRose.copy(0.3f)))
-                )
-                .border(1.dp, Color(0xFFFFD54F).copy(0.45f), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(num, color = TextPrimary, fontFamily = DisplayFont, fontSize = 13.sp)
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = TextPrimary, fontFamily = DisplayFont, fontSize = 15.sp)
-            Text(body, color = TextMuted, fontFamily = BodyFont, fontSize = 13.sp, lineHeight = 18.sp)
-        }
-    }
-}
-
-@Composable
-private fun TutorialInvitePane(replay: Boolean) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 20.dp),
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(
-            if (replay) "Zusammen bleiben" else "Jemanden einladen",
+            "Fast geschafft",
             fontFamily = DisplayFont,
             fontSize = 28.sp,
             color = TextPrimary,
-            lineHeight = 34.sp
+            textAlign = TextAlign.Center
         )
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
-            if (replay) {
-                "Im Menü öffnest du Lobbys, speicherst Momente und lädst Freunde ein."
-            } else {
-                "Deine Skizze liegt gleich als Lobby im Hauptmenü. Tippe drauf — oder teile den Code."
-            },
+            "Melde dich an —\ndann bleibt alles bei dir.",
             fontFamily = BodyFont,
             color = TextMuted,
             fontSize = 15.sp,
-            lineHeight = 23.sp
+            textAlign = TextAlign.Center,
+            lineHeight = 22.sp
         )
-        Spacer(modifier = Modifier.height(28.dp))
-        TutorialInviteLine("01", "Lobby öffnen", MaleBlue)
-        Spacer(modifier = Modifier.height(14.dp))
-        TutorialInviteLine("02", "Code teilen", AccentRose)
-        Spacer(modifier = Modifier.height(14.dp))
-        TutorialInviteLine("03", "Moment speichern", FemalePurple)
-    }
-}
-
-@Composable
-private fun TutorialInviteLine(num: String, title: String, tint: Color) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        Text(
-            num,
-            color = tint.copy(0.9f),
-            fontFamily = DisplayFont,
-            fontSize = 18.sp,
-            modifier = Modifier.width(36.dp)
-        )
-        Box(
-            modifier = Modifier
-                .height(1.dp)
-                .width(28.dp)
-                .background(tint.copy(0.45f))
-        )
-        Text(title, color = TextPrimary, fontFamily = DisplayFont, fontSize = 17.sp)
+        Spacer(modifier = Modifier.height(36.dp))
+        if (googleEnabled && !googleSignedIn) {
+            TutorialPrimaryButton(
+                label = if (busy) "Einen Moment…" else "Mit Google anmelden",
+                enabled = !busy,
+                onClick = onGoogleSignIn
+            )
+        } else if (googleSignedIn) {
+            Text(
+                "Wird eingerichtet…",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 14.sp
+            )
+        }
     }
 }
 
@@ -953,17 +1050,15 @@ private fun TutorialPrimaryButton(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(54.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .then(
+            .height(52.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(
                 if (enabled) {
-                    Modifier.background(
-                        Brush.horizontalGradient(
-                            listOf(AccentRose, AccentRose.copy(0.9f), FemalePurple.copy(0.82f))
-                        )
-                    )
+                    Brush.horizontalGradient(listOf(MaleBlue, AccentRose))
                 } else {
-                    Modifier.background(AccentRose.copy(alpha = 0.28f))
+                    Brush.horizontalGradient(
+                        listOf(Color.White.copy(0.12f), Color.White.copy(0.08f))
+                    )
                 }
             )
             .clickable(enabled = enabled, onClick = onClick),
@@ -971,9 +1066,63 @@ private fun TutorialPrimaryButton(
     ) {
         Text(
             label,
-            color = TextPrimary,
+            color = Color.White,
             fontFamily = DisplayFont,
             fontSize = 17.sp
         )
     }
+}
+
+private fun buildDemoFaceStrokes(colorIndex: Int, nick: String): List<Stroke> {
+    val nickKey = nick.ifBlank { "Du" }
+    fun circle(cx: Float, cy: Float, r: Float, n: Int = 48): List<StrokePoint> =
+        (0..n).map { i ->
+            val a = (i.toFloat() / n) * (Math.PI * 2).toFloat()
+            StrokePoint(cx + cos(a) * r, cy + sin(a) * r)
+        }
+    fun smile(): List<StrokePoint> =
+        (0..24).map { i ->
+            val t = i / 24f
+            val x = 0.38f + t * 0.24f
+            val y = 0.50f + sin(t * Math.PI.toFloat()) * 0.08f
+            StrokePoint(x, y)
+        }
+    return listOf(
+        Stroke(
+            id = "demo-face",
+            points = circle(0.50f, 0.42f, 0.20f),
+            width = 10f,
+            isLocal = true,
+            nickname = nickKey,
+            colorIndex = colorIndex,
+            colorLocked = true
+        ),
+        Stroke(
+            id = "demo-eye-l",
+            points = listOf(StrokePoint(0.42f, 0.38f)),
+            width = 14f,
+            isLocal = true,
+            nickname = nickKey,
+            colorIndex = colorIndex,
+            colorLocked = true
+        ),
+        Stroke(
+            id = "demo-eye-r",
+            points = listOf(StrokePoint(0.58f, 0.38f)),
+            width = 14f,
+            isLocal = true,
+            nickname = nickKey,
+            colorIndex = colorIndex,
+            colorLocked = true
+        ),
+        Stroke(
+            id = "demo-smile",
+            points = smile(),
+            width = 10f,
+            isLocal = true,
+            nickname = nickKey,
+            colorIndex = colorIndex,
+            colorLocked = true
+        )
+    )
 }

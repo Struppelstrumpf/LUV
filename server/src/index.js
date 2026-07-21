@@ -1030,6 +1030,10 @@ function ensureInventory(user) {
   }
   if (!inv.themes.includes("meadow")) inv.themes.push("meadow");
   if (!inv.pets.includes(DEFAULT_PET)) inv.pets.push(DEFAULT_PET);
+  // Tutorial-Starter-Sticker (nicht equipped) — einmalig mindestens 1
+  if (!inv.stickers["🐕"] || Number(inv.stickers["🐕"]) < 1) {
+    inv.stickers["🐕"] = Math.max(1, Number(inv.stickers["🐕"]) || 0);
+  }
   // WICHTIG: Keine Shop-Items aus profileCanvas „schenken“ — sonst Inventar-Bypass per PUT /profile
   if (!inv.equippedPet || !inv.pets.includes(inv.equippedPet)) {
     inv.equippedPet = DEFAULT_PET;
