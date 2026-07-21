@@ -190,7 +190,7 @@ async function verifyIntegrityToken(integrityToken, expectedNonce) {
         return {
           ok: false,
           error: "app_untrusted",
-          message: "Bitte LUV aus dem Google Play Store installieren (keine Mod-APK).",
+          message: "Bitte LUV aus dem Google Play Store installieren.",
           verdicts: device,
           appLic,
         };

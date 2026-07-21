@@ -80,6 +80,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -128,6 +131,8 @@ import kotlin.math.sin
 import kotlin.random.Random
 import android.os.SystemClock
 
+private const val TUTORIAL_DOG_EMOJI = "🐕"
+
 @Composable
 fun ProfileCanvasScreen(
     nickname: String,
@@ -137,6 +142,9 @@ fun ProfileCanvasScreen(
     initialOpenChest: Boolean = false,
     initialChestTab: Int = 0,
     onInitialChestConsumed: () -> Unit = {},
+    /** Tutorial: echte Profilgestaltung mit Coachmark + Fertig nach Hund-Sticker */
+    tutorialMode: Boolean = false,
+    onTutorialFinished: ((profileJson: String) -> Unit)? = null,
     onClose: () -> Unit,
     onEditNickname: (() -> Unit)? = null,
     onReport: (() -> Unit)? = null,
@@ -199,6 +207,14 @@ fun ProfileCanvasScreen(
         mutableStateOf(false)
     }
     var emojiBar by remember { mutableStateOf<List<String>>(emptyList()) }
+    var rootW by remember { mutableFloatStateOf(1f) }
+    var rootH by remember { mutableFloatStateOf(1f) }
+    var rootOrigin by remember { mutableStateOf(Offset.Zero) }
+    var coachChest by remember { mutableStateOf(Triple(0.88f, 0.16f, 0.07f)) }
+
+    val hasTutorialDog = state.layout.any {
+        it.type == ProfileElType.Sticker && it.emoji == TUTORIAL_DOG_EMOJI
+    }
 
     LaunchedEffect(initialOpenChest) {
         if (initialOpenChest && editable) {
@@ -208,10 +224,41 @@ fun ProfileCanvasScreen(
         }
     }
 
-    LaunchedEffect(userId, editable, nickname) {
+    LaunchedEffect(userId, editable, nickname, tutorialMode) {
         profileReady = false
         val started = SystemClock.elapsedRealtime()
         if (editable) {
+            if (tutorialMode) {
+                loadedNick = nickname
+                state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname))
+                    .normalized(nickname)
+                withContext(Dispatchers.IO) {
+                    prefs.grantStarterSticker(TUTORIAL_DOG_EMOJI, 1)
+                    runCatching {
+                        val remote = LuvApiClient.fetchInventory()
+                        prefs.applyInventorySnap(
+                            emojis = remote.emojis,
+                            themes = remote.themes,
+                            stickers = remote.stickers,
+                            pets = remote.pets,
+                            equippedPet = remote.equippedPet
+                        )
+                    }
+                    // Nach Server-Sync erneut — Hund muss im Tutorial inventarisiert sein
+                    prefs.grantStarterSticker(TUTORIAL_DOG_EMOJI, 1)
+                }
+                ownedStickers = withContext(Dispatchers.IO) { prefs.ownedStickers() }
+                ownedThemes = withContext(Dispatchers.IO) { prefs.ownedThemes() }
+                ownedPets = withContext(Dispatchers.IO) { prefs.ownedPets() }
+                emojiBar = withContext(Dispatchers.IO) {
+                    runCatching { prefs.emojiBar() }
+                        .getOrDefault(com.luv.couple.shop.ShopCatalog.DEFAULT_BAR)
+                }
+                displayCoins = AccountSession.account.value?.coins ?: myCoins
+                savedSnapshot = state.snapshotKey()
+                profileReady = true
+                return@LaunchedEffect
+            }
             val local = withContext(Dispatchers.IO) {
                 ProfileCatalog.decode(prefs.profileCanvasJson(), nickname)
             }
@@ -562,6 +609,12 @@ fun ProfileCanvasScreen(
                         }
                         ownedStickers = remote.stickers
                     }
+                    if (tutorialMode) {
+                        withContext(Dispatchers.IO) {
+                            prefs.grantStarterSticker(TUTORIAL_DOG_EMOJI, 1)
+                        }
+                        ownedStickers = withContext(Dispatchers.IO) { prefs.ownedStickers() }
+                    }
                     placeSticker(id, afterInventoryRefresh = true, fromChest = fromChest)
                 }
                 return
@@ -629,6 +682,18 @@ fun ProfileCanvasScreen(
     }
 
     fun tryClose() {
+        if (tutorialMode) {
+            if (!hasTutorialDog) {
+                Toast.makeText(
+                    context,
+                    "Öffne das Inventar und platziere den Hund",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return
+            }
+            // Fertig über Speichern-Button
+            return
+        }
         if (editable && state.snapshotKey() != savedSnapshot) {
             confirmDiscard = true
         } else if (!reopenChestFromPlace()) {
@@ -647,8 +712,15 @@ fun ProfileCanvasScreen(
                     }
                 )
             }
+            val json = ProfileCatalog.encode(clean)
             withContext(Dispatchers.IO) {
-                prefs.setProfileCanvasJson(ProfileCatalog.encode(clean))
+                prefs.setProfileCanvasJson(json)
+            }
+            if (tutorialMode) {
+                saving = false
+                savedSnapshot = clean.snapshotKey()
+                if (closeAfter) onTutorialFinished?.invoke(json)
+                return@launch
             }
             val saveResult = runCatching { LuvApiClient.saveMyProfileCanvas(clean) }
                 .getOrElse { false to null }
@@ -684,7 +756,8 @@ fun ProfileCanvasScreen(
     fun save() = persistProfile(closeAfter = true, silent = false)
 
     // Z-Reihenfolge / Größe still mit Google-Konto synchronisieren
-    LaunchedEffect(editable, state.snapshotKey()) {
+    LaunchedEffect(editable, state.snapshotKey(), tutorialMode) {
+        if (tutorialMode) return@LaunchedEffect
         if (!editable || savedSnapshot.isEmpty()) return@LaunchedEffect
         if (state.snapshotKey() == savedSnapshot) return@LaunchedEffect
         delay(1600)
@@ -700,20 +773,27 @@ fun ProfileCanvasScreen(
             .background(BgDeep)
             .statusBarsPadding()
             .navigationBarsPadding()
+            .onGloballyPositioned {
+                rootW = it.size.width.toFloat().coerceAtLeast(1f)
+                rootH = it.size.height.toFloat().coerceAtLeast(1f)
+                rootOrigin = it.positionInRoot()
+            }
     ) {
         if (!profileReady) {
             ProfileBrushHeartLoader(modifier = Modifier.fillMaxSize())
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(16.dp)
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(0.12f))
-                    .clickable(onClick = onClose),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("✕", color = TextMuted, fontSize = 16.sp)
+            if (!tutorialMode) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(16.dp)
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(0.12f))
+                        .clickable(onClick = onClose),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("✕", color = TextMuted, fontSize = 16.sp)
+                }
             }
             return@Box
         }
@@ -735,7 +815,22 @@ fun ProfileCanvasScreen(
                         fontFamily = DisplayFont,
                         fontSize = 24.sp
                     )
-                    if (editable && onEditNickname != null) {
+                    if (tutorialMode) {
+                        Text(
+                            when {
+                                !hasTutorialDog && !showChest ->
+                                    "Öffne dein Inventar oben rechts"
+                                !hasTutorialDog && showChest ->
+                                    "Tippe im Sticker-Tab auf den Hund"
+                                else ->
+                                    "Größe anpassen — dann Fertig"
+                            },
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    } else if (editable && onEditNickname != null) {
                         Text(
                             "Name ändern",
                             color = AccentRose,
@@ -758,15 +853,17 @@ fun ProfileCanvasScreen(
                             .clickable(onClick = onReport)
                     )
                 }
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(0.1f))
-                        .clickable(onClick = { tryClose() }),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("✕", color = TextMuted, fontSize = 16.sp)
+                if (!tutorialMode) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(0.1f))
+                            .clickable(onClick = { tryClose() }),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("✕", color = TextMuted, fontSize = 16.sp)
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -787,6 +884,16 @@ fun ProfileCanvasScreen(
                     onOpenChest = {
                         if (!editable) chestTab = 3 // Extras
                         showChest = true
+                    },
+                    onChestPositioned = { coords ->
+                        val p = coords.positionInRoot()
+                        val cx = (p.x + coords.size.width / 2f - rootOrigin.x) / rootW
+                        val cy = (p.y + coords.size.height / 2f - rootOrigin.y) / rootH
+                        val rr = (
+                            maxOf(coords.size.width, coords.size.height) / 2f /
+                                minOf(rootW, rootH) + 0.02f
+                            ).coerceIn(0.05f, 0.2f)
+                        coachChest = Triple(cx, cy, rr)
                     },
                     onEdit = { if (editable) editElId = it },
                     onTipGlass = if (!editable && !userId.isNullOrBlank() && canTipGlass && !tipBusy) {
@@ -893,27 +1000,38 @@ fun ProfileCanvasScreen(
                         .background(
                             Brush.horizontalGradient(listOf(AccentRose, FemalePurple.copy(0.85f)))
                         )
-                        .clickable(enabled = !saving, onClick = { save() }),
+                        .clickable(
+                            enabled = !saving && (!tutorialMode || hasTutorialDog),
+                            onClick = { save() }
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        if (saving) "…" else "Profil speichern & veröffentlichen",
-                        color = Color.White,
+                        when {
+                            saving -> "…"
+                            tutorialMode -> "Fertig"
+                            else -> "Profil speichern & veröffentlichen"
+                        },
+                        color = Color.White.copy(
+                            alpha = if (!tutorialMode || hasTutorialDog) 1f else 0.45f
+                        ),
                         fontFamily = DisplayFont,
                         fontSize = 16.sp
                     )
                 }
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    "Profil ansehen",
-                    color = AccentRose,
-                    fontFamily = DisplayFont,
-                    fontSize = 15.sp,
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .clickable { showPreview = true }
-                        .padding(8.dp)
-                )
+                if (!tutorialMode) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        "Profil ansehen",
+                        color = AccentRose,
+                        fontFamily = DisplayFont,
+                        fontSize = 15.sp,
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .clickable { showPreview = true }
+                            .padding(8.dp)
+                    )
+                }
                 Spacer(modifier = Modifier.height(12.dp))
             } else {
                 if (state.bio.isNotBlank()) {
@@ -1444,6 +1562,18 @@ fun ProfileCanvasScreen(
             }
         }
 
+        if (tutorialMode && !hasTutorialDog && !showChest && profileReady) {
+            CoachmarkOverlay(
+                holeCenterXFrac = coachChest.first,
+                holeCenterYFrac = coachChest.second,
+                holeRadiusFrac = coachChest.third,
+                label = "Inventar öffnen",
+                labelAbove = false,
+                showScrim = false,
+                onDismiss = { showChest = true }
+            )
+        }
+
         if (showChest) {
             ProfileChestDialog(
                 ownedStickers = if (editable) ownedStickers else emptyMap(),
@@ -1923,6 +2053,7 @@ private fun ProfileCanvasBoard(
     onSelect: (String?) -> Unit,
     onLayoutChange: (List<ProfileLayoutEl>) -> Unit,
     onOpenChest: () -> Unit,
+    onChestPositioned: (LayoutCoordinates) -> Unit = {},
     onEdit: (String) -> Unit,
     onTipGlass: (() -> Unit)? = null,
     onPetKraul: (() -> Unit)? = null,
@@ -2016,6 +2147,7 @@ private fun ProfileCanvasBoard(
                     .padding(10.dp)
                     .size(44.dp)
                     .zIndex(200f)
+                    .onGloballyPositioned(onChestPositioned)
                     .shadow(8.dp, RoundedCornerShape(14.dp))
                     .clip(RoundedCornerShape(14.dp))
                     .background(

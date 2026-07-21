@@ -48,6 +48,8 @@ fun CoachmarkOverlay(
     holeRadiusFrac: Float,
     label: String,
     labelAbove: Boolean = true,
+    /** false = nur Ring/Label, ohne graues Dimmen der Fläche darunter */
+    showScrim: Boolean = true,
     onDismiss: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -97,15 +99,21 @@ fun CoachmarkOverlay(
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                .then(
+                    if (showScrim) {
+                        Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    } else Modifier
+                )
         ) {
-            drawRect(Color(0xE60B0E14))
-            drawCircle(
-                color = Color.Transparent,
-                radius = r,
-                center = Offset(cx, cy),
-                blendMode = BlendMode.Clear
-            )
+            if (showScrim) {
+                drawRect(Color(0xE60B0E14))
+                drawCircle(
+                    color = Color.Transparent,
+                    radius = r,
+                    center = Offset(cx, cy),
+                    blendMode = BlendMode.Clear
+                )
+            }
             drawCircle(
                 color = Color(0x66FFFFFF),
                 radius = r,

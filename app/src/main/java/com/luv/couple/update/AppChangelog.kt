@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.44",
+            listOf(
+                "Tutorial-Profil 1:1 wie Profil gestalten inkl. echtem Inventar; keine grauen Coachmark-Flächen über der Zeichnung",
+            )
+        ),
+        Entry(
             "2.2.43",
             listOf(
                 "Markt: Coinshop und Lootbox nebeneinander; Lootbox-Bestand nach Kauf sofort sichtbar",

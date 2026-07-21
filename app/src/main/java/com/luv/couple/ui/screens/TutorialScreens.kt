@@ -80,15 +80,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import kotlin.math.hypot
-import com.luv.couple.LuvApp
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Stroke
 import com.luv.couple.data.StrokePoint
 import com.luv.couple.lock.CanvasStore
 import com.luv.couple.lock.DrawingView
 import com.luv.couple.profile.ProfileCatalog
-import com.luv.couple.profile.ProfileElType
-import com.luv.couple.profile.ProfileLayoutEl
 import com.luv.couple.profile.ProfileState
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
@@ -102,7 +99,6 @@ import com.luv.couple.ui.theme.TextPrimary
 import java.util.UUID
 import kotlin.math.cos
 import kotlin.math.min
-import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -164,19 +160,6 @@ fun TutorialFlow(
     val tutorialStrokes = remember { mutableStateListOf<Stroke>() }
     var drawReady by remember { mutableStateOf(false) }
     var dogPlaced by remember { mutableStateOf(false) }
-    var dogEl by remember {
-        mutableStateOf(
-            ProfileLayoutEl(
-                id = "stk-tutorial-dog",
-                type = ProfileElType.Sticker,
-                x = 55f,
-                y = 52f,
-                scale = 1.15f,
-                z = 30,
-                emoji = TUTORIAL_DOG
-            )
-        )
-    }
     var profileJson by remember { mutableStateOf("") }
     var fadeCover by remember { mutableFloatStateOf(0f) }
     val finishLock = remember { booleanArrayOf(false) }
@@ -187,9 +170,9 @@ fun TutorialFlow(
 
     fun buildProfileJson(nick: String): String {
         if (profileJson.isNotBlank()) return profileJson
-        val layout = ProfileCatalog.defaultLayout(nick).toMutableList()
-        if (dogPlaced) layout.add(dogEl.copy(emoji = TUTORIAL_DOG))
-        return ProfileCatalog.encode(ProfileState(layout = layout).normalized(nick))
+        return ProfileCatalog.encode(
+            ProfileState(layout = ProfileCatalog.defaultLayout(nick)).normalized(nick)
+        )
     }
 
     fun emitFinished(payload: TutorialFinishPayload) {
@@ -253,163 +236,169 @@ fun TutorialFlow(
                 )
         )
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .padding(horizontal = 22.dp, vertical = 12.dp)
-        ) {
-            TutorialProgress(index = index, total = pages.size)
-            Spacer(modifier = Modifier.height(10.dp))
-
-            AnimatedContent(
-                targetState = page,
-                transitionSpec = {
-                    (fadeIn(tween(320)) + slideInVertically { it / 14 }) togetherWith
-                        (fadeOut(tween(220)) + slideOutVertically { -it / 18 })
+        if (page == TutPage.Profile) {
+            ProfileCanvasScreen(
+                nickname = nickname.trim().ifBlank { "Du" },
+                colorIndex = colorIndex,
+                editable = true,
+                tutorialMode = true,
+                onTutorialFinished = { json ->
+                    profileJson = json
+                    dogPlaced = true
+                    index = pages.indexOf(TutPage.Celebrate).coerceAtLeast(index + 1)
                 },
-                label = "tut",
-                modifier = Modifier.weight(1f)
-            ) { p ->
-                when (p) {
-                    TutPage.Nickname -> TutorialNickname(
-                        nickname = nickname,
-                        onNicknameChange = { nickname = it.take(18) },
-                        color = color,
-                        googleEnabled = googleEnabled && !googleSignedIn && !replay,
-                        googleBusy = busy,
-                        onHaveAccount = onGoogleSignIn,
-                        onImeDone = {
-                            if (nickname.trim().length >= 2) showNickConfirm = true
-                        }
-                    )
-                    TutPage.Draw -> TutorialDrawPad(
-                        nickname = nickname.trim().ifBlank { existingNickname.trim() },
-                        colorIndex = colorIndex,
-                        strokes = tutorialStrokes.toList(),
-                        drawReady = drawReady,
-                        replay = replay,
-                        onUserStroke = { points, widthPx, shortSide ->
-                            // Mindestens ein echter Strich (keine Einzelpunkte)
-                            if (points.size < 8) return@TutorialDrawPad
-                            val stored = CanvasStore.toStoredWidth(widthPx, shortSide)
-                            tutorialStrokes.add(
-                                Stroke(
-                                    id = UUID.randomUUID().toString(),
-                                    points = points,
-                                    width = stored,
-                                    isLocal = true,
-                                    nickname = nickname.trim().ifBlank { null },
-                                    colorIndex = colorIndex,
-                                    colorLocked = true
-                                )
-                            )
-                            drawReady = true
-                        },
-                        onUndo = {
-                            if (tutorialStrokes.isNotEmpty()) {
-                                tutorialStrokes.removeAt(tutorialStrokes.lastIndex)
-                            }
-                            drawReady = tutorialStrokes.any { it.points.size >= 8 }
-                        },
-                        onContinueToProfile = {
-                            if (replay) {
-                                index = pages.indexOf(TutPage.Celebrate).coerceAtLeast(0)
-                            } else {
-                                index = pages.indexOf(TutPage.Profile).coerceAtLeast(index + 1)
-                            }
-                        }
-                    )
-                    TutPage.Profile -> TutorialProfileStickerStep(
-                        nickname = nickname.trim().ifBlank { "Du" },
-                        colorIndex = colorIndex,
-                        dogPlaced = dogPlaced,
-                        dogEl = dogEl,
-                        onDogChanged = { el ->
-                            dogEl = el
-                            dogPlaced = true
-                            val nick = nickname.trim().ifBlank { "Du" }
-                            val layout = ProfileCatalog.defaultLayout(nick).toMutableList()
-                            layout.add(el.copy(emoji = TUTORIAL_DOG))
-                            profileJson = ProfileCatalog.encode(
-                                ProfileState(layout = layout).normalized(nick)
-                            )
-                        },
-                        onContinue = {
-                            index = pages.indexOf(TutPage.Celebrate).coerceAtLeast(index + 1)
-                        }
-                    )
-                    TutPage.Celebrate -> TutorialCelebrateStep(
-                        dogPlaced = dogPlaced || replay,
-                        onDone = {
-                            scope.launch {
-                                fadeCover = 0f
-                                val anim = Animatable(0f)
-                                anim.animateTo(1f, tween(900, easing = FastOutSlowInEasing)) {
-                                    fadeCover = value
-                                }
-                                if (replay) {
-                                    emitFinished(
-                                        TutorialFinishPayload(
-                                            nickname = existingNickname.trim().ifBlank { "Luv" },
-                                            strokes = emptyList(),
-                                            profileJson = ""
-                                        )
-                                    )
-                                } else if (googleSignedIn || pages.none { it == TutPage.Google }) {
-                                    fadeCover = 0f
-                                    finishOnboardingNow()
-                                } else {
-                                    index = pages.indexOf(TutPage.Google).coerceAtLeast(index)
-                                    fadeCover = 0f
-                                }
-                            }
-                        }
-                    )
-                    TutPage.Google -> TutorialGoogleStep(
-                        busy = busy,
-                        googleEnabled = googleEnabled,
-                        googleSignedIn = googleSignedIn,
-                        onGoogleSignIn = onGoogleSignIn
-                    )
-                }
+                onClose = { }
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 8.dp, start = 22.dp, end = 22.dp)
+                    .zIndex(5f)
+            ) {
+                TutorialProgress(index = index, total = pages.size)
             }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 22.dp, vertical = 12.dp)
+            ) {
+                TutorialProgress(index = index, total = pages.size)
+                Spacer(modifier = Modifier.height(10.dp))
 
-            if (page != TutPage.Celebrate && page != TutPage.Profile && page != TutPage.Draw) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!error.isNullOrBlank()) {
-                        Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
+                AnimatedContent(
+                    targetState = page,
+                    transitionSpec = {
+                        (fadeIn(tween(320)) + slideInVertically { it / 14 }) togetherWith
+                            (fadeOut(tween(220)) + slideOutVertically { -it / 18 })
+                    },
+                    label = "tut",
+                    modifier = Modifier.weight(1f)
+                ) { p ->
+                    when (p) {
+                        TutPage.Nickname -> TutorialNickname(
+                            nickname = nickname,
+                            onNicknameChange = { nickname = it.take(18) },
+                            color = color,
+                            googleEnabled = googleEnabled && !googleSignedIn && !replay,
+                            googleBusy = busy,
+                            onHaveAccount = onGoogleSignIn,
+                            onImeDone = {
+                                if (nickname.trim().length >= 2) showNickConfirm = true
+                            }
+                        )
+                        TutPage.Draw -> TutorialDrawPad(
+                            nickname = nickname.trim().ifBlank { existingNickname.trim() },
+                            colorIndex = colorIndex,
+                            strokes = tutorialStrokes.toList(),
+                            drawReady = drawReady,
+                            replay = replay,
+                            onUserStroke = { points, widthPx, shortSide ->
+                                // Mindestens ein echter Strich (keine Einzelpunkte)
+                                if (points.size < 8) return@TutorialDrawPad
+                                val stored = CanvasStore.toStoredWidth(widthPx, shortSide)
+                                tutorialStrokes.add(
+                                    Stroke(
+                                        id = UUID.randomUUID().toString(),
+                                        points = points,
+                                        width = stored,
+                                        isLocal = true,
+                                        nickname = nickname.trim().ifBlank { null },
+                                        colorIndex = colorIndex,
+                                        colorLocked = true
+                                    )
+                                )
+                                drawReady = true
+                            },
+                            onUndo = {
+                                if (tutorialStrokes.isNotEmpty()) {
+                                    tutorialStrokes.removeAt(tutorialStrokes.lastIndex)
+                                }
+                                drawReady = tutorialStrokes.any { it.points.size >= 8 }
+                            },
+                            onContinueToProfile = {
+                                if (replay) {
+                                    index = pages.indexOf(TutPage.Celebrate).coerceAtLeast(0)
+                                } else {
+                                    index = pages.indexOf(TutPage.Profile).coerceAtLeast(index + 1)
+                                }
+                            }
+                        )
+                        TutPage.Profile -> Unit
+                        TutPage.Celebrate -> TutorialCelebrateStep(
+                            dogPlaced = dogPlaced || replay,
+                            onDone = {
+                                scope.launch {
+                                    fadeCover = 0f
+                                    val anim = Animatable(0f)
+                                    anim.animateTo(1f, tween(900, easing = FastOutSlowInEasing)) {
+                                        fadeCover = value
+                                    }
+                                    if (replay) {
+                                        emitFinished(
+                                            TutorialFinishPayload(
+                                                nickname = existingNickname.trim().ifBlank { "Luv" },
+                                                strokes = emptyList(),
+                                                profileJson = ""
+                                            )
+                                        )
+                                    } else if (googleSignedIn || pages.none { it == TutPage.Google }) {
+                                        fadeCover = 0f
+                                        finishOnboardingNow()
+                                    } else {
+                                        index = pages.indexOf(TutPage.Google).coerceAtLeast(index)
+                                        fadeCover = 0f
+                                    }
+                                }
+                            }
+                        )
+                        TutPage.Google -> TutorialGoogleStep(
+                            busy = busy,
+                            googleEnabled = googleEnabled,
+                            googleSignedIn = googleSignedIn,
+                            onGoogleSignIn = onGoogleSignIn
+                        )
                     }
-                    when (page) {
-                        TutPage.Nickname -> {
-                            TutorialPrimaryButton(
-                                label = if (busy) "…" else "Weiter",
-                                enabled = !busy && nickname.trim().length >= 2,
-                                onClick = { showNickConfirm = true }
-                            )
+                }
+
+                if (page != TutPage.Celebrate && page != TutPage.Draw) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (!error.isNullOrBlank()) {
+                            Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
                         }
-                        TutPage.Google -> {
-                            if (!googleEnabled) {
+                        when (page) {
+                            TutPage.Nickname -> {
                                 TutorialPrimaryButton(
-                                    label = if (busy) "…" else "Los geht’s",
-                                    enabled = !busy,
-                                    onClick = { finishOnboardingNow() }
+                                    label = if (busy) "…" else "Weiter",
+                                    enabled = !busy && nickname.trim().length >= 2,
+                                    onClick = { showNickConfirm = true }
                                 )
                             }
+                            TutPage.Google -> {
+                                if (!googleEnabled) {
+                                    TutorialPrimaryButton(
+                                        label = if (busy) "…" else "Los geht’s",
+                                        enabled = !busy,
+                                        onClick = { finishOnboardingNow() }
+                                    )
+                                }
+                            }
+                            else -> Unit
                         }
-                        else -> Unit
-                    }
-                    if (replay && onDismiss != null && index == 0) {
-                        Text(
-                            "Abbrechen",
-                            color = TextMuted,
-                            fontFamily = BodyFont,
-                            modifier = Modifier
-                                .align(Alignment.CenterHorizontally)
-                                .clickable(enabled = !busy, onClick = onDismiss)
-                                .padding(6.dp)
-                        )
+                        if (replay && onDismiss != null && index == 0) {
+                            Text(
+                                "Abbrechen",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                modifier = Modifier
+                                    .align(Alignment.CenterHorizontally)
+                                    .clickable(enabled = !busy, onClick = onDismiss)
+                                    .padding(6.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -739,355 +728,9 @@ private fun TutorialDrawPad(
                 holeRadiusFrac = 0.07f,
                 label = "Öffne hier dein Profil",
                 labelAbove = true,
+                showScrim = false,
                 onDismiss = onContinueToProfile
             )
-        }
-    }
-}
-
-@Composable
-private fun TutorialProfileStickerStep(
-    nickname: String,
-    @Suppress("UNUSED_PARAMETER") colorIndex: Int,
-    dogPlaced: Boolean,
-    dogEl: ProfileLayoutEl,
-    onDogChanged: (ProfileLayoutEl) -> Unit,
-    onContinue: () -> Unit
-) {
-    var showChest by remember { mutableStateOf(false) }
-    var selected by remember { mutableStateOf(dogPlaced) }
-    var boardW by remember { mutableFloatStateOf(1f) }
-    var boardH by remember { mutableFloatStateOf(1f) }
-    var coachChest by remember { mutableStateOf(Triple(0.88f, 0.12f, 0.07f)) }
-    var coachStep by remember { mutableIntStateOf(0) }
-    var rootOrigin by remember { mutableStateOf(Offset.Zero) }
-    var rootW by remember { mutableFloatStateOf(1f) }
-    var rootH by remember { mutableFloatStateOf(1f) }
-
-    LaunchedEffect(Unit) {
-        runCatching { LuvApp.instance.prefs.grantStarterSticker(TUTORIAL_DOG, 1) }
-    }
-    LaunchedEffect(dogPlaced) {
-        if (dogPlaced) {
-            selected = true
-            coachStep = 2
-        }
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .onGloballyPositioned {
-                rootW = it.size.width.toFloat().coerceAtLeast(1f)
-                rootH = it.size.height.toFloat().coerceAtLeast(1f)
-                rootOrigin = it.positionInRoot()
-            }
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Text(
-                "Dein Profil",
-                fontFamily = DisplayFont,
-                fontSize = 22.sp,
-                color = TextPrimary
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                when {
-                    !dogPlaced && !showChest -> "Öffne dein Inventar oben rechts"
-                    !dogPlaced && showChest -> "Tippe im Sticker-Tab auf den Hund"
-                    else -> "Größe, Drehen, Spiegeln — dann Fertig"
-                },
-                fontFamily = BodyFont,
-                color = TextMuted,
-                fontSize = 13.sp,
-                maxLines = 2
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color(0xFF1A2433), Color(0xFF2A3340), Color(0xFF3D4A3A))
-                        )
-                    )
-                    .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(22.dp))
-                    .onGloballyPositioned {
-                        boardW = it.size.width.toFloat().coerceAtLeast(1f)
-                        boardH = it.size.height.toFloat().coerceAtLeast(1f)
-                    }
-            ) {
-                Text(
-                    nickname,
-                    color = Color.White.copy(0.85f),
-                    fontFamily = DisplayFont,
-                    fontSize = 16.sp,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 28.dp)
-                )
-
-                if (dogPlaced) {
-                    TutorialDogElement(
-                        el = dogEl,
-                        selected = selected,
-                        boardW = boardW,
-                        boardH = boardH,
-                        onSelect = { selected = true },
-                        onChange = onDogChanged
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(10.dp)
-                        .size(44.dp)
-                        .onGloballyPositioned { coords ->
-                            val p = coords.positionInRoot()
-                            val cx = (p.x + coords.size.width / 2f - rootOrigin.x) / rootW
-                            val cy = (p.y + coords.size.height / 2f - rootOrigin.y) / rootH
-                            val rr = (maxOf(coords.size.width, coords.size.height) / 2f /
-                                minOf(rootW, rootH) + 0.02f).coerceIn(0.05f, 0.2f)
-                            coachChest = Triple(cx, cy, rr)
-                        }
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(
-                            Brush.verticalGradient(listOf(Color(0xFF3E2A22), Color(0xFF2A1C16)))
-                        )
-                        .border(1.dp, Color(0xFFD4A574).copy(0.55f), RoundedCornerShape(14.dp))
-                        .clickable {
-                            showChest = true
-                            coachStep = 1
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("🎒", fontSize = 22.sp)
-                }
-            }
-
-            if (dogPlaced) {
-                Spacer(modifier = Modifier.height(12.dp))
-                TutorialPrimaryButton(label = "Fertig", enabled = true, onClick = onContinue)
-            }
-        }
-
-        if (showChest && !dogPlaced) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0xCC0B0E14))
-                    .clickable { showChest = false }
-            )
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
-                    .background(BgSoft)
-                    .border(
-                        1.dp,
-                        Color.White.copy(0.1f),
-                        RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
-                    )
-                    .padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text("Sticker", fontFamily = DisplayFont, color = TextPrimary, fontSize = 18.sp)
-                Spacer(modifier = Modifier.height(14.dp))
-                Box(
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color.White.copy(0.06f))
-                        .border(2.dp, AccentRose, RoundedCornerShape(16.dp))
-                        .clickable {
-                            onDogChanged(
-                                dogEl.copy(
-                                    x = 55f,
-                                    y = 48f,
-                                    scale = 1.15f,
-                                    rotation = 0f,
-                                    flipX = false,
-                                    emoji = TUTORIAL_DOG
-                                )
-                            )
-                            showChest = false
-                            selected = true
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(TUTORIAL_DOG, fontSize = 36.sp)
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Hund platzieren", color = TextMuted, fontFamily = BodyFont, fontSize = 13.sp)
-            }
-        }
-
-        if (!dogPlaced && !showChest && coachStep == 0) {
-            CoachmarkOverlay(
-                holeCenterXFrac = coachChest.first,
-                holeCenterYFrac = coachChest.second,
-                holeRadiusFrac = coachChest.third,
-                label = "Inventar öffnen",
-                labelAbove = false,
-                onDismiss = {
-                    showChest = true
-                    coachStep = 1
-                }
-            )
-        }
-    }
-}
-
-@Composable
-private fun TutorialDogElement(
-    el: ProfileLayoutEl,
-    selected: Boolean,
-    boardW: Float,
-    boardH: Float,
-    onSelect: () -> Unit,
-    onChange: (ProfileLayoutEl) -> Unit
-) {
-    val density = LocalDensity.current
-    var dragEl by remember(el.id) { mutableStateOf(el) }
-    LaunchedEffect(el) { dragEl = el }
-    val base = ProfileCatalog.baseSizePx(ProfileElType.Sticker, boardW, boardH)
-    val sizePx = base * dragEl.scale.coerceIn(
-        ProfileCatalog.ELEMENT_SCALE_MIN,
-        ProfileCatalog.ELEMENT_SCALE_MAX
-    )
-    val sizeDp = with(density) { sizePx.toDp() }
-    val xPx = dragEl.x / 100f * boardW
-    val yPx = dragEl.y / 100f * boardH
-    val invScale = 1f / dragEl.scale.coerceAtLeast(0.2f)
-
-    Box(
-        modifier = Modifier
-            .offset {
-                IntOffset(
-                    (xPx - sizePx / 2f).roundToInt(),
-                    (yPx - sizePx / 2f).roundToInt()
-                )
-            }
-            .size(sizeDp)
-            .graphicsLayer {
-                rotationZ = dragEl.rotation
-                scaleX = if (dragEl.flipX) -1f else 1f
-                transformOrigin = TransformOrigin(0.5f, 0.5f)
-            }
-            .then(
-                if (selected) {
-                    Modifier.border(
-                        1.5.dp,
-                        Color.White.copy(0.75f),
-                        RoundedCornerShape(8.dp)
-                    )
-                } else Modifier
-            )
-            .pointerInput(el.id) {
-                detectDragGestures(
-                    onDragStart = { onSelect() }
-                ) { change, drag ->
-                    change.consume()
-                    val next = dragEl.copy(
-                        x = ((dragEl.x / 100f * boardW + drag.x) / boardW * 100f).coerceIn(8f, 92f),
-                        y = ((dragEl.y / 100f * boardH + drag.y) / boardH * 100f).coerceIn(12f, 88f)
-                    )
-                    dragEl = next
-                    onChange(next)
-                }
-            }
-            .clickable(onClick = onSelect),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(TUTORIAL_DOG, fontSize = (28f * dragEl.scale).coerceIn(18f, 48f).sp)
-
-        if (selected) {
-            val handleMod = Modifier.graphicsLayer {
-                scaleX = invScale * (if (dragEl.flipX) -1f else 1f)
-                scaleY = invScale
-                transformOrigin = TransformOrigin(0.5f, 0.5f)
-            }
-            val cornerPad = 14.dp
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .offset(x = -cornerPad, y = -cornerPad)
-                    .then(handleMod)
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(Color.White)
-                    .pointerInput(el.id) {
-                        detectDragGestures { change, drag ->
-                            change.consume()
-                            val next = dragEl.copy(
-                                rotation = ProfileCatalog.repairRotation(
-                                    dragEl.rotation + (drag.x + drag.y) * 0.4f
-                                )
-                            )
-                            dragEl = next
-                            onChange(next)
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) { Text("↻", fontSize = 14.sp, color = Color.Black) }
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(x = cornerPad, y = -cornerPad)
-                    .then(handleMod)
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(0.25f))
-                    .border(1.dp, Color.White.copy(0.2f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) { Text("✕", color = Color.White.copy(0.35f), fontSize = 13.sp) }
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .offset(x = -cornerPad, y = cornerPad)
-                    .then(handleMod)
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF7E57C2))
-                    .clickable {
-                        val next = dragEl.copy(flipX = !dragEl.flipX)
-                        dragEl = next
-                        onChange(next)
-                    },
-                contentAlignment = Alignment.Center
-            ) { Text("⇄", color = Color.White, fontSize = 13.sp) }
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .offset(x = cornerPad, y = cornerPad)
-                    .then(handleMod)
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(Color.White)
-                    .pointerInput(el.id) {
-                        detectDragGestures { change, drag ->
-                            change.consume()
-                            val next = dragEl.copy(
-                                scale = (dragEl.scale + drag.x * 0.01f * invScale)
-                                    .coerceIn(
-                                        ProfileCatalog.ELEMENT_SCALE_MIN,
-                                        ProfileCatalog.ELEMENT_SCALE_MAX
-                                    )
-                            )
-                            dragEl = next
-                            onChange(next)
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) { Text("⤡", fontSize = 13.sp, color = Color.Black) }
         }
     }
 }
