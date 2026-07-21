@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.37",
+            listOf(
+                "Einladungs-Link zeigt wieder Beitreten-Popup statt nur Home",
+            )
+        ),
+        Entry(
             "2.2.36",
             listOf(
                 "Einladungs-Link öffnet die App direkt; Beitreten mit Vorschau — Landing ohne Scrollen",

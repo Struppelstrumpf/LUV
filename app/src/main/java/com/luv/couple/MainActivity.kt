@@ -112,15 +112,30 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun captureJoinIntent(intent: Intent?) {
-        val data = intent?.data?.toString()
-        val extra = intent?.getStringExtra(Intent.EXTRA_TEXT)
+        if (intent == null) return
+        val dataUri = intent.data
+        val data = dataUri?.toString()
+        val extra = intent.getStringExtra(Intent.EXTRA_TEXT)
         PendingShopReturn.offer(data)
         if (data?.contains("/shop/", ignoreCase = true) == true ||
             data?.startsWith("luv://shop", ignoreCase = true) == true
         ) {
             return
         }
-        PendingJoin.offer(data ?: extra)
+        // Mehrere Formen: luv://join/CODE, https://…/luv/j/CODE, intent://join/CODE#Intent;…
+        val candidates = buildList {
+            if (!data.isNullOrBlank()) add(data)
+            if (!extra.isNullOrBlank()) add(extra)
+            // path /CODE bei luv://join/CODE
+            dataUri?.pathSegments?.forEach { add(it) }
+            dataUri?.lastPathSegment?.let { add(it) }
+            intent.getStringExtra("code")?.let { add(it) }
+            intent.getStringExtra("join")?.let { add(it) }
+        }
+        for (c in candidates) {
+            if (PendingJoin.peek() != null) break
+            PendingJoin.offer(c)
+        }
     }
 
     private fun maybeRequestNotificationPermission() {

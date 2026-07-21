@@ -28,6 +28,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import android.view.WindowManager
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
@@ -180,6 +181,8 @@ fun LuvAppNav() {
     var joinPreview by remember { mutableStateOf<RoomPreview?>(null) }
     var joinPreviewLoading by remember { mutableStateOf(false) }
     var joinPreviewCode by remember { mutableStateOf<String?>(null) }
+    /** Deep-Link: Beitreten-Popup über allem (ohne NavHost-Race). */
+    var showInviteOverlay by remember { mutableStateOf(false) }
     var accountMessage by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var colorIndex by remember { mutableIntStateOf(0) }
@@ -233,17 +236,27 @@ fun LuvAppNav() {
         }
     }
 
-    fun openJoinPreview(code: String) {
-        joinPreviewCode = code
+    fun openJoinPreview(code: String, asOverlay: Boolean = false) {
+        val clean = LuvApiClient.normalizeCode(code) ?: code.trim().uppercase()
+        if (clean.isBlank()) return
+        joinPreviewCode = clean
         joinPreview = null
         joinPreviewLoading = true
         joinError = null
-        navController.navigate(Routes.JOIN_PREVIEW) {
-            launchSingleTop = true
+        showPublicSplash = false
+        if (asOverlay) {
+            showInviteOverlay = true
+        } else {
+            showInviteOverlay = false
+            runCatching {
+                navController.navigate(Routes.JOIN_PREVIEW) {
+                    launchSingleTop = true
+                }
+            }
         }
         scope.launch {
             try {
-                joinPreview = LuvApiClient.roomPreview(code)
+                joinPreview = LuvApiClient.roomPreview(clean)
             } catch (e: Exception) {
                 joinError = e.message ?: "Lobby nicht gefunden."
                 joinPreview = null
@@ -251,6 +264,14 @@ fun LuvAppNav() {
                 joinPreviewLoading = false
             }
         }
+    }
+
+    fun dismissInviteConfirm() {
+        showInviteOverlay = false
+        joinPreview = null
+        joinPreviewCode = null
+        joinError = null
+        PendingJoin.consume()
     }
 
     /** Erstes Tutorial: Skizze als normale Host-Lobby anlegen (nicht bei Replay). */
@@ -908,6 +929,33 @@ fun LuvAppNav() {
         }
     }
 
+    suspend fun confirmInviteJoin() {
+        val code = joinPreviewCode ?: joinPreview?.code ?: return
+        val linked = AccountSession.account.value?.googleLinked == true
+        val hasSession = !LuvApiClient.sessionToken.isNullOrBlank()
+        val ok = if (linked && hasSession) {
+            joinWithCode(code)
+        } else {
+            trialJoinWithCode(code)
+        }
+        if (!ok) return
+        val lobbyId = prefs.snapshot().lobbies.firstOrNull {
+            it.code.equals(code, ignoreCase = true)
+        }?.id
+        dismissInviteConfirm()
+        tab = 0
+        if (startDestination != Routes.MAIN) startDestination = Routes.MAIN
+        runCatching {
+            navController.navigate(Routes.MAIN) {
+                popUpTo(Routes.MAIN) { inclusive = true }
+            }
+        }
+        // trialJoin öffnet LockDraw selbst; Google-Join hier öffnen
+        if (linked && hasSession && lobbyId != null) {
+            openLobbyCanvas(lobbyId)
+        }
+    }
+
     fun inviteSeat(lobby: Lobby) {
         inviteLobby = lobby
     }
@@ -1038,15 +1086,16 @@ fun LuvAppNav() {
         }
     }
 
-    // Invite-Deep-Link / Install-Referrer → Bestätigung (Leinwand + Beitreten/Ablehnen)
+    // Invite-Deep-Link / Install-Referrer → Overlay (unabhängig vom NavHost)
     LaunchedEffect(pendingJoin, startDestination) {
         val code = PendingJoin.peek() ?: return@LaunchedEffect
-        if (startDestination == null) return@LaunchedEffect
+        // Auch vor startDestination zeigen — sonst landet man nur im Home
         PendingJoin.consume()
-        if (startDestination != Routes.MAIN) startDestination = Routes.MAIN
-        // Kurz warten bis NavHost steht, dann Preview/Confirm
-        delay(80)
-        openJoinPreview(code)
+        showPublicSplash = false
+        if (startDestination == null || startDestination == Routes.TUTORIAL) {
+            startDestination = Routes.MAIN
+        }
+        openJoinPreview(code, asOverlay = true)
     }
 
     // Bei jedem App-Start / Zurück aus dem Hintergrund auf Pflicht-Update prüfen
@@ -1969,38 +2018,10 @@ fun LuvAppNav() {
                 error = joinError,
                 busy = busy,
                 onJoin = {
-                    val code = joinPreviewCode ?: joinPreview?.code ?: return@JoinPreviewScreen
-                    scope.launch {
-                        val linked = AccountSession.account.value?.googleLinked == true
-                        val hasSession = !LuvApiClient.sessionToken.isNullOrBlank()
-                        val ok = if (linked && hasSession) {
-                            joinWithCode(code)
-                        } else {
-                            trialJoinWithCode(code)
-                        }
-                        if (ok) {
-                            val lobbyId = prefs.snapshot().lobbies.firstOrNull {
-                                it.code.equals(code, ignoreCase = true)
-                            }?.id
-                            joinPreview = null
-                            joinPreviewCode = null
-                            joinError = null
-                            tab = 0
-                            navController.navigate(Routes.MAIN) {
-                                popUpTo(Routes.MAIN) { inclusive = true }
-                            }
-                            // trialJoin öffnet LockDraw selbst; Google-Join hier öffnen
-                            if (linked && hasSession && lobbyId != null) {
-                                openLobbyCanvas(lobbyId)
-                            }
-                        }
-                    }
+                    scope.launch { confirmInviteJoin() }
                 },
                 onDecline = {
-                    joinPreview = null
-                    joinPreviewCode = null
-                    joinError = null
-                    PendingJoin.consume()
+                    dismissInviteConfirm()
                     if (!navController.popBackStack()) {
                         navController.navigate(Routes.MAIN) {
                             popUpTo(Routes.MAIN) { inclusive = true }
@@ -2095,8 +2116,22 @@ fun LuvAppNav() {
     }
     } // destination != null
 
-    if (showPublicSplash) {
+    if (showPublicSplash && !showInviteOverlay) {
         PublicCanvasSplash(onFinished = { showPublicSplash = false })
+    }
+
+    // Deep-Link-Einladung: immer oben — unabhängig von NavHost/Splash
+    if (showInviteOverlay && !joinPreviewCode.isNullOrBlank()) {
+        Box(modifier = Modifier.fillMaxSize().zIndex(80f)) {
+            JoinPreviewScreen(
+                preview = joinPreview,
+                loading = joinPreviewLoading,
+                error = joinError,
+                busy = busy,
+                onJoin = { scope.launch { confirmInviteJoin() } },
+                onDecline = { dismissInviteConfirm() }
+            )
+        }
     }
 
     // Live-Hinweise / Verwarnungen vom Team (WS + Poll)

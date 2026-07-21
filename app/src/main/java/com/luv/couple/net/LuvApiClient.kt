@@ -294,6 +294,10 @@ object LuvApiClient {
         RegexOption.IGNORE_CASE
     )
     private val luvSchemeRegex = Regex("""luv://join/([A-Z0-9]{4,12})""", RegexOption.IGNORE_CASE)
+    private val intentJoinRegex = Regex(
+        """intent://join/([A-Z0-9]{4,12})""",
+        RegexOption.IGNORE_CASE
+    )
     private val bareCodeRegex = Regex("""\b([A-Z0-9]{6})\b""", RegexOption.IGNORE_CASE)
 
     private val http = OkHttpClient.Builder()
@@ -3488,6 +3492,25 @@ object LuvApiClient {
         if (text.isEmpty()) return null
         joinUrlRegex.find(text)?.groupValues?.getOrNull(1)?.uppercase()?.let { return it }
         luvSchemeRegex.find(text)?.groupValues?.getOrNull(1)?.uppercase()?.let { return it }
+        intentJoinRegex.find(text)?.groupValues?.getOrNull(1)?.uppercase()?.let { return it }
+        // android.net.Uri: luv://join/CODE → host=join, path=/CODE
+        runCatching {
+            val uri = android.net.Uri.parse(text)
+            val host = uri.host?.lowercase().orEmpty()
+            val scheme = uri.scheme?.lowercase().orEmpty()
+            if ((scheme == "luv" || scheme == "http" || scheme == "https") &&
+                (host == "join" || text.contains("/j/", ignoreCase = true))
+            ) {
+                val seg = uri.pathSegments
+                    ?.firstOrNull { it.length in 4..12 && it.all(Char::isLetterOrDigit) }
+                    ?.uppercase()
+                if (!seg.isNullOrBlank()) return seg
+                val last = uri.lastPathSegment
+                    ?.takeIf { it.length in 4..12 && it.all(Char::isLetterOrDigit) }
+                    ?.uppercase()
+                if (!last.isNullOrBlank()) return last
+            }
+        }
         inviteRegex.find(text)?.groupValues?.getOrNull(1)?.uppercase()?.let { extracted ->
             if (extracted.all { it.isLetterOrDigit() }) return extracted
         }
