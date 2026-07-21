@@ -14366,10 +14366,14 @@ function publicRoomSpace(room, db, viewerId) {
     const u = db.users?.[uid];
     const pos = space.positions[uid] || layout?.spawn || { x: 0.5, y: 0.85 };
     const react = space.reactions[uid];
+    const petRaw = String(u?.inventory?.equippedPet || "🐣").trim();
+    const petEmoji = petRaw.startsWith("img_")
+      ? petRaw.slice(0, 32)
+      : petRaw.slice(0, 16) || "🐣";
     return {
       userId: uid,
       nickname: u ? String(u.nickname || "").trim().slice(0, 18) || "Jemand" : "Jemand",
-      petEmoji: u?.inventory?.equippedPet || "🐣",
+      petEmoji,
       x: Number(pos.x) || 0.5,
       y: Number(pos.y) || 0.85,
       seatedSeatId: space.seated[uid] || null,

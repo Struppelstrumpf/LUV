@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.72",
+            listOf(
+                "Neuer Raum: Begleiter-Bild im Avatar, Reaktionsleiste wie in der Mal-Lobby",
+            )
+        ),
+        Entry(
             "2.2.71",
             listOf(
                 "Neuer Raum: eigene Räume aus dem Admin, laufen & sitzen ohne Malen",

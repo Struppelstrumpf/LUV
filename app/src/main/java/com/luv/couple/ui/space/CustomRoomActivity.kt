@@ -20,8 +20,11 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -46,13 +49,18 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.luv.couple.LuvApp
 import com.luv.couple.lock.CanvasMemoryKeeper
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
+import com.luv.couple.shop.ShopCatalog
+import com.luv.couple.ui.ItemGlyph
+import com.luv.couple.ui.clipItemId
+import com.luv.couple.ui.isImagePetId
 import com.luv.couple.ui.theme.LuvTheme
-import com.luv.couple.ui.theme.TextMuted
 import kotlin.math.hypot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -141,11 +149,20 @@ fun CustomRoomScreen(
     var walking by remember { mutableStateOf(false) }
     var myReaction by remember { mutableStateOf<String?>(null) }
     var lastBellMoveAt by remember { mutableLongStateOf(0L) }
+    var reactionExpanded by remember { mutableStateOf(false) }
+    var emojiBar by remember { mutableStateOf(ShopCatalog.DEFAULT_BAR) }
 
     val zones = layout?.zones.orEmpty()
     val avatarR = layout?.avatarR?.takeIf { it > 0f } ?: DEFAULT_AVATAR_R
     val viewRect = layout?.viewRect ?: LuvApiClient.RoomViewRect()
     val sitZones = remember(zones) { zones.filter { it.isGuestSeat } }
+
+    LaunchedEffect(Unit) {
+        emojiBar = withContext(Dispatchers.IO) {
+            runCatching { LuvApp.instance.prefs.emojiBar() }
+                .getOrDefault(ShopCatalog.DEFAULT_BAR)
+        }
+    }
 
     fun imageToViewX(ix: Float): Float = ((ix - viewRect.x) / viewRect.w).coerceIn(0f, 1f)
     fun imageToViewY(iy: Float): Float = ((iy - viewRect.y) / viewRect.h).coerceIn(0f, 1f)
@@ -270,6 +287,7 @@ fun CustomRoomScreen(
             val ay = if (p.userId == myId || p.isMe) myY else p.y
             val vx = imageToViewX(ax)
             val vy = imageToViewY(ay)
+            val petId = clipItemId(p.petEmoji).ifBlank { "🐣" }
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -279,8 +297,11 @@ fun CustomRoomScreen(
                     )
                     .size(avatarDp)
                     .clip(CircleShape)
-                    .background(Color(0xFF4A3728))
-                    .border(2.dp, Color.White.copy(0.45f), CircleShape),
+                    .background(
+                        if (isImagePetId(petId)) Color.White.copy(0.92f)
+                        else Color(0xFF4A3728)
+                    )
+                    .border(2.dp, Color.White.copy(0.7f), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 val showReact = when {
@@ -288,13 +309,19 @@ fun CustomRoomScreen(
                     p.reaction != null && p.reactionUntil > System.currentTimeMillis() -> p.reaction
                     else -> null
                 }
-                Text(showReact ?: p.petEmoji, fontSize = (avatarDp.value * 0.5f).sp)
+                val glyphSize = (avatarDp.value * 0.68f).sp
+                if (showReact != null) {
+                    ItemGlyph(id = clipItemId(showReact), fontSize = glyphSize)
+                } else {
+                    ItemGlyph(id = petId, fontSize = glyphSize)
+                }
             }
         }
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .padding(bottom = 64.dp)
                 .pointerInput(zones, avatarR, sitZones, seated, code) {
                     detectTapGestures { offset ->
                         val viewX = (offset.x / size.width).coerceIn(0.01f, 0.99f)
@@ -373,40 +400,94 @@ fun CustomRoomScreen(
                 },
         )
 
-        Row(
+        // Reaktionsleiste wie Mal-Lobby: 🙂 oben rechts, klappt nach unten
+        Column(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 12.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(Color.White.copy(0.75f))
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                .align(Alignment.TopEnd)
+                .padding(top = 8.dp, end = 10.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xCC1E2430))
+                .padding(6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            listOf("❤️", "😍", "🎉", "👏").forEach { emo ->
-                Text(
-                    emo,
-                    fontSize = 28.sp,
-                    modifier = Modifier.clickable {
-                        scope.launch {
-                            runCatching { LuvApiClient.spaceReact(code, emo) }
-                                .onSuccess { space = it }
-                            myReaction = emo
-                            delay(2000)
-                            if (myReaction == emo) myReaction = null
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { reactionExpanded = !reactionExpanded },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("🙂", fontSize = 22.sp)
+            }
+            if (reactionExpanded) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    emojiBar.forEach { emo ->
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp, 40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color.White.copy(0.08f))
+                                .clickable {
+                                    scope.launch {
+                                        reactionExpanded = false
+                                        runCatching { LuvApiClient.spaceReact(code, emo) }
+                                            .onSuccess { space = it }
+                                        myReaction = emo
+                                        delay(2000)
+                                        if (myReaction == emo) myReaction = null
+                                    }
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            ItemGlyph(id = emo, fontSize = 22.sp)
                         }
-                    },
-                )
+                    }
+                }
             }
         }
 
-        Text(
-            "✕",
-            color = TextMuted,
-            fontSize = 18.sp,
+        // Untere Leiste wie Mal-Lobby: links Zurück
+        Box(
             modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(16.dp)
-                .clickable(onClick = onClose),
-        )
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color(0xE61E2430))
+                .padding(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "←",
+                    color = Color.White,
+                    fontSize = 22.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.White.copy(0.10f))
+                        .clickable(onClick = onClose)
+                        .padding(vertical = 6.dp),
+                )
+                // Dock-Slots wie Mal-Lobby (hier ohne Mal-Aktionen)
+                repeat(3) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 4.dp)
+                            .height(40.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.White.copy(0.06f)),
+                    )
+                }
+            }
+        }
     }
 }
