@@ -92,6 +92,7 @@ import com.luv.couple.net.LiveNoticeBus
 import com.luv.couple.net.StaffWarningBus
 import com.luv.couple.ui.screens.CreateLobbyScreen
 import com.luv.couple.ui.screens.ForcedUpdateDialog
+import com.luv.couple.ui.screens.ForcedMaintenanceDialog
 import com.luv.couple.ui.screens.HelpScreen
 import com.luv.couple.ui.screens.HostShareScreen
 import com.luv.couple.ui.screens.InviteLobbyDialog
@@ -1428,6 +1429,42 @@ fun LuvAppNav() {
         state = updateState,
         onUpdate = { startAppUpdate() }
     )
+
+    var maintenanceStatus by remember {
+        mutableStateOf<LuvApiClient.MaintenanceStatus?>(null)
+    }
+    var maintenanceHold by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            val st = runCatching { LuvApiClient.fetchMaintenanceStatus() }.getOrNull()
+            if (st != null) {
+                if (st.active) {
+                    maintenanceHold = true
+                    maintenanceStatus = st
+                } else if (maintenanceHold) {
+                    // Bis Dialog dismiss (Claim/Weiter/Failsafe) — Status weiter aktualisieren
+                    maintenanceStatus = st
+                } else {
+                    maintenanceStatus = null
+                }
+            }
+            delay(if (maintenanceStatus?.active == true) 4_000 else 12_000)
+        }
+    }
+    maintenanceStatus?.let { st ->
+        if (st.active || maintenanceHold) {
+            ForcedMaintenanceDialog(
+                status = st,
+                onDismiss = {
+                    maintenanceHold = false
+                    maintenanceStatus = null
+                },
+                onClaimed = {
+                    scope.launch { runCatching { refreshAccount() } }
+                }
+            )
+        }
+    }
 
     LaunchedEffect(startDestination, pendingShopReturn) {
         if (startDestination != Routes.MAIN) return@LaunchedEffect

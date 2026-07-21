@@ -12,6 +12,81 @@ const LOG_PER_ITEM = 60;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
 const MONTH_MS = 30 * DAY_MS; // Planungsmonat ≈ 30 Tage
+/** Shop-Wechsel immer um 03:00 Europe/Berlin. */
+const SHOP_ROLLOVER_HOUR = 3;
+
+function berlinParts(date) {
+  return seasonEvents.berlinParts(date);
+}
+function berlinLocalMs(y, m, d, hour, minute) {
+  return seasonEvents.berlinLocalMs(y, m, d, hour, minute);
+}
+function berlinDayStartMs(y, m, d) {
+  return seasonEvents.berlinDayStartMs(y, m, d);
+}
+
+/** Berlin-Kalendertag ± Tage (über Mittag, DST-sicher). */
+function berlinYmdShift(y, m, d, addDays) {
+  const noon = berlinDayStartMs(y, m, d) + 12 * 3600000;
+  return berlinParts(new Date(noon + addDays * DAY_MS));
+}
+
+/** 03:00 Berlin am gegebenen Kalendertag. */
+function berlinShopInstant(y, m, d) {
+  return berlinLocalMs(y, m, d, SHOP_ROLLOVER_HOUR, 0);
+}
+
+/** Aktueller Shop-Tagesbeginn (letzter 03:00 Berlin ≤ now). */
+function berlinShopDayStartMs(nowMs = Date.now()) {
+  const p = berlinParts(new Date(nowMs));
+  const today3 = berlinShopInstant(p.year, p.month, p.day);
+  if (nowMs >= today3) return today3;
+  const prev = berlinYmdShift(p.year, p.month, p.day, -1);
+  return berlinShopInstant(prev.year, prev.month, prev.day);
+}
+
+/** Nächster Shop-Tagesbeginn (nächster 03:00 Berlin ≥ now, exakt now → gleicher Moment). */
+function snapForwardBerlinShop(ms) {
+  const p = berlinParts(new Date(ms));
+  const same = berlinShopInstant(p.year, p.month, p.day);
+  if (ms <= same) return same;
+  const next = berlinYmdShift(p.year, p.month, p.day, 1);
+  return berlinShopInstant(next.year, next.month, next.day);
+}
+
+/** Letzter Shop-Tagesbeginn ≤ ms. */
+function snapBackBerlinShop(ms) {
+  const p = berlinParts(new Date(ms));
+  const same = berlinShopInstant(p.year, p.month, p.day);
+  if (ms >= same) return same;
+  const prev = berlinYmdShift(p.year, p.month, p.day, -1);
+  return berlinShopInstant(prev.year, prev.month, prev.day);
+}
+
+/** Fenster auf volle Shop-Tage (03:00→03:00) snappen. */
+function snapWindowToBerlinShop(fromMs, untilMs) {
+  let from = snapBackBerlinShop(Number(fromMs) || Date.now());
+  let until = snapForwardBerlinShop(Number(untilMs) || from + DAY_MS);
+  if (until <= from) {
+    const p = berlinParts(new Date(from));
+    const next = berlinYmdShift(p.year, p.month, p.day, 1);
+    until = berlinShopInstant(next.year, next.month, next.day);
+  }
+  return { from, until };
+}
+
+/** Shop-Tag für Kalenderzelle YYYY-MM-DD (Berlin) → [03:00, nächster 03:00). */
+function berlinShopDayBounds(dateStr) {
+  const m = String(dateStr || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const from = berlinShopInstant(y, mo, d);
+  const next = berlinYmdShift(y, mo, d, 1);
+  const until = berlinShopInstant(next.year, next.month, next.day);
+  return { from, until, y, mo, d };
+}
 
 function ensureAvailabilityLog(db) {
   const cat = shopCatalog.ensureShopCatalog(db);
@@ -373,24 +448,21 @@ function itemWindowAt(plan, itemId, now = Date.now()) {
   const offset = itemPhaseOffset(plan, itemId);
   const anchor = Number(plan.anchorAt) || 0;
   const into = ((now - anchor - offset) % period + period) % period;
+  let rawFrom;
+  let rawUntil;
   if (into < onMs) {
-    const from = now - into;
-    return {
-      active: true,
-      from,
-      until: from + onMs,
-      onMs,
-      periodMs: period,
-      onDays: c.onDays,
-      offDays: c.offDays,
-    };
+    rawFrom = now - into;
+    rawUntil = rawFrom + onMs;
+  } else {
+    rawFrom = now + (period - into);
+    rawUntil = rawFrom + onMs;
   }
-  const from = now + (period - into);
+  const snapped = snapWindowToBerlinShop(rawFrom, rawUntil);
   return {
-    active: false,
-    from,
-    until: from + onMs,
-    onMs,
+    active: now >= snapped.from && now < snapped.until,
+    from: snapped.from,
+    until: snapped.until,
+    onMs: snapped.until - snapped.from,
     periodMs: period,
     onDays: c.onDays,
     offDays: c.offDays,
@@ -739,7 +811,7 @@ function ensureDefaultExpensiveRotation(db) {
     Object.values(plans).find((p) => p && p.seeded === true) ||
     null;
 
-  const ROTATION_VERSION = 4;
+  const ROTATION_VERSION = 5;
   const desired = {
     id: "expensive_3m_week",
     label: "Alle Items · Zufallsrotation",
@@ -763,7 +835,7 @@ function ensureDefaultExpensiveRotation(db) {
     priceMin: 0,
     priceMax: null,
     itemKeys: [],
-    anchorAt: existing?.anchorAt || Date.UTC(2026, 0, 5, 0, 0, 0),
+    anchorAt: existing?.anchorAt || berlinShopInstant(2026, 1, 5),
   };
 
   if (existing) {
@@ -882,16 +954,21 @@ function monthGrid(db, year, month /* 1-12 */) {
   // Kein Apply hier — sonst überschreibt jeder Admin-Reload manuelle Fenster
   const y = Math.max(2000, Math.min(2100, Math.floor(Number(year) || new Date().getFullYear())));
   const m = Math.max(1, Math.min(12, Math.floor(Number(month) || new Date().getMonth() + 1)));
-  const first = new Date(y, m - 1, 1);
-  const startPad = (first.getDay() + 6) % 7; // Mo=0
-  const daysInMonth = new Date(y, m, 0).getDate();
+  const firstWeekday = berlinParts(
+    new Date(berlinDayStartMs(y, m, 1) + 12 * 3600000)
+  ).weekday; // 0=Sun
+  const startPad = (firstWeekday + 6) % 7; // Mo=0
+  const daysInMonthFixed = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const cat = shopCatalog.ensureShopCatalog(db);
   const all = Object.values(cat.items || {}).filter(Boolean);
   const plansMap = ensureRotationPlans(db);
   const days = [];
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dayStart = new Date(y, m - 1, d).getTime();
-    const dayEnd = dayStart + DAY_MS;
+  for (let d = 1; d <= daysInMonthFixed; d++) {
+    const bounds = berlinShopDayBounds(
+      `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`
+    );
+    const dayStart = bounds.from;
+    const dayEnd = bounds.until;
     const active = all
       .filter((it) => {
         const plan = it.rotationPlanId ? plansMap[it.rotationPlanId] : null;
@@ -909,6 +986,11 @@ function monthGrid(db, year, month /* 1-12 */) {
         rotationPlanId: it.rotationPlanId || null,
         availableFrom: it.availableFrom || null,
         availableUntil: it.availableUntil || null,
+        hasImage: Boolean(it.hasImage),
+        imageUrl:
+          it.hasImage && (it.kind === "pets" || it.kind === "emojis" || it.kind === "stickers")
+            ? `/luv/v1/shop/pet-image/${encodeURIComponent(it.itemId)}`
+            : null,
       }));
     const byKind = { stickers: 0, themes: 0, pets: 0, emojis: 0, other: 0 };
     for (const it of active) {
@@ -916,21 +998,28 @@ function monthGrid(db, year, month /* 1-12 */) {
       else byKind.other += 1;
     }
     days.push({
-      date: dayKey(dayStart),
+      date: `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`,
       day: d,
-      weekday: (new Date(y, m - 1, d).getDay() + 6) % 7,
+      weekday: (berlinParts(new Date(dayStart + 4 * 3600000)).weekday + 6) % 7,
       items: active,
       count: active.length,
       byKind,
+      shopFrom: dayStart,
+      shopUntil: dayEnd,
     });
   }
+  const todayParts = berlinParts(new Date());
+  const today = `${todayParts.year}-${String(todayParts.month).padStart(2, "0")}-${String(
+    todayParts.day
+  ).padStart(2, "0")}`;
   return {
     year: y,
     month: m,
     startPad,
-    daysInMonth,
+    daysInMonth: daysInMonthFixed,
     days,
-    today: dayKey(Date.now()),
+    today,
+    shopRolloverHour: SHOP_ROLLOVER_HOUR,
     plans: listRotationPlansSafe(db).map((p) => ({
       id: p.id,
       label: p.label,
@@ -1046,12 +1135,21 @@ function updateAvailability(db, kind, itemId, patch, { byUserId = null } = {}) {
   if (patch.availableUntil !== undefined) {
     item.availableUntil = parseDateInput(patch.availableUntil);
   }
+  if (item.availableFrom != null && item.availableUntil != null) {
+    const snapped = snapWindowToBerlinShop(item.availableFrom, item.availableUntil);
+    item.availableFrom = snapped.from;
+    item.availableUntil = snapped.until;
+  } else if (item.availableFrom != null) {
+    item.availableFrom = snapBackBerlinShop(item.availableFrom);
+  } else if (item.availableUntil != null) {
+    item.availableUntil = snapForwardBerlinShop(item.availableUntil);
+  }
   if (
     item.availableFrom != null &&
     item.availableUntil != null &&
     item.availableUntil < item.availableFrom
   ) {
-    return { ok: false, error: "bad_window", message: "Bis-Datum liegt vor Von-Datum." }; // validated
+    return { ok: false, error: "bad_window", message: "Bis-Datum liegt vor Von-Datum." };
   }
   if (patch.enabled !== undefined) {
     item.enabled = Boolean(patch.enabled);
@@ -1148,4 +1246,7 @@ module.exports = {
   DAY_MS,
   WEEK_MS,
   MONTH_MS,
+  SHOP_ROLLOVER_HOUR,
+  berlinShopDayBounds,
+  snapWindowToBerlinShop,
 };

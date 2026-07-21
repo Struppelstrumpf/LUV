@@ -1425,105 +1425,37 @@
 
     function editorHtml(ev) {
       if (!ev) return `<p class="help">Event wählen.</p>`;
-      const d = ev.decor || {};
-      return `<form id="evEditForm" class="ev-edit-form" data-id="${esc(ev.id)}">
+      const when = ev.next
+        ? `${esc(ev.next.start || "—")}${
+            ev.next.end && ev.next.end !== ev.next.start ? ` – ${esc(ev.next.end)}` : ""
+          }${ev.active ? " · gerade aktiv" : ""}${
+            ev.schedule?.mode === "absolute" ? " · absolut" : ""
+          }`
+        : "—";
+      return `<div id="evEditPanel" data-id="${esc(ev.id)}" class="ev-edit-form">
         <div class="ev-edit-head">
           <span class="ev-edit-emoji">${esc(ev.emoji || "🎉")}</span>
           <div>
             <h4 style="margin:0">${esc(ev.title)}</h4>
             <div class="muted mono" style="font-size:0.8rem">${esc(ev.id)}</div>
           </div>
-          <label class="field" style="flex-direction:row;align-items:center;gap:0.4rem;margin:0">
-            <input type="checkbox" name="enabled" ${ev.enabled !== false ? "checked" : ""} /> Aktiv
-          </label>
+          <span class="badge ${ev.enabled !== false ? "" : "src-off"}">${
+            ev.enabled !== false ? "Aktiv" : "Aus"
+          }</span>
         </div>
-        <label class="field">Titel
-          <input name="title" maxlength="60" value="${esc(ev.title || "")}" />
-        </label>
-        <label class="field">Emoji
-          <input name="emoji" maxlength="8" value="${esc(ev.emoji || "")}" />
-        </label>
-        <label class="field">Beschreibung
-          <textarea name="description" rows="2" maxlength="240">${esc(ev.description || "")}</textarea>
-        </label>
-        <label class="field">Hinweis
-          <input name="hint" maxlength="200" value="${esc(ev.hint || "")}" />
-        </label>
-        <div class="grid-2">
-          <label class="field">Coins / Collect
-            <input name="rewardCoinsPerCollect" type="number" min="0" max="50" value="${esc(ev.rewardCoinsPerCollect ?? 2)}" />
-          </label>
-          <label class="field">Sammel-Ziel
-            <input name="collectTarget" type="number" min="1" max="31" value="${esc(ev.collectTarget ?? 3)}" />
-          </label>
-        </div>
-        <div class="grid-2">
-          <label class="field">Meilenstein-Bonus
-            <input name="milestoneBonusCoins" type="number" min="0" max="50" value="${esc(ev.milestoneBonusCoins ?? 0)}" />
-          </label>
-          <label class="field">Dauer (Tage)
-            <input name="durationDays" type="number" min="1" max="31" value="${esc(ev.durationDays ?? 1)}" />
-          </label>
-        </div>
-        <h4 style="margin:0.85rem 0 0.35rem">App-Schmuck</h4>
-        <div class="grid-2">
-          <label class="field">Partikel
-            <select name="particles">
-              ${DECOR_PRESETS.map(
-                (p) =>
-                  `<option value="${p.id}" ${d.particles === p.id ? "selected" : ""}>${esc(p.label)}</option>`
-              ).join("")}
-            </select>
-          </label>
-          <label class="field">Akzentfarbe
-            <input name="accentHex" type="color" value="${esc((d.accentHex || "#E94E77").slice(0, 7))}" />
-          </label>
-        </div>
-        <label class="field">Banner-Text
-          <input name="bannerText" maxlength="48" value="${esc(d.bannerText || "")}" />
-        </label>
-        <label class="field">Intensität (0–1)
-          <input name="intensity" type="number" min="0" max="1" step="0.05" value="${esc(d.intensity ?? 0.55)}" />
-        </label>
-        <label class="field">Ornamente
-          <select name="ornaments">
-            ${["none", "wreath", "hearts", "spark"]
-              .map(
-                (o) =>
-                  `<option value="${o}" ${(d.ornaments || "none") === o ? "selected" : ""}>${esc(o)}</option>`
-              )
-              .join("")}
-          </select>
-        </label>
-        <div id="evDecorLive">${decorPreviewHtml(d)}</div>
-        <div class="actions" style="margin-top:0.75rem">
-          <button type="button" class="btn teal" id="evOpenWizardBtn">✨ Im Wizard bearbeiten</button>
-          <button type="submit" class="btn">Schnell speichern</button>
+        <p class="help" style="margin:0.75rem 0 0.35rem">
+          Alle Einstellungen (Zeit, Belohnung, Shop-Items, Look) änderst du im Wizard.
+        </p>
+        <p class="muted" style="margin:0 0 0.85rem">Fenster: ${when}</p>
+        <div class="actions" style="margin-top:0.25rem;flex-wrap:wrap;gap:0.45rem">
+          <button type="button" class="btn teal" id="evOpenWizardBtn">In Wizard bearbeiten</button>
           ${
             ev.custom
               ? `<button type="button" class="btn danger" id="evDeleteBtn">Event löschen</button>`
               : `<button type="button" class="btn secondary" id="evDisableBtn">Deaktivieren</button>`
           }
         </div>
-        ${
-          (ev.quests && ev.quests.length) || ev.lobby?.enabled || ev.contest?.enabled
-            ? `<div class="ev-modules help" style="margin-top:0.75rem">
-                ${ev.quests?.length ? `<div>Quests: ${ev.quests.length}</div>` : ""}
-                ${ev.lobby?.enabled ? `<div>Event-Lobby: an (${esc(ev.lobby.access || "friends")})</div>` : ""}
-                ${ev.contest?.enabled ? `<div>Wettbewerb: an</div>` : ""}
-              </div>`
-            : ""
-        }
-        ${
-          ev.next
-            ? `<p class="help" style="margin-top:0.6rem">Fenster: ${esc(ev.next.start || "—")}${
-                ev.next.end && ev.next.end !== ev.next.start ? ` – ${esc(ev.next.end)}` : ""
-              }${ev.active ? " · gerade aktiv" : ""}${
-                ev.schedule?.mode === "absolute" ? " · absolut" : ""
-              }</p>`
-            : ""
-        }
-      </form>`;
+      </div>`;
     }
 
     function paint() {
@@ -2184,8 +2116,8 @@
         };
       });
 
-      const form = $("evEditForm");
-      if (form) {
+      const panel = $("evEditPanel");
+      if (panel) {
         const wizBtn = $("evOpenWizardBtn");
         if (wizBtn) {
           wizBtn.onclick = () => {
@@ -2213,64 +2145,10 @@
             });
           };
         }
-        const syncPreview = () => {
-          const fd = new FormData(form);
-          const live = $("evDecorLive");
-          if (live) {
-            live.innerHTML = decorPreviewHtml({
-              particles: fd.get("particles"),
-              accentHex: fd.get("accentHex"),
-              bannerText: fd.get("bannerText"),
-              intensity: fd.get("intensity"),
-              ornaments: fd.get("ornaments"),
-            });
-          }
-        };
-        form.querySelectorAll("input, select, textarea").forEach((el) => {
-          el.addEventListener("input", syncPreview);
-          el.addEventListener("change", syncPreview);
-        });
-        form.onsubmit = async (e) => {
-          e.preventDefault();
-          const fd = new FormData(form);
-          const id = form.getAttribute("data-id");
-          const patch = {
-            id,
-            title: String(fd.get("title") || ""),
-            emoji: String(fd.get("emoji") || ""),
-            description: String(fd.get("description") || ""),
-            hint: String(fd.get("hint") || ""),
-            enabled: Boolean(fd.get("enabled")),
-            rewardCoinsPerCollect: Number(fd.get("rewardCoinsPerCollect")),
-            collectTarget: Number(fd.get("collectTarget")),
-            milestoneBonusCoins: Number(fd.get("milestoneBonusCoins")),
-            durationDays: Number(fd.get("durationDays")),
-            decor: {
-              particles: String(fd.get("particles") || "none"),
-              accentHex: String(fd.get("accentHex") || "#E94E77"),
-              bannerText: String(fd.get("bannerText") || ""),
-              intensity: Number(fd.get("intensity")),
-              ornaments: String(fd.get("ornaments") || "none"),
-            },
-          };
-          try {
-            const res = await api("/admin/events", {
-              method: "PUT",
-              body: JSON.stringify({ events: [patch] }),
-            });
-            const next = res.events || [];
-            events.length = 0;
-            events.push(...next);
-            alert("Gespeichert");
-            paint();
-          } catch (err) {
-            alert(err?.message || "Speichern fehlgeschlagen");
-          }
-        };
         const delBtn = $("evDeleteBtn");
         if (delBtn) {
           delBtn.onclick = async () => {
-            const id = form.getAttribute("data-id");
+            const id = panel.getAttribute("data-id");
             if (
               !confirm(
                 "Event wirklich löschen?\nSchmuck endet, Fortschritt und Event-Lobbys werden entfernt."
@@ -2300,7 +2178,7 @@
         const disBtn = $("evDisableBtn");
         if (disBtn) {
           disBtn.onclick = async () => {
-            const id = form.getAttribute("data-id");
+            const id = panel.getAttribute("data-id");
             if (!confirm("Builtin-Event deaktivieren? (Schmuck endet, falls es das aktive war.)")) return;
             try {
               const res = await api(`/admin/events/${encodeURIComponent(id)}`, {

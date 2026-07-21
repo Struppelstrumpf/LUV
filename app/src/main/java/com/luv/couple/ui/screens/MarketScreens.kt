@@ -1,8 +1,11 @@
 package com.luv.couple.ui.screens
 import android.widget.Toast
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -51,8 +54,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -69,6 +77,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlin.math.cos
+import kotlin.math.sin
 import com.luv.couple.LuvApp
 import com.luv.couple.data.AccountInfo
 import com.luv.couple.net.AccountSession
@@ -191,38 +201,37 @@ fun MarketScreen(
                 }
             )
             if (showHubLootbox) {
-                AlertDialog(
+                Dialog(
                     onDismissRequest = {
                         showHubLootbox = false
                         hubLootBusy = null
                         hubLootRefresh++
                     },
-                    containerColor = BgSoft,
-                    title = {
-                        Text("Lootbox", fontFamily = DisplayFont, color = TextPrimary, fontSize = 22.sp)
-                    },
-                    text = {
-                        Box(modifier = Modifier.fillMaxWidth().height(520.dp)) {
-                            LootboxTab(
-                                coins = hubAccount?.coins ?: 0,
-                                busy = hubLootBusy != null,
-                                onBusy = { hubLootBusy = it },
-                                onRefresh = { onRefreshInventory() },
-                                economyUnlocked = economyUnlocked,
-                                onRequireGoogle = onRequireGoogle
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            showHubLootbox = false
-                            hubLootBusy = null
-                            hubLootRefresh++
-                        }) {
-                            Text("Schließen", color = AccentRose, fontFamily = DisplayFont)
-                        }
+                    properties = DialogProperties(
+                        usePlatformDefaultWidth = false,
+                        decorFitsSystemWindows = false
+                    )
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(BgDeep)
+                    ) {
+                        LootboxTab(
+                            coins = hubAccount?.coins ?: 0,
+                            busy = hubLootBusy != null,
+                            onBusy = { hubLootBusy = it },
+                            onRefresh = { onRefreshInventory() },
+                            economyUnlocked = economyUnlocked,
+                            onRequireGoogle = onRequireGoogle,
+                            onClose = {
+                                showHubLootbox = false
+                                hubLootBusy = null
+                                hubLootRefresh++
+                            }
+                        )
                     }
-                )
+                }
             }
         }
         MarketPanel.Marketplace -> MarketExpandShell(
@@ -446,10 +455,8 @@ private fun MarketLootboxTile(
                 Image(
                     painter = painterResource(com.luv.couple.R.drawable.shop_lootbox),
                     contentDescription = "Lootbox",
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(RoundedCornerShape(16.dp)),
-                    contentScale = ContentScale.Crop
+                    modifier = Modifier.size(76.dp),
+                    contentScale = ContentScale.Fit
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
@@ -1700,6 +1707,171 @@ internal fun PurchaseFlashPopup(
     }
 }
 
+/** Normierte Riss-Pfade (0–1) — werden Tippen für Tippen freigeschaltet. */
+private data class LootCrackSeg(
+    val ax: Float,
+    val ay: Float,
+    val cx: Float,
+    val cy: Float,
+    val bx: Float,
+    val by: Float
+)
+
+private val LOOTBOX_CRACK_WAVES: List<List<LootCrackSeg>> = listOf(
+    listOf(
+        LootCrackSeg(0.48f, 0.22f, 0.52f, 0.34f, 0.46f, 0.46f),
+        LootCrackSeg(0.46f, 0.46f, 0.42f, 0.52f, 0.40f, 0.58f)
+    ),
+    listOf(
+        LootCrackSeg(0.52f, 0.28f, 0.62f, 0.36f, 0.70f, 0.48f),
+        LootCrackSeg(0.70f, 0.48f, 0.74f, 0.54f, 0.72f, 0.62f)
+    ),
+    listOf(
+        LootCrackSeg(0.50f, 0.30f, 0.38f, 0.40f, 0.28f, 0.52f),
+        LootCrackSeg(0.28f, 0.52f, 0.24f, 0.58f, 0.30f, 0.66f)
+    ),
+    listOf(
+        LootCrackSeg(0.44f, 0.48f, 0.50f, 0.58f, 0.48f, 0.72f),
+        LootCrackSeg(0.48f, 0.58f, 0.58f, 0.64f, 0.64f, 0.70f)
+    ),
+    listOf(
+        LootCrackSeg(0.36f, 0.36f, 0.44f, 0.44f, 0.56f, 0.42f),
+        LootCrackSeg(0.56f, 0.42f, 0.66f, 0.50f, 0.60f, 0.60f),
+        LootCrackSeg(0.40f, 0.62f, 0.48f, 0.68f, 0.54f, 0.78f)
+    ),
+    listOf(
+        LootCrackSeg(0.32f, 0.40f, 0.28f, 0.50f, 0.34f, 0.70f),
+        LootCrackSeg(0.68f, 0.38f, 0.76f, 0.48f, 0.70f, 0.68f),
+        LootCrackSeg(0.42f, 0.34f, 0.50f, 0.50f, 0.58f, 0.74f)
+    )
+)
+
+@Composable
+private fun LootboxCrackOverlay(
+    crackLevel: Int,
+    explode: Float,
+    modifier: Modifier = Modifier
+) {
+    val alpha = (1f - explode * 0.85f).coerceIn(0f, 1f)
+    if (crackLevel <= 0 || alpha < 0.02f) return
+    Canvas(modifier = modifier) {
+        val waves = LOOTBOX_CRACK_WAVES.take(crackLevel.coerceAtMost(LOOTBOX_CRACK_WAVES.size))
+        val strokeMain = Stroke(
+            width = size.minDimension * 0.012f,
+            cap = StrokeCap.Round,
+            join = StrokeJoin.Round
+        )
+        val strokeGlow = Stroke(
+            width = size.minDimension * 0.028f,
+            cap = StrokeCap.Round,
+            join = StrokeJoin.Round
+        )
+        waves.forEach { segs ->
+            segs.forEach { seg ->
+                val path = Path().apply {
+                    moveTo(seg.ax * size.width, seg.ay * size.height)
+                    quadraticTo(
+                        seg.cx * size.width,
+                        seg.cy * size.height,
+                        seg.bx * size.width,
+                        seg.by * size.height
+                    )
+                }
+                drawPath(path, Color(0xFFFFE8A8).copy(alpha = 0.35f * alpha), style = strokeGlow)
+                drawPath(path, Color(0xFFFFF6E0).copy(alpha = 0.92f * alpha), style = strokeMain)
+                drawPath(
+                    path,
+                    Color(0xFF2A1A12).copy(alpha = 0.55f * alpha),
+                    style = Stroke(
+                        width = size.minDimension * 0.0055f,
+                        cap = StrokeCap.Round
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LootboxBurstParticles(
+    progress: Float,
+    modifier: Modifier = Modifier
+) {
+    if (progress <= 0.02f || progress >= 0.98f) return
+    val seeds = remember {
+        List(28) { i ->
+            val a = (i / 28f) * Math.PI.toFloat() * 2f + (i % 5) * 0.17f
+            val speed = 0.35f + (i % 7) * 0.08f
+            Triple(a, speed, if (i % 3 == 0) Color(0xFFFFC4D6) else if (i % 3 == 1) Color(0xFFFFE08A) else Color(0xFFE8F0FF))
+        }
+    }
+    Canvas(modifier = modifier) {
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val reach = size.minDimension * 0.72f
+        seeds.forEach { (angle, speed, color) ->
+            val t = (progress * speed).coerceIn(0f, 1f)
+            val r = reach * t
+            val fade = (1f - progress).coerceIn(0f, 1f)
+            val x = cx + cos(angle) * r
+            val y = cy + sin(angle) * r
+            drawCircle(
+                color = color.copy(alpha = 0.85f * fade),
+                radius = size.minDimension * (0.018f + (1f - t) * 0.02f),
+                center = Offset(x, y)
+            )
+        }
+    }
+}
+
+@Composable
+private fun LootboxVisual(
+    crackLevel: Int,
+    shake: Float,
+    pulse: Float,
+    explode: Float,
+    visible: Boolean,
+    modifier: Modifier = Modifier
+) {
+    if (!visible && explode <= 0.02f) return
+    val scale = when {
+        explode > 0.01f -> 1f + explode * 1.15f
+        else -> 1f + pulse * 0.06f
+    }
+    val alpha = when {
+        explode > 0.01f -> (1f - explode).coerceIn(0f, 1f)
+        visible -> 1f
+        else -> 0f
+    }
+    Box(
+        modifier = modifier
+            .graphicsLayer {
+                translationX = shake * 14f
+                rotationZ = shake * 7f
+                scaleX = scale
+                scaleY = scale
+                this.alpha = alpha
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = painterResource(com.luv.couple.R.drawable.shop_lootbox),
+            contentDescription = "Lootbox",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Fit
+        )
+        LootboxCrackOverlay(
+            crackLevel = crackLevel,
+            explode = explode,
+            modifier = Modifier.fillMaxSize(0.88f)
+        )
+        LootboxBurstParticles(
+            progress = explode,
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
 @Composable
 private fun LootboxTab(
     coins: Int,
@@ -1707,7 +1879,8 @@ private fun LootboxTab(
     onBusy: (String?) -> Unit,
     onRefresh: suspend () -> Unit,
     economyUnlocked: Boolean = true,
-    onRequireGoogle: () -> Unit = {}
+    onRequireGoogle: () -> Unit = {},
+    onClose: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1718,17 +1891,28 @@ private fun LootboxTab(
     var activePendingId by remember { mutableStateOf<String?>(null) }
     var tapsLeft by remember { mutableIntStateOf(0) }
     var revealedReward by remember { mutableStateOf<com.luv.couple.net.LootboxResult?>(null) }
-    var phase by remember { mutableStateOf("idle") } // idle | tapping | reveal
+    var phase by remember { mutableStateOf("idle") } // idle | tapping | opening | reveal
     var shake by remember { mutableFloatStateOf(0f) }
-    var flash by remember { mutableFloatStateOf(0f) }
     var showConfirmBuy by remember { mutableStateOf(false) }
     var buyQty by remember { mutableIntStateOf(1) }
     /** Sofort sichtbar nach Kauf — nicht erst nach Server-Antwort (~sekunden). */
     var displayPending by remember { mutableIntStateOf(0) }
-    val shakeAnim by animateFloatAsState(shake, label = "lootShake")
-    val flashAnim by animateFloatAsState(flash, label = "lootFlash")
+    val shakeAnim by animateFloatAsState(
+        targetValue = shake,
+        animationSpec = spring(stiffness = Spring.StiffnessHigh, dampingRatio = 0.35f),
+        label = "lootShake"
+    )
+    val tapPulse = remember { Animatable(0f) }
+    val explodeAnim = remember { Animatable(0f) }
     val maxAffordable = (coins / ShopCatalog.LOOTBOX_PRICE_COINS).coerceAtLeast(0)
     val price = ShopCatalog.LOOTBOX_PRICE_COINS
+    val crackLevel = remember(tapsLeft, phase) {
+        when (phase) {
+            "tapping", "opening" ->
+                (ShopCatalog.LOOTBOX_TAP_COUNT - tapsLeft).coerceIn(0, ShopCatalog.LOOTBOX_TAP_COUNT)
+            else -> 0
+        }
+    }
     fun kindLabel(kind: String): String = when (kind) {
         "themes" -> "Hintergrund"
         "pets" -> "Begleiter"
@@ -1752,6 +1936,10 @@ private fun LootboxTab(
         tapsLeft = ShopCatalog.LOOTBOX_TAP_COUNT
         phase = "tapping"
         revealedReward = null
+        scope.launch {
+            explodeAnim.snapTo(0f)
+            tapPulse.snapTo(0f)
+        }
         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
     }
     fun startLootboxPurchase(quantity: Int) {
@@ -1817,23 +2005,31 @@ private fun LootboxTab(
             return
         }
         onBusy("lootbox-open")
+        phase = "opening"
         scope.launch {
             try {
-                shake = 1f
-                kotlinx.coroutines.delay(80)
-                shake = -1f
-                kotlinx.coroutines.delay(80)
-                shake = 1f
-                kotlinx.coroutines.delay(80)
+                // Nur die Box wackelt — kein weißes Rechteck/Flash
+                repeat(7) { i ->
+                    shake = if (i % 2 == 0) 1.2f else -1.2f
+                    delay(42)
+                }
+                shake = 0.6f
+                delay(36)
+                shake = -0.6f
+                delay(36)
                 shake = 0f
-                flash = 1f
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                val openJob = launch {
+                    explodeAnim.snapTo(0f)
+                    explodeAnim.animateTo(1f, tween(520))
+                }
                 val reward = LuvApiClient.openLootbox(id)
+                openJob.join()
                 revealedReward = reward
                 phase = "reveal"
                 activePendingId = null
                 displayPending = queue.size + 1
                 onBusy(null)
-                // Inventar im Hintergrund — Chance/Reveal sofort zeigen
                 scope.launch {
                     try {
                         onRefresh()
@@ -1842,9 +2038,6 @@ private fun LootboxTab(
                     } catch (_: Exception) {
                     }
                 }
-                kotlinx.coroutines.delay(220)
-                flash = 0f
-                onBusy(null)
             } catch (e: CancellationException) {
                 onBusy(null)
                 throw e
@@ -1865,13 +2058,15 @@ private fun LootboxTab(
                 } catch (_: Exception) {
                     phase = "idle"
                 }
-                flash = 0f
+                explodeAnim.snapTo(0f)
+                shake = 0f
                 onBusy(null)
             }
         }
     }
     fun afterRevealDismiss() {
         revealedReward = null
+        scope.launch { explodeAnim.snapTo(0f) }
         val next = queue.firstOrNull()
         if (next != null) {
             beginOpening(next, queue.drop(1))
@@ -1985,40 +2180,53 @@ private fun LootboxTab(
         )
     }
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val giftSize = (maxWidth * 0.42f).coerceIn(132.dp, 176.dp)
+        val giftSize = minOf(maxWidth, maxHeight) * 0.52f
         val reveal = revealedReward?.takeIf { phase == "reveal" }
+        val showBox = phase == "idle" || phase == "tapping" || phase == "opening" ||
+            (phase == "reveal" && explodeAnim.value < 0.95f)
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 12.dp),
+                .padding(horizontal = 18.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Lootbox",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 28.sp
+                    )
+                    Text(
+                        "$price Coins",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 15.sp
+                    )
+                }
+                if (onClose != null) {
+                    TextButton(onClick = onClose) {
+                        Text("✕", color = TextPrimary, fontFamily = DisplayFont, fontSize = 18.sp)
+                    }
+                }
+            }
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
                 modifier = Modifier
-                    .graphicsLayer {
-                        translationX = shakeAnim * 10f
-                        rotationZ = shakeAnim * 4f
-                    }
+                    .weight(1f)
+                    .fillMaxWidth()
             ) {
-                Text(
-                    "Lootbox",
-                    color = TextPrimary,
-                    fontFamily = DisplayFont,
-                    fontSize = 28.sp
-                )
-                Text(
-                    "$price Coins",
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 15.sp
-                )
+                Spacer(modifier = Modifier.weight(0.18f))
                 val waiting = maxOf(
                     displayPending,
-                    queue.size + if (phase == "tapping" || phase == "reveal") 1 else 0
+                    queue.size + if (phase == "tapping" || phase == "opening" || phase == "reveal") 1 else 0
                 )
                 if (waiting > 0 && reveal == null) {
                     Text(
@@ -2035,23 +2243,17 @@ private fun LootboxTab(
                         fontSize = 13.sp
                     )
                 }
-                // Geschenk bleibt an fester Relativposition — auf allen Displays tippbar
                 Box(
                     modifier = Modifier
                         .size(giftSize)
-                        .clip(RoundedCornerShape(28.dp))
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color(0xFF2A3344), Color(0xFF1A2230))
-                            )
-                        )
-                        .border(1.5.dp, MaleBlue.copy(0.55f), RoundedCornerShape(28.dp))
                         .clickable(
                             enabled = when (phase) {
                                 "reveal" -> true
                                 "idle", "tapping" -> !busy
                                 else -> false
-                            }
+                            },
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
                         ) {
                             when (phase) {
                                 "reveal" -> afterRevealDismiss()
@@ -2076,6 +2278,10 @@ private fun LootboxTab(
                                 "tapping" -> {
                                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     tapsLeft = (tapsLeft - 1).coerceAtLeast(0)
+                                    scope.launch {
+                                        tapPulse.snapTo(1f)
+                                        tapPulse.animateTo(0f, tween(160))
+                                    }
                                     if (tapsLeft == 0) {
                                         finishTapsAndOpen()
                                     }
@@ -2084,13 +2290,13 @@ private fun LootboxTab(
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Image(
-                        painter = painterResource(com.luv.couple.R.drawable.shop_lootbox),
-                        contentDescription = "Lootbox",
-                        modifier = Modifier
-                            .fillMaxSize(0.78f)
-                            .clip(RoundedCornerShape(18.dp)),
-                        contentScale = ContentScale.Crop
+                    LootboxVisual(
+                        crackLevel = crackLevel,
+                        shake = shakeAnim,
+                        pulse = tapPulse.value,
+                        explode = explodeAnim.value,
+                        visible = showBox,
+                        modifier = Modifier.fillMaxSize()
                     )
                 }
                 if (reveal != null) {
@@ -2180,7 +2386,8 @@ private fun LootboxTab(
                 } else {
                     Text(
                         when (phase) {
-                            "tapping" -> "Noch $tapsLeft× tippen"
+                            "tapping" -> "Noch $tapsLeft× tippen — die Box bekommt Risse"
+                            "opening" -> "…"
                             else -> "Tippen zum Öffnen · $price Coins"
                         },
                         color = TextPrimary,
@@ -2189,12 +2396,13 @@ private fun LootboxTab(
                         textAlign = TextAlign.Center
                     )
                 }
+                Spacer(modifier = Modifier.weight(0.22f))
             }
             if (reveal == null) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.padding(bottom = 10.dp)
+                    modifier = Modifier.padding(bottom = 8.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -2248,13 +2456,6 @@ private fun LootboxTab(
             } else {
                 Spacer(modifier = Modifier.height(8.dp))
             }
-        }
-        if (flashAnim > 0.05f) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.White.copy(alpha = flashAnim * 0.85f))
-            )
         }
     }
 }

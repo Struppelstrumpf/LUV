@@ -103,12 +103,32 @@ function publicRewardItem(raw) {
   const kind = String(raw.kind || "").trim();
   const itemId = String(raw.itemId || "").trim();
   if (!kind || !itemId) return null;
+  const emoRaw = String(raw.emoji || itemId).trim();
+  const emoMax = /^img_/i.test(emoRaw) || /^img_/i.test(itemId) ? 48 : 16;
   return {
     kind,
-    itemId,
-    emoji: String(raw.emoji || itemId).slice(0, 16),
+    itemId: itemId.slice(0, 48),
+    emoji: emoRaw.slice(0, emoMax),
     label: String(raw.label || itemId).slice(0, 60),
   };
+}
+
+/** Bis zu 6 Item-Belohnungen; `single` als Fallback für ältere Events. */
+function publicRewardItems(rawList, single) {
+  const fromArr = Array.isArray(rawList) ? rawList : [];
+  const merged = fromArr.length ? fromArr : single ? [single] : [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of merged) {
+    const it = publicRewardItem(raw);
+    if (!it) continue;
+    const key = `${it.kind}:${it.itemId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(it);
+    if (out.length >= 6) break;
+  }
+  return out;
 }
 
 function normalizeDecor(d, fallback) {
@@ -145,6 +165,10 @@ function normalizeCollect(raw, ev) {
     src.enabled != null
       ? Boolean(src.enabled)
       : !(ev?.lobby?.enabled || ev?.contest?.enabled || (Array.isArray(ev?.quests) && ev.quests.length));
+  const rewardItems = publicRewardItems(
+    src.rewardItems ?? ev?.rewardItems,
+    src.rewardItem ?? ev?.rewardItem
+  );
   return {
     enabled: enabled !== false,
     rewardCoinsPerCollect: clampReward(
@@ -153,7 +177,8 @@ function normalizeCollect(raw, ev) {
     ),
     collectTarget: clampInt(src.collectTarget ?? ev?.collectTarget, 1, 31, 3),
     milestoneBonusCoins: clampReward(src.milestoneBonusCoins ?? ev?.milestoneBonusCoins, 0),
-    rewardItem: publicRewardItem(src.rewardItem ?? ev?.rewardItem),
+    rewardItems,
+    rewardItem: rewardItems[0] || null,
   };
 }
 
@@ -300,6 +325,7 @@ function enrichEvent(ev) {
     rewardCoinsPerCollect: collect.rewardCoinsPerCollect,
     collectTarget: collect.collectTarget,
     milestoneBonusCoins: collect.milestoneBonusCoins,
+    rewardItems: collect.rewardItems || [],
     rewardItem: collect.rewardItem,
   };
 }
@@ -458,6 +484,19 @@ function createOrUpdateEvent(db, raw, { isCreate = false } = {}) {
     );
   }
   if (raw.collect != null) base.collect = normalizeCollect(raw.collect, base);
+  if (raw.rewardItems !== undefined || raw.rewardItem !== undefined) {
+    const items = publicRewardItems(raw.rewardItems, raw.rewardItem);
+    base.rewardItems = items;
+    base.rewardItem = items[0] || null;
+    base.collect = normalizeCollect(
+      {
+        ...(base.collect && typeof base.collect === "object" ? base.collect : {}),
+        rewardItems: items,
+        rewardItem: items[0] || null,
+      },
+      base
+    );
+  }
   if (raw.quests != null) base.quests = normalizeQuests(raw.quests);
   if (raw.lobby != null) base.lobby = normalizeLobby(raw.lobby);
   if (raw.contest != null) base.contest = normalizeContest(raw.contest);
@@ -476,6 +515,7 @@ function createOrUpdateEvent(db, raw, { isCreate = false } = {}) {
     rewardCoinsPerCollect: enriched.collect.rewardCoinsPerCollect,
     collectTarget: enriched.collect.collectTarget,
     milestoneBonusCoins: enriched.collect.milestoneBonusCoins,
+    rewardItems: enriched.collect.rewardItems || [],
     rewardItem: enriched.collect.rewardItem,
     custom: base.custom !== false && !String(id).match(/^(new_year|valentine|carnival|easter|mothers_day|midsummer|autumn|halloween|full_moon|date_night|nikolaus|advent|christmas|silvester)$/),
   });
@@ -1010,5 +1050,6 @@ module.exports = {
   entryVoteCount,
   publicEventModules,
   publicRewardItem,
+  publicRewardItems,
   slugId,
 };

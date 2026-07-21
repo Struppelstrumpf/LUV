@@ -251,6 +251,7 @@ data class SeasonEvent(
     val windowEnd: String?,
     val decor: EventDecor,
     val rewardItem: EventRewardItem?,
+    val rewardItems: List<EventRewardItem> = emptyList(),
     val quests: List<EventQuest> = emptyList(),
     val lobbyEnabled: Boolean = false,
     val contestEnabled: Boolean = false,
@@ -263,6 +264,9 @@ data class SeasonEvent(
 ) {
     val shopPet: EventShopItem?
         get() = shopItems.firstOrNull { it.kind == "pets" }
+
+    val resolvedRewardItems: List<EventRewardItem>
+        get() = rewardItems.ifEmpty { listOfNotNull(rewardItem) }
 
     companion object {
         fun fromJson(o: JSONObject): SeasonEvent {
@@ -286,6 +290,16 @@ data class SeasonEvent(
                     EventShopItem.fromJson(o.optJSONObject("shopPet"))?.let { add(it) }
                 }
             }
+            val rewardArr = o.optJSONArray("rewardItems")
+            val rewardItems = buildList {
+                if (rewardArr != null) {
+                    for (i in 0 until rewardArr.length()) {
+                        EventRewardItem.fromJson(rewardArr.optJSONObject(i))?.let { add(it) }
+                    }
+                }
+            }
+            val singleReward = EventRewardItem.fromJson(o.optJSONObject("rewardItem"))
+            val resolvedRewards = rewardItems.ifEmpty { listOfNotNull(singleReward) }
             return SeasonEvent(
             id = o.optString("id"),
             title = o.optString("title"),
@@ -303,7 +317,8 @@ data class SeasonEvent(
             windowStart = o.optCleanString("windowStart"),
             windowEnd = o.optCleanString("windowEnd"),
             decor = EventDecor.fromJson(o.optJSONObject("decor")),
-            rewardItem = EventRewardItem.fromJson(o.optJSONObject("rewardItem")),
+            rewardItem = resolvedRewards.firstOrNull(),
+            rewardItems = resolvedRewards,
             quests = quests,
             lobbyEnabled = o.optJSONObject("lobby")?.optBoolean("enabled", false) == true,
             contestEnabled = o.optJSONObject("contest")?.optBoolean("enabled", false) == true,

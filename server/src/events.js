@@ -720,21 +720,17 @@ function normalizeDecor(d, fallback) {
 }
 
 function publicRewardItem(raw) {
-  if (!raw || typeof raw !== "object") return null;
-  const kind = String(raw.kind || "").trim();
-  const itemId = String(raw.itemId || "").trim();
-  if (!kind || !itemId) return null;
-  return {
-    kind,
-    itemId,
-    emoji: String(raw.emoji || itemId).slice(0, 16),
-    label: String(raw.label || itemId).slice(0, 60),
-  };
+  return engine.publicRewardItem(raw);
+}
+
+function publicRewardItems(rawList, single) {
+  return engine.publicRewardItems(rawList, single);
 }
 
 function publicEvent(ev) {
   if (!ev) return null;
   const e = engine.enrichEvent(ev);
+  const rewardItems = publicRewardItems(e.rewardItems, e.rewardItem);
   return {
     id: String(e.id || ""),
     title: String(e.title || "").slice(0, 60),
@@ -748,7 +744,8 @@ function publicEvent(ev) {
     rewardCoinsPerCollect: clampReward(e.rewardCoinsPerCollect, DEFAULT_REWARD),
     collectTarget: clampTarget(e.collectTarget),
     milestoneBonusCoins: clampReward(e.milestoneBonusCoins, 0),
-    rewardItem: publicRewardItem(e.rewardItem),
+    rewardItems,
+    rewardItem: rewardItems[0] || null,
     decor: normalizeDecor(e.decor),
     schedule: e.schedule,
     collect: e.collect,
@@ -852,9 +849,14 @@ function putAdminEvents(db, body) {
     if (raw.milestoneBonusCoins != null) cur.milestoneBonusCoins = clampReward(raw.milestoneBonusCoins, 0);
     if (raw.sort != null) cur.sort = Math.floor(Number(raw.sort) || 0);
     if (raw.decor != null) cur.decor = normalizeDecor(raw.decor, cur.decor);
-    if (raw.rewardItem !== undefined) {
-      cur.rewardItem = publicRewardItem(raw.rewardItem);
-      if (cur.collect) cur.collect.rewardItem = cur.rewardItem;
+    if (raw.rewardItems !== undefined || raw.rewardItem !== undefined) {
+      const items = publicRewardItems(raw.rewardItems, raw.rewardItem);
+      cur.rewardItems = items;
+      cur.rewardItem = items[0] || null;
+      if (cur.collect) {
+        cur.collect.rewardItems = items;
+        cur.collect.rewardItem = cur.rewardItem;
+      }
     }
     if (raw.schedule != null) cur.schedule = engine.normalizeSchedule(raw.schedule, cur);
     if (raw.quests != null) cur.quests = engine.normalizeQuests(raw.quests);
@@ -922,15 +924,8 @@ function createAdminEvent(db, body = {}) {
     if (body.absoluteUntil) schedule.absoluteUntil = String(body.absoluteUntil);
   }
 
-  const rewardItem =
-    body.rewardItem && body.rewardItem.kind && body.rewardItem.itemId
-      ? {
-          kind: String(body.rewardItem.kind).trim(),
-          itemId: String(body.rewardItem.itemId).trim(),
-          emoji: String(body.rewardItem.emoji || body.rewardItem.itemId).trim(),
-          label: String(body.rewardItem.label || body.rewardItem.itemId).trim(),
-        }
-      : null;
+  const rewardItems = publicRewardItems(body.rewardItems, body.rewardItem);
+  const rewardItem = rewardItems[0] || null;
 
   const payload = {
     id,
@@ -952,8 +947,10 @@ function createAdminEvent(db, body = {}) {
       rewardCoinsPerCollect: clampReward(body.rewardCoinsPerCollect ?? 2),
       collectTarget: clampTarget(body.collectTarget ?? 3),
       milestoneBonusCoins: clampReward(body.milestoneBonusCoins ?? 5, 0),
+      rewardItems,
       rewardItem,
     },
+    rewardItems,
     rewardItem,
     rewardCoinsPerCollect: clampReward(body.rewardCoinsPerCollect ?? 2),
     collectTarget: clampTarget(body.collectTarget ?? 3),
@@ -1540,26 +1537,28 @@ function collectEvent(db, user, eventId, dayKey, applyLedgerFn, giveItemFn, now 
   prog.progress = Math.min(pub.collectTarget, prog.progress + 1);
   let milestoneBonus = 0;
   let itemGranted = null;
+  let itemsGranted = [];
   const hitMilestone = prog.progress >= pub.collectTarget;
+  const rewards =
+    Array.isArray(pub.rewardItems) && pub.rewardItems.length
+      ? pub.rewardItems
+      : pub.rewardItem
+        ? [pub.rewardItem]
+        : [];
+  if (hitMilestone && !prog.itemGranted && rewards.length && typeof giveItemFn === "function") {
+    for (const ri of rewards) {
+      if (giveItemFn(user, ri.kind, ri.itemId)) {
+        itemsGranted.push(ri);
+      }
+    }
+    if (itemsGranted.length) {
+      prog.itemGranted = true;
+      itemGranted = itemsGranted[0];
+    }
+  }
   if (hitMilestone && !prog.claimedMilestone) {
     prog.claimedMilestone = true;
     if (pub.milestoneBonusCoins > 0) milestoneBonus = pub.milestoneBonusCoins;
-    if (pub.rewardItem && !prog.itemGranted && typeof giveItemFn === "function") {
-      if (giveItemFn(user, pub.rewardItem.kind, pub.rewardItem.itemId)) {
-        prog.itemGranted = true;
-        itemGranted = pub.rewardItem;
-      }
-    }
-  } else if (
-    hitMilestone &&
-    pub.rewardItem &&
-    !prog.itemGranted &&
-    typeof giveItemFn === "function"
-  ) {
-    if (giveItemFn(user, pub.rewardItem.kind, pub.rewardItem.itemId)) {
-      prog.itemGranted = true;
-      itemGranted = pub.rewardItem;
-    }
   }
   const total = grant + milestoneBonus;
   if (total > 0 && typeof applyLedgerFn === "function") {
@@ -1572,6 +1571,7 @@ function collectEvent(db, user, eventId, dayKey, applyLedgerFn, giveItemFn, now 
     rewardCoins: grant,
     milestoneBonus,
     itemGranted,
+    itemsGranted,
     progress: prog.progress,
     collectTarget: pub.collectTarget,
     claimedMilestone: prog.claimedMilestone,
@@ -1684,4 +1684,8 @@ module.exports = {
   findCatalogEventPet,
   findCatalogEventItem,
   findEventKindConflict,
+  berlinParts,
+  berlinLocalMs,
+  berlinDayStartMs,
+  berlinYmd,
 };

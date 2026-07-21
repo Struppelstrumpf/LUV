@@ -67,12 +67,14 @@ import com.luv.couple.ui.screens.BrushStudioMode
 import com.luv.couple.ui.screens.BrushStudioSheet
 import com.luv.couple.ui.screens.EmojiBarEditorDialog
 import com.luv.couple.ui.screens.ForcedUpdateDialog
+import com.luv.couple.ui.screens.ForcedMaintenanceDialog
 import com.luv.couple.ui.screens.ProfileCanvasScreen
 import com.luv.couple.ui.screens.requiresForcedUpdate
 import com.luv.couple.ui.theme.LuvTheme
 import com.luv.couple.update.AppUpdater
 import com.luv.couple.update.UpdateUiState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -224,6 +226,9 @@ class LockDrawActivity : ComponentActivity() {
     private val correctGuessers = mutableSetOf<String>()
     private var hasVotedClear = false
     private var forcedUpdateHost: FrameLayout? = null
+    private var maintenanceHost: FrameLayout? = null
+    private var maintenanceHold: Boolean = false
+    private val maintenanceUi = mutableStateOf<LuvApiClient.MaintenanceStatus?>(null)
     private var strokeMemoryView: TextView? = null
     private var myPetEmoji: String = ShopCatalog.DEFAULT_PET
     private val statusHideRunnable = Runnable {
@@ -449,6 +454,7 @@ class LockDrawActivity : ComponentActivity() {
         MidnightClear.checkAndClearIfNewDay(this)
         refreshLegend()
         observeForcedUpdates()
+        observeMaintenance()
 
         drawingView.onStrokeFinished = { points ->
             val shortSide = min(drawingView.width, drawingView.height)
@@ -2415,6 +2421,64 @@ class LockDrawActivity : ComponentActivity() {
     private fun dismissForcedUpdateOverlay() {
         forcedUpdateHost?.let { rootView?.removeView(it) }
         forcedUpdateHost = null
+    }
+
+    private fun observeMaintenance() {
+        lifecycleScope.launch {
+            while (true) {
+                val st = runCatching { LuvApiClient.fetchMaintenanceStatus() }.getOrNull()
+                if (st != null) {
+                    if (st.active) {
+                        maintenanceHold = true
+                        showMaintenanceOverlay(st)
+                    } else if (maintenanceHold) {
+                        showMaintenanceOverlay(st)
+                    } else {
+                        dismissMaintenanceOverlay()
+                    }
+                }
+                delay(if (maintenanceHold) 4_000 else 12_000)
+            }
+        }
+    }
+
+    private fun showMaintenanceOverlay(status: LuvApiClient.MaintenanceStatus) {
+        val root = rootView ?: return
+        maintenanceUi.value = status
+        if (maintenanceHost != null) return
+        val host = fullscreenComposeHost().apply { elevation = 95f }
+        val compose = ComposeView(this).apply {
+            setContent {
+                val st by maintenanceUi
+                LuvTheme {
+                    st?.let { current ->
+                        ForcedMaintenanceDialog(
+                            status = current,
+                            onDismiss = {
+                                maintenanceHold = false
+                                dismissMaintenanceOverlay()
+                            },
+                            onClaimed = { }
+                        )
+                    }
+                }
+            }
+        }
+        host.addView(
+            compose,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        root.addView(host)
+        maintenanceHost = host
+    }
+
+    private fun dismissMaintenanceOverlay() {
+        maintenanceUi.value = null
+        maintenanceHost?.let { rootView?.removeView(it) }
+        maintenanceHost = null
     }
 
     private fun refreshLegend() {

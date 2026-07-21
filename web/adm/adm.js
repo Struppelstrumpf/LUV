@@ -15,7 +15,8 @@
     shopQ: "",
     shopSource: "",
     shopUniverse: [],
-    shopView: "katalog", // katalog | kalender
+    shopView: "katalog", // katalog | events | kalender
+    calOpenInv: null,
     calKind: "",
     calQ: "",
     calStatus: "",
@@ -63,6 +64,7 @@
     { id: "codes", label: "Codes", hint: "Gutscheincodes erstellen und widerrufen.", perm: "codes.view" },
     { id: "users", label: "Nutzer", hint: "Vollprofil: Coins, Erfolge, Logs, Lobbys, Verwarnungen, Streak.", perm: "gm.search" },
     { id: "mods", label: "Moderatoren", hint: "Mods einladen und Rechte setzen.", perm: "mods.manage", adminOnly: true },
+    { id: "bericht", label: "Bericht", hint: "Nächtliche Wartungsberichte: Backup, Shop-Zyklus, Health — kopieren für die KI.", perm: "market.settings" },
     { id: "market", label: "Einstellungen", hint: "Markt-Preisfenster und Erfolgs-Tageslimit.", perm: "market.settings" },
     { id: "live", label: "Live-Hinweis", hint: "Nachricht an alle App-Nutzer senden.", perm: "live.notify" },
   ];
@@ -531,6 +533,7 @@
         else await window.LuvAdmPanels.renderUsers();
       }
       else if (id === "mods") await renderMods();
+      else if (id === "bericht") await renderMaintenanceBericht();
       else if (id === "market") await renderMarketSettings();
       else if (id === "live") await renderLive();
     } catch (e) {
@@ -554,28 +557,36 @@
   }
 
   async function renderShop() {
+    const eventMode = state.shopView === "events";
     const SHOP_CATS = [
       { id: "emojis", label: "Emojis", emoji: "😊", hint: "Reaktionen in der Leinwand" },
       { id: "stickers", label: "Sticker", emoji: "🏷️", hint: "Profil-Sticker" },
       { id: "themes", label: "Hintergründe", emoji: "🖼️", hint: "Profil-Hintergründe" },
       { id: "pets", label: "Begleiter", emoji: "🐾", hint: "Avatar-Begleiter" },
     ];
-    const SOURCE_FILTERS = [
-      { id: "", label: "Alle Quellen" },
-      { id: "shop", label: "Itemshop" },
-      { id: "achievement", label: "Erfolg" },
-      { id: "code", label: "Code" },
-      { id: "starter", label: "Starter" },
-      { id: "marriage", label: "Ehe" },
-      { id: "tradeable", label: "Handelbar" },
-      { id: "locked", label: "Gesperrt" },
-    ];
+    const SOURCE_FILTERS = eventMode
+      ? [
+          { id: "", label: "Alle Quellen" },
+          { id: "shop", label: "Itemshop" },
+          { id: "event", label: "Event" },
+        ]
+      : [
+          { id: "", label: "Alle Quellen" },
+          { id: "shop", label: "Itemshop" },
+          { id: "achievement", label: "Erfolg" },
+          { id: "code", label: "Code" },
+          { id: "starter", label: "Starter" },
+          { id: "marriage", label: "Ehe" },
+          { id: "tradeable", label: "Handelbar" },
+          { id: "locked", label: "Gesperrt" },
+        ];
     const SRC_LABEL = {
       shop: "Shop",
       achievement: "Erfolg",
       code: "Code",
       starter: "Starter",
       marriage: "Ehe",
+      event: "Event",
     };
 
     const q = new URLSearchParams();
@@ -594,9 +605,59 @@
     const shopByKey = Object.fromEntries(
       state.shopItems.map((it) => [`${it.kind}:${it.itemId}`, it])
     );
+    const universeByKey = Object.fromEntries(
+      state.shopUniverse.map((it) => [`${it.kind}:${it.itemId}`, it])
+    );
+
+    function isEventCatalogItem(it, shop) {
+      if (shop?.eventId) return true;
+      if ((it?.sources || []).includes("event")) return true;
+      const id = String(it?.itemId || shop?.itemId || "");
+      return /^img_ev_/i.test(id) || /^img_event_/i.test(id);
+    }
+
+    /** Anzuzeigende Items: normaler Katalog ohne Events, Event-Katalog nur Events. */
+    let displayItems = [];
+    if (eventMode) {
+      const seen = new Set();
+      for (const shop of state.shopItems) {
+        if (!isEventCatalogItem({ itemId: shop.itemId, sources: [] }, shop)) continue;
+        const key = `${shop.kind}:${shop.itemId}`;
+        if (seen.has(key)) continue;
+        if (state.shopKind && shop.kind !== state.shopKind) continue;
+        seen.add(key);
+        const uni = universeByKey[key];
+        displayItems.push(
+          uni || {
+            kind: shop.kind,
+            itemId: shop.itemId,
+            label: shop.label || shop.itemId,
+            emoji: shop.emoji || shop.previewEmoji || "🎁",
+            priceCoins: shop.priceCoins,
+            sources: ["event", "shop"],
+            marketSellable: false,
+            marketLocked: false,
+            lootboxEligible: false,
+          }
+        );
+      }
+      for (const it of state.shopUniverse) {
+        const shop = shopByKey[`${it.kind}:${it.itemId}`];
+        if (!isEventCatalogItem(it, shop)) continue;
+        const key = `${it.kind}:${it.itemId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        displayItems.push(it);
+      }
+    } else {
+      displayItems = state.shopUniverse.filter((it) => {
+        const shop = shopByKey[`${it.kind}:${it.itemId}`];
+        return !isEventCatalogItem(it, shop);
+      });
+    }
 
     const byKind = Object.fromEntries(SHOP_CATS.map((c) => [c.id, []]));
-    for (const it of state.shopUniverse) {
+    for (const it of displayItems) {
       if (!byKind[it.kind]) byKind[it.kind] = [];
       byKind[it.kind].push(it);
     }
@@ -606,10 +667,159 @@
       ? SHOP_CATS.filter((c) => c.id === activeKind)
       : SHOP_CATS;
 
+    function openNewEventChooser() {
+      openModal(
+        `
+        <h3 style="margin:0 0 0.5rem;font-family:var(--display)">Neues Event-Item</h3>
+        <p class="help" style="margin:0 0 0.75rem">Welche Art soll angelegt werden?</p>
+        <div class="actions" style="flex-direction:column;align-items:stretch;gap:0.45rem">
+          <button type="button" class="btn teal" data-ev-new="event_emojis">🎉 Event-Emoji</button>
+          <button type="button" class="btn teal" data-ev-new="event_stickers">🎉 Event-Sticker</button>
+          <button type="button" class="btn teal" data-ev-new="event_themes">🎉 Event-Hintergrund</button>
+          <button type="button" class="btn teal" data-ev-new="event_pets">🎉 Event-Begleiter</button>
+          <button type="button" class="btn ghost" id="cancelModal">Abbrechen</button>
+        </div>`
+      );
+      const cancel = $("cancelModal");
+      if (cancel) cancel.onclick = closeModal;
+      document.querySelectorAll("[data-ev-new]").forEach((btn) => {
+        btn.onclick = () => {
+          closeModal();
+          openWizard(btn.getAttribute("data-ev-new"));
+        };
+      });
+    }
+
     function sourceBadges(sources) {
       return (sources || [])
         .map((s) => `<span class="badge src-${esc(s)}">${esc(SRC_LABEL[s] || s)}</span>`)
         .join(" ");
+    }
+
+    function shopStatusBadges(shop, it) {
+      if (!shop) {
+        return `<span class="badge src-noshop">nicht im Shop-Katalog</span>`;
+      }
+      const bits = [];
+      if (shop.eventId || (it.sources || []).includes("event")) {
+        bits.push(
+          `<span class="badge" title="Event-Item">🎉 Event${
+            shop.eventId ? " · " + esc(shop.eventId) : ""
+          }</span>`
+        );
+      }
+      if (shop.rotationPlanId && !shop.rotationLocked) {
+        bits.push(`<span class="badge badge-cycle" title="Im Rotationszyklus">↻ Zyklus</span>`);
+      } else if (shop.rotationLocked) {
+        bits.push(`<span class="badge" title="Nicht in Rotation">📌 Fix</span>`);
+      }
+      const now = Date.now();
+      const from = shop.availableFrom || null;
+      const until = shop.availableUntil || null;
+      const enabled = shop.enabled !== false;
+      const inWindow =
+        enabled &&
+        (!from || now >= from) &&
+        (!until || now < until);
+      if (!enabled) {
+        bits.push(`<span class="badge off">Shop aus</span>`);
+      } else if (inWindow) {
+        bits.push(`<span class="badge badge-on">Im Shop aktiv</span>`);
+        if (shop.remainingMs != null) {
+          bits.push(
+            `<span class="badge muted-badge">noch ${esc(fmtDuration(shop.remainingMs))}</span>`
+          );
+        }
+      } else if (shop.opensInMs != null && shop.opensInMs > 0) {
+        bits.push(
+          `<span class="badge badge-soon">in ${esc(fmtDuration(shop.opensInMs))} aktiv</span>`
+        );
+      } else if (until && now >= until) {
+        bits.push(`<span class="badge off">Fenster vorbei</span>`);
+      } else {
+        bits.push(`<span class="badge">Pause / geplant</span>`);
+      }
+      return bits.join(" ");
+    }
+
+    function openCycleModal(kind, itemId) {
+      const shop = shopByKey[`${kind}:${itemId}`];
+      const uni = state.shopUniverse.find((x) => x.kind === kind && x.itemId === itemId);
+      if (!shop) {
+        alert("Item ist nicht im Shop-Katalog.");
+        return;
+      }
+      const label = uni?.label || shop.label || itemId;
+      openModal(
+        `
+        <h3 style="margin:0 0 0.4rem;font-family:var(--display)">Zyklus · ${esc(label)}</h3>
+        <p class="help" style="margin:0 0 0.75rem">
+          Shop-Wechsel immer um <strong>03:00 Europe/Berlin</strong>.
+          Starter bleiben dauerhaft; Event-Items sind von der Rotation ausgeschlossen.
+        </p>
+        <div class="panel" style="margin:0 0 0.75rem">
+          <div class="shop-card-meta" style="display:flex;flex-wrap:wrap;gap:0.35rem">
+            ${shopStatusBadges(shop, uni || { sources: [] })}
+          </div>
+          <p class="muted mono" style="margin:0.55rem 0 0;font-size:0.8rem">${esc(kind)}:${esc(itemId)}</p>
+          <p class="help" style="margin:0.45rem 0 0">
+            Fenster: ${esc(fmtWhen(shop.availableFrom))} → ${esc(fmtWhen(shop.availableUntil))}
+            ${shop.rotationPlanId ? ` · Plan ${esc(shop.rotationPlanId)}` : ""}
+          </p>
+        </div>
+        <div class="actions" style="flex-wrap:wrap;gap:0.45rem">
+          ${
+            shop.rotationPlanId && !shop.rotationLocked
+              ? `<button type="button" class="btn danger" id="cycLeave">Aus Zyklus nehmen</button>`
+              : `<button type="button" class="btn teal" id="cycRejoin">In Zyklus aufnehmen</button>`
+          }
+          <button type="button" class="btn secondary" id="cycGotoPlans">Rotationspläne öffnen</button>
+          <button type="button" class="btn ghost" id="cancelModal">Schließen</button>
+        </div>`,
+        true
+      );
+      const leave = $("cycLeave");
+      if (leave) {
+        leave.onclick = async () => {
+          if (!confirm("Aus dem Zyklus nehmen? Item bleibt dann dauerhaft im Shop (Fix).")) return;
+          try {
+            await api(
+              `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/leave-rotation`,
+              { method: "POST", body: "{}" }
+            );
+            closeModal();
+            renderShop();
+          } catch (err) {
+            alert(err?.message || "Fehlgeschlagen");
+          }
+        };
+      }
+      const rejoin = $("cycRejoin");
+      if (rejoin) {
+        rejoin.onclick = async () => {
+          try {
+            await api(
+              `/admin/shop/calendar/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/rejoin-rotation`,
+              { method: "POST", body: "{}" }
+            );
+            closeModal();
+            renderShop();
+          } catch (err) {
+            alert(err?.message || "Fehlgeschlagen");
+          }
+        };
+      }
+      const goto = $("cycGotoPlans");
+      if (goto) {
+        goto.onclick = () => {
+          closeModal();
+          state.shopView = "kalender";
+          state.calTab = "plans";
+          loadTab("shop");
+        };
+      }
+      const cancel = $("cancelModal");
+      if (cancel) cancel.onclick = closeModal;
     }
 
     function cardHtml(it) {
@@ -623,7 +833,9 @@
               )},${esc(shop.visualConfig.skyBottom || "#B8D4E8")} 55%,${esc(
                 shop.visualConfig.groundTop || "#2F5D2E"
               )})"></span>`
-            : `<span class="shop-card-emoji">${esc(it.emoji || it.itemId)}</span>`;
+            : `<span class="shop-card-emoji">${esc(
+                /^img_/i.test(String(it.emoji || "")) ? "🎁" : it.emoji || it.itemId
+              )}</span>`;
       const price =
         it.priceCoins != null
           ? `<strong class="shop-price">${it.priceCoins}</strong> <span class="muted">Coins</span>`
@@ -653,11 +865,6 @@
                 : "Lootbox: aus — klicken zum Freigeben"
             }">${it.lootboxEligible !== false ? "🎁" : "⛔"}</button>`;
       const shopOff = shop && shop.enabled === false;
-      const eventBadge = shop?.eventId
-        ? `<span class="badge" title="Event-Item">🎉 ${esc(shop.eventId)}${
-            shop.eventYear ? " · " + shop.eventYear : ""
-          }</span>`
-        : "";
       const achLinks = (it.achievements || [])
         .map(
           (a) =>
@@ -672,20 +879,20 @@
         </div>
         <div class="shop-card-body">
           <strong class="shop-card-title">${esc(it.label || it.itemId)}</strong>
-          ${eventBadge}
+          <div class="shop-card-status">${shopStatusBadges(shop, it)}</div>
           <div class="muted mono shop-card-id">${esc(it.itemId)}</div>
-          <div class="shop-card-price-row">${price}
-            ${shopOff ? '<span class="badge off">Shop aus</span>' : ""}
-            ${
-              !it.sources.includes("shop")
-                ? '<span class="badge src-noshop">nicht im Shop</span>'
-                : ""
-            }
-          </div>
+          <div class="shop-card-price-row">${price}</div>
           <div class="shop-card-meta source-row">${sourceBadges(it.sources)}</div>
           ${achLinks ? `<div class="ach-chip-row">${achLinks}</div>` : ""}
         </div>
         <div class="shop-card-actions">
+          ${
+            shop && !eventMode && !isEventItem
+              ? `<button type="button" class="btn secondary" data-cycle="${esc(it.kind)}|${esc(
+                  it.itemId
+                )}">Zyklus</button>`
+              : ""
+          }
           <button type="button" class="btn secondary" data-name="${esc(it.kind)}|${esc(it.itemId)}" title="Nur Anzeigename">Name</button>
           ${
             shop
@@ -709,18 +916,6 @@
               <h3>${cat.emoji} ${cat.label}</h3>
               <p class="help" style="margin:0.2rem 0 0">${cat.hint}</p>
             </div>
-            <button type="button" class="btn teal" data-new-kind="${cat.id}">＋ Neu</button>
-          ${
-            cat.id === "pets"
-              ? `<button type="button" class="btn secondary" data-new-kind="event_pets">🎉 Event-Begleiter</button>`
-              : cat.id === "stickers"
-                ? `<button type="button" class="btn secondary" data-new-kind="event_stickers">🎉 Event-Sticker</button>`
-                : cat.id === "emojis"
-                  ? `<button type="button" class="btn secondary" data-new-kind="event_emojis">🎉 Event-Emoji</button>`
-                  : cat.id === "themes"
-                    ? `<button type="button" class="btn secondary" data-new-kind="event_themes">🎉 Event-Hintergrund</button>`
-                    : ""
-          }
           </header>
           <p class="help">Keine Einträge für diesen Filter.</p>
         </section>`;
@@ -730,42 +925,31 @@
         <header class="shop-section-head">
           <div>
             <h3>${cat.emoji} ${cat.label}</h3>
-            <p class="help" style="margin:0.2rem 0 0">${cat.hint} · ${items.length} Items</p>
+            <p class="help" style="margin:0.2rem 0 0">${cat.hint} · ${items.length}</p>
           </div>
-          <button type="button" class="btn teal" data-new-kind="${cat.id}">＋ Neu</button>
-          ${
-            cat.id === "pets"
-              ? `<button type="button" class="btn secondary" data-new-kind="event_pets">🎉 Event-Begleiter</button>`
-              : cat.id === "stickers"
-                ? `<button type="button" class="btn secondary" data-new-kind="event_stickers">🎉 Event-Sticker</button>`
-                : cat.id === "emojis"
-                  ? `<button type="button" class="btn secondary" data-new-kind="event_emojis">🎉 Event-Emoji</button>`
-                  : cat.id === "themes"
-                    ? `<button type="button" class="btn secondary" data-new-kind="event_themes">🎉 Event-Hintergrund</button>`
-                    : ""
-          }
         </header>
         <div class="shop-card-grid">${items.map(cardHtml).join("")}</div>
       </section>`;
     }
 
-    const total = state.shopUniverse.length;
     content.innerHTML = `
       <div class="panel shop-hero">
         <div class="shop-top">
           <div>
-            <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">Items</h3>
-            <p class="help" style="margin:0.4rem 0 0;max-width:40rem">
-              Alle Items aus Shop, Erfolgen und Codes. Farben = Herkunft.
-              🏪 = am Marktplatz handelbar, 🚫 = gesperrt, 🔒 = dauerhaft gesperrt.
-              ${total} Items${state.shopQ ? ` · „${esc(state.shopQ)}“` : ""}.
-            </p>
+            <h3 style="margin:0;font-family:var(--display);font-size:1.55rem">${
+              eventMode ? "Event-Katalog" : "Katalog"
+            }</h3>
           </div>
-          <button class="btn teal" id="shopWizard">＋ Neues Shop-Item</button>
+          ${
+            eventMode
+              ? `<button class="btn teal" id="shopWizard">＋ Neues Event-Item</button>`
+              : `<button class="btn teal" id="shopWizard">＋ Neues Shop-Item</button>`
+          }
         </div>
 
         <div class="shop-cats" id="shopViews">
-          <button type="button" class="shop-cat on" data-shop-view="katalog">Katalog</button>
+          <button type="button" class="shop-cat ${!eventMode ? "on" : ""}" data-shop-view="katalog">Katalog</button>
+          <button type="button" class="shop-cat ${eventMode ? "on" : ""}" data-shop-view="events">Event-Katalog</button>
           <button type="button" class="shop-cat" data-shop-view="kalender">Kalender</button>
         </div>
 
@@ -789,24 +973,27 @@
         </div>
 
         <div class="toolbar shop-search-bar">
-          <input id="shopQ" placeholder="Suchen (Name, ID, Quelle)…" value="${esc(state.shopQ)}" />
+          <input id="shopQ" placeholder="Suchen (Name, ID)…" value="${esc(state.shopQ)}" />
           <button class="btn secondary" id="shopFilter">Suchen</button>
           ${state.shopQ || state.shopSource ? `<button class="btn ghost" id="shopClearQ">Zurücksetzen</button>` : ""}
-        </div>
-        <div class="source-legend">
-          <span class="badge src-shop">Shop</span>
-          <span class="badge src-achievement">Erfolg</span>
-          <span class="badge src-code">Code</span>
-          <span class="badge src-starter">Starter</span>
-          <span class="badge src-marriage">Ehe</span>
         </div>
       </div>
 
       <div class="shop-sections">
-        ${visibleCats.map(sectionHtml).join("") || `<div class="panel"><p class="help">Keine Items gefunden.</p></div>`}
+        ${
+          visibleCats.map(sectionHtml).join("") ||
+          `<div class="panel"><p class="help">${
+            eventMode
+              ? "Noch keine Event-Items. Oben „Neues Event-Item“ anlegen."
+              : "Keine Items gefunden."
+          }</p></div>`
+        }
       </div>`;
 
-    $("shopWizard").onclick = () => openWizard();
+    $("shopWizard").onclick = () => {
+      if (eventMode) openNewEventChooser();
+      else openWizard();
+    };
     content.querySelectorAll("#shopViews [data-shop-view]").forEach((btn) => {
       btn.onclick = () => {
         state.shopView = btn.getAttribute("data-shop-view") || "katalog";
@@ -815,6 +1002,14 @@
     });
     content.querySelectorAll("[data-new-kind]").forEach((btn) => {
       btn.onclick = () => openWizard(btn.getAttribute("data-new-kind"));
+    });
+    content.querySelectorAll("[data-cycle]").forEach((btn) => {
+      btn.onclick = () => {
+        const raw = btn.getAttribute("data-cycle") || "";
+        const [kind, ...rest] = raw.split("|");
+        const itemId = rest.join("|");
+        if (kind && itemId) openCycleModal(kind, itemId);
+      };
     });
     $("shopFilter").onclick = () => {
       state.shopQ = $("shopQ").value.trim();
@@ -1013,6 +1208,8 @@
       ? days.find((d) => d.date === state.calDay)
       : null;
 
+    if (state.calTab === "items") state.calTab = "month";
+
     let itemsData = { items: [], marks: {} };
     if (state.calTab === "items") {
       const qs = new URLSearchParams();
@@ -1044,7 +1241,7 @@
       return "dens-4";
     }
 
-    function kindDotsHtml(byKind, total) {
+    function kindDotsHtml(byKind, date) {
       const parts = [
         ["stickers", "S", "Sticker"],
         ["themes", "H", "Hintergründe"],
@@ -1056,7 +1253,11 @@
         .filter(([k]) => (byKind?.[k] || 0) > 0)
         .map(
           ([k, letter, label]) =>
-            `<span class="cal-kdot cal-k-${k}" title="${esc(label)}: ${byKind[k]}">${letter}<i>${byKind[k]}</i></span>`
+            `<button type="button" class="cal-kdot cal-k-${k}" data-cal-day="${esc(
+              date
+            )}" data-cal-kind-filter="${esc(k)}" title="${esc(label)}: ${byKind[k]}">${letter}<i>${
+              byKind[k]
+            }</i></button>`
         )
         .join("");
     }
@@ -1075,14 +1276,13 @@
         if (byKind.emojis) tipParts.push(`${byKind.emojis} Emojis`);
         if (byKind.other) tipParts.push(`${byKind.other} Sonstige`);
         const tip = n
-          ? `${n} Items aktiv${tipParts.length ? " · " + tipParts.join(", ") : ""} — Klick für Liste`
-          : "Keine zeitlich begrenzten Items";
+          ? `${n} Items · Klick öffnet Inventar (03:00 Berlin)`
+          : "Leer — Klick zum Befüllen";
 
         let body;
         if (n <= 0) {
           body = `<span class="cal-cell-empty">—</span>`;
         } else if (n <= 4) {
-          // Wenige: Glyphs + Restzahl
           const chips = (d.items || [])
             .slice(0, 3)
             .map((it) => `<span class="cal-chip" title="${esc(it.label || it.itemId)}">${esc(it.emoji || "·")}</span>`)
@@ -1090,130 +1290,280 @@
           const more = n > 3 ? `<span class="cal-more">+${n - 3}</span>` : "";
           body = `<span class="cal-cell-chips">${chips}${more}</span>`;
         } else {
-          // Viele: Kategorie-Dots + große Zahl — skaliert auch bei 50+ Items
           body = `<span class="cal-cell-dense">
             <span class="cal-cell-big">${n}</span>
-            <span class="cal-kdots">${kindDotsHtml(byKind, n)}</span>
+            <span class="cal-kdots">${kindDotsHtml(byKind, d.date)}</span>
           </span>`;
         }
 
-        return `<button type="button" class="cal-cell ${densClass(n)} ${isToday ? "is-today" : ""} ${isSel ? "is-sel" : ""} ${n ? "has-items" : ""}" data-cal-day="${esc(d.date)}" title="${esc(tip)}">
+        return `<div role="button" tabindex="0" class="cal-cell ${densClass(n)} ${isToday ? "is-today" : ""} ${isSel ? "is-sel" : ""} ${n ? "has-items" : ""}" data-cal-day="${esc(d.date)}" title="${esc(tip)}">
           <span class="cal-cell-top">
             <span class="cal-cell-num">${d.day}</span>
-            ${n ? `<span class="cal-cell-pill">${n}</span>` : ""}
           </span>
           ${body}
           <span class="cal-dens-bar" aria-hidden="true"></span>
-        </button>`;
+        </div>`;
       });
       return `<div class="cal-weekdays">${["Mo","Di","Mi","Do","Fr","Sa","So"].map((w) => `<div>${w}</div>`).join("")}</div>
         <div class="cal-grid">${pads.join("")}${cells.join("")}</div>
         <p class="help cal-legend" style="margin:0.55rem 0 0">
-          Wenige Items: Vorschau-Glyphs · Viele Items: Zahl + Kategorien (S/H/B/E). Details immer per Klick rechts.
+          Shop-Tag = 03:00→03:00 Berlin. Tippe Tag oder Kategorie-Punkt (S/H/B/E) für Inventar-Popup.
         </p>`;
     }
 
-    function dayPanelHtml() {
-      if (!selectedDay) {
-        return `<div class="cal-side panel">
-          <h4 style="margin:0 0 0.4rem">Tag wählen</h4>
-          <p class="help">Tippe einen Tag im Kalender an, um die Items an diesem Tag zu sehen oder ein Fenster für mehrere Items zu setzen.</p>
-          <div class="cal-plan-preview">
-            <h4 style="margin:0.8rem 0 0.35rem">Aktive Rotation</h4>
-            ${
-              plans.length
-                ? plans
-                    .map((p) => {
-                      const act = (p.activeNow || [])
-                        .map((a) => `${a.emoji || ""} ${a.label || a.itemId}`)
-                        .join(", ") || "—";
-                      return `<div class="cal-plan-mini ${p.enabled ? "" : "is-off"}">
-                        <strong>${esc(p.label)}</strong>
-                        <div class="muted" style="font-size:0.8rem">${esc(p.cycleLength)} ${esc(p.cycleUnit)} Zyklus · ${esc(p.activeLength)} ${esc(p.activeUnit)} im Shop · ${p.itemCount || 0} Items</div>
-                        <div style="margin-top:0.25rem">${esc(act)}</div>
-                      </div>`;
-                    })
-                    .join("")
-                : `<p class="help">Noch keine Rotationspläne.</p>`
-            }
-          </div>
-        </div>`;
+    function invThumb(it) {
+      if (it?.hasImage && it?.imageUrl) {
+        return `<img class="cal-inv-thumb" src="${esc(it.imageUrl)}" alt="" loading="lazy" />`;
       }
+      return `<span class="cal-inv-emoji">${esc(it?.emoji || "🎁")}</span>`;
+    }
+
+    async function openAddToDayModal(date, kindFilter, presentKeys) {
       const KIND_LABEL = {
         stickers: "Sticker",
         themes: "Hintergründe",
         pets: "Begleiter",
         emojis: "Emojis",
       };
-      const byKind = {};
-      for (const it of selectedDay.items || []) {
-        const k = String(it.kind || "other");
-        if (!byKind[k]) byKind[k] = [];
-        byKind[k].push(it);
+      const kinds = kindFilter
+        ? [kindFilter]
+        : ["stickers", "themes", "pets", "emojis"];
+      let pool = [];
+      try {
+        const qs = kindFilter ? `?kind=${encodeURIComponent(kindFilter)}` : "";
+        const data = await api("/admin/shop/items" + qs);
+        pool = (data.items || []).filter((it) => kinds.includes(it.kind));
+      } catch (err) {
+        alert(err?.message || "Katalog laden fehlgeschlagen");
+        return;
       }
-      const kindOrder = ["stickers", "themes", "pets", "emojis"];
-      const kindKeys = [
-        ...kindOrder.filter((k) => byKind[k]?.length),
-        ...Object.keys(byKind).filter((k) => !kindOrder.includes(k)),
-      ];
-      const groupsHtml = kindKeys.length
-        ? kindKeys
-            .map((k) => {
-              const rows = byKind[k]
+      const available = pool.filter((it) => !presentKeys.has(`${it.kind}:${it.itemId}`));
+      let q = "";
+      let filterKind = kindFilter || "";
+
+      function paintAdd() {
+        const list = available.filter((it) => {
+          if (filterKind && it.kind !== filterKind) return false;
+          if (!q) return true;
+          const hay = `${it.label || ""} ${it.itemId} ${it.kind}`.toLowerCase();
+          return hay.includes(q);
+        });
+        openModal(
+          `
+          <h3 style="margin:0 0 0.35rem;font-family:var(--display)">Hinzufügen · ${esc(date)}${
+            kindFilter ? ` · ${esc(KIND_LABEL[kindFilter] || kindFilter)}` : ""
+          }</h3>
+          <p class="help">Nur Items, die an diesem Tag noch fehlen. Fenster: 03:00→nächster 03:00 Berlin.</p>
+          ${
+            kindFilter
+              ? ""
+              : `<div class="shop-cats" id="calAddKinds" style="margin:0.4rem 0">
+              <button type="button" class="shop-cat ${!filterKind ? "on" : ""}" data-add-kind="">Alle</button>
+              ${["stickers", "themes", "pets", "emojis"]
                 .map(
-                  (it) => `<li class="cal-day-row" data-cal-q="${esc(
-                    `${it.label || ""} ${it.itemId || ""} ${it.emoji || ""} ${it.kind || ""}`.toLowerCase()
-                  )}">
-                    <span class="cal-emoji-inline">${esc(it.emoji || "·")}</span>
-                    <span class="cal-day-meta">
-                      <strong>${esc(it.label || it.itemId)}</strong>
-                      <span class="muted">${it.priceCoins ?? "—"}💰${
-                        it.rotationPlanId ? " · ↻" : ""
-                      }</span>
-                    </span>
-                  </li>`
+                  (k) =>
+                    `<button type="button" class="shop-cat ${
+                      filterKind === k ? "on" : ""
+                    }" data-add-kind="${k}">${esc(KIND_LABEL[k])}</button>`
                 )
-                .join("");
-              return `<div class="cal-day-group" data-kind="${esc(k)}">
-                <div class="cal-day-group-h">${esc(KIND_LABEL[k] || k)} <span class="muted">${byKind[k].length}</span></div>
-                <ul class="cal-day-items">${rows}</ul>
-              </div>`;
-            })
-            .join("")
-        : `<p class="muted">Keine zeitlich begrenzten Items</p>`;
+                .join("")}
+            </div>`
+          }
+          <input type="search" id="calAddQ" class="ev-pick-search" placeholder="Suchen…" value="${esc(q)}" />
+          <div class="cal-inv-grid" id="calAddGrid">
+            ${
+              list.length
+                ? list
+                    .map(
+                      (it) => `<button type="button" class="cal-inv-tile" data-add-key="${esc(
+                        it.kind
+                      )}:${esc(it.itemId)}">
+                  ${invThumb(it)}
+                  <span class="cal-inv-name">${esc(it.label || it.itemId)}</span>
+                  <span class="muted" style="font-size:0.7rem">${esc(it.kind)}</span>
+                </button>`
+                    )
+                    .join("")
+                : `<p class="help">Keine passenden Items übrig.</p>`
+            }
+          </div>
+          <div class="actions" style="margin-top:0.75rem">
+            <button type="button" class="btn ghost" id="cancelModal">Abbrechen</button>
+          </div>`,
+          true
+        );
+        const cancel = $("cancelModal");
+        if (cancel) cancel.onclick = () => {
+          closeModal();
+          openDayInventoryModal(date, kindFilter);
+        };
+        const qEl = $("calAddQ");
+        if (qEl) {
+          qEl.oninput = () => {
+            q = String(qEl.value || "").trim().toLowerCase();
+            paintAdd();
+          };
+        }
+        document.querySelectorAll("#calAddKinds [data-add-kind]").forEach((btn) => {
+          btn.onclick = () => {
+            filterKind = btn.getAttribute("data-add-kind") || "";
+            paintAdd();
+          };
+        });
+        document.querySelectorAll("#calAddGrid [data-add-key]").forEach((btn) => {
+          btn.onclick = async () => {
+            const key = btn.getAttribute("data-add-key") || "";
+            const dayMeta = days.find((d) => d.date === date);
+            const from = dayMeta?.shopFrom || null;
+            const until = dayMeta?.shopUntil || null;
+            if (!from || !until) {
+              alert("Shop-Fenster für diesen Tag fehlt.");
+              return;
+            }
+            try {
+              await api("/admin/shop/calendar/batch", {
+                method: "POST",
+                body: JSON.stringify({
+                  itemKeys: [key],
+                  availableFrom: from,
+                  availableUntil: until,
+                  enabled: true,
+                }),
+              });
+              closeModal();
+              state.calOpenInv = { date, kindFilter };
+              renderShopCalendar();
+            } catch (err) {
+              alert(err?.message || "Hinzufügen fehlgeschlagen");
+            }
+          };
+        });
+      }
+      paintAdd();
+    }
+
+    function openDayInventoryModal(date, kindFilter) {
+      const day = days.find((d) => d.date === date);
+      if (!day) return;
+      state.calDay = date;
+      const KIND_LABEL = {
+        stickers: "Sticker",
+        themes: "Hintergründe",
+        pets: "Begleiter",
+        emojis: "Emojis",
+        other: "Sonstige",
+      };
+      let q = "";
+      let filterKind = kindFilter || "";
+      const allItems = day.items || [];
+
+      function paintInv() {
+        const items = allItems.filter((it) => {
+          if (filterKind && it.kind !== filterKind) return false;
+          if (!q) return true;
+          const hay = `${it.label || ""} ${it.itemId} ${it.kind} ${it.emoji || ""}`.toLowerCase();
+          return hay.includes(q);
+        });
+        items.sort((a, b) =>
+          String(a.label || a.itemId).localeCompare(String(b.label || b.itemId), "de")
+        );
+        const presentKeys = new Set(allItems.map((it) => `${it.kind}:${it.itemId}`));
+        openModal(
+          `
+          <h3 style="margin:0 0 0.35rem;font-family:var(--display)">
+            ${esc(date)}${filterKind ? ` · ${esc(KIND_LABEL[filterKind] || filterKind)}` : ""} · Shop-Tag
+          </h3>
+          <p class="help" style="margin:0 0 0.5rem">
+            ${items.length} Items · Fenster 03:00→03:00 Berlin
+            ${day.shopFrom ? ` (${esc(fmtWhen(day.shopFrom))} – ${esc(fmtWhen(day.shopUntil))})` : ""}
+          </p>
+          <div class="shop-cats" id="calInvKinds" style="margin:0 0 0.45rem">
+            <button type="button" class="shop-cat ${!filterKind ? "on" : ""}" data-inv-kind="">Alle</button>
+            ${["stickers", "themes", "pets", "emojis"]
+              .map((k) => {
+                const n = allItems.filter((it) => it.kind === k).length;
+                if (!n && kindFilter && kindFilter !== k) return "";
+                return `<button type="button" class="shop-cat ${
+                  filterKind === k ? "on" : ""
+                }" data-inv-kind="${k}">${esc(KIND_LABEL[k])} <span class="shop-cat-n">${n}</span></button>`;
+              })
+              .join("")}
+          </div>
+          <input type="search" id="calInvQ" class="ev-pick-search" placeholder="Suchen…" value="${esc(q)}" />
+          <div class="cal-inv-grid" id="calInvGrid">
+            <button type="button" class="cal-inv-tile is-add" id="calInvAdd" title="Item hinzufügen">
+              <span class="cal-inv-plus">+</span>
+              <span class="cal-inv-name">Hinzufügen</span>
+            </button>
+            ${items
+              .map(
+                (it) => `<div class="cal-inv-tile" title="${esc(it.label || it.itemId)}">
+                ${invThumb(it)}
+                <span class="cal-inv-name">${esc(it.label || it.itemId)}</span>
+                <span class="muted" style="font-size:0.7rem">${it.priceCoins ?? "—"}💰${
+                  it.rotationPlanId ? " · ↻" : ""
+                }</span>
+              </div>`
+              )
+              .join("")}
+          </div>
+          <div class="actions" style="margin-top:0.75rem">
+            <button type="button" class="btn ghost" id="cancelModal">Schließen</button>
+          </div>`,
+          true
+        );
+        const cancel = $("cancelModal");
+        if (cancel) cancel.onclick = closeModal;
+        const qEl = $("calInvQ");
+        if (qEl) {
+          qEl.oninput = () => {
+            q = String(qEl.value || "").trim().toLowerCase();
+            paintInv();
+          };
+        }
+        document.querySelectorAll("#calInvKinds [data-inv-kind]").forEach((btn) => {
+          btn.onclick = () => {
+            filterKind = btn.getAttribute("data-inv-kind") || "";
+            paintInv();
+          };
+        });
+        const addBtn = $("calInvAdd");
+        if (addBtn) {
+          addBtn.onclick = () => {
+            closeModal();
+            openAddToDayModal(date, filterKind || kindFilter || "", presentKeys);
+          };
+        }
+      }
+      paintInv();
+    }
+
+    function dayPanelHtml() {
       return `<div class="cal-side panel">
-        <h4 style="margin:0 0 0.35rem">${esc(selectedDay.date)}</h4>
-        <p class="help" style="margin:0 0 0.45rem">${selectedDay.count || 0} Items mit Zeitfenster an diesem Tag</p>
-        <label class="field cal-day-filter">
-          <input type="search" id="calDayFilter" placeholder="Im Tag filtern…" autocomplete="off" />
-        </label>
-        <div class="cal-day-groups" id="calDayGroups">${groupsHtml}</div>
-        <hr class="cal-hr" />
-        <h4 style="margin:0 0 0.35rem">Fenster für Auswahl setzen</h4>
-        <p class="help">Unten unter „Items“ anhaken, dann hier speichern — oder einzelne IDs eintragen.</p>
-        <form id="calBatchForm" class="cal-batch-form">
-          <label class="field">Item-Keys (kind:id, kommagetrennt)
-            <textarea name="keys" rows="2" placeholder="emojis:💎, pets:🦄">${esc(
-              Object.keys(state.calPick || {})
-                .filter((k) => state.calPick[k])
-                .join(", ")
-            )}</textarea>
-          </label>
-          <div class="grid-2">
-            <label class="field">Ab
-              <input type="datetime-local" name="availableFrom" value="${esc(selectedDay.date)}T00:00" />
-            </label>
-            <label class="field">Bis
-              <input type="datetime-local" name="availableUntil" value="${esc(selectedDay.date)}T23:59" />
-            </label>
-          </div>
-          <label class="field" style="flex-direction:row;align-items:center;gap:0.5rem;margin-top:0.4rem">
-            <input type="checkbox" name="enabled" checked /> Im Shop aktiv
-          </label>
-          <div class="actions" style="margin-top:0.6rem">
-            <button type="submit" class="btn">Auf ${pickCount || "…"} Items anwenden</button>
-          </div>
-        </form>
+        <h4 style="margin:0 0 0.4rem">Tag-Inventar</h4>
+        <p class="help">Tippe einen Tag oder eine Kategorie (S/H/B/E) im Kalender — es öffnet sich ein Inventar-Popup. Zyklus steuerst du im <strong>Katalog</strong>.</p>
+        <p class="help" style="margin-top:0.55rem">Shop-Wechsel immer um <strong>03:00 Europe/Berlin</strong>.</p>
+        <div class="cal-plan-preview">
+          <h4 style="margin:0.8rem 0 0.35rem">Aktive Rotation</h4>
+          ${
+            plans.length
+              ? plans
+                  .map((p) => {
+                    const act = (p.activeNow || [])
+                      .map((a) => `${a.emoji || ""} ${a.label || a.itemId}`)
+                      .join(", ") || "—";
+                    return `<div class="cal-plan-mini ${p.enabled ? "" : "is-off"}">
+                      <strong>${esc(p.label)}</strong>
+                      <div class="muted" style="font-size:0.8rem">${p.itemCount || 0} Items · ${
+                      p.activeSharePct || 0
+                    } % aktiv</div>
+                      <div style="margin-top:0.25rem">${esc(act)}</div>
+                    </div>`;
+                  })
+                  .join("")
+              : `<p class="help">Noch keine Rotationspläne — Tab „Rotation“.</p>`
+          }
+        </div>
       </div>`;
     }
 
@@ -1236,8 +1586,8 @@
             <li>Jedes Item kommt regelmäßig wieder; nichts bleibt ewig ohne Pause (außer Starter).</li>
           </ol>
           <p class="help" style="margin:0.6rem 0 0">
-            Im Monatskalender siehst du die Rotationstage. Unter Items kannst du einzelne dauerhaft
-            aus der Rotation nehmen („Raus“) oder wieder aufnehmen.
+            Im Monatskalender siehst du die Shop-Tage (03:00 Berlin). Einzelne Items nimmst du im
+            <strong>Katalog → Zyklus</strong> aus der Rotation oder nimmst sie wieder auf.
           </p>
         </div>
         <div class="panel">
@@ -1534,12 +1884,12 @@
         </div>
         <div class="shop-cats" id="shopViews">
           <button type="button" class="shop-cat" data-shop-view="katalog">Katalog</button>
+          <button type="button" class="shop-cat" data-shop-view="events">Event-Katalog</button>
           <button type="button" class="shop-cat on" data-shop-view="kalender">Kalender</button>
         </div>
         <div class="shop-cats" id="calTabs">
           <button type="button" class="shop-cat ${state.calTab === "month" ? "on" : ""}" data-cal-tab="month">Monat</button>
           <button type="button" class="shop-cat ${state.calTab === "plans" ? "on" : ""}" data-cal-tab="plans">Rotation</button>
-          <button type="button" class="shop-cat ${state.calTab === "items" ? "on" : ""}" data-cal-tab="items">Items</button>
         </div>
       </div>
       ${
@@ -1603,77 +1953,36 @@
         renderShopCalendar();
       };
     }
-    content.querySelectorAll("[data-cal-day]").forEach((btn) => {
-      btn.onclick = () => {
-        state.calDay = btn.getAttribute("data-cal-day") || "";
-        renderShopCalendar();
+    content.querySelectorAll("[data-cal-day]").forEach((el) => {
+      const open = (kindFilter) => {
+        const date = el.getAttribute("data-cal-day") || "";
+        if (!date) return;
+        openDayInventoryModal(date, kindFilter || "");
       };
+      if (el.classList.contains("cal-kdot")) {
+        el.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          open(el.getAttribute("data-cal-kind-filter") || "");
+        };
+      } else if (el.classList.contains("cal-cell")) {
+        el.onclick = (e) => {
+          if (e.target.closest && e.target.closest(".cal-kdot")) return;
+          open("");
+        };
+        el.onkeydown = (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            open("");
+          }
+        };
+      }
     });
 
-    const dayFilter = $("calDayFilter");
-    if (dayFilter) {
-      dayFilter.oninput = () => {
-        const q = String(dayFilter.value || "").trim().toLowerCase();
-        content.querySelectorAll("#calDayGroups .cal-day-row").forEach((row) => {
-          const hay = row.getAttribute("data-cal-q") || "";
-          row.hidden = Boolean(q) && !hay.includes(q);
-        });
-        content.querySelectorAll("#calDayGroups .cal-day-group").forEach((g) => {
-          const any = [...g.querySelectorAll(".cal-day-row")].some((r) => !r.hidden);
-          g.hidden = Boolean(q) && !any;
-        });
-      };
-    }
-
-    const batchForm = $("calBatchForm");
-    if (batchForm) {
-      batchForm.onsubmit = async (e) => {
-        e.preventDefault();
-        const fd = new FormData(batchForm);
-        const keys = String(fd.get("keys") || "")
-          .split(/[,;\n]+/)
-          .map((s) => s.trim())
-          .filter(Boolean);
-        if (!keys.length) {
-          alert("Mindestens ein Item-Key (kind:id) angeben oder unter Items anhaken.");
-          return;
-        }
-        try {
-          const fromRaw = String(fd.get("availableFrom") || "").trim();
-          const untilRaw = String(fd.get("availableUntil") || "").trim();
-          const fromMs = fromRaw ? new Date(fromRaw).getTime() : null;
-          const untilMs = untilRaw ? new Date(untilRaw).getTime() : null;
-          if (fromMs != null && Number.isNaN(fromMs)) {
-            alert("Ungültiges Von-Datum");
-            return;
-          }
-          if (untilMs != null && Number.isNaN(untilMs)) {
-            alert("Ungültiges Bis-Datum");
-            return;
-          }
-          if (fromMs != null && untilMs != null && untilMs < fromMs) {
-            alert("Bis-Datum liegt vor Von-Datum");
-            return;
-          }
-          const result = await api("/admin/shop/calendar/batch", {
-            method: "POST",
-            body: JSON.stringify({
-              itemKeys: keys,
-              availableFrom: fromMs,
-              availableUntil: untilMs,
-              enabled: batchForm.querySelector('[name="enabled"]').checked,
-            }),
-          });
-          if (!result.count) {
-            alert("Keine Items aktualisiert — Keys prüfen (kind:id).");
-            return;
-          }
-          state.calPick = {};
-          renderShopCalendar();
-        } catch (err) {
-          alert(err?.message || "Batch fehlgeschlagen");
-        }
-      };
+    if (state.calOpenInv?.date) {
+      const pending = state.calOpenInv;
+      state.calOpenInv = null;
+      openDayInventoryModal(pending.date, pending.kindFilter || "");
     }
 
     const planForm = $("calPlanForm");
@@ -2232,7 +2541,9 @@
 
     function paint() {
       openModal(`
-        <h3 style="font-family:var(--display);margin:0 0 0.5rem">Neues Item</h3>
+        <h3 style="font-family:var(--display);margin:0 0 0.5rem">${
+          draft.isEventItem ? "Neues Event-Item" : "Neues Shop-Item"
+        }</h3>
         <div class="wizard-steps">${steps
           .map((s, i) => `<span class="${i === step ? "on" : ""}">${i + 1}. ${s}</span>`)
           .join("")}</div>
@@ -2636,18 +2947,23 @@
 
     function stepBody() {
       if (step === 0)
-        return `<label class="field">Kategorie
+        return draft.isEventItem
+          ? `<label class="field">Kategorie
           <select name="kind">
-            <option value="emojis" ${!draft.isEventItem && draft.kind === "emojis" ? "selected" : ""}>😊 Emoji (Reaktion)</option>
-            <option value="stickers" ${!draft.isEventItem && draft.kind === "stickers" ? "selected" : ""}>🏷️ Sticker</option>
-            <option value="themes" ${!draft.isEventItem && draft.kind === "themes" ? "selected" : ""}>🖼️ Hintergrund</option>
-            <option value="pets" ${!draft.isEventItem && draft.kind === "pets" ? "selected" : ""}>🐾 Begleiter</option>
-            <option value="event_pets" ${draft.isEventItem && draft.kind === "pets" ? "selected" : ""}>🎉 Event-Begleiter</option>
-            <option value="event_stickers" ${draft.isEventItem && draft.kind === "stickers" ? "selected" : ""}>🎉 Event-Sticker</option>
-            <option value="event_emojis" ${draft.isEventItem && draft.kind === "emojis" ? "selected" : ""}>🎉 Event-Emoji</option>
-            <option value="event_themes" ${draft.isEventItem && draft.kind === "themes" ? "selected" : ""}>🎉 Event-Hintergrund</option>
+            <option value="event_emojis" ${draft.kind === "emojis" ? "selected" : ""}>🎉 Event-Emoji</option>
+            <option value="event_stickers" ${draft.kind === "stickers" ? "selected" : ""}>🎉 Event-Sticker</option>
+            <option value="event_themes" ${draft.kind === "themes" ? "selected" : ""}>🎉 Event-Hintergrund</option>
+            <option value="event_pets" ${draft.kind === "pets" ? "selected" : ""}>🎉 Event-Begleiter</option>
           </select>
-          <span class="tip">Event-Items: nur im Event-Fenster im Shop (1× pro Kategorie/Jahr), Besitz bleibt — nicht in der Lootbox.</span>
+          <span class="tip">Nur während dem Event im Shop &amp; Event-Popup · 1× pro Kategorie und Jahr · nicht in der Lootbox.</span>
+        </label>`
+          : `<label class="field">Kategorie
+          <select name="kind">
+            <option value="emojis" ${draft.kind === "emojis" ? "selected" : ""}>😊 Emoji (Reaktion)</option>
+            <option value="stickers" ${draft.kind === "stickers" ? "selected" : ""}>🏷️ Sticker</option>
+            <option value="themes" ${draft.kind === "themes" ? "selected" : ""}>🖼️ Hintergrund</option>
+            <option value="pets" ${draft.kind === "pets" ? "selected" : ""}>🐾 Begleiter</option>
+          </select>
         </label>`;
       if (step === 1) {
         if (draft.isEventItem) {
@@ -3156,6 +3472,107 @@
       alert("Erfolgs-Tageslimit gespeichert");
       renderMarketSettings();
     };
+  }
+
+  async function renderMaintenanceBericht() {
+    const data = await api("/admin/maintenance/reports");
+    const reports = data.reports || [];
+    content.innerHTML = `
+      <div class="panel">
+        <h3>Wartungsbericht</h3>
+        <p class="help">Jede Nacht 02:59–03:09 (Berlin): Backup (max. 10), Shop-Zyklus, Health-Check. Hier nur den Bericht manuell erfassen — ohne Shop umzubauen.</p>
+        <div class="actions">
+          <button class="btn" id="maintManual">Bericht jetzt erfassen</button>
+        </div>
+      </div>
+      <div class="panel" id="maintDetail" style="display:none">
+        <div class="actions" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <h3 id="maintDetailTitle" style="margin:0">Bericht</h3>
+          <button class="btn ghost" id="maintCopy">Alles kopieren</button>
+        </div>
+        <pre id="maintCopyText" class="codeblock" style="white-space:pre-wrap;max-height:420px;overflow:auto;margin-top:12px"></pre>
+        <div id="maintEntries" style="margin-top:12px"></div>
+      </div>
+      <div class="panel">
+        <h3>Letzte Berichte</h3>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Zeit</th><th>Nacht</th><th>Quelle</th><th>Status</th><th>Summary</th><th></th></tr></thead>
+            <tbody>
+              ${
+                reports.length
+                  ? reports
+                      .map(
+                        (r) => `<tr>
+                    <td>${esc(new Date(r.createdAt).toLocaleString("de-DE"))}</td>
+                    <td>${esc(r.nightKey || "—")}</td>
+                    <td>${esc(r.source || "—")}</td>
+                    <td><span class="badge ${
+                      r.status === "error" ? "bad" : r.status === "warn" ? "warn" : "ok"
+                    }">${esc(r.status || "?")}</span></td>
+                    <td>${esc(r.summary || "")}</td>
+                    <td><button class="btn ghost tiny" data-maint-id="${esc(r.id)}">Öffnen</button></td>
+                  </tr>`
+                      )
+                      .join("")
+                  : `<tr><td colspan="6" class="muted">Noch keine Berichte.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+
+    async function openReport(id) {
+      const res = await api(`/admin/maintenance/reports/${encodeURIComponent(id)}`);
+      const report = res.report;
+      if (!report) return;
+      const detail = $("maintDetail");
+      detail.style.display = "block";
+      $("maintDetailTitle").textContent = `${report.nightKey || "Bericht"} · ${report.status}`;
+      $("maintCopyText").textContent = report.copyText || "";
+      const entries = Array.isArray(report.entries) ? report.entries : [];
+      $("maintEntries").innerHTML = entries
+        .map((e) => {
+          const lvl = String(e.level || "info");
+          return `<div class="card" style="margin-bottom:8px">
+            <div class="k">[${esc(lvl.toUpperCase())}] ${esc(e.code || "")}</div>
+            <div class="v" style="font-size:14px">${esc(e.message || "")}</div>
+            ${
+              e.recommendation
+                ? `<p class="help" style="margin:6px 0 0">→ ${esc(e.recommendation)}</p>`
+                : ""
+            }
+          </div>`;
+        })
+        .join("");
+      $("maintCopy").onclick = async () => {
+        const text = report.copyText || $("maintCopyText").textContent || "";
+        try {
+          await navigator.clipboard.writeText(text);
+          alert("Bericht kopiert — kannst du der KI schicken.");
+        } catch {
+          $("maintCopyText").focus();
+          $("maintCopyText").select?.();
+          alert("Bitte Text manuell markieren und kopieren.");
+        }
+      };
+    }
+
+    $("maintManual").onclick = async () => {
+      const res = await api("/admin/maintenance/report", {
+        method: "POST",
+        body: "{}",
+      });
+      if (res.report?.id) {
+        alert("Bericht erfasst.");
+        await renderMaintenanceBericht();
+        await openReport(res.report.id);
+      }
+    };
+
+    content.querySelectorAll("[data-maint-id]").forEach((btn) => {
+      btn.onclick = () => openReport(btn.getAttribute("data-maint-id"));
+    });
   }
 
   async function renderLive() {

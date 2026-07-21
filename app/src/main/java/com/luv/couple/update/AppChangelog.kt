@@ -12,6 +12,19 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.56",
+            listOf(
+                "Nächtlicher Wartungsmodus 02:59–03:09 mit Timer, Herz-Hüpfer-Minispiel und 2-Coin-Dankeschön",
+            )
+        ),
+        Entry(
+            "2.2.55",
+            listOf(
+                "Lootbox-Popup Vollbild mit Riss-/Explosions-Animation",
+                "Event-Wizard: Item-Bilder, bis zu 6 Belohnungen, Kalender nur noch Wizard/Löschen",
+            )
+        ),
+        Entry(
             "2.2.54",
             listOf(
                 "Lootbox-Kachel mit eigenem Premium-Bild",

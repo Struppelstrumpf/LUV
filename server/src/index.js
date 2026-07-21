@@ -12,6 +12,8 @@ const {
   hashSecret,
   newId,
   DATA_DIR,
+  flushSaveSync,
+  DATA_FILE,
 } = require("./store");
 const { pickShareLine } = require("./share_lines");
 const ach = require("./achievements");
@@ -30,6 +32,7 @@ const dailyTasks = require("./daily_tasks");
 const shopCalendar = require("./shop_calendar");
 const seasonEvents = require("./events");
 const adminWebAuth = require("./admin_web_auth");
+const maintenance = require("./maintenance");
 ach.bindGetDb(getDb);
 const {
   STICKER_SHOP_PRICES,
@@ -4007,6 +4010,7 @@ const PAID_CREDIT_REASONS = new Set([
   "event_quest",
   "event_contest_prize",
   "event_vote",
+  "maintenance_reward",
 ]);
 
 /** Soft-Earn (nicht als IAP-Äquivalent / Tip-fähig stapeln). */
@@ -6519,6 +6523,8 @@ setInterval(() => {
 }, 60_000).unref();
 setInterval(() => {
   try {
+    // Während Wartungsfenster: Zyklus nur über maintenance.tick (einmal), nicht parallel
+    if (maintenance.isMaintenanceActive()) return;
     const db = getDb();
     seedShopCatalogIfNeeded();
     shopCalendar.applyAllRotationPlans(db);
@@ -6528,6 +6534,25 @@ setInterval(() => {
     console.error("[shop] rotation tick failed", e);
   }
 }, 2 * 60_000).unref();
+setInterval(() => {
+  try {
+    const db = getDb();
+    const result = maintenance.tick(db, {
+      dataFile: DATA_FILE,
+      dataDir: DATA_DIR,
+      shopCalendar,
+      shopCatalog,
+      flushSaveSync,
+      beforeShop: () => seedShopCatalogIfNeeded(),
+    });
+    if (result?.job?.ran) {
+      console.log("[maintenance] nightly job done", result.job.report?.id || "");
+      scheduleSave();
+    }
+  } catch (e) {
+    console.error("[maintenance] tick failed", e);
+  }
+}, 15_000).unref();
 setInterval(() => {
   sweepExpiredMarketListings();
 }, 5 * 60_000).unref();
@@ -10156,6 +10181,90 @@ app.post("/v1/admin/live-notice", (req, res) => {
   scheduleSave();
   broadcastLiveNotice(getLiveNotice());
   return res.json({ ok: true, notice: getLiveNotice() });
+});
+
+/** Nächtlicher Wartungsmodus (02:59–03:09 Berlin) — Status für App-Overlay */
+app.get("/v1/maintenance/status", (req, res) => {
+  const ctx = authUser(req);
+  if (ctx?.user?.banned) {
+    return res.status(403).json({ error: "banned", message: "Dieses Konto ist gesperrt." });
+  }
+  const db = getDb();
+  const status = maintenance.publicStatus(db, ctx?.user || null);
+  if (ctx?.user && status.active) scheduleSave();
+  return res.json({
+    ok: true,
+    ...status,
+  });
+});
+
+app.post("/v1/maintenance/score", (req, res) => {
+  const ctx = requireAuth(req, res, { allowTrial: true });
+  if (!ctx) return;
+  const score = Math.floor(Number(req.body?.score) || 0);
+  const result = maintenance.recordScore(getDb(), ctx.user, score);
+  scheduleSave();
+  return res.json({ ok: true, ...result });
+});
+
+app.post("/v1/maintenance/claim", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const result = maintenance.claimReward(getDb(), ctx.user, applyLedger);
+  if (!result.ok) {
+    const code =
+      result.error === "too_early"
+        ? 409
+        : result.error === "too_late" || result.error === "not_eligible"
+          ? 410
+          : 400;
+    return res.status(code).json(result);
+  }
+  scheduleSave();
+  syncCoinTotal(ctx.user);
+  return res.json({
+    ok: true,
+    already: Boolean(result.already),
+    coins: result.coins,
+    nightKey: result.nightKey,
+    balance: Number(ctx.user.coins) || 0,
+  });
+});
+
+app.get("/v1/admin/maintenance/reports", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const list = maintenance.listReports(getDb()).map((r) => ({
+    id: r.id,
+    nightKey: r.nightKey,
+    source: r.source,
+    createdAt: r.createdAt,
+    status: r.status,
+    summary: r.summary,
+  }));
+  return res.json({ ok: true, reports: list });
+});
+
+app.get("/v1/admin/maintenance/reports/:id", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const report = maintenance.getReport(getDb(), req.params.id);
+  if (!report) return res.status(404).json({ error: "not_found" });
+  return res.json({ ok: true, report });
+});
+
+/** Manuell nur Bericht (Backup + Health, kein Shop-Zyklus) */
+app.post("/v1/admin/maintenance/report", (req, res) => {
+  const ctx = requireStaff(req, res, "market.settings");
+  if (!ctx) return;
+  const report = maintenance.runManualReport(getDb(), {
+    dataFile: DATA_FILE,
+    dataDir: DATA_DIR,
+    flushSaveSync,
+    withShopCycle: false,
+  });
+  scheduleSave();
+  return res.json({ ok: true, report });
 });
 
 function sanitizeVoucherItems(raw) {

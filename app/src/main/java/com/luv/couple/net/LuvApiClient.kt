@@ -1328,6 +1328,65 @@ object LuvApiClient {
         )
     }
 
+    data class MaintenanceStatus(
+        val active: Boolean,
+        val nightKey: String,
+        val startsAt: Long,
+        val endsAt: Long,
+        val serverNow: Long,
+        val remainingMs: Long,
+        val joke: String,
+        val highScore: Int,
+        val claimed: Boolean,
+        val canClaim: Boolean,
+        val rewardCoins: Int,
+        val claimGraceMs: Long
+    )
+
+    data class MaintenanceClaimResult(
+        val already: Boolean,
+        val coins: Int,
+        val balance: Int
+    )
+
+    suspend fun fetchMaintenanceStatus(): MaintenanceStatus? = withContext(Dispatchers.IO) {
+        val json = runCatching { authedGet("/v1/maintenance/status") }.getOrNull()
+            ?: return@withContext null
+        MaintenanceStatus(
+            active = json.optBoolean("active", false),
+            nightKey = json.optString("nightKey"),
+            startsAt = json.optLong("startsAt", 0L),
+            endsAt = json.optLong("endsAt", 0L),
+            serverNow = json.optLong("serverNow", System.currentTimeMillis()),
+            remainingMs = json.optLong("remainingMs", 0L),
+            joke = json.optString("joke").ifBlank {
+                "Kurz Pause — die Coins putzen sich die Zähne."
+            },
+            highScore = json.optInt("highScore", 0),
+            claimed = json.optBoolean("claimed", false),
+            canClaim = json.optBoolean("canClaim", false),
+            rewardCoins = json.optInt("rewardCoins", 2),
+            claimGraceMs = json.optLong("claimGraceMs", 30 * 60_000L)
+        )
+    }
+
+    suspend fun submitMaintenanceScore(score: Int): Int = withContext(Dispatchers.IO) {
+        val clean = score.coerceIn(0, 999_999)
+        val json = runCatching {
+            authedPost("/v1/maintenance/score", """{"score":$clean}""")
+        }.getOrNull() ?: return@withContext 0
+        json.optInt("highScore", clean)
+    }
+
+    suspend fun claimMaintenanceReward(): MaintenanceClaimResult = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/maintenance/claim", "{}")
+        MaintenanceClaimResult(
+            already = json.optBoolean("already", false),
+            coins = json.optInt("coins", 0),
+            balance = json.optInt("balance", 0)
+        )
+    }
+
     data class StaffWarning(
         val id: String,
         val message: String,

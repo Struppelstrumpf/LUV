@@ -19,6 +19,15 @@ const DEFAULT = {
   peerReports: {},
   helpMessages: {},
   liveNotice: null,
+  maintenance: {
+    nightKey: null,
+    joke: "",
+    jobDone: false,
+    jobStartedAt: null,
+    jobFinishedAt: null,
+    lastReportId: null,
+  },
+  maintenanceReports: {},
   marketListings: {},
   marketMeta: { priceHistory: {} },
   economySettings: { achievementDailyCap: 12 },
@@ -77,6 +86,21 @@ function load() {
           : {},
       liveNotice:
         raw.liveNotice && typeof raw.liveNotice === "object" ? raw.liveNotice : null,
+      maintenance:
+        raw.maintenance && typeof raw.maintenance === "object"
+          ? raw.maintenance
+          : {
+              nightKey: null,
+              joke: "",
+              jobDone: false,
+              jobStartedAt: null,
+              jobFinishedAt: null,
+              lastReportId: null,
+            },
+      maintenanceReports:
+        raw.maintenanceReports && typeof raw.maintenanceReports === "object"
+          ? raw.maintenanceReports
+          : {},
       marketListings:
         raw.marketListings && typeof raw.marketListings === "object"
           ? raw.marketListings

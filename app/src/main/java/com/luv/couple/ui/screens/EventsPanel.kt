@@ -56,6 +56,7 @@ import com.luv.couple.data.AccountInfo
 import com.luv.couple.net.EventShopItem
 import com.luv.couple.net.SeasonEvent
 import com.luv.couple.data.asCleanJsonString
+import com.luv.couple.ui.ItemGlyph
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -305,18 +306,19 @@ private fun EventHeroCard(
                 fontSize = 12.sp
             )
         }
-        val reward = event.rewardItem
-        if (reward != null) {
+        val rewards = event.resolvedRewardItems
+        if (rewards.isNotEmpty()) {
+            val labels = rewards.joinToString(", ") { it.label.ifBlank { it.itemId } }
             Text(
                 if (event.itemGranted) {
-                    "Belohnung erhalten: ${reward.emoji} ${reward.label}"
+                    "Belohnung erhalten: $labels"
                 } else {
-                    "Ziel-Belohnung: ${reward.emoji} ${reward.label} (nach ${event.collectTarget}× Sammeln)"
+                    "Ziel-Belohnung: $labels (nach ${event.collectTarget}× Sammeln)"
                 },
                 color = AccentRose,
                 fontFamily = BodyFont,
                 fontSize = 12.sp,
-                maxLines = 2,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis
             )
         }
@@ -947,7 +949,6 @@ private fun UpcomingEventPreviewDialog(
         event.hint.isNotBlank() -> event.hint
         else -> "Bald startet dieses Event — Farben und Atmosphäre siehst du hier schon."
     }
-    val reward = event.rewardItem
     val shopItems = event.shopItems
     var peekItem by remember { mutableStateOf<EventShopItem?>(null) }
 
@@ -1023,31 +1024,40 @@ private fun UpcomingEventPreviewDialog(
                         fontSize = 15.sp,
                         lineHeight = 22.sp
                     )
-                    if (reward != null) {
-                        Row(
+                    val rewards = event.resolvedRewardItems
+                    if (rewards.isNotEmpty()) {
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(14.dp))
                                 .background(accent.copy(0.16f))
                                 .border(1.dp, accent.copy(0.3f), RoundedCornerShape(14.dp))
                                 .padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Text(reward.emoji.ifBlank { "🎁" }, fontSize = 28.sp)
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Event-Belohnung",
-                                    color = TextMuted,
-                                    fontFamily = BodyFont,
-                                    fontSize = 11.sp
-                                )
-                                Text(
-                                    reward.label.ifBlank { reward.itemId },
-                                    color = TextPrimary,
-                                    fontFamily = DisplayFont,
-                                    fontSize = 16.sp
-                                )
+                            Text(
+                                "Event-Belohnung",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 11.sp
+                            )
+                            rewards.forEach { reward ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    ItemGlyph(
+                                        id = reward.itemId.ifBlank { reward.emoji },
+                                        fontSize = 28.sp
+                                    )
+                                    Text(
+                                        reward.label.ifBlank { reward.itemId },
+                                        color = TextPrimary,
+                                        fontFamily = DisplayFont,
+                                        fontSize = 16.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
                             }
                         }
                     }

@@ -596,6 +596,11 @@ function remainingMs(item, now = Date.now()) {
   return Math.max(0, item.availableUntil - now);
 }
 
+function opensInMs(item, now = Date.now()) {
+  if (!item?.availableFrom || now >= item.availableFrom) return null;
+  return Math.max(0, item.availableFrom - now);
+}
+
 function publicItem(item, now = Date.now(), { admin = false, db = null } = {}) {
   if (!item) return null;
   const price = effectivePrice(item);
@@ -606,6 +611,7 @@ function publicItem(item, now = Date.now(), { admin = false, db = null } = {}) {
         ? item.priceCoins
         : null;
   const rem = remainingMs(item, now);
+  const opens = opensInMs(item, now);
   const hasImage = Boolean(item.hasImage);
   const themeEmoji =
     item.kind === "themes" && item.visualConfig?.emojis?.[0]
@@ -631,6 +637,7 @@ function publicItem(item, now = Date.now(), { admin = false, db = null } = {}) {
     searchText: mergeSearchText(item.searchText, keywordsForEmoji(item.itemId), item.label),
     availableUntil: item.availableUntil || null,
     remainingMs: rem,
+    opensInMs: opens,
     maxPerUser: item.maxPerUser,
     maxTotalSales: item.maxTotalSales,
     soldTotal: item.soldTotal || 0,

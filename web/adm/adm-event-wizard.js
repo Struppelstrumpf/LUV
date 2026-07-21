@@ -26,9 +26,54 @@
     { v: 0, l: "Sonntag" },
   ];
   const DEFAULT_PROMPTS = ["Herz", "Stern", "Sonne", "Katze", "Blume", "Mond", "Haus", "Baum"];
+  const MAX_REWARD_ITEMS = 6;
 
   function pad2(n) {
     return String(n).padStart(2, "0");
+  }
+
+  function isImgId(s) {
+    return /^img_/i.test(String(s || "").trim());
+  }
+
+  function itemThumbHtml(it, esc) {
+    if (!it) return `<span class="ev-shop-glyph">🎁</span>`;
+    if (it.hasImage && it.imageUrl) {
+      return `<img class="ev-item-thumb" src="${esc(it.imageUrl)}" alt="" loading="lazy" />`;
+    }
+    if (it.kind === "themes" && it.visualConfig) {
+      const v = it.visualConfig;
+      return `<span class="ev-item-theme" style="background:linear-gradient(160deg,${esc(
+        v.skyTop || "#7EB8D8"
+      )},${esc(v.skyBottom || "#B8D4E8")} 55%,${esc(v.groundTop || "#2F5D2E")})"></span>`;
+    }
+    const emo = String(it.emoji || "").trim();
+    if (emo && !isImgId(emo)) {
+      return `<span class="ev-shop-glyph">${esc(emo)}</span>`;
+    }
+    if (isImgId(it.itemId) && ["pets", "emojis", "stickers"].includes(String(it.kind || ""))) {
+      const url = `/luv/v1/shop/pet-image/${encodeURIComponent(it.itemId)}`;
+      return `<img class="ev-item-thumb" src="${esc(url)}" alt="" loading="lazy" onerror="this.outerHTML='<span class=\\'ev-shop-glyph\\'>🎁</span>'" />`;
+    }
+    return `<span class="ev-shop-glyph">🎁</span>`;
+  }
+
+  function catalogHit(catalogItems, kind, itemId) {
+    return catalogItems.find((x) => x.kind === kind && x.itemId === itemId) || null;
+  }
+
+  function rewardFromCatalog(it) {
+    if (!it) return null;
+    const emo = String(it.emoji || "").trim();
+    return {
+      kind: it.kind,
+      itemId: it.itemId,
+      emoji: emo && !isImgId(emo) ? emo : it.previewEmoji || it.itemId,
+      label: it.label || it.itemId,
+      hasImage: Boolean(it.hasImage),
+      imageUrl: it.imageUrl || null,
+      visualConfig: it.visualConfig || null,
+    };
   }
 
   function toLocalInput(isoOrMs) {
@@ -93,10 +138,26 @@
       rewardCoinsPerCollect: Number(existing?.rewardCoinsPerCollect ?? 2),
       collectTarget: Number(existing?.collectTarget ?? 1),
       milestoneBonusCoins: Number(existing?.milestoneBonusCoins ?? 0),
-      rewardKind: existing?.rewardItem?.kind || "",
-      rewardItemId: existing?.rewardItem?.itemId || "",
-      rewardEmoji: existing?.rewardItem?.emoji || "",
-      rewardLabel: existing?.rewardItem?.label || "",
+      rewardItems: (() => {
+        const fromArr = Array.isArray(existing?.rewardItems) ? existing.rewardItems : [];
+        const list = fromArr.length
+          ? fromArr
+          : existing?.rewardItem
+            ? [existing.rewardItem]
+            : [];
+        return list
+          .filter((r) => r && r.kind && r.itemId)
+          .slice(0, MAX_REWARD_ITEMS)
+          .map((r) => ({
+            kind: r.kind,
+            itemId: r.itemId,
+            emoji: r.emoji || r.itemId,
+            label: r.label || r.itemId,
+            hasImage: Boolean(r.hasImage),
+            imageUrl: r.imageUrl || null,
+            visualConfig: r.visualConfig || null,
+          }));
+      })(),
       shopBindings: [], // {kind,itemId,label}
       lobbyEnabled: Boolean(existing?.lobby?.enabled),
       lobbyPrompts: (existing?.lobby?.prompts || DEFAULT_PROMPTS).join("\n"),
@@ -133,6 +194,11 @@
             label: it.label || it.itemId,
           }));
       }
+      // Belohnungs-Thumbs aus Katalog anreichern (Custom-Bilder)
+      draft.rewardItems = draft.rewardItems.map((r) => {
+        const hit = catalogHit(catalogItems, r.kind, r.itemId);
+        return hit ? { ...rewardFromCatalog(hit), label: r.label || hit.label } : r;
+      });
     }
 
     function saveStep() {
@@ -172,10 +238,7 @@
         draft.rewardCoinsPerCollect = Number(fd.get("rewardCoinsPerCollect") || 0);
         draft.collectTarget = Math.max(1, Number(fd.get("collectTarget") || 1));
         draft.milestoneBonusCoins = Number(fd.get("milestoneBonusCoins") || 0);
-        draft.rewardKind = String(fd.get("rewardKind") || "").trim();
-        draft.rewardItemId = String(fd.get("rewardItemId") || "").trim();
-        draft.rewardEmoji = String(fd.get("rewardEmoji") || "").trim();
-        draft.rewardLabel = String(fd.get("rewardLabel") || "").trim();
+        // rewardItems kommen aus den Plus-Kacheln (draft), nicht aus Form-Feldern
       }
       if (step === 3) {
         const checks = form.querySelectorAll("[data-shop-bind]:checked");
@@ -286,16 +349,22 @@
           </div>`;
       }
       if (step === 2) {
-        const rewardOpts = catalogItems
-          .filter((it) => ["emojis", "stickers", "pets", "themes"].includes(it.kind))
-          .slice(0, 200)
-          .map((it) => {
-            const val = `${it.kind}|${it.itemId}`;
-            const sel =
-              draft.rewardKind === it.kind && draft.rewardItemId === it.itemId ? "selected" : "";
-            return `<option value="${esc(val)}" ${sel}>${esc(it.emoji || "·")} ${esc(it.label || it.itemId)} (${esc(it.kind)})</option>`;
-          })
-          .join("");
+        const slots = [];
+        for (let i = 0; i < MAX_REWARD_ITEMS; i++) {
+          const it = draft.rewardItems[i];
+          if (it) {
+            slots.push(`<button type="button" class="ev-reward-slot is-filled" data-reward-slot="${i}" title="Tippen zum Entfernen">
+              ${itemThumbHtml(it, esc)}
+              <span class="ev-reward-slot-label">${esc(it.label || it.itemId)}</span>
+              <span class="ev-reward-slot-x">×</span>
+            </button>`);
+          } else {
+            slots.push(`<button type="button" class="ev-reward-slot is-empty" data-reward-add title="Item wählen">
+              <span class="ev-reward-plus">+</span>
+              <span class="ev-reward-slot-label">Item</span>
+            </button>`);
+          }
+        }
         return `
           <div class="grid-2">
             <label class="field">Coins pro Sammeln
@@ -309,16 +378,21 @@
           <label class="field">Meilenstein-Bonus (Coins)
             <input name="milestoneBonusCoins" type="number" min="0" max="100" value="${draft.milestoneBonusCoins}" />
           </label>
-          <label class="field">Item-Belohnung (optional)
-            <select name="rewardPick" id="evRewardPick">
-              <option value="">— keine —</option>
-              ${rewardOpts}
-            </select>
-          </label>
-          <input type="hidden" name="rewardKind" id="evRewardKind" value="${esc(draft.rewardKind)}" />
-          <input type="hidden" name="rewardItemId" id="evRewardItemId" value="${esc(draft.rewardItemId)}" />
-          <input type="hidden" name="rewardEmoji" id="evRewardEmoji" value="${esc(draft.rewardEmoji)}" />
-          <input type="hidden" name="rewardLabel" id="evRewardLabel" value="${esc(draft.rewardLabel)}" />`;
+          <div class="field">
+            <span>Item-Belohnungen (optional, max. ${MAX_REWARD_ITEMS})</span>
+            <p class="tip" style="margin:0.25rem 0 0.55rem">Plus-Kachel → Item wählen. Belegte Kachel tippen = entfernen. Alle werden beim Meilenstein vergeben.</p>
+            <div class="ev-reward-slots">${slots.join("")}</div>
+          </div>
+          <div id="evRewardPickLayer" class="ev-pick-layer" hidden>
+            <div class="ev-pick-panel">
+              <div class="ev-pick-head">
+                <strong>Item wählen</strong>
+                <button type="button" class="btn ghost" id="evRewardPickClose">✕</button>
+              </div>
+              <input type="search" id="evRewardPickQ" class="ev-pick-search" placeholder="Suchen…" autocomplete="off" />
+              <div class="ev-pick-grid" id="evRewardPickGrid"></div>
+            </div>
+          </div>`;
       }
       if (step === 3) {
         const unbound = catalogItems.filter((it) => {
@@ -338,7 +412,7 @@
             )}" data-label="${esc(it.label || it.itemId)}" ${on ? "checked" : ""} ${
               taken ? "disabled" : ""
             } />
-              <span class="ev-shop-glyph">${esc(it.emoji || "🎁")}</span>
+              <span class="ev-shop-glyph-wrap">${itemThumbHtml(it, esc)}</span>
               <span>
                 <strong>${esc(it.label || it.itemId)}</strong>
                 <span class="muted">${esc(it.kind)} · ${esc(String(it.priceCoins ?? "—"))} Coins${
@@ -424,7 +498,11 @@
           <p><strong>${esc(draft.emoji)} ${esc(draft.title)}</strong></p>
           <p class="muted">${esc(when)}</p>
           <p>Sammeln: ${draft.collectTarget}× · ${draft.rewardCoinsPerCollect} Coins${
-        draft.rewardItemId ? ` · Belohnung ${esc(draft.rewardLabel || draft.rewardItemId)}` : ""
+        draft.rewardItems.length
+          ? ` · Belohnung ${esc(
+              draft.rewardItems.map((r) => r.label || r.itemId).join(", ")
+            )}`
+          : ""
       }</p>
           <p>Shop-Items: ${draft.shopBindings.length} · Lobby: ${
         draft.lobbyEnabled ? "an" : "aus"
@@ -491,29 +569,92 @@
         };
       });
 
-      const rewardPick = $("evRewardPick");
-      if (rewardPick) {
-        rewardPick.onchange = () => {
-          const v = String(rewardPick.value || "");
-          if (!v) {
-            draft.rewardKind = "";
-            draft.rewardItemId = "";
-            draft.rewardEmoji = "";
-            draft.rewardLabel = "";
-          } else {
-            const [kind, itemId] = v.split("|");
-            const hit = catalogItems.find((x) => x.kind === kind && x.itemId === itemId);
-            draft.rewardKind = kind;
-            draft.rewardItemId = itemId;
-            draft.rewardEmoji = hit?.emoji || itemId;
-            draft.rewardLabel = hit?.label || itemId;
-          }
-          $("evRewardKind").value = draft.rewardKind;
-          $("evRewardItemId").value = draft.rewardItemId;
-          $("evRewardEmoji").value = draft.rewardEmoji;
-          $("evRewardLabel").value = draft.rewardLabel;
+      function openRewardPicker() {
+        if (!saveStep()) return;
+        if (draft.rewardItems.length >= MAX_REWARD_ITEMS) {
+          alert(`Maximal ${MAX_REWARD_ITEMS} Belohnungs-Items.`);
+          return;
+        }
+        const layer = $("evRewardPickLayer");
+        const grid = $("evRewardPickGrid");
+        const qEl = $("evRewardPickQ");
+        if (!layer || !grid) return;
+        layer.hidden = false;
+        const renderGrid = () => {
+          const q = String(qEl?.value || "")
+            .trim()
+            .toLowerCase();
+          const taken = new Set(draft.rewardItems.map((r) => `${r.kind}:${r.itemId}`));
+          const list = catalogItems
+            .filter((it) => ["emojis", "stickers", "pets", "themes"].includes(it.kind))
+            .filter((it) => {
+              if (!q) return true;
+              const hay = `${it.label || ""} ${it.itemId} ${it.kind} ${it.emoji || ""}`.toLowerCase();
+              return hay.includes(q);
+            })
+            .slice(0, 240);
+          grid.innerHTML = list
+            .map((it) => {
+              const key = `${it.kind}:${it.itemId}`;
+              const disabled = taken.has(key);
+              return `<button type="button" class="ev-pick-card ${disabled ? "is-taken" : ""}" data-kind="${esc(
+                it.kind
+              )}" data-item-id="${esc(it.itemId)}" ${disabled ? "disabled" : ""}>
+                ${itemThumbHtml(it, esc)}
+                <span class="ev-pick-card-meta">
+                  <strong>${esc(it.label || it.itemId)}</strong>
+                  <span class="muted">${esc(it.kind)}</span>
+                </span>
+              </button>`;
+            })
+            .join("");
+          grid.querySelectorAll(".ev-pick-card:not([disabled])").forEach((btn) => {
+            btn.onclick = () => {
+              const kind = btn.getAttribute("data-kind");
+              const itemId = btn.getAttribute("data-item-id");
+              const hit = catalogHit(catalogItems, kind, itemId);
+              const entry = rewardFromCatalog(hit || { kind, itemId, label: itemId });
+              if (!entry) return;
+              if (draft.rewardItems.some((r) => r.kind === entry.kind && r.itemId === entry.itemId)) {
+                return;
+              }
+              if (draft.rewardItems.length >= MAX_REWARD_ITEMS) return;
+              draft.rewardItems.push(entry);
+              layer.hidden = true;
+              saveStep();
+              paint();
+            };
+          });
         };
+        if (qEl) {
+          qEl.value = "";
+          qEl.oninput = renderGrid;
+        }
+        const closeBtn = $("evRewardPickClose");
+        if (closeBtn) closeBtn.onclick = () => {
+          layer.hidden = true;
+        };
+        layer.onclick = (ev) => {
+          if (ev.target === layer) layer.hidden = true;
+        };
+        renderGrid();
       }
+      document.querySelectorAll("[data-reward-add]").forEach((btn) => {
+        btn.onclick = (e) => {
+          e.preventDefault();
+          openRewardPicker();
+        };
+      });
+      document.querySelectorAll("[data-reward-slot]").forEach((btn) => {
+        btn.onclick = (e) => {
+          e.preventDefault();
+          saveStep();
+          const idx = Number(btn.getAttribute("data-reward-slot"));
+          if (!Number.isFinite(idx)) return;
+          draft.rewardItems.splice(idx, 1);
+          paint();
+        };
+      });
 
       const accent = $("evAccent");
       const particles = $("evParticles");
@@ -573,15 +714,16 @@
     }
 
     function buildPayload() {
-      const rewardItem =
-        draft.rewardKind && draft.rewardItemId
-          ? {
-              kind: draft.rewardKind,
-              itemId: draft.rewardItemId,
-              emoji: draft.rewardEmoji || draft.rewardItemId,
-              label: draft.rewardLabel || draft.rewardItemId,
-            }
-          : null;
+      const rewardItems = draft.rewardItems
+        .filter((r) => r && r.kind && r.itemId)
+        .slice(0, MAX_REWARD_ITEMS)
+        .map((r) => ({
+          kind: r.kind,
+          itemId: r.itemId,
+          emoji: r.emoji || r.itemId,
+          label: r.label || r.itemId,
+        }));
+      const rewardItem = rewardItems[0] || null;
       const decor = {
         particles: draft.particles,
         accentHex: draft.accentHex,
@@ -616,6 +758,7 @@
         rewardCoinsPerCollect: draft.rewardCoinsPerCollect,
         collectTarget: draft.collectTarget,
         milestoneBonusCoins: draft.milestoneBonusCoins,
+        rewardItems,
         rewardItem,
         decor,
         lobby,
