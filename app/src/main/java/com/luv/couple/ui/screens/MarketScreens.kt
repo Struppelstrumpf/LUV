@@ -443,7 +443,14 @@ private fun MarketLootboxTile(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("🎁", fontSize = 44.sp)
+                Image(
+                    painter = painterResource(com.luv.couple.R.drawable.shop_lootbox),
+                    contentDescription = "Lootbox",
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(RoundedCornerShape(16.dp)),
+                    contentScale = ContentScale.Crop
+                )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     if (pendingCount > 0) {
@@ -2077,7 +2084,14 @@ private fun LootboxTab(
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("🎁", fontSize = (giftSize.value * 0.43f).sp)
+                    Image(
+                        painter = painterResource(com.luv.couple.R.drawable.shop_lootbox),
+                        contentDescription = "Lootbox",
+                        modifier = Modifier
+                            .fillMaxSize(0.78f)
+                            .clip(RoundedCornerShape(18.dp)),
+                        contentScale = ContentScale.Crop
+                    )
                 }
                 if (reveal != null) {
                     Column(
