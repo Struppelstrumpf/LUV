@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -45,14 +46,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.min
 import com.luv.couple.LuvApp
 import com.luv.couple.lock.CanvasMemoryKeeper
 import com.luv.couple.net.AccountSession
@@ -152,6 +157,7 @@ fun CustomRoomScreen(
     var lastBellMoveAt by remember { mutableLongStateOf(0L) }
     var reactionExpanded by remember { mutableStateOf(false) }
     var emojiBar by remember { mutableStateOf(ShopCatalog.DEFAULT_BAR) }
+    var showZones by remember { mutableStateOf(true) }
 
     val zones = layout?.zones.orEmpty()
     val avatarR = layout?.avatarR?.takeIf { it > 0f } ?: DEFAULT_AVATAR_R
@@ -265,6 +271,14 @@ fun CustomRoomScreen(
                 contentDescription = layout?.name ?: "Raum",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.FillBounds,
+            )
+        }
+
+        if (showZones && zones.isNotEmpty()) {
+            ZoneOverlay(
+                zones = zones,
+                viewRect = viewRect,
+                modifier = Modifier.fillMaxSize(),
             )
         }
 
@@ -501,7 +515,23 @@ fun CustomRoomScreen(
                         .clickable(onClick = onClose)
                         .padding(vertical = 6.dp),
                 )
-                repeat(3) {
+                Text(
+                    "Zonen",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 4.dp)
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (showZones) Color(0x8843A047) else Color.White.copy(0.10f)
+                        )
+                        .clickable { showZones = !showZones }
+                        .padding(vertical = 10.dp),
+                )
+                repeat(2) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -511,6 +541,72 @@ fun CustomRoomScreen(
                             .background(Color.White.copy(0.06f)),
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ZoneOverlay(
+    zones: List<LuvApiClient.RoomZone>,
+    viewRect: LuvApiClient.RoomViewRect,
+    modifier: Modifier = Modifier,
+) {
+    val vrW = viewRect.w.coerceAtLeast(0.01f)
+    val vrH = viewRect.h.coerceAtLeast(0.01f)
+    Canvas(modifier = modifier) {
+        fun toScreenX(ix: Float) = ((ix - viewRect.x) / vrW) * size.width
+        fun toScreenY(iy: Float) = ((iy - viewRect.y) / vrH) * size.height
+        fun toScreenR(r: Float) = r * min(size.width / vrW, size.height / vrH)
+
+        // Grün zuerst (unten), dann Rot/Blau usw.
+        val ordered = zones.sortedBy { z ->
+            when (z.color) {
+                "green" -> 0
+                "red" -> 1
+                "blue" -> 2
+                "brown" -> 3
+                "orange" -> 4
+                "yellow" -> 5
+                else -> 6
+            }
+        }
+        for (z in ordered) {
+            val fill = when (z.color) {
+                "green" -> Color(0x6643A047)
+                "red" -> Color(0x66E53935)
+                "blue" -> Color(0x8842A5F5)
+                "brown" -> Color(0x998D6E63)
+                "orange" -> Color(0x99FF9800)
+                "yellow" -> Color(0x99FFD54F)
+                else -> Color(0x55FFFFFF)
+            }
+            val stroke = when (z.color) {
+                "green" -> Color(0xFF43A047)
+                "red" -> Color(0xFFE53935)
+                "blue" -> Color(0xFF42A5F5)
+                "brown" -> Color(0xFF8D6E63)
+                "orange" -> Color(0xFFFF9800)
+                "yellow" -> Color(0xFFFFD54F)
+                else -> Color.White
+            }
+            if (z.shape == "circle") {
+                val c = Offset(toScreenX(z.cx), toScreenY(z.cy))
+                val rad = toScreenR(z.r).coerceAtLeast(4f)
+                drawCircle(color = fill, radius = rad, center = c)
+                drawCircle(color = stroke, radius = rad, center = c, style = Stroke(width = 3f))
+            } else {
+                val left = toScreenX(z.x)
+                val top = toScreenY(z.y)
+                val w = (z.w / vrW) * size.width
+                val h = (z.h / vrH) * size.height
+                drawRect(color = fill, topLeft = Offset(left, top), size = Size(w, h))
+                drawRect(
+                    color = stroke,
+                    topLeft = Offset(left, top),
+                    size = Size(w, h),
+                    style = Stroke(width = 3f),
+                )
             }
         }
     }

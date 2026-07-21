@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.79",
+            listOf(
+                "Neuer Raum: Gebiete (Grün/Rot/Blau) zum Prüfen einblendbar",
+            )
+        ),
+        Entry(
             "2.2.78",
             listOf(
                 "Neuer Raum: stabiles Laufen ohne Avatar-Zucken, freiere Wiese",
