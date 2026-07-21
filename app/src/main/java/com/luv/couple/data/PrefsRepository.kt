@@ -29,6 +29,8 @@ class PrefsRepository(private val context: Context) {
     private val liveProximityWakeKey = booleanPreferencesKey("live_proximity_wake")
     /** Pro Lobby: Lebendige-Nähe-Impulse (Default aus). JSON-Objekt lobbyId→bool */
     private val lobbyProximityKey = stringPreferencesKey("lobby_proximity_json")
+    /** Pro Lobby: eigene Stiftfarbe. JSON-Objekt Invite-Code→colorIndex */
+    private val lobbyColorKey = stringPreferencesKey("lobby_color_json")
     private val seenMemoriesKey = stringPreferencesKey("seen_memories_json")
     private val lastClearDayKey = stringPreferencesKey("last_clear_day")
     private val tutorialDoneKey = booleanPreferencesKey("tutorial_done")
@@ -187,9 +189,45 @@ class PrefsRepository(private val context: Context) {
         }
     }
 
+    /**
+     * Globaler Fallback / letzte Farbe (z. B. Lobby erstellen).
+     * Stiftfarbe auf der Leinwand: [colorIndexForLobby] / [setColorIndexForLobby].
+     */
     suspend fun setColorIndex(index: Int) {
         val safe = index.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
         context.dataStore.edit { it[colorIndexKey] = safe.toString() }
+    }
+
+    /** Gespeicherte Stiftfarbe dieser Lobby (Invite-Code), oder null. */
+    suspend fun colorIndexForLobby(lobbyIdOrCode: String): Int? {
+        val prefs = context.dataStore.data.first()
+        val lobbies = parseLobbies(prefs[lobbiesKey])
+        val code = resolveLobbyCode(lobbyIdOrCode, lobbies) ?: return null
+        val map = parseLobbyColors(prefs[lobbyColorKey])
+        val byCode = map[code]
+        if (byCode != null) return byCode.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
+        // Legacy: UUID-Key vor Migration
+        lobbies.firstOrNull { normalizeLobbyCode(it.code) == code }?.let { lobby ->
+            map[lobby.id]?.let { return it.coerceIn(0, PeerPalette.COLOR_COUNT - 1) }
+        }
+        map[lobbyIdOrCode.trim()]?.let { return it.coerceIn(0, PeerPalette.COLOR_COUNT - 1) }
+        return null
+    }
+
+    /** Stiftfarbe nur für diese Lobby — andere Lobbies bleiben unberührt. */
+    suspend fun setColorIndexForLobby(lobbyIdOrCode: String, index: Int) {
+        val safe = index.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
+        context.dataStore.edit { prefs ->
+            val lobbies = parseLobbies(prefs[lobbiesKey])
+            val code = resolveLobbyCode(lobbyIdOrCode, lobbies) ?: return@edit
+            val map = parseLobbyColors(prefs[lobbyColorKey]).toMutableMap()
+            lobbies.filter { normalizeLobbyCode(it.code) == code }.forEach { map.remove(it.id) }
+            map.remove(lobbyIdOrCode.trim())
+            map[code] = safe
+            prefs[lobbyColorKey] = encodeLobbyColors(map)
+            // Letzte Farbe als Create-Default — nicht als Lobby-übergreifende Zeichenfarbe
+            prefs[colorIndexKey] = safe.toString()
+        }
     }
 
     suspend fun brushWidth(): Float =
@@ -311,6 +349,7 @@ class PrefsRepository(private val context: Context) {
             it.remove(inventoryUnseenKey)
             it[pendingHomeCoachmarksKey] = false
             it[homeCoachmarksDoneKey] = false
+            it.remove(lobbyColorKey)
         }
     }
 
@@ -1202,6 +1241,11 @@ class PrefsRepository(private val context: Context) {
             if (prox.remove(lobbyId) != null) proxDirty = true
             if (code.length >= 3 && prox.remove(code) != null) proxDirty = true
             if (proxDirty) prefs[lobbyProximityKey] = encodeLobbyProximity(prox)
+            val colors = parseLobbyColors(prefs[lobbyColorKey]).toMutableMap()
+            var colorDirty = false
+            if (colors.remove(lobbyId) != null) colorDirty = true
+            if (code.length >= 3 && colors.remove(code) != null) colorDirty = true
+            if (colorDirty) prefs[lobbyColorKey] = encodeLobbyColors(colors)
             if (code.length >= 3) {
                 val set = parseDismissedLobbyCodes(prefs[dismissedLobbiesKey]).toMutableSet()
                 if (set.add(code)) {
@@ -1453,6 +1497,27 @@ class PrefsRepository(private val context: Context) {
         fun encodeLobbyProximity(map: Map<String, Boolean>): String {
             val o = JSONObject()
             map.forEach { (k, v) -> if (v) o.put(k, true) }
+            return o.toString()
+        }
+
+        fun parseLobbyColors(raw: String?): Map<String, Int> {
+            if (raw.isNullOrBlank()) return emptyMap()
+            return runCatching {
+                val o = JSONObject(raw)
+                buildMap {
+                    o.keys().forEach { key ->
+                        val idx = o.optInt(key, -1)
+                        if (idx in 0 until PeerPalette.COLOR_COUNT) put(key, idx)
+                    }
+                }
+            }.getOrDefault(emptyMap())
+        }
+
+        fun encodeLobbyColors(map: Map<String, Int>): String {
+            val o = JSONObject()
+            map.forEach { (k, v) ->
+                if (v in 0 until PeerPalette.COLOR_COUNT) o.put(k, v)
+            }
             return o.toString()
         }
 

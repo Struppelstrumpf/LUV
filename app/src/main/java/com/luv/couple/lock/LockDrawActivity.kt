@@ -416,12 +416,25 @@ class LockDrawActivity : ComponentActivity() {
             lobbyId?.let { id ->
                 withContext(Dispatchers.IO) { LuvApp.instance.prefs.setActiveLobby(id) }
             }
-            CanvasStore.updateProfile(snap.nickname, snap.colorIndex)
             val brushW = withContext(Dispatchers.IO) { LuvApp.instance.prefs.brushWidth() }
             CanvasStore.updateBrushWidth(brushW)
             if (::drawingView.isInitialized) drawingView.myBrushWidth = brushW
             CanvasStore.updateKnownLobbies(snap.lobbies.map { it.id })
             val lobby = snap.lobbies.firstOrNull { it.id == lobbyId }
+            // Farbe je Lobby (Code) — nie die Farbe einer anderen Lobby übernehmen
+            val lobbyKey = lobby?.code?.takeIf { it.isNotBlank() } ?: lobbyId
+            val myColor = withContext(Dispatchers.IO) {
+                val saved = lobbyKey?.let { LuvApp.instance.prefs.colorIndexForLobby(it) }
+                when {
+                    saved != null -> saved
+                    else -> {
+                        val seed = snap.colorIndex
+                        lobbyKey?.let { LuvApp.instance.prefs.setColorIndexForLobby(it, seed) }
+                        seed
+                    }
+                }
+            }
+            CanvasStore.updateProfile(snap.nickname, myColor)
             eventLobbyActive = lobby?.isEventLobby == true
             eventEndsAtMs = lobby?.eventEndsAt.asCleanJsonString()?.let { iso ->
                 runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrNull()
@@ -442,9 +455,9 @@ class LockDrawActivity : ComponentActivity() {
             weddingRetakeActive = lobby?.isWeddingRetake == true ||
                 (lobby?.isWedding == true && lobby.name.contains("Hochzeitsbild", ignoreCase = true))
             setupWeddingConfirmUi()
-            applyMyColor(snap.colorIndex, persist = false, sync = false)
+            applyMyColor(myColor, persist = false, sync = false)
             // Eigene Historie an aktuelle Farbe anpassen (sonst gemischte Farben bis zum Picker)
-            CanvasStore.recolorOwnStrokes(snap.colorIndex, lobbyId, broadcast = false)
+            CanvasStore.recolorOwnStrokes(myColor, lobbyId, broadcast = false)
             drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
             refreshLegend()
             showLastStrokeMemory(lobbyId, lobby)
@@ -556,7 +569,8 @@ class LockDrawActivity : ComponentActivity() {
                         refreshLegend()
                     }
                     is PairEvent.ColorAssigned -> if (event.lobbyId == id) {
-                        applyMyColor(event.colorIndex, persist = false, sync = true)
+                        // Nur UI/Sync — Persistenz schon pro Lobby in PairConnectionService
+                        applyMyColor(event.colorIndex, persist = false, sync = false)
                     }
                     is PairEvent.Cleared -> if (event.lobbyId == id) {
                         drawingView.clearCanvas()
@@ -1780,8 +1794,18 @@ class LockDrawActivity : ComponentActivity() {
         rootView?.setBackgroundColor(bg)
         drawingView.canvasBackground = bg
         if (persist) {
+            val key = lobbyId
             lifecycleScope.launch {
-                withContext(Dispatchers.IO) { LuvApp.instance.prefs.setColorIndex(safe) }
+                withContext(Dispatchers.IO) {
+                    val snap = LuvApp.instance.prefs.snapshot()
+                    val code = snap.lobbies.firstOrNull { it.id == key }?.code
+                    val lobbyKey = code?.takeIf { it.isNotBlank() } ?: key
+                    if (!lobbyKey.isNullOrBlank()) {
+                        LuvApp.instance.prefs.setColorIndexForLobby(lobbyKey, safe)
+                    } else {
+                        LuvApp.instance.prefs.setColorIndex(safe)
+                    }
+                }
             }
         }
         // Solo: nur Pinsel/Hintergrund wechseln — alte Striche behalten Farben.

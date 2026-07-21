@@ -628,18 +628,38 @@ class PairConnectionService : Service() {
                             val suggested = json.optInt("suggestedColorIndex", -1)
                             val activeId = CanvasStore.activeLobbyId.value
                             val appliesHere = activeId == null || activeId == lobby.id
-                            if (appliesHere && suggested in 0 until PeerPalette.COLOR_COUNT) {
+                            if (suggested in 0 until PeerPalette.COLOR_COUNT) {
                                 scope.launch {
-                                    val colorChanged = CanvasStore.cachedColorIndex != suggested
-                                    if (colorChanged) {
-                                        LuvApp.instance.prefs.setColorIndex(suggested)
-                                        CanvasStore.updateProfile(CanvasStore.cachedNickname, suggested)
-                                        CanvasStore.recolorOwnStrokes(
-                                            suggested,
-                                            lobby.id,
-                                            broadcast = LockDrawActivity.isCanvasForeground(lobby.id)
-                                        )
-                                        _events.emit(PairEvent.ColorAssigned(lobby.id, suggested))
+                                    val prefs = LuvApp.instance.prefs
+                                    val lobbyKey = lobby.code.takeIf { it.isNotBlank() } ?: lobby.id
+                                    val saved = prefs.colorIndexForLobby(lobbyKey)
+                                    // Lokale Lobby-Farbe hat Vorrang; Server nur beim ersten Mal
+                                    val useColor = saved ?: suggested
+                                    if (saved == null) {
+                                        prefs.setColorIndexForLobby(lobbyKey, suggested)
+                                    }
+                                    if (appliesHere) {
+                                        val colorChanged = CanvasStore.cachedColorIndex != useColor
+                                        if (colorChanged) {
+                                            CanvasStore.updateProfile(
+                                                CanvasStore.cachedNickname,
+                                                useColor
+                                            )
+                                            CanvasStore.recolorOwnStrokes(
+                                                useColor,
+                                                lobby.id,
+                                                broadcast = LockDrawActivity.isCanvasForeground(lobby.id)
+                                            )
+                                            _events.emit(PairEvent.ColorAssigned(lobby.id, useColor))
+                                        } else if (saved != null && saved != suggested) {
+                                            // Server hat andere Farbe — lokale Präferenz zurückspielen
+                                            sendRecolor(
+                                                applicationContext,
+                                                CanvasStore.cachedNickname,
+                                                saved,
+                                                lobby.id
+                                            )
+                                        }
                                     }
                                     // Nur echte Leinwand-Präsenz — nicht schon bei Lobby-Verbindung
                                     sendPresence(

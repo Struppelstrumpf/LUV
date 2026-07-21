@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.61",
+            listOf(
+                "Stiftfarbe bleibt je Lobby (normal / Event / Random) — Wechsel in einer Lobby ändert die anderen nicht",
+            )
+        ),
+        Entry(
             "2.2.60",
             listOf(
                 "Sozial-Events: Event-Shop-Vorschau ohne überlappende Kacheln, Demnächst-Popup deckt das Menü ab, eigene Events wieder in der Vorschau",

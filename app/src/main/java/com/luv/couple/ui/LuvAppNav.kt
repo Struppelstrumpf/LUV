@@ -345,7 +345,7 @@ fun LuvAppNav() {
         )
         AccountSession.account.value?.let { prefs.updateAccount(it) }
         val myColor = PeerPalette.hostSideColor(hostColorSide)
-        prefs.setColorIndex(myColor)
+        prefs.setColorIndexForLobby(room.code, myColor)
         colorIndex = myColor
         CanvasStore.updateProfile(nick.ifBlank { snap.nickname.orEmpty() }, myColor)
         val lobby = Lobby(
@@ -506,7 +506,7 @@ fun LuvAppNav() {
                 )
                 AccountSession.account.value?.let { prefs.updateAccount(it) }
                 val myColor = PeerPalette.hostSideColor(hostColorSide)
-                prefs.setColorIndex(myColor)
+                prefs.setColorIndexForLobby(room.code, myColor)
                 colorIndex = myColor
                 CanvasStore.updateProfile(snap.nickname.orEmpty(), myColor)
                 val lobby = Lobby(
@@ -895,7 +895,7 @@ fun LuvAppNav() {
         }
         val room = LuvApiClient.joinRoom(raw)
         room.suggestedColorIndex?.let { suggested ->
-            prefs.setColorIndex(suggested)
+            prefs.setColorIndexForLobby(room.code, suggested)
             colorIndex = suggested
             CanvasStore.updateProfile(snap.nickname.orEmpty(), suggested)
         }
@@ -1003,7 +1003,7 @@ fun LuvAppNav() {
                 )
                 AccountSession.account.value?.let { prefs.updateAccount(it) }
                 val myColor = PeerPalette.hostSideColor(hostColorSide)
-                prefs.setColorIndex(myColor)
+                prefs.setColorIndexForLobby(room.code, myColor)
                 colorIndex = myColor
                 val nick = snap.nickname.orEmpty().ifBlank { "Luv" }
                 CanvasStore.updateProfile(nick, myColor)
@@ -1069,7 +1069,7 @@ fun LuvAppNav() {
             val nick = user.nickname.ifBlank { "Gast" }
             prefs.setNickname(nick)
             room.suggestedColorIndex?.let { suggested ->
-                prefs.setColorIndex(suggested)
+                prefs.setColorIndexForLobby(room.code, suggested)
                 colorIndex = suggested
                 CanvasStore.updateProfile(nick, suggested)
             }
@@ -1860,7 +1860,7 @@ fun LuvAppNav() {
                                         }
                                         val room = LuvApiClient.randomMatch()
                                         room.suggestedColorIndex?.let { suggested ->
-                                            prefs.setColorIndex(suggested)
+                                            prefs.setColorIndexForLobby(room.code, suggested)
                                             colorIndex = suggested
                                             CanvasStore.updateProfile(nick, suggested)
                                         }
@@ -2234,7 +2234,7 @@ fun LuvAppNav() {
                             val room = LuvApiClient.createRoom(name, hostColorSide)
                             AccountSession.account.value?.let { prefs.updateAccount(it) }
                             val myColor = PeerPalette.hostSideColor(hostColorSide)
-                            prefs.setColorIndex(myColor)
+                            prefs.setColorIndexForLobby(room.code, myColor)
                             colorIndex = myColor
                             CanvasStore.updateProfile(snap.nickname.orEmpty(), myColor)
                             val lobby = Lobby(
