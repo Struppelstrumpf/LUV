@@ -28,6 +28,8 @@ services:
       # Play Integrity (Anti-Bot bei Neuanmeldung) — Project-Nummer aus Google Cloud
       GOOGLE_CLOUD_PROJECT_NUMBER: "${GOOGLE_CLOUD_PROJECT_NUMBER:-37411430724}"
       PLAY_INTEGRITY_REQUIRED: "${PLAY_INTEGRITY_REQUIRED:-}"
+      # Sideload-APK-Login nur für diese Google-Mails (Komma). Leer = Super-Admins.
+      SIDELOAD_LOGIN_EMAILS: "${SIDELOAD_LOGIN_EMAILS:-}"
     volumes:
       - luv_data:/data
       - /opt/luv-web:/opt/luv-web:ro

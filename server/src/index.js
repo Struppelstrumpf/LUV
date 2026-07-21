@@ -59,6 +59,81 @@ const SUPER_ADMIN_EMAILS = new Set(
     .filter(Boolean)
 );
 
+/**
+ * Google-E-Mails, die sich auch über Sideload-APK anmelden dürfen
+ * (ohne PLAY_RECOGNIZED). Alle anderen brauchen die Play-Store-App.
+ * Default = Super-Admins. Env: SIDELOAD_LOGIN_EMAILS=a@x.de,b@y.de
+ */
+const SIDELOAD_LOGIN_EMAILS = new Set(
+  String(
+    process.env.SIDELOAD_LOGIN_EMAILS ||
+      process.env.SUPER_ADMIN_EMAILS ||
+      "xstruppelstrumpf@gmail.com"
+  )
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+function isSideloadLoginAllowed(email) {
+  return SIDELOAD_LOGIN_EMAILS.has(String(email || "").trim().toLowerCase());
+}
+
+/**
+ * Play-App-Pflicht für Google-Login. Sideload nur für Allowlist-E-Mails.
+ * Geräte-Integrity (kein Emulator) gilt weiter für alle.
+ */
+async function gateGooglePlayLogin(req, email) {
+  if (!playIntegrity.isEnforced()) return { ok: true };
+  const integrityToken = String(req.body?.integrityToken || "").trim();
+  const integrityNonce = String(req.body?.integrityNonce || "").trim();
+  const allow = isSideloadLoginAllowed(email);
+
+  if (!integrityToken || !integrityNonce) {
+    if (allow) {
+      console.warn("[play_integrity] sideload allowlist (missing token)", email);
+      return { ok: true, sideloadBypass: true };
+    }
+    return {
+      ok: false,
+      error: "missing_integrity",
+      message:
+        "Bitte LUV aus dem Google Play Store installieren und aktualisieren.",
+    };
+  }
+
+  const verdict = await playIntegrity.verifyIntegrityToken(
+    integrityToken,
+    integrityNonce
+  );
+  if (verdict.ok) return { ok: true, verdict };
+
+  const sideloadApp =
+    verdict.error === "app_untrusted" ||
+    verdict.error === "missing_integrity" ||
+    verdict.appLic === "UNRECOGNIZED_VERSION" ||
+    verdict.appLic === "UNEVALUATED" ||
+    (verdict.appLic && verdict.appLic !== "PLAY_RECOGNIZED");
+
+  if (allow && sideloadApp && verdict.error !== "device_untrusted") {
+    console.warn(
+      "[play_integrity] sideload allowlist",
+      email,
+      verdict.error || "",
+      verdict.appLic || ""
+    );
+    return { ok: true, verdict, sideloadBypass: true };
+  }
+
+  return {
+    ok: false,
+    error: verdict.error || "app_untrusted",
+    message:
+      verdict.message ||
+      "Bitte LUV aus dem Google Play Store installieren.",
+  };
+}
+
 const ALL_MOD_PERMISSION_IDS = [
   "reports.view",
   "reports.act",
@@ -6668,6 +6743,20 @@ app.post("/v1/auth/google", async (req, res) => {
     }
   }
 
+  // Play-Store-App Pflicht — Sideload nur für SIDELOAD_LOGIN_EMAILS / Super-Admins
+  if (!staffOnly) {
+    const gate = await gateGooglePlayLogin(req, profile.email);
+    if (!gate.ok) {
+      return res.status(403).json({
+        error: gate.error || "app_untrusted",
+        updateRequired: gate.error === "missing_integrity",
+        message:
+          gate.message ||
+          "Bitte LUV aus dem Google Play Store installieren.",
+      });
+    }
+  }
+
   const db = getDb();
   const existingByGoogle = findUserByGoogleSub(profile.sub);
   const authed = authUser(req);
@@ -6733,26 +6822,7 @@ app.post("/v1/auth/google", async (req, res) => {
     applySuperAdmin(user);
     scheduleSave();
   } else {
-    // ——— Neues Konto: Play Integrity (echtes Gerät + echte App) ———
-    if (playIntegrity.isEnforced()) {
-      const integrityToken = String(req.body?.integrityToken || "").trim();
-      const integrityNonce = String(req.body?.integrityNonce || "").trim();
-      const verdict = await playIntegrity.verifyIntegrityToken(
-        integrityToken,
-        integrityNonce
-      );
-      if (!verdict.ok) {
-        const missing = !integrityToken || verdict.error === "missing_integrity";
-        return res.status(403).json({
-          error: verdict.error || "integrity_required",
-          updateRequired: missing,
-          message: missing
-            ? "Bitte aktualisiere LUV im Play Store, um ein neues Konto zu erstellen. Bestehende Konten kannst du weiterhin anmelden."
-            : verdict.message ||
-              "Neue Konten nur über die echte Play-Store-App auf einem Android-Gerät.",
-        });
-      }
-    }
+    // ——— Neues Konto (Play-Gate schon oben) ———
     if (!rateLimit(`auth_google_signup:${ip}`, 5, 24 * 60 * 60 * 1000)) {
       return res.status(429).json({
         error: "rate_limited",
