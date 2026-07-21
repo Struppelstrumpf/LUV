@@ -2853,12 +2853,21 @@
           }
         } else {
           const fixed = draft.shopPresence === "fixed";
-          body.rotationLocked = fixed;
           body.marketSellable = Boolean(draft.marketSellable);
           body.lootboxEligible = Boolean(draft.lootboxEligible);
-          if (!fixed) {
+          if (fixed) {
+            // Dauerhaft = Lock + kein Fenster (sonst filtert isWithinWindow das Item raus)
+            body.rotationLocked = true;
+            body.rotationPlanId = null;
+            body.joinRotation = false;
+            body.availableFrom = null;
+            body.availableUntil = null;
+            body.enabled = true;
+          } else {
+            body.rotationLocked = false;
             body.rotationPlanId = draft.rotationPlanId || defaultPlanId;
             body.joinRotation = true;
+            body.enabled = true;
             if (draft.cycleMode === "manual") {
               if (!draft.cycleFrom || !draft.cycleUntil) {
                 alert("Bitte Von/Bis für das Zyklus-Fenster setzen oder „Zufall“ wählen.");
@@ -2872,6 +2881,7 @@
               body.cycleUntil = draft.cycleUntil;
               // Manuelles Zyklusfenster steuert die Sichtbarkeit — Sale-Ende aus Step 3 nicht mischen
               body.availableUntil = null;
+              body.availableFrom = null;
             }
           }
         }
@@ -3475,7 +3485,7 @@
               <option value="fixed" ${draft.shopPresence === "fixed" ? "selected" : ""}>Dauerhaft (Fix — kein Zyklus)</option>
               <option value="cycle" ${draft.shopPresence === "cycle" ? "selected" : ""}>Im Rotationszyklus</option>
             </select>
-            <span class="tip">Fix = immer sichtbar. Zyklus = kommt und geht laut Plan (Wechsel ≈03:00 Berlin).</span>
+            <span class="tip">Fix = sofort und dauerhaft im Itemshop (ohne Zeitfenster). Zyklus = kommt und geht laut Plan (≈03:00 Berlin).</span>
           </label>
           <div id="wizCycleBox" class="panel" style="margin-top:0.75rem;${
             draft.shopPresence === "cycle" ? "" : "display:none"

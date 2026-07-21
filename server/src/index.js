@@ -11408,7 +11408,7 @@ app.post("/v1/admin/shop/rotation-plans/:id/apply", (req, res) => {
 });
 
 /**
- * Nach create/upsert: Lootbox, Marktplatz, optional Rotation+Fenster.
+ * Nach create/upsert: Lootbox, Marktplatz, Fix/Rotation+Fenster.
  * body: marketSellable, lootboxEligible, joinRotation, cycleFrom, cycleUntil, rotationPlanId, rotationLocked
  */
 function finalizeNewShopItemFlags(body, result, { byUserId = null, kind, eventId } = {}) {
@@ -11435,7 +11435,23 @@ function finalizeNewShopItemFlags(body, result, { byUserId = null, kind, eventId
       starterEmojis: STARTER_EMOJIS,
     });
   }
-  if (!eventId && body.joinRotation === true && body.rotationLocked !== true) {
+  if (!eventId && body.rotationLocked === true) {
+    // Wie leave-rotation: dauerhaft sichtbar, kein Zeitfenster das den Shop-Filter blockiert
+    try {
+      shopCalendar.removeItemFromRotation(getDb(), kind, itemId, { byUserId });
+    } catch (e) {
+      console.error("[shop] finalize fixed/leaveRotation", e);
+      const item = shopCatalog.getItem(getDb(), kind, itemId);
+      if (item) {
+        item.rotationLocked = true;
+        item.rotationPlanId = null;
+        item.availableFrom = null;
+        item.availableUntil = null;
+        item.enabled = true;
+        item.updatedAt = Date.now();
+      }
+    }
+  } else if (!eventId && body.joinRotation === true && body.rotationLocked !== true) {
     try {
       shopCalendar.rejoinRotationPool(getDb(), kind, itemId, { byUserId });
       if (body.cycleFrom != null || body.cycleUntil != null) {
