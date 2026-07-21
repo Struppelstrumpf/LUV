@@ -1,5 +1,12 @@
 package com.luv.couple.ui.screens
 
+import android.widget.Toast
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,6 +49,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -50,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.times
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
 import com.luv.couple.profile.ProfileCatalog
 import com.luv.couple.profile.ProfileTheme
 import com.luv.couple.profile.ProfileThemeBackdrop
@@ -141,26 +152,62 @@ fun ProfileInventoryPanel(
     onKindVisited: (String) -> Unit = {},
     onDismiss: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
-    showCardChrome: Boolean = true
+    showCardChrome: Boolean = true,
+    /**
+     * Tutorial: nur dieser Sticker platzierbar; andere Tabs gesperrt,
+     * Sticker mit Pfeil/Rahmen hervorgehoben.
+     */
+    tutorialGuideSticker: String? = null
 ) {
+    val context = LocalContext.current
+    val guideSticker = tutorialGuideSticker?.trim()?.takeIf { it.isNotEmpty() }
+    val tutorialLocked = guideSticker != null
     val tabs = remember(mode, readOnly) { tabsFor(mode, readOnly) }
-    var tab by remember(mode, readOnly) {
+    val stickersTabIndex = remember(tabs) {
+        tabs.indexOf(InvTab.Stickers).coerceAtLeast(0)
+    }
+    var tab by remember(mode, readOnly, tutorialLocked) {
         mutableIntStateOf(
-            if (readOnly) 0 else selectedTab.coerceIn(0, tabs.lastIndex.coerceAtLeast(0))
+            when {
+                readOnly -> 0
+                tutorialLocked -> stickersTabIndex
+                else -> selectedTab.coerceIn(0, tabs.lastIndex.coerceAtLeast(0))
+            }
         )
     }
     var searchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var labelsEpoch by remember { mutableIntStateOf(LiveShopCatalog.displayLabelsEpoch) }
+    val guidePulse = rememberInfiniteTransition(label = "tutStickerPulse")
+    val guidePulseScale by guidePulse.animateFloat(
+        initialValue = 0.96f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "tutStickerScale"
+    )
     LaunchedEffect(Unit) {
         runCatching { LuvApiClient.refreshItemDisplayLabels() }
         labelsEpoch = LiveShopCatalog.displayLabelsEpoch
     }
-    LaunchedEffect(selectedTab, tabs.size) {
-        tab = selectedTab.coerceIn(0, tabs.lastIndex)
+    LaunchedEffect(selectedTab, tabs.size, tutorialLocked, stickersTabIndex) {
+        tab = if (tutorialLocked) {
+            stickersTabIndex
+        } else {
+            selectedTab.coerceIn(0, tabs.lastIndex)
+        }
     }
     LaunchedEffect(tab, tabs) {
         tabs.getOrNull(tab)?.kindPrefix?.let(onKindVisited)
+    }
+    fun toastTutorialLocked() {
+        Toast.makeText(
+            context,
+            "Im Tutorial nur den Hund-Sticker tippen",
+            Toast.LENGTH_SHORT
+        ).show()
     }
     // Frei = Besitz − in Verwendung (platziert / Leiste / ausgerüstet) — für Ausgrauung
     val freeStickers = remember(ownedStickers, placedStickers) {
@@ -253,29 +300,53 @@ fun ProfileInventoryPanel(
                 )
             }
             Spacer(modifier = Modifier.height(s(12.dp)))
-            Row(horizontalArrangement = Arrangement.spacedBy(s(8.dp))) {
-                ShopLinkChip("🛒 Marktplatz", onOpenMarketplace, Modifier.weight(1f), scale)
-                ShopLinkChip("✨ Itemshop", onOpenItemShop, Modifier.weight(1f), scale)
-                if (onOpenGallery != null) {
-                    ShopLinkChip("🖼️ Galerie", onOpenGallery, Modifier.weight(1f), scale)
+            if (!tutorialLocked) {
+                Row(horizontalArrangement = Arrangement.spacedBy(s(8.dp))) {
+                    ShopLinkChip("🛒 Marktplatz", onOpenMarketplace, Modifier.weight(1f), scale)
+                    ShopLinkChip("✨ Itemshop", onOpenItemShop, Modifier.weight(1f), scale)
+                    if (onOpenGallery != null) {
+                        ShopLinkChip("🖼️ Galerie", onOpenGallery, Modifier.weight(1f), scale)
+                    }
                 }
+                Spacer(modifier = Modifier.height(s(12.dp)))
+            } else {
+                Text(
+                    "Tippe auf den Hund, um ihn zu platzieren",
+                    color = AccentRose,
+                    fontFamily = BodyFont,
+                    fontSize = ts(13.sp),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(s(10.dp)))
             }
-            Spacer(modifier = Modifier.height(s(12.dp)))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(s(6.dp))
             ) {
                 tabs.forEachIndexed { i, invTab ->
                     val on = tab == i
-                    val tabHasNew = invTab.kindPrefix?.let { prefix ->
+                    val tabLocked = tutorialLocked && invTab != InvTab.Stickers
+                    val tabHasNew = !tutorialLocked && invTab.kindPrefix?.let { prefix ->
                         unseenKeys.any { it.startsWith("$prefix:") }
                     } == true
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(s(12.dp)))
-                            .background(if (on) AccentRose.copy(0.28f) else Color.White.copy(0.06f))
+                            .background(
+                                when {
+                                    tabLocked -> Color.White.copy(0.03f)
+                                    on -> AccentRose.copy(0.28f)
+                                    else -> Color.White.copy(0.06f)
+                                }
+                            )
+                            .alpha(if (tabLocked) 0.42f else 1f)
                             .clickable {
+                                if (tabLocked) {
+                                    toastTutorialLocked()
+                                    return@clickable
+                                }
                                 tab = i
                                 onTabChange(i)
                             }
@@ -473,11 +544,14 @@ fun ProfileInventoryPanel(
                 }
                 InvTab.Stickers -> {
                     val stickerEntries = ownedStickers.entries
-                        .filter { LiveShopCatalog.matchesQuery(q, it.key, ItemLabels.stickerLabel(it.key)) }
+                        .filter {
+                            LiveShopCatalog.matchesQuery(q, it.key, ItemLabels.stickerLabel(it.key))
+                        }
+                        .filter { guideSticker == null || it.key == guideSticker }
                         .sortedBy { it.key }
                     val freeEntries = if (readOnly) stickerEntries
                     else stickerEntries.filter { (freeStickers[it.key] ?: 0) > 0 }
-                    val dimmedEntries = if (readOnly) emptyList()
+                    val dimmedEntries = if (readOnly || tutorialLocked) emptyList()
                     else stickerEntries.filter { (freeStickers[it.key] ?: 0) <= 0 }
                     if (stickerEntries.isEmpty()) {
                         InvEmptyHint(
@@ -499,26 +573,61 @@ fun ProfileInventoryPanel(
                             fun StickerCell(emoji: String, count: Int, dimmed: Boolean) {
                                 val free = freeStickers[emoji] ?: 0
                                 val itemKey = "stickers:$emoji"
+                                val isGuide = guideSticker != null && emoji == guideSticker
                                 ItemNewGlowBorder(
-                                    active = itemKey in highlightKeys,
+                                    active = itemKey in highlightKeys || isGuide,
                                     corner = s(14.dp),
                                     modifier = Modifier.aspectRatio(1f)
                                 ) {
                                     Box(
                                         modifier = Modifier
                                             .fillMaxSize()
+                                            .then(
+                                                if (isGuide) {
+                                                    Modifier.graphicsLayer {
+                                                        scaleX = guidePulseScale
+                                                        scaleY = guidePulseScale
+                                                    }
+                                                } else Modifier
+                                            )
                                             .clip(RoundedCornerShape(s(14.dp)))
                                             .background(BgSoft)
+                                            .then(
+                                                if (isGuide) {
+                                                    Modifier.border(
+                                                        2.5.dp,
+                                                        AccentRose,
+                                                        RoundedCornerShape(s(14.dp))
+                                                    )
+                                                } else Modifier
+                                            )
                                             .alpha(if (dimmed) 0.38f else 1f)
-                                            .clickable(enabled = readOnly || free > 0) { onSticker(emoji) }
+                                            .clickable(enabled = readOnly || free > 0) {
+                                                if (guideSticker != null && emoji != guideSticker) {
+                                                    toastTutorialLocked()
+                                                } else {
+                                                    onSticker(emoji)
+                                                }
+                                            }
                                             .padding(s(4.dp))
                                     ) {
+                                        if (isGuide) {
+                                            Text(
+                                                "⬇",
+                                                color = AccentRose,
+                                                fontSize = ts(16.sp),
+                                                modifier = Modifier
+                                                    .align(Alignment.TopCenter)
+                                                    .offset(y = s((-2).dp))
+                                                    .zIndex(2f)
+                                            )
+                                        }
                                         com.luv.couple.ui.ItemGlyph(
                                             id = emoji,
                                             fontSize = ts(26.sp),
                                             modifier = Modifier.align(Alignment.Center)
                                         )
-                                        if (count > 0) {
+                                        if (count > 0 && !isGuide) {
                                             Text(
                                                 "×$count",
                                                 color = TextMuted,
@@ -814,7 +923,8 @@ fun ProfileChestDialog(
     onOpenItemShop: () -> Unit,
     selectedTab: Int = 0,
     onTabChange: (Int) -> Unit = {},
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    tutorialGuideSticker: String? = null
 ) {
     Dialog(
         onDismissRequest = onDismiss,
@@ -851,6 +961,7 @@ fun ProfileChestDialog(
             selectedTab = if (readOnly) 0 else selectedTab,
             onTabChange = onTabChange,
             onDismiss = onDismiss,
+            tutorialGuideSticker = tutorialGuideSticker,
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.78f)

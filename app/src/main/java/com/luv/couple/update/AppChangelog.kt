@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.46",
+            listOf(
+                "Tutorial-Inventar: nur Hund-Sticker; andere Tabs gesperrt; Hund größer und mit Pfeil markiert",
+            )
+        ),
+        Entry(
             "2.2.45",
             listOf(
                 "Coinshop wieder mit allen Paketen; 99‑ct-Kachel voll; Lootbox-Ergebnis unter dem Geschenk — weiter tippen möglich",

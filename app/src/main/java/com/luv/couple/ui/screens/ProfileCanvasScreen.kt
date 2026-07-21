@@ -626,7 +626,11 @@ fun ProfileCanvasScreen(
             Toast.makeText(context, "Maximal ${ProfileCatalog.MAX_DECOR} Sticker", Toast.LENGTH_SHORT).show()
             return
         }
-        val el = ProfileCatalog.newSticker(id, state.layout)
+        val el = ProfileCatalog.newSticker(id, state.layout).let { raw ->
+            if (tutorialMode && id == TUTORIAL_DOG_EMOJI) {
+                raw.copy(scale = 1.75f, x = 52f, y = 58f)
+            } else raw
+        }
         applyLayoutWithStickerStock(state.layout + el)
         selectedId = el.id
         closeChestAfterPlace(fromChest)
@@ -1594,18 +1598,63 @@ fun ProfileCanvasScreen(
                 hasEngaged = state.layout.any { it.type == ProfileElType.Engaged },
                 dayStreak = dayStreak,
                 readOnly = !editable,
-                onTheme = { if (editable) setTheme(it, fromChest = true) },
-                onSticker = { if (editable) placeSticker(it, fromChest = true) },
-                onCompanion = { if (editable) placeCompanion(it, fromChest = true) },
-                onGlass = { if (editable) placeGlass(fromChest = true) },
-                onBio = { if (editable) placeBio(fromChest = true) },
-                onStreak = { if (editable) placeStreak(fromChest = true) },
-                onSpouse = { if (editable) placeSpouse(fromChest = true) },
-                onEngaged = { if (editable) placeEngaged(fromChest = true) },
+                onTheme = {
+                    if (tutorialMode) {
+                        Toast.makeText(
+                            context,
+                            "Im Tutorial nur den Hund-Sticker tippen",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@ProfileChestDialog
+                    }
+                    if (editable) setTheme(it, fromChest = true)
+                },
+                onSticker = { emoji ->
+                    if (tutorialMode && emoji != TUTORIAL_DOG_EMOJI) {
+                        Toast.makeText(
+                            context,
+                            "Im Tutorial nur den Hund-Sticker tippen",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@ProfileChestDialog
+                    }
+                    if (editable) placeSticker(emoji, fromChest = true)
+                },
+                onCompanion = {
+                    if (tutorialMode) {
+                        Toast.makeText(
+                            context,
+                            "Im Tutorial nur den Hund-Sticker tippen",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@ProfileChestDialog
+                    }
+                    if (editable) placeCompanion(it, fromChest = true)
+                },
+                onGlass = {
+                    if (tutorialMode) return@ProfileChestDialog
+                    if (editable) placeGlass(fromChest = true)
+                },
+                onBio = {
+                    if (tutorialMode) return@ProfileChestDialog
+                    if (editable) placeBio(fromChest = true)
+                },
+                onStreak = {
+                    if (tutorialMode) return@ProfileChestDialog
+                    if (editable) placeStreak(fromChest = true)
+                },
+                onSpouse = {
+                    if (tutorialMode) return@ProfileChestDialog
+                    if (editable) placeSpouse(fromChest = true)
+                },
+                onEngaged = {
+                    if (tutorialMode) return@ProfileChestDialog
+                    if (editable) placeEngaged(fromChest = true)
+                },
                 selectedTab = if (editable) chestTab else 0,
-                onTabChange = { if (editable) chestTab = it },
+                onTabChange = { if (editable && !tutorialMode) chestTab = it },
                 onOpenMarketplace = {
-                    if (!editable) return@ProfileChestDialog
+                    if (!editable || tutorialMode) return@ProfileChestDialog
                     showChest = false
                     if (onOpenMarketplace != null) onOpenMarketplace(chestTab)
                     else {
@@ -1615,7 +1664,7 @@ fun ProfileCanvasScreen(
                     }
                 },
                 onOpenItemShop = {
-                    if (!editable) return@ProfileChestDialog
+                    if (!editable || tutorialMode) return@ProfileChestDialog
                     showChest = false
                     if (onOpenItemShop != null) onOpenItemShop(chestTab)
                     else {
@@ -1624,7 +1673,10 @@ fun ProfileCanvasScreen(
                         onClose()
                     }
                 },
-                onDismiss = { showChest = false }
+                onDismiss = { showChest = false },
+                tutorialGuideSticker = if (tutorialMode && !hasTutorialDog) {
+                    TUTORIAL_DOG_EMOJI
+                } else null
             )
         }
 
