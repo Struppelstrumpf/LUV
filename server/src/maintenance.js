@@ -219,24 +219,80 @@ function runShopCycle(db, shopCalendar, shopCatalog) {
     const touched = Array.isArray(result)
       ? result.reduce((s, r) => s + (Number(r?.touched) || 0), 0)
       : Number(result?.touched) || 0;
+    const stats = countShopLive(db);
     entries.push({
       level: "info",
       code: "SHOP_CYCLE_OK",
-      message: `Shop-Zyklus angewendet (${Date.now() - before} ms). Touched≈${touched}.`,
+      message: `Shop-Zyklus angewendet (${Date.now() - before} ms). Touched≈${touched}. Live im Shop jetzt: ${stats.live} (Rotation live ${stats.rotLive}/${stats.rotatable}, Ziel ~50 %).`,
       recommendation: null,
     });
-    return { ok: true, entries, touched };
+    if (stats.live < 80) {
+      entries.push({
+        level: "error",
+        code: "SHOP_LIVE_CRITICAL",
+        message: `Nur ${stats.live} Items aktuell im Shop — kritisch niedrig.`,
+        recommendation:
+          "Unter Itemshop → Kalender → Rotation „Jetzt neu mischen“. Wenn das nicht hilft: Bericht an die KI.",
+      });
+    } else if (
+      stats.live < 200 ||
+      (stats.rotatable > 100 && stats.rotLive / stats.rotatable < 0.25)
+    ) {
+      entries.push({
+        level: "warn",
+        code: "SHOP_LIVE_LOW",
+        message: `Shop eher dünn: live=${stats.live}, Rotation ${stats.rotLive}/${stats.rotatable}.`,
+        recommendation:
+          "Einmal „Neu mischen“ prüfen. Ziel sind grob 40–60 % der rotierenden Items plus Starter.",
+      });
+    }
+    return { ok: true, entries, touched, stats };
   } catch (e) {
     entries.push({
       level: "error",
       code: "SHOP_CYCLE_FAILED",
       message: e?.message || String(e),
       recommendation:
-        "Rotation fehlgeschlagen — Items ggf. manuell unter Itemshop → Rotation „Neu berechnen“. " +
+        "Rotation fehlgeschlagen — Items ggf. manuell unter Itemshop → Rotation „Neu mischen“. " +
         "Fehlerdetails an die KI schicken (Bericht kopieren).",
     });
     return { ok: false, entries, touched: 0 };
   }
+}
+
+/** Aktuell kaufbare Shop-Items (enabled + Zeitfenster jetzt). */
+function countShopLive(db, now = Date.now()) {
+  const items = Object.values(db?.shopCatalog?.items || {}).filter(Boolean);
+  let live = 0;
+  let rotatable = 0;
+  let rotLive = 0;
+  let always = 0;
+  for (const it of items) {
+    const from = it.availableFrom || 0;
+    const until = it.availableUntil || Number.MAX_SAFE_INTEGER;
+    const inWin = it.enabled !== false && now >= from && now < until;
+    const alwaysOn =
+      it.enabled !== false && it.availableFrom == null && it.availableUntil == null;
+    if (alwaysOn) {
+      always += 1;
+      live += 1;
+    } else if (inWin) {
+      live += 1;
+    }
+    const rotates = Boolean(it.rotationPlanId) && it.rotationLocked !== true;
+    if (rotates) {
+      rotatable += 1;
+      if (inWin) rotLive += 1;
+    }
+  }
+  return {
+    total: items.length,
+    live,
+    rotatable,
+    rotLive,
+    always,
+    rotSharePct: rotatable ? Math.round((100 * rotLive) / rotatable) : 0,
+  };
 }
 
 function healthSweep(db) {
@@ -257,6 +313,28 @@ function healthSweep(db) {
         code: "SHOP_EMPTY",
         message: "Shop-Katalog ist leer.",
         recommendation: "Shop neu seeden / Katalog prüfen.",
+      });
+    }
+    const live = countShopLive(db);
+    entries.push({
+      level: "info",
+      code: "SHOP_LIVE_NOW",
+      message: `Aktuell im Shop: ${live.live} (Rotation ${live.rotLive}/${live.rotatable} = ${live.rotSharePct} %, Starter/Fix≈${live.always}).`,
+      recommendation: null,
+    });
+    if (live.live < 80) {
+      entries.push({
+        level: "error",
+        code: "SHOP_LIVE_CRITICAL",
+        message: `Nur ${live.live} Items live — Shop droht leer zu wirken.`,
+        recommendation: "Rotation neu mischen; Bericht an die KI.",
+      });
+    } else if (live.live < 200) {
+      entries.push({
+        level: "warn",
+        code: "SHOP_LIVE_LOW",
+        message: `Nur ${live.live} Items live (unter Komfortzone ~200+).`,
+        recommendation: "Rotation prüfen / neu mischen.",
       });
     }
     const broken = [];

@@ -6523,9 +6523,12 @@ setInterval(() => {
 }, 60_000).unref();
 setInterval(() => {
   try {
-    // Während Wartungsfenster: Zyklus nur über maintenance.tick (einmal), nicht parallel
-    if (maintenance.isMaintenanceActive()) return;
     const db = getDb();
+    // Während Wartungsfenster: Nightly-Job zuerst; danach weiter ticken (kein Leerlauf bis 03:09)
+    if (maintenance.isMaintenanceActive()) {
+      const st = db.maintenance;
+      if (st && st.jobDone !== true) return;
+    }
     seedShopCatalogIfNeeded();
     shopCalendar.applyAllRotationPlans(db);
     shopCatalog.deactivateExpired(db);
