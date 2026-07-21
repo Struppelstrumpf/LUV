@@ -219,13 +219,21 @@ const BUILTIN_EVENTS = [
     id: "date_night",
     title: "Date-Night Freitag",
     emoji: "🍷",
-    description: "Jeden Freitag: ein kleiner Anlass für euch beide.",
-    hint: "Freitags einmal sammeln — wie ein Mini-Date.",
-    recurrence: { type: "weekly", weekday: 5 },
+    description: "Jeden Freitagabend: ein kleiner Anlass für euch beide.",
+    hint: "Freitags ab 18 Uhr bis Samstag 1 Uhr einmal sammeln.",
+    recurrence: {
+      type: "weekly",
+      weekday: 5,
+      startHour: 18,
+      startMinute: 0,
+      endHour: 1,
+      endMinute: 0,
+      endDayOffset: 1,
+    },
     durationDays: 1,
     rewardCoinsPerCollect: 2,
-    collectTarget: 4,
-    milestoneBonusCoins: 6,
+    collectTarget: 1,
+    milestoneBonusCoins: 4,
     rewardItem: rewardItem("stickers", "💝", "💝", "Herz-Geschenk"),
     sort: 88,
     decor: decor("hearts", "#CE93D8", "Date Night", 0.4, "none"),
@@ -477,6 +485,124 @@ function windowForYear(ev, year) {
   return windowBoundsFromDay(utcDay(year, r.month || 1, r.day || 1), dur);
 }
 
+function berlinLocalMs(y, m, d, hour = 0, minute = 0) {
+  const base = berlinDayStartMs(y, m, d);
+  return base + Math.max(0, Number(hour) || 0) * 3600000 + Math.max(0, Number(minute) || 0) * 60000;
+}
+
+function weeklyHasClock(r) {
+  return Number.isFinite(Number(r?.startHour));
+}
+
+/** Wochen-Fenster (z. B. Fr 18:00 → Sa 01:00). Enthält now oder null. */
+function weeklyWindowContaining(ev, now = new Date()) {
+  const r = ev.recurrence || {};
+  if (r.type !== "weekly") return null;
+  const wantWd = Number(r.weekday);
+  if (!Number.isFinite(wantWd)) return null;
+  const startH = weeklyHasClock(r) ? Math.max(0, Math.min(23, Math.floor(Number(r.startHour)))) : null;
+  const startM = Math.max(0, Math.min(59, Math.floor(Number(r.startMinute) || 0)));
+  let endH = Number.isFinite(Number(r.endHour))
+    ? Math.max(0, Math.min(23, Math.floor(Number(r.endHour))))
+    : null;
+  let endM = Math.max(0, Math.min(59, Math.floor(Number(r.endMinute) || 0)));
+  let endDayOffset = Math.max(0, Math.min(6, Math.floor(Number(r.endDayOffset) || 0)));
+  if (startH != null && endH == null) {
+    endH = 23;
+    endM = 59;
+  }
+  if (
+    startH != null &&
+    endH != null &&
+    !Number(r.endDayOffset) &&
+    (endH < startH || (endH === startH && endM <= startM))
+  ) {
+    endDayOffset = 1;
+  }
+  const t = now.getTime();
+  const bp = berlinParts(now);
+  // Prüfe aktuelle und vorherige Woche (Fenster kann über Mitternacht gehen)
+  for (const weekBack of [0, 1]) {
+    let add = (wantWd - bp.weekday + 7) % 7;
+    if (weekBack === 1) add -= 7;
+    else if (add === 0 && startH != null) {
+      /* same day — check below */
+    }
+    const startDay = addDays(utcDay(bp.year, bp.month, bp.day), add);
+    const sp = berlinParts(startDay);
+    let fromMs;
+    let untilMs;
+    if (startH == null) {
+      fromMs = berlinDayStartMs(sp.year, sp.month, sp.day);
+      untilMs = fromMs + 86400000;
+    } else {
+      fromMs = berlinLocalMs(sp.year, sp.month, sp.day, startH, startM);
+      const endDay = addDays(startDay, endDayOffset);
+      const ep = berlinParts(endDay);
+      untilMs = berlinLocalMs(ep.year, ep.month, ep.day, endH, endM);
+      if (untilMs <= fromMs) untilMs = fromMs + 3600000;
+    }
+    if (t >= fromMs && t < untilMs) {
+      return { fromMs, untilMs, start: new Date(fromMs), end: new Date(untilMs) };
+    }
+  }
+  return null;
+}
+
+/** Nächstes Wochen-Fenster ab now (auch wenn gerade aktiv → aktuelles). */
+function nextWeeklyWindow(ev, now = new Date()) {
+  const containing = weeklyWindowContaining(ev, now);
+  if (containing) return containing;
+  const r = ev.recurrence || {};
+  const wantWd = Number(r.weekday);
+  const bp = berlinParts(now);
+  let add = (wantWd - bp.weekday + 7) % 7;
+  if (add === 0) add = 7;
+  const startH = weeklyHasClock(r) ? Math.max(0, Math.min(23, Math.floor(Number(r.startHour)))) : null;
+  const startM = Math.max(0, Math.min(59, Math.floor(Number(r.startMinute) || 0)));
+  let endH = Number.isFinite(Number(r.endHour))
+    ? Math.max(0, Math.min(23, Math.floor(Number(r.endHour))))
+    : null;
+  let endM = Math.max(0, Math.min(59, Math.floor(Number(r.endMinute) || 0)));
+  let endDayOffset = Math.max(0, Math.min(6, Math.floor(Number(r.endDayOffset) || 0)));
+  if (startH != null && endH == null) {
+    endH = 23;
+    endM = 59;
+  }
+  if (
+    startH != null &&
+    endH != null &&
+    !Number(r.endDayOffset) &&
+    (endH < startH || (endH === startH && endM <= startM))
+  ) {
+    endDayOffset = 1;
+  }
+  const startDay = addDays(utcDay(bp.year, bp.month, bp.day), add);
+  const sp = berlinParts(startDay);
+  let fromMs;
+  let untilMs;
+  if (startH == null) {
+    fromMs = berlinDayStartMs(sp.year, sp.month, sp.day);
+    untilMs = fromMs + 86400000;
+  } else {
+    fromMs = berlinLocalMs(sp.year, sp.month, sp.day, startH, startM);
+    const endDay = addDays(startDay, endDayOffset);
+    const ep = berlinParts(endDay);
+    untilMs = berlinLocalMs(ep.year, ep.month, ep.day, endH, endM);
+  }
+  return { fromMs, untilMs, start: new Date(fromMs), end: new Date(untilMs) };
+}
+
+function formatBerlinClock(date) {
+  return new Intl.DateTimeFormat("de-DE", {
+    timeZone: TZ_BERLIN,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(date);
+}
+
 function isActiveAt(ev, now = new Date()) {
   if (ev.enabled === false) return false;
   const r = ev.recurrence || {};
@@ -484,6 +610,9 @@ function isActiveAt(ev, now = new Date()) {
   const bp = berlinParts(now);
 
   if (r.type === "weekly") {
+    if (weeklyHasClock(r)) {
+      return Boolean(weeklyWindowContaining(ev, now));
+    }
     return bp.weekday === Number(r.weekday);
   }
   if (r.type === "full_moon") {
@@ -511,25 +640,48 @@ function nextOccurrence(ev, now = new Date()) {
     const untilMs = Date.parse(enriched.schedule.absoluteUntil || "");
     if (!Number.isFinite(fromMs) && !Number.isFinite(untilMs)) return null;
     const active = isActiveAtPatched(ev, now);
+    if (Number.isFinite(fromMs) && Number.isFinite(untilMs)) {
+      const fromD = new Date(fromMs);
+      const untilD = new Date(untilMs);
+      const hasTime =
+        fromD.getUTCHours() !== 0 ||
+        fromD.getUTCMinutes() !== 0 ||
+        untilD.getUTCHours() !== 0 ||
+        untilD.getUTCMinutes() !== 0 ||
+        String(enriched.schedule.absoluteFrom || "").includes("T");
+      if (hasTime) {
+        return {
+          start: formatBerlinClock(fromD),
+          end: formatBerlinClock(untilD),
+          label: `${formatBerlinClock(fromD)} – ${formatBerlinClock(untilD)}`,
+          active,
+          fromMs,
+          untilMs,
+        };
+      }
+    }
     const start = Number.isFinite(fromMs) ? berlinYmd(new Date(fromMs)) : null;
     const end = Number.isFinite(untilMs) ? berlinYmd(new Date(untilMs)) : start;
-    return { start, end, active };
+    return { start, end, active, fromMs: Number.isFinite(fromMs) ? fromMs : null, untilMs: Number.isFinite(untilMs) ? untilMs : null };
   }
   const r = ev.recurrence || {};
   const bp = berlinParts(now);
 
   if (r.type === "weekly") {
-    const want = Number(r.weekday);
-    const cur = bp.weekday;
-    let add = (want - cur + 7) % 7;
-    if (add === 0 && isActiveAt(ev, now)) {
-      const today = berlinYmd(now);
-      return { start: today, end: today, active: true };
+    const win = nextWeeklyWindow(ev, now);
+    const active = Boolean(weeklyWindowContaining(ev, now));
+    if (weeklyHasClock(r)) {
+      return {
+        start: formatBerlinClock(win.start),
+        end: formatBerlinClock(win.end),
+        label: `${formatBerlinClock(win.start)} – ${formatBerlinClock(win.end)}`,
+        active,
+        fromMs: win.fromMs,
+        untilMs: win.untilMs,
+      };
     }
-    if (add === 0) add = 7;
-    const start = addDays(utcDay(bp.year, bp.month, bp.day), add);
-    const s = ymd(start);
-    return { start: s, end: s, active: false };
+    const today = berlinYmd(win.start);
+    return { start: today, end: today, active, fromMs: win.fromMs, untilMs: win.untilMs };
   }
   if (r.type === "full_moon") {
     for (let i = 0; i < 40; i++) {
@@ -637,6 +789,20 @@ function ensureEventsConfig(db) {
       if (!cur.description) cur.description = b.description;
       if (!cur.hint) cur.hint = b.hint;
       if (!cur.recurrence) cur.recurrence = b.recurrence;
+      // Builtin-Uhrzeiten nachziehen (z. B. Date-Night Fr 18–Sa 1)
+      if (
+        b.recurrence &&
+        Number.isFinite(Number(b.recurrence.startHour)) &&
+        !Number.isFinite(Number(cur.recurrence?.startHour))
+      ) {
+        cur.recurrence = { ...(cur.recurrence || {}), ...b.recurrence };
+        if (b.id === "date_night") {
+          cur.collectTarget = b.collectTarget;
+          cur.hint = b.hint;
+          cur.description = b.description;
+          if (b.milestoneBonusCoins != null) cur.milestoneBonusCoins = b.milestoneBonusCoins;
+        }
+      }
       if (cur.durationDays == null) cur.durationDays = b.durationDays;
       if (cur.rewardCoinsPerCollect == null) cur.rewardCoinsPerCollect = b.rewardCoinsPerCollect;
       if (cur.collectTarget == null) cur.collectTarget = b.collectTarget;
@@ -936,7 +1102,11 @@ function progressSeasonKey(ev, now = new Date()) {
   }
   const r = ev.recurrence || {};
   const bp = berlinParts(now);
-  if (r.type === "weekly") return `${ev.id}:${bp.year}`;
+  if (r.type === "weekly") {
+    const win = weeklyWindowContaining(ev, now) || nextWeeklyWindow(ev, now);
+    // Pro Vorkommen (Freitagabend), nicht nur pro Jahr
+    return `${ev.id}:${berlinYmd(win.start)}`;
+  }
   if (r.type === "full_moon") return `${ev.id}:${berlinYmd(now)}`;
   for (const y of [bp.year - 1, bp.year, bp.year + 1]) {
     const w = windowForYear(ev, y);
@@ -1293,8 +1463,8 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
       quests,
       lobby: pub.lobby || { enabled: false },
       contest: pub.contest || { enabled: false },
-      windowStart: occ?.start || null,
-      windowEnd: occ?.end || null,
+      windowStart: occ?.label || occ?.start || null,
+      windowEnd: occ?.label ? null : occ?.end || null,
       progress: prog.progress,
       collectTarget: pub.collectTarget,
       collectedToday: prog.lastCollectDay === dayKey,

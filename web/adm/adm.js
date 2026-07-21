@@ -2504,6 +2504,10 @@
       if (step === 1) {
         draft.label = String(fd.get("label") || draft.label || "").trim();
         draft.searchText = String(fd.get("searchText") || "").trim();
+        const earlyPrice = String(fd.get("priceCoinsEarly") || "").trim();
+        if (earlyPrice !== "" && Number(earlyPrice) >= 1) {
+          draft.priceCoins = Number(earlyPrice);
+        }
         if (draft.isEventItem) {
           const evId = String(fd.get("eventId") || draft.eventId || "").trim();
           if (!evId) {
@@ -2670,6 +2674,9 @@
               <label class="field" style="margin-top:0.75rem">Name
                 <input name="label" value="${esc(draft.label)}" />
               </label>
+              <label class="field" style="margin-top:0.6rem">Preis (Coins)
+                <input name="priceCoinsEarly" type="number" min="1" value="${draft.priceCoins}" />
+              </label>
               <label class="field" style="margin-top:0.6rem">Suchworte
                 <input name="searchText" value="${esc(draft.searchText)}" placeholder="event hintergrund" />
               </label>`;
@@ -2716,6 +2723,10 @@
             }
             <label class="field" style="margin-top:0.75rem">Name
               <input name="label" value="${esc(draft.label)}" />
+            </label>
+            <label class="field" style="margin-top:0.6rem">Preis (Coins)
+              <input name="priceCoinsEarly" type="number" min="1" value="${draft.priceCoins}" />
+              <span class="tip">Standard ${draft.kind === "themes" ? "80" : "200"} — kannst du hier oder im Preis-Schritt ändern.</span>
             </label>
             <label class="field" style="margin-top:0.6rem">Suchworte
               <input name="searchText" value="${esc(draft.searchText)}" placeholder="event item" />

@@ -949,110 +949,272 @@ private fun UpcomingEventPreviewDialog(
     }
     val reward = event.rewardItem
     val shopItems = event.shopItems
+    var peekItem by remember { mutableStateOf<EventShopItem?>(null) }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 22.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .background(
-                    Brush.verticalGradient(
-                        listOf(accent.copy(0.42f), BgSoft, BgDeep.copy(0.55f))
-                    )
-                )
-                .border(1.dp, accent.copy(0.45f), RoundedCornerShape(22.dp))
+                .fillMaxSize()
+                .background(BgDeep)
         ) {
             com.luv.couple.ui.MenuAmbientBackground(
                 eventDecor = event.decor,
+                modifier = Modifier.fillMaxSize()
+            )
+            // Leichtes Overlay, damit Kacheln darunter nicht durchscheinen
+            Box(
                 modifier = Modifier
-                    .matchParentSize()
-                    .clip(RoundedCornerShape(22.dp))
+                    .fillMaxSize()
+                    .background(BgDeep.copy(0.72f))
             )
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .fillMaxSize()
+                    .padding(horizontal = 18.dp, vertical = 16.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(event.emoji, fontSize = 32.sp)
+                    Text(event.emoji, fontSize = 36.sp)
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             event.title,
                             color = TextPrimary,
                             fontFamily = DisplayFont,
-                            fontSize = 22.sp
+                            fontSize = 24.sp
                         )
                         val whenLabel = listOfNotNull(event.windowStart, event.windowEnd)
                             .distinct()
                             .joinToString(" – ")
                         if (whenLabel.isNotBlank()) {
-                            Text(whenLabel, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
+                            Text(whenLabel, color = TextMuted, fontFamily = BodyFont, fontSize = 13.sp)
                         }
                     }
-                    Text(ornament, fontSize = 22.sp)
+                    Text(ornament, fontSize = 24.sp)
+                    TextButton(onClick = onDismiss) {
+                        Text("✕", color = TextPrimary, fontFamily = DisplayFont, fontSize = 18.sp)
+                    }
                 }
                 event.decor.bannerText.takeIf { it.isNotBlank() }?.let { banner ->
                     Text(
                         banner,
                         color = accent,
                         fontFamily = DisplayFont,
-                        fontSize = 15.sp
+                        fontSize = 16.sp,
+                        modifier = Modifier.padding(top = 6.dp)
                     )
                 }
-                Text(
-                    body,
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp
-                )
-                if (reward != null) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(BgDeep.copy(0.55f))
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text(reward.emoji.ifBlank { "🎁" }, fontSize = 22.sp)
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Event-Belohnung",
-                                color = TextMuted,
-                                fontFamily = BodyFont,
-                                fontSize = 11.sp
-                            )
-                            Text(
-                                reward.label.ifBlank { reward.itemId },
-                                color = TextPrimary,
-                                fontFamily = DisplayFont,
-                                fontSize = 14.sp
-                            )
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(top = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        body,
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 15.sp,
+                        lineHeight = 22.sp
+                    )
+                    if (reward != null) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(accent.copy(0.16f))
+                                .border(1.dp, accent.copy(0.3f), RoundedCornerShape(14.dp))
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(reward.emoji.ifBlank { "🎁" }, fontSize = 28.sp)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Event-Belohnung",
+                                    color = TextMuted,
+                                    fontFamily = BodyFont,
+                                    fontSize = 11.sp
+                                )
+                                Text(
+                                    reward.label.ifBlank { reward.itemId },
+                                    color = TextPrimary,
+                                    fontFamily = DisplayFont,
+                                    fontSize = 16.sp
+                                )
+                            }
+                        }
+                    }
+                    if (shopItems.isNotEmpty()) {
+                        Text(
+                            "Event-Items",
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 16.sp
+                        )
+                        Text(
+                            "Tippe für Preis & Vorschau · nur während dem Event im Shop",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 12.sp
+                        )
+                        val cols = 4
+                        shopItems.chunked(cols).forEach { rowItems ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                rowItems.forEach { item ->
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .background(BgSoft.copy(0.92f))
+                                            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(16.dp))
+                                            .clickable { peekItem = item }
+                                            .padding(vertical = 12.dp, horizontal = 6.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(52.dp)
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(BgDeep.copy(0.45f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            EventShopItemGlyph(item, event.emoji, 28.sp)
+                                        }
+                                        Text(
+                                            item.label,
+                                            color = TextPrimary,
+                                            fontFamily = BodyFont,
+                                            fontSize = 11.sp,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                                repeat(cols - rowItems.size) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
                         }
                     }
                 }
-                if (shopItems.isNotEmpty()) {
-                    EventShopTile(
-                        event = event,
-                        accent = accent,
-                        previewOnly = true,
-                    )
-                }
                 TextButton(
                     onClick = onDismiss,
-                    modifier = Modifier.align(Alignment.End)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(accent.copy(0.3f))
                 ) {
-                    Text("Schließen", color = accent, fontFamily = DisplayFont)
+                    Text(
+                        "Schließen",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 16.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
+            }
+        }
+        peekItem?.let { item ->
+            EventItemPeekDialog(
+                item = item,
+                accent = accent,
+                eventEmoji = event.emoji,
+                onDismiss = { peekItem = null }
+            )
+        }
+    }
+}
+
+/** Grobe €-Schätzung aus Coin-Pack „Handvoll“ (60 Coins ≈ 2,99 €). */
+private fun coinsToApproxEurLabel(coins: Int): String {
+    if (coins <= 0) return "0,00 €"
+    val eur = coins * 2.99 / 60.0
+    val cents = kotlin.math.round(eur * 100.0).toInt()
+    val whole = cents / 100
+    val frac = cents % 100
+    return "$whole,${frac.toString().padStart(2, '0')} €"
+}
+
+@Composable
+private fun EventItemPeekDialog(
+    item: EventShopItem,
+    accent: Color,
+    eventEmoji: String,
+    onDismiss: () -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 28.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(
+                    Brush.verticalGradient(listOf(accent.copy(0.4f), BgSoft, BgDeep))
+                )
+                .border(1.dp, accent.copy(0.4f), RoundedCornerShape(22.dp))
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(96.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(BgDeep.copy(0.5f)),
+                contentAlignment = Alignment.Center
+            ) {
+                EventShopItemGlyph(item, eventEmoji, 48.sp)
+            }
+            Text(
+                item.kindLabel,
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 12.sp
+            )
+            Text(
+                item.label,
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 22.sp,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                "${item.priceCoins} Coins",
+                color = accent,
+                fontFamily = DisplayFont,
+                fontSize = 20.sp
+            )
+            Text(
+                "≈ ${coinsToApproxEurLabel(item.priceCoins)}",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 14.sp
+            )
+            Text(
+                "Nur während dem Event im Itemshop & Event-Shop",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center
+            )
+            TextButton(onClick = onDismiss) {
+                Text("Schließen", color = accent, fontFamily = DisplayFont)
             }
         }
     }

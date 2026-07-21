@@ -1497,7 +1497,8 @@
         </label>
         <div id="evDecorLive">${decorPreviewHtml(d)}</div>
         <div class="actions" style="margin-top:0.75rem">
-          <button type="submit" class="btn">Speichern</button>
+          <button type="button" class="btn teal" id="evOpenWizardBtn">✨ Im Wizard bearbeiten</button>
+          <button type="submit" class="btn">Schnell speichern</button>
           ${
             ev.custom
               ? `<button type="button" class="btn danger" id="evDeleteBtn">Event löschen</button>`
@@ -1587,10 +1588,37 @@
 
       const createBtn = $("evCreateBtn");
       if (createBtn) {
-        createBtn.onclick = () => openCreateEventWizard();
+        createBtn.onclick = () => {
+          if (!window.LuvEventWizard) {
+            alert("Event-Wizard nicht geladen — Seite neu laden.");
+            return;
+          }
+          window.LuvEventWizard.open({
+            mode: "create",
+            api,
+            esc,
+            openModal,
+            closeModal,
+            $,
+            onSaved: (res) => {
+              const next = res.events || [];
+              if (next.length) {
+                events.length = 0;
+                events.push(...next);
+              }
+              if (res.event?.id) selectedId = res.event.id;
+              paint();
+            },
+          });
+        };
       }
 
       function openCreateEventWizard() {
+        /* ersetzt durch LuvEventWizard */
+      }
+
+      if (false) {
+      function openCreateEventWizardLegacy() {
         const now = new Date();
         const state = {
           viewY: now.getFullYear(),
@@ -2053,6 +2081,7 @@
           }
         };
       }
+      } // end if(false) legacy wizard
 
       const testBtn = $("evTestBtn");
       if (testBtn) {
@@ -2157,6 +2186,33 @@
 
       const form = $("evEditForm");
       if (form) {
+        const wizBtn = $("evOpenWizardBtn");
+        if (wizBtn) {
+          wizBtn.onclick = () => {
+            if (!window.LuvEventWizard) {
+              alert("Event-Wizard nicht geladen — Seite neu laden.");
+              return;
+            }
+            const cur = events.find((e) => e.id === selectedId);
+            window.LuvEventWizard.open({
+              mode: "edit",
+              event: cur,
+              api,
+              esc,
+              openModal,
+              closeModal,
+              $,
+              onSaved: (res) => {
+                const next = res.events || [];
+                if (next.length) {
+                  events.length = 0;
+                  events.push(...next);
+                }
+                paint();
+              },
+            });
+          };
+        }
         const syncPreview = () => {
           const fd = new FormData(form);
           const live = $("evDecorLive");

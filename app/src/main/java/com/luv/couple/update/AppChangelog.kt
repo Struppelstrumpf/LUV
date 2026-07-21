@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.53",
+            listOf(
+                "Event-Vorschau Vollbild mit Item-Preisen; Date-Night Fr 18–Sa 1 Uhr; neuer Event-Wizard",
+            )
+        ),
+        Entry(
             "2.2.52",
             listOf(
                 "Event-Items sind fest von der Lootbox ausgeschlossen",

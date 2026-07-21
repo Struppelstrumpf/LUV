@@ -231,7 +231,7 @@
         <div class="pet-dropzone" id="petDrop" style="margin-top:0.75rem" tabindex="0">
           Hier klicken, dann <strong>Strg+V</strong> — oder Datei ablegen / wählen
           <div style="margin-top:0.6rem">
-            <input type="file" id="petFile" accept="image/*" />
+            <input type="file" id="petFile" accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,image/*" />
           </div>
         </div>
         <div class="pet-paste-stage" id="petStage" hidden>
@@ -332,27 +332,73 @@
     }
 
     function loadBitmap(fileOrBlob) {
-      // data:-URL statt blob: — CSP img-src erlaubt data: zuverlässig
-      const reader = new FileReader();
-      reader.onerror = () => alert("Bild konnte nicht geladen werden.");
-      reader.onload = () => {
-        const dataUrl = String(reader.result || "");
-        if (!dataUrl.startsWith("data:image/")) {
-          alert("Bild konnte nicht geladen werden.");
-          return;
+      if (!fileOrBlob) {
+        alert("Kein Bild gewählt.");
+        return;
+      }
+      const applyImg = (img) => {
+        sourceImg = img;
+        stage.hidden = false;
+        hint.hidden = false;
+        drop.classList.add("on");
+        crop = { x: 0.12, y: 0.12, s: 0.76 };
+        layoutCrop();
+        redrawKeyed();
+      };
+      const fromDataUrl = (dataUrl) =>
+        new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error("decode"));
+          img.src = dataUrl;
+        });
+      const fromBlobBitmap = async () => {
+        if (typeof createImageBitmap !== "function") throw new Error("no_cib");
+        const bmp = await createImageBitmap(fileOrBlob);
+        const c = document.createElement("canvas");
+        c.width = bmp.width;
+        c.height = bmp.height;
+        c.getContext("2d").drawImage(bmp, 0, 0);
+        try {
+          bmp.close?.();
+        } catch (_) {
+          /* ignore */
         }
         const img = new Image();
-        img.onload = () => {
-          sourceImg = img;
-          stage.hidden = false;
-          hint.hidden = false;
-          drop.classList.add("on");
-          crop = { x: 0.12, y: 0.12, s: 0.76 };
-          layoutCrop();
-          redrawKeyed();
-        };
-        img.onerror = () => alert("Bild konnte nicht geladen werden.");
-        img.src = dataUrl;
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          img.src = c.toDataURL("image/png");
+        });
+        return img;
+      };
+      const reader = new FileReader();
+      reader.onerror = async () => {
+        try {
+          applyImg(await fromBlobBitmap());
+        } catch {
+          alert("Bild konnte nicht geladen werden. Bitte PNG, JPG oder WebP nutzen (kein HEIC).");
+        }
+      };
+      reader.onload = async () => {
+        const dataUrl = String(reader.result || "");
+        try {
+          if (dataUrl.startsWith("data:image/") || dataUrl.startsWith("data:application/octet-stream")) {
+            // octet-stream: manch. Handy-Picks — trotzdem versuchen
+            const fixed = dataUrl.startsWith("data:application/")
+              ? dataUrl.replace(/^data:application\/octet-stream/, "data:image/jpeg")
+              : dataUrl;
+            applyImg(await fromDataUrl(fixed));
+            return;
+          }
+          applyImg(await fromBlobBitmap());
+        } catch {
+          try {
+            applyImg(await fromBlobBitmap());
+          } catch {
+            alert("Bild konnte nicht geladen werden. Bitte PNG, JPG oder WebP nutzen (kein HEIC).");
+          }
+        }
       };
       reader.readAsDataURL(fileOrBlob);
     }
