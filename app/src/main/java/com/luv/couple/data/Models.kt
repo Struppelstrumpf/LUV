@@ -213,7 +213,10 @@ data class RoomPreview(
     val isFree: Boolean,
     val invite: String,
     val joinUrl: String,
-    val hostColorSide: String = "blue"
+    val hostColorSide: String = "blue",
+    /** Relativer oder absoluter Pfad zum Invite-Snapshot (Leinwand). */
+    val inviteImageUrl: String? = null,
+    val hasDrawing: Boolean = false
 )
 
 data class PeerInfo(

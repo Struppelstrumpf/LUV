@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.luv.couple",
+      "sha256_cert_fingerprints": [
+        "C8:61:0E:3C:7C:B7:38:FE:E9:0A:46:AB:F4:9F:87:6D:28:A6:14:DF:92:2B:3F:72:71:CC:E9:D1:2B:BA:2F:CC"
+      ]
+    }
+  }
+]

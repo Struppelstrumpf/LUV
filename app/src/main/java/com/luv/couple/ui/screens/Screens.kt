@@ -9,6 +9,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -71,10 +72,12 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
@@ -119,6 +122,7 @@ import com.luv.couple.ui.theme.MaleBlue
 import com.luv.couple.ui.theme.TextMuted
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.luv.couple.ui.theme.TextPrimary
 
 @Composable
@@ -2031,72 +2035,136 @@ fun JoinPreviewScreen(
     preview: RoomPreview?,
     loading: Boolean,
     error: String?,
+    busy: Boolean = false,
     onJoin: () -> Unit,
     onDecline: () -> Unit
 ) {
-    ScreenBackdrop {
-        Column(
+    var canvasBmp by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    val imageUrl = preview?.inviteImageUrl
+
+    LaunchedEffect(imageUrl) {
+        canvasBmp = null
+        val url = imageUrl?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        canvasBmp = withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val req = okhttp3.Request.Builder().url(url).get().build()
+                com.luv.couple.net.LuvApiClient.httpClient().newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@runCatching null
+                    resp.body?.byteStream()?.use { android.graphics.BitmapFactory.decodeStream(it) }
+                }
+            }.getOrNull()
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Leinwand-Hintergrund
+        if (canvasBmp != null) {
+            Image(
+                bitmap = canvasBmp!!.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xFF121821), BgDeep, Color(0xFF151A22))
+                        )
+                    )
+            )
+        }
+        // Abdunkeln
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(28.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+                .background(Color(0xCC0B0E14))
+        )
+
+        // Popup Mitte
+        Column(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(horizontal = 28.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(22.dp))
+                .background(BgSoft)
+                .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(22.dp))
+                .padding(horizontal = 22.dp, vertical = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Column {
-                Text(
-                    "Ablehnen",
+            Text(
+                "Einladung",
+                fontFamily = DisplayFont,
+                fontSize = 26.sp,
+                color = TextPrimary,
+                textAlign = TextAlign.Center
+            )
+            when {
+                loading -> Text(
+                    "Lobby wird geladen…",
                     color = TextMuted,
                     fontFamily = BodyFont,
-                    modifier = Modifier
-                        .clickable(onClick = onDecline)
-                        .padding(vertical = 8.dp)
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.height(20.dp))
-                Text("Einladung", fontFamily = DisplayFont, fontSize = 34.sp, color = TextPrimary)
-                Spacer(modifier = Modifier.height(8.dp))
-                when {
-                    loading -> Text("Lobby wird geladen…", color = TextMuted, fontFamily = BodyFont)
-                    preview != null -> {
-                        Text(
-                            preview.name,
-                            fontFamily = DisplayFont,
-                            fontSize = 28.sp,
-                            color = TextPrimary
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "Host: ${preview.hostNickname}",
-                            color = AccentRose,
-                            fontFamily = BodyFont,
-                            fontSize = 18.sp
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "${preview.peers}/${preview.capacity} online · bis ${preview.maxPeers}",
-                            color = TextMuted,
-                            fontFamily = BodyFont,
-                            fontSize = 14.sp
-                        )
-                    }
-                    else -> Text(
-                        error ?: "Lobby nicht gefunden.",
+                preview != null -> {
+                    Text(
+                        preview.hostNickname,
+                        fontFamily = DisplayFont,
+                        fontSize = 20.sp,
                         color = AccentRose,
-                        fontFamily = BodyFont
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        "lädt dich ein mitzuzeichnen",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 14.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        "${preview.peers}/${preview.capacity} online",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center
                     )
                 }
-                if (!error.isNullOrBlank() && preview != null) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
-                }
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                PrimaryButton(
-                    label = "Beitreten",
+                else -> Text(
+                    error ?: "Lobby nicht gefunden.",
                     color = AccentRose,
-                    onClick = onJoin,
-                    enabled = preview != null && !loading
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center
                 )
-                PrimaryButton("Ablehnen", BgSoft, onDecline, bordered = true)
             }
+            if (!error.isNullOrBlank() && preview != null) {
+                Text(
+                    error,
+                    color = AccentRose,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            PrimaryButton(
+                label = if (busy) "…" else "Beitreten",
+                color = AccentRose,
+                onClick = onJoin,
+                enabled = preview != null && !loading && !busy
+            )
+            PrimaryButton(
+                "Nicht jetzt",
+                BgSoft,
+                onDecline,
+                bordered = true,
+                enabled = !busy
+            )
         }
     }
 }

@@ -767,14 +767,19 @@ fun LuvAppNav() {
         joinError = null
         return try {
             val snap = prefs.snapshot()
-            if (snap.lobbies.size >= PeerPalette.MAX_LOBBIES) {
+            val normalized = LuvApiClient.normalizeCode(raw).orEmpty()
+            val already = snap.lobbies.firstOrNull {
+                it.code.equals(normalized, ignoreCase = true)
+            }
+            if (already != null) {
+                // Schon Mitglied → als Erfolg behandeln (Leinwand öffnen), kein Fehler
+                prefs.setActiveLobby(already.id)
+                CanvasStore.setActiveLobby(already.id)
+                CanvasStore.updateKnownLobbies(snap.lobbies.map { it.id })
+                PairConnectionService.startAll(context)
+                true
+            } else if (snap.lobbies.size >= PeerPalette.MAX_LOBBIES) {
                 joinError = "Maximal ${PeerPalette.MAX_LOBBIES} Lobbys."
-                false
-            } else if (snap.lobbies.any {
-                    it.code.equals(LuvApiClient.normalizeCode(raw).orEmpty(), ignoreCase = true)
-                }
-            ) {
-                joinError = "Du bist schon in dieser Lobby."
                 false
             } else {
                 val room = LuvApiClient.joinRoom(raw)
@@ -819,6 +824,18 @@ fun LuvAppNav() {
         } finally {
             busy = false
         }
+    }
+
+    fun openLobbyCanvas(lobbyId: String, trialUntil: Long? = null) {
+        context.startActivity(
+            Intent(context, LockDrawActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobbyId)
+                if (trialUntil != null && trialUntil > 0L) {
+                    putExtra(LockDrawActivity.EXTRA_TRIAL_DRAW_UNTIL, trialUntil)
+                }
+            }
+        )
     }
 
     /** Invite ohne Google: 60s Probezeichnen, dann Gate in LockDraw. */
@@ -1021,41 +1038,15 @@ fun LuvAppNav() {
         }
     }
 
-    // Invite-Deep-Link / Install-Referrer → Trial oder normaler Join
+    // Invite-Deep-Link / Install-Referrer → Bestätigung (Leinwand + Beitreten/Ablehnen)
     LaunchedEffect(pendingJoin, startDestination) {
         val code = PendingJoin.peek() ?: return@LaunchedEffect
         if (startDestination == null) return@LaunchedEffect
-        val linked = AccountSession.account.value?.googleLinked == true
-        val hasSession = !LuvApiClient.sessionToken.isNullOrBlank()
-        if (linked && hasSession) {
-            PendingJoin.consume()
-            if (startDestination != Routes.MAIN) startDestination = Routes.MAIN
-            if (joinWithCode(code)) {
-                val lobby = prefs.snapshot().lobbies.firstOrNull {
-                    it.code.equals(code, ignoreCase = true)
-                }
-                if (lobby != null) {
-                    context.startActivity(
-                        Intent(context, LockDrawActivity::class.java).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            putExtra(LockDrawActivity.EXTRA_LOBBY_ID, lobby.id)
-                        }
-                    )
-                }
-            } else if (!joinError.isNullOrBlank()) {
-                Toast.makeText(context, joinError, Toast.LENGTH_LONG).show()
-            }
-            return@LaunchedEffect
-        }
-        if (startDestination != Routes.MAIN) startDestination = Routes.MAIN
         PendingJoin.consume()
-        val ok = trialJoinWithCode(code)
-        if (!ok && !joinError.isNullOrBlank()) {
-            Toast.makeText(context, joinError, Toast.LENGTH_LONG).show()
-            if (prefs.snapshot().sessionToken.isNullOrBlank()) {
-                startDestination = Routes.TUTORIAL
-            }
-        }
+        if (startDestination != Routes.MAIN) startDestination = Routes.MAIN
+        // Kurz warten bis NavHost steht, dann Preview/Confirm
+        delay(80)
+        openJoinPreview(code)
     }
 
     // Bei jedem App-Start / Zurück aus dem Hintergrund auf Pflicht-Update prüfen
@@ -1976,14 +1967,31 @@ fun LuvAppNav() {
                 preview = joinPreview,
                 loading = joinPreviewLoading,
                 error = joinError,
+                busy = busy,
                 onJoin = {
                     val code = joinPreviewCode ?: joinPreview?.code ?: return@JoinPreviewScreen
                     scope.launch {
-                        if (joinWithCode(code)) {
-                            Toast.makeText(context, "Lobby beigetreten", Toast.LENGTH_SHORT).show()
+                        val linked = AccountSession.account.value?.googleLinked == true
+                        val hasSession = !LuvApiClient.sessionToken.isNullOrBlank()
+                        val ok = if (linked && hasSession) {
+                            joinWithCode(code)
+                        } else {
+                            trialJoinWithCode(code)
+                        }
+                        if (ok) {
+                            val lobbyId = prefs.snapshot().lobbies.firstOrNull {
+                                it.code.equals(code, ignoreCase = true)
+                            }?.id
+                            joinPreview = null
+                            joinPreviewCode = null
+                            joinError = null
                             tab = 0
                             navController.navigate(Routes.MAIN) {
                                 popUpTo(Routes.MAIN) { inclusive = true }
+                            }
+                            // trialJoin öffnet LockDraw selbst; Google-Join hier öffnen
+                            if (linked && hasSession && lobbyId != null) {
+                                openLobbyCanvas(lobbyId)
                             }
                         }
                     }

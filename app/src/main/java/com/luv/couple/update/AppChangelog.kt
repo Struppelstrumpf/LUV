@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.36",
+            listOf(
+                "Einladungs-Link öffnet die App direkt; Beitreten mit Vorschau — Landing ohne Scrollen",
+            )
+        ),
+        Entry(
             "2.2.35",
             listOf(
                 "Neues Onboarding: zeichnen, Profil-Sticker und Google am Ende — dann kurze Home-Tipps",

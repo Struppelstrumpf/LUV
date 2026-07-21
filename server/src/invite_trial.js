@@ -98,6 +98,19 @@ function buildInviteLandingHtml({
       </div>
     </div>`;
 
+  const cleanCode = String(code || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  // Fallback mit ?stay=1 verhindert Redirect-Schleife, wenn die App fehlt
+  const stayUrl =
+    String(joinUrl || "").indexOf("?") >= 0
+      ? `${joinUrl}&stay=1`
+      : `${joinUrl}?stay=1`;
+  // Intent: App öffnen wenn installiert, sonst auf dieser Seite bleiben (kein Play-Zwang)
+  const intentUrl =
+    `intent://join/${cleanCode}#Intent;scheme=luv;package=com.luv.couple;` +
+    `S.browser_fallback_url=${encodeURIComponent(stayUrl)};end`;
+
   return `<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -126,8 +139,19 @@ function buildInviteLandingHtml({
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/luv/styles.css" />
   <style>
-    .join-stage { min-height: 100dvh; display: grid; place-content: center; padding: 2rem 1.25rem 2.5rem; text-align: center; }
-    .join-stage .brand { font-family: Fraunces, serif; font-size: clamp(2.6rem, 9vw, 4.2rem); letter-spacing: 0.12em; margin: 0; color: #f4f1ec; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    .join-stage {
+      height: 100dvh; height: 100svh; max-height: 100dvh;
+      box-sizing: border-box;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: max(0.55rem, env(safe-area-inset-top)) 1rem max(0.7rem, env(safe-area-inset-bottom));
+      text-align: center; overflow: hidden; gap: 0.35rem;
+    }
+    .join-stage .brand {
+      font-family: Fraunces, serif; font-size: clamp(1.65rem, 5.5vw, 2.35rem);
+      letter-spacing: 0.12em; margin: 0; color: #f4f1ec; line-height: 1;
+      flex-shrink: 0;
+    }
     .join-stage .brand .c-l { color: #00b7e4; }
     .join-stage .brand .c-u {
       display: inline-block;
@@ -136,35 +160,60 @@ function buildInviteLandingHtml({
       color: transparent; -webkit-text-fill-color: transparent;
     }
     .join-stage .brand .c-v { color: #c218a8; }
-    .join-stage .headline { font-family: Fraunces, serif; font-weight: 500; font-size: clamp(1.35rem, 4vw, 1.85rem); margin: 1rem 0 0.45rem; line-height: 1.25; }
-    .join-stage .lede { opacity: 0.78; max-width: 26rem; margin: 0 auto 1.35rem; line-height: 1.5; font-family: Outfit, system-ui, sans-serif; }
-    .join-stage .cta-row { display: flex; flex-direction: column; gap: 0.85rem; align-items: center; margin-top: 0.35rem; }
-    .join-stage .download { text-decoration: none; }
+    .join-stage .headline {
+      font-family: Fraunces, serif; font-weight: 500;
+      font-size: clamp(1.05rem, 3.6vw, 1.35rem);
+      margin: 0; line-height: 1.2; flex-shrink: 0;
+      max-width: 22rem;
+    }
+    .join-stage .lede {
+      opacity: 0.78; max-width: 22rem; margin: 0;
+      line-height: 1.35; font-family: Outfit, system-ui, sans-serif;
+      font-size: clamp(0.78rem, 2.6vw, 0.9rem);
+      flex-shrink: 0;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .join-stage .cta-row {
+      display: flex; flex-direction: column; gap: 0.45rem; align-items: center;
+      margin-top: 0.15rem; flex-shrink: 0; width: 100%;
+    }
     .lobby-preview {
-      margin: 0 auto 1.35rem; max-width: min(18rem, 78vw);
-      border-radius: 1.25rem; overflow: hidden;
+      margin: 0; width: min(11.5rem, 42vw);
+      max-height: min(38dvh, 42vh);
+      border-radius: 1rem; overflow: hidden;
       border: 1px solid rgba(255,255,255,0.14);
       background: rgba(0,0,0,0.35);
-      box-shadow: 0 18px 50px rgba(0,0,0,0.35);
+      box-shadow: 0 12px 32px rgba(0,0,0,0.32);
+      flex: 0 1 auto; min-height: 0;
+      display: flex; flex-direction: column;
     }
-    .lobby-preview img { display: block; width: 100%; height: auto; aspect-ratio: 9/16; object-fit: cover; }
+    .lobby-preview img {
+      display: block; width: 100%; height: 100%; min-height: 0;
+      flex: 1 1 auto; object-fit: cover; aspect-ratio: 9/16;
+      max-height: calc(min(38dvh, 42vh) - 1.6rem);
+    }
     .lobby-preview figcaption {
-      font-family: Outfit, system-ui, sans-serif; font-size: 0.78rem;
-      padding: 0.65rem 0.8rem 0.8rem; color: rgba(244,241,236,0.78); text-align: left;
+      font-family: Outfit, system-ui, sans-serif; font-size: 0.68rem;
+      padding: 0.35rem 0.55rem 0.45rem; color: rgba(244,241,236,0.78); text-align: left;
+      flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .fake-lobby { margin: 0 auto 1.35rem; }
+    .fake-lobby { margin: 0; flex: 0 1 auto; min-height: 0; max-height: min(38dvh, 42vh); }
     .fake-phone {
-      width: min(15.5rem, 72vw); margin: 0 auto; border-radius: 1.6rem;
-      padding: 0.55rem; background: linear-gradient(160deg, #1a2030, #0d111a);
+      width: min(10.5rem, 40vw); max-height: inherit; margin: 0 auto; border-radius: 1.2rem;
+      padding: 0.4rem; background: linear-gradient(160deg, #1a2030, #0d111a);
       border: 1px solid rgba(255,255,255,0.16);
-      box-shadow: 0 22px 55px rgba(0,0,0,0.4);
+      box-shadow: 0 14px 36px rgba(0,0,0,0.35);
+      box-sizing: border-box; height: 100%;
+      display: flex; flex-direction: column;
     }
     .fake-notch {
-      width: 38%; height: 0.35rem; margin: 0.15rem auto 0.55rem;
-      border-radius: 999px; background: rgba(255,255,255,0.12);
+      width: 38%; height: 0.28rem; margin: 0.1rem auto 0.35rem;
+      border-radius: 999px; background: rgba(255,255,255,0.12); flex-shrink: 0;
     }
     .fake-canvas {
-      position: relative; aspect-ratio: 9/16; border-radius: 1.1rem;
+      position: relative; flex: 1 1 auto; min-height: 0;
+      aspect-ratio: 9/16; max-height: calc(min(38dvh, 42vh) - 1.2rem);
+      border-radius: 0.9rem;
       background:
         radial-gradient(ellipse at 30% 25%, rgba(0,183,228,0.18), transparent 55%),
         radial-gradient(ellipse at 70% 70%, rgba(194,24,168,0.16), transparent 50%),
@@ -172,35 +221,48 @@ function buildInviteLandingHtml({
       overflow: hidden;
     }
     .fake-dot {
-      position: absolute; width: 0.7rem; height: 0.7rem; border-radius: 50%;
+      position: absolute; width: 0.55rem; height: 0.55rem; border-radius: 50%;
       animation: fakePulse 2.4s ease-in-out infinite;
     }
     .fake-dot-a { left: 28%; top: 38%; background: #00b7e4; }
     .fake-dot-b { right: 30%; top: 52%; background: #c218a8; animation-delay: 0.7s; }
     .fake-hint {
-      position: absolute; left: 0.8rem; right: 0.8rem; bottom: 1.1rem;
-      margin: 0; font-family: Outfit, system-ui, sans-serif; font-size: 0.78rem;
-      color: rgba(244,241,236,0.55); line-height: 1.35;
+      position: absolute; left: 0.55rem; right: 0.55rem; bottom: 0.7rem;
+      margin: 0; font-family: Outfit, system-ui, sans-serif; font-size: 0.68rem;
+      color: rgba(244,241,236,0.55); line-height: 1.3;
     }
     @keyframes fakePulse {
       0%, 100% { transform: scale(1); opacity: 0.75; }
       50% { transform: scale(1.35); opacity: 1; }
     }
     .play-cta {
-      display: inline-flex; align-items: center; gap: 0.75rem;
-      padding: 0.85rem 1.15rem; border-radius: 1rem;
+      display: inline-flex; align-items: center; gap: 0.6rem;
+      padding: 0.65rem 0.95rem; border-radius: 0.9rem;
       background: #fff; color: #111; text-decoration: none;
       font-family: Outfit, system-ui, sans-serif; font-weight: 600;
-      box-shadow: 0 10px 28px rgba(0,0,0,0.28);
-      max-width: 100%;
+      box-shadow: 0 8px 22px rgba(0,0,0,0.28);
+      max-width: min(100%, 18rem);
     }
     .play-cta .play-ico { flex-shrink: 0; }
-    .play-cta .download-text { text-align: left; display: flex; flex-direction: column; gap: 0.1rem; }
-    .play-cta .download-label { font-size: 1.05rem; letter-spacing: 0.01em; }
-    .play-cta .download-meta { font-size: 0.75rem; font-weight: 500; opacity: 0.65; }
+    .play-cta .play-ico svg { width: 22px; height: 22px; }
+    .play-cta .download-text { text-align: left; display: flex; flex-direction: column; gap: 0.05rem; }
+    .play-cta .download-label { font-size: 0.95rem; letter-spacing: 0.01em; }
+    .play-cta .download-meta { font-size: 0.68rem; font-weight: 500; opacity: 0.65; }
     .open-app-link {
-      font-family: Outfit, system-ui, sans-serif; font-size: 0.85rem;
+      font-family: Outfit, system-ui, sans-serif; font-size: 0.78rem;
       color: rgba(244,241,236,0.55); text-decoration: underline; text-underline-offset: 0.2em;
+      padding: 0.15rem;
+    }
+    @media (max-height: 620px) {
+      .join-stage { gap: 0.22rem; padding-top: 0.4rem; padding-bottom: 0.45rem; }
+      .lobby-preview, .fake-lobby { max-height: 32dvh; }
+      .lobby-preview img, .fake-canvas { max-height: calc(32dvh - 1.4rem); }
+      .join-stage .lede { -webkit-line-clamp: 1; }
+    }
+    @media (max-height: 520px) {
+      .lobby-preview, .fake-lobby { max-height: 26dvh; }
+      .join-stage .brand { font-size: 1.45rem; }
+      .join-stage .headline { font-size: 1rem; }
     }
   </style>
 </head>
@@ -230,15 +292,36 @@ function buildInviteLandingHtml({
           <span class="download-meta">Google Play · kostenlos</span>
         </span>
       </a>
-      <a class="open-app-link" id="openApp" href="${escapeHtml(deep)}">App bereits installiert? Öffnen</a>
+      <a class="open-app-link" id="openApp" href="${escapeHtml(intentUrl)}">App bereits installiert? Öffnen</a>
     </div>
   </main>
   <script>
     (function () {
-      var deep = ${JSON.stringify(deep)};
       var found = ${found ? "true" : "false"};
-      // App-Link nur anbieten — kein Auto-Redirect (verhindert leeren Fehler ohne App)
-      if (!found) document.getElementById("openApp").style.display = "none";
+      var intentUrl = ${JSON.stringify(intentUrl)};
+      var deep = ${JSON.stringify(deep)};
+      var openApp = document.getElementById("openApp");
+      if (!found) {
+        if (openApp) openApp.style.display = "none";
+        return;
+      }
+      var ua = navigator.userAgent || "";
+      var isAndroid = /Android/i.test(ua);
+      // Nur Crawler auslassen — WhatsApp-In-App-Browser soll die App öffnen
+      var isBot = /bot|crawl|spider|facebookexternalhit|twitterbot|slackbot|discordbot|linkedinbot|applebot/i.test(ua);
+      var stay = false;
+      try {
+        stay = new URLSearchParams(window.location.search || "").get("stay") === "1";
+      } catch (e) {}
+      function tryOpen() {
+        try {
+          window.location.href = intentUrl || deep;
+        } catch (e) {}
+      }
+      // Auto-Open nur einmal — nach Fallback (?stay=1) auf der Landing bleiben
+      if (isAndroid && !isBot && !stay) {
+        setTimeout(tryOpen, 280);
+      }
     })();
   </script>
 </body>

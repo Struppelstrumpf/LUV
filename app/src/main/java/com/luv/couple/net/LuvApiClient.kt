@@ -3502,6 +3502,14 @@ object LuvApiClient {
 
     private fun parsePreview(json: JSONObject): RoomPreview {
         val code = json.getString("code")
+        val rawImg = json.optString("inviteImageUrl", "").trim().ifBlank { null }
+        val inviteImageUrl = rawImg?.let { path ->
+            when {
+                path.startsWith("http://") || path.startsWith("https://") -> path
+                path.startsWith("/") -> baseUrl().trimEnd('/') + path
+                else -> baseUrl().trimEnd('/') + "/" + path
+            }
+        }
         return RoomPreview(
             code = code,
             name = json.optString("name", "Lobby"),
@@ -3512,7 +3520,9 @@ object LuvApiClient {
             isFree = json.optBoolean("isFree", false),
             invite = json.optString("invite", "LUV-$code"),
             joinUrl = json.optString("joinUrl", publicJoinUrl(code)),
-            hostColorSide = json.optString("hostColorSide", "blue").ifBlank { "blue" }
+            hostColorSide = json.optString("hostColorSide", "blue").ifBlank { "blue" },
+            inviteImageUrl = inviteImageUrl,
+            hasDrawing = json.optBoolean("hasDrawing", !inviteImageUrl.isNullOrBlank())
         )
     }
 
