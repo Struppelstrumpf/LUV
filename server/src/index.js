@@ -1438,6 +1438,71 @@ function remapFriendRefs(db, fromId, toId) {
   }
 }
 
+/**
+ * Nach Merge: Freunde zeigen oft noch auf die gelöschte Alt-ID.
+ * Wenn genau ein lebender Ehepartner der Referenzen als Ziel in Frage kommt
+ * (und selbst nicht auf die tote ID zeigt), IDs umhängen und Liste wiederherstellen.
+ */
+function repairDanglingFriendsViaSpouse(db) {
+  const byMissing = new Map();
+  for (const u of Object.values(db.users || {})) {
+    if (!u?.id) continue;
+    const f = ensureFriends(u);
+    const ids = new Set([
+      ...(f.list || []),
+      ...(f.incoming || []),
+      ...(f.outgoing || []),
+      ...Object.keys(f.levels || {}),
+    ]);
+    for (const id of ids) {
+      if (!id || db.users[id]) continue;
+      if (!byMissing.has(id)) byMissing.set(id, new Set());
+      byMissing.get(id).add(u.id);
+    }
+  }
+  let repaired = 0;
+  for (const [missingId, refSet] of byMissing.entries()) {
+    const candidates = new Set();
+    for (const rid of refSet) {
+      const m = marriage.findMarriageForUser(db, rid);
+      if (!m || !marriage.isBusyStatus(m.status)) continue;
+      const partner = marriage.partnerIdOf(m, rid);
+      if (partner && db.users[partner] && !refSet.has(partner)) {
+        candidates.add(partner);
+      }
+    }
+    if (candidates.size !== 1) continue;
+    const toId = [...candidates][0];
+    const target = db.users[toId];
+    if (!target) continue;
+    remapFriendRefs(db, missingId, toId);
+    const tf = ensureFriends(target);
+    for (const rid of refSet) {
+      if (rid === toId || !db.users[rid]) continue;
+      if (!tf.list.includes(rid)) tf.list.push(rid);
+      const other = db.users[rid];
+      const of = ensureFriends(other);
+      // tote ID → toId (falls remap die levels schon umgehängt hat)
+      of.list = of.list.filter((id) => id !== missingId);
+      if (!of.list.includes(toId)) of.list.push(toId);
+      const lv = Math.max(
+        Number(of.levels?.[toId]) || 0,
+        Number(of.levels?.[missingId]) || 0,
+        Number(tf.levels?.[rid]) || 0
+      );
+      if (lv > 0) marriage.setLevelBoth(target, other, lv);
+      else {
+        // Mindestens Freundschaft ohne Level
+        marriage.ensureFriendLevels(tf);
+        marriage.ensureFriendLevels(of);
+      }
+    }
+    repaired += 1;
+    console.log(`repaired dangling friends ${missingId} → ${toId} (${refSet.size} refs)`);
+  }
+  return repaired;
+}
+
 function profileRichness(p) {
   if (!p || typeof p !== "object") return 0;
   const layout = Array.isArray(p.layout) ? p.layout.length : 0;
@@ -7318,6 +7383,8 @@ app.get("/v1/me/friends", (req, res) => {
   if (!ctx) return;
   // tickMarriages läuft bereits per Interval — nicht bei jedem GET (Stroke-I/O)
   const db = getDb();
+  // Alt-IDs nach Google-Merge → lebender Ehepartner der Referenzen
+  if (repairDanglingFriendsViaSpouse(db) > 0) scheduleSave();
   const f = ensureFriends(ctx.user);
   const listBefore = f.list.length;
   const inBefore = f.incoming.length;
