@@ -54,6 +54,7 @@ import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairEvent
 import com.luv.couple.net.PairSessionState
+import com.luv.couple.net.PendingOnboardingRestart
 import com.luv.couple.net.PublicVoteEvent
 import com.luv.couple.notify.LiveProximity
 import com.luv.couple.shop.ShopCatalog
@@ -289,7 +290,15 @@ class LockDrawActivity : ComponentActivity() {
         paintEraserButton()
         setupTrialGate()
 
-        btnBack.setOnClickListener { finish() }
+        btnBack.setOnClickListener { leaveCanvas() }
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : androidx.activity.OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    leaveCanvas()
+                }
+            }
+        )
         btnColor.setOnClickListener {
             if (eraserOn) setEraserEnabled(false)
             openBrushStudio(BrushStudioMode.COLOR)
@@ -2913,9 +2922,24 @@ class LockDrawActivity : ComponentActivity() {
         legendScroll.layoutParams = lp
     }
 
+    private fun isTrialSession(): Boolean {
+        val acc = AccountSession.account.value
+        if (acc?.isTrial == true) return true
+        if (acc?.googleLinked != true && trialDrawUntil > 0L) return true
+        return trialDrawUntil > System.currentTimeMillis()
+    }
+
+    /** Zurück: bei Trial → Onboarding (Name/Tutorial/Google), sonst Home. */
+    private fun leaveCanvas() {
+        if (isTrialSession()) {
+            PendingOnboardingRestart.offer()
+        }
+        finish()
+    }
+
     private fun setupTrialGate() {
         val until = trialDrawUntil
-        val isTrial = AccountSession.account.value?.isTrial == true || until > System.currentTimeMillis()
+        val isTrial = isTrialSession() || until > System.currentTimeMillis()
         if (!isTrial) return
         lifecycleScope.launch {
             AccountSession.trialExpired.collect {

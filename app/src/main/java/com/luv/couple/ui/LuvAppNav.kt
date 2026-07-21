@@ -70,6 +70,7 @@ import com.luv.couple.net.PairEvent
 import com.luv.couple.net.PairSessionState
 import com.luv.couple.net.InstallReferrerJoin
 import com.luv.couple.net.PendingJoin
+import com.luv.couple.net.PendingOnboardingRestart
 import com.luv.couple.net.PendingShop
 import com.luv.couple.net.PendingShopReturn
 import com.luv.couple.net.PendingSplashSkip
@@ -167,6 +168,7 @@ fun LuvAppNav() {
     val marketDot by com.luv.couple.net.NotificationBadges.hasMarketDot.collectAsStateWithLifecycle()
     val inventarDot by com.luv.couple.net.NotificationBadges.hasInventoryDot.collectAsStateWithLifecycle()
     val pendingJoin by PendingJoin.code.collectAsStateWithLifecycle()
+    val pendingOnboardingRestart by PendingOnboardingRestart.pending.collectAsStateWithLifecycle()
     val pendingShopReturn by PendingShopReturn.pending.collectAsStateWithLifecycle()
     val pendingShop by PendingShop.open.collectAsStateWithLifecycle()
     val pendingMarketplace by com.luv.couple.net.PendingMarketplace.open.collectAsStateWithLifecycle()
@@ -175,6 +177,8 @@ fun LuvAppNav() {
     val focusUpdate by AppUpdater.focusRequest.collectAsStateWithLifecycle()
     var googleEnabled by remember { mutableStateOf(false) }
     var googleBusy by remember { mutableStateOf(false) }
+    val needsGoogleGate = AccountSession.needsGoogleLogin(googleEnabled) ||
+        account?.isTrial == true
     var startDestination by remember { mutableStateOf<String?>(null) }
     var shareLobby by remember { mutableStateOf<Lobby?>(null) }
     var joinError by remember { mutableStateOf<String?>(null) }
@@ -901,6 +905,7 @@ fun LuvAppNav() {
                 eventPrompt = room.eventPrompt,
                 eventEndsAt = room.eventEndsAt,
             )
+            prefs.resetInventoryToStarter()
             prefs.upsertLobby(lobby)
             prefs.setActiveLobby(lobby.id)
             PairSessionState.setCapacity(lobby.id, room.capacity)
@@ -926,6 +931,26 @@ fun LuvAppNav() {
             false
         } finally {
             busy = false
+        }
+    }
+
+    /** Trial-Zurück: Session leeren, Onboarding (Name → … → Google) starten. */
+    suspend fun restartOnboardingAfterTrial() {
+        runCatching { GoogleAuth.signOut(context) }
+        PairConnectionService.stop(context)
+        PairSessionState.reset()
+        CanvasStore.clearAll(notifyPeer = false)
+        prefs.clearForLogout()
+        AccountSession.setAccount(null)
+        LuvApiClient.sessionToken = null
+        tab = 0
+        joinError = null
+        accountMessage = null
+        showInviteOverlay = false
+        tutorialReplay = false
+        startDestination = Routes.TUTORIAL
+        navController.navigate(Routes.TUTORIAL) {
+            popUpTo(0) { inclusive = true }
         }
     }
 
@@ -1096,6 +1121,19 @@ fun LuvAppNav() {
             startDestination = Routes.MAIN
         }
         openJoinPreview(code, asOverlay = true)
+    }
+
+    // Zurück aus Trial-Leinwand → Name/Tutorial/Google
+    LaunchedEffect(pendingOnboardingRestart, startDestination) {
+        if (!PendingOnboardingRestart.peek()) return@LaunchedEffect
+        if (startDestination == null) return@LaunchedEffect
+        PendingOnboardingRestart.consume()
+        showPublicSplash = false
+        restartOnboardingAfterTrial()
+    }
+
+    LaunchedEffect(needsGoogleGate) {
+        if (needsGoogleGate) tab = 0
     }
 
     // Bei jedem App-Start / Zurück aus dem Hintergrund auf Pflicht-Update prüfen
@@ -1468,7 +1506,7 @@ fun LuvAppNav() {
                             lobbyStates = lobbyStates,
                             reconnectUi = reconnectUi,
                             error = joinError,
-                            requireGoogleLogin = AccountSession.needsGoogleLogin(googleEnabled),
+                            requireGoogleLogin = needsGoogleGate,
                             googleBusy = googleBusy,
                             onGoogleSignIn = { connectGoogle() },
                             onOpenLobby = { lobby ->
@@ -1743,44 +1781,46 @@ fun LuvAppNav() {
                 if (showEmojiBarEditor) {
                     EmojiBarEditorDialog(onDismiss = { showEmojiBarEditor = false })
                 }
-                SimpleBottomBar(
-                    selected = tab,
-                    sozialBadge = sozialDot,
-                    marketBadge = marketDot,
-                    inventarBadge = inventarDot,
-                    onSelect = { next ->
-                        if (next == 4) accountMessage = null
-                        tab = next
-                        scope.launch {
-                            // Update-Check bei Tab-Wechsel (Käufe/API laufen weiter)
-                            runCatching { AppUpdater.checkOnNavigate(context) }
-                            when (next) {
-                                1 -> {
-                                    // Punkt sofort weg — Coins bleiben in Erfolge abholbar
-                                    com.luv.couple.net.NotificationBadges.markSozialSeen()
-                                    com.luv.couple.net.NotificationBadges.syncAppBadge(context)
-                                    AchievementsBadge.refresh()
-                                    com.luv.couple.net.NotificationBadges.refreshFriends(context)
-                                    com.luv.couple.net.NotificationBadges.markSozialSeen()
-                                    com.luv.couple.net.NotificationBadges.syncAppBadge(context)
+                if (!needsGoogleGate) {
+                    SimpleBottomBar(
+                        selected = tab,
+                        sozialBadge = sozialDot,
+                        marketBadge = marketDot,
+                        inventarBadge = inventarDot,
+                        onSelect = { next ->
+                            if (next == 4) accountMessage = null
+                            tab = next
+                            scope.launch {
+                                // Update-Check bei Tab-Wechsel (Käufe/API laufen weiter)
+                                runCatching { AppUpdater.checkOnNavigate(context) }
+                                when (next) {
+                                    1 -> {
+                                        // Punkt sofort weg — Coins bleiben in Erfolge abholbar
+                                        com.luv.couple.net.NotificationBadges.markSozialSeen()
+                                        com.luv.couple.net.NotificationBadges.syncAppBadge(context)
+                                        AchievementsBadge.refresh()
+                                        com.luv.couple.net.NotificationBadges.refreshFriends(context)
+                                        com.luv.couple.net.NotificationBadges.markSozialSeen()
+                                        com.luv.couple.net.NotificationBadges.syncAppBadge(context)
+                                    }
+                                    2 -> syncInventory()
+                                    3 -> {
+                                        refreshAccount()
+                                        syncInventory()
+                                        com.luv.couple.net.NotificationBadges.refreshPendingSales(context)
+                                    }
+                                    4 -> {
+                                        googleEnabled = runCatching {
+                                            LuvApiClient.authConfig().googleEnabled
+                                        }.getOrDefault(googleEnabled)
+                                        refreshAccount()
+                                    }
+                                    else -> refreshAccount()
                                 }
-                                2 -> syncInventory()
-                                3 -> {
-                                    refreshAccount()
-                                    syncInventory()
-                                    com.luv.couple.net.NotificationBadges.refreshPendingSales(context)
-                                }
-                                4 -> {
-                                    googleEnabled = runCatching {
-                                        LuvApiClient.authConfig().googleEnabled
-                                    }.getOrDefault(googleEnabled)
-                                    refreshAccount()
-                                }
-                                else -> refreshAccount()
                             }
                         }
-                    }
-                )
+                    )
+                }
             }
             }
         }

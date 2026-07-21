@@ -286,7 +286,7 @@ class PrefsRepository(private val context: Context) {
         }
     }
 
-    /** Abmelden: Session weg, neues Geräte-Konto, Lobbys lokal leeren, Tutorial erneut. */
+    /** Abmelden: Session weg, Inventar/Begleiter/Profil leeren, Tutorial erneut. */
     suspend fun clearForLogout() {
         val id = UUID.randomUUID().toString()
         val secret = UUID.randomUUID().toString() + UUID.randomUUID().toString()
@@ -299,8 +299,36 @@ class PrefsRepository(private val context: Context) {
             it.remove(activeLobbyKey)
             it[tutorialDoneKey] = false
             it.remove(nicknameKey)
-            // Reaktionsleiste gehört zum Konto — nicht für den nächsten Login behalten
+            // Reaktionsleiste + Inventar gehören zum Konto
             it.remove(emojiBarKey)
+            it.remove(ownedEmojisKey)
+            it.remove(ownedThemesKey)
+            it.remove(ownedStickersKey)
+            it.remove(ownedPetsKey)
+            it[equippedPetKey] = com.luv.couple.shop.ShopCatalog.DEFAULT_PET
+            it.remove(profileCanvasKey)
+            it.remove(inventorySeenKey)
+            it.remove(inventoryUnseenKey)
+            it[pendingHomeCoachmarksKey] = false
+            it[homeCoachmarksDoneKey] = false
+        }
+    }
+
+    /** Trial/Gast: lokales Inventar auf Starter zurücksetzen (kein Alt-Konto-Müll). */
+    suspend fun resetInventoryToStarter() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(ownedEmojisKey)
+            prefs[ownedThemesKey] = JSONArray(
+                listOf(com.luv.couple.profile.ProfileCatalog.DEFAULT_THEME_ID)
+            ).toString()
+            prefs.remove(ownedStickersKey)
+            prefs[ownedPetsKey] = JSONArray(
+                listOf(com.luv.couple.shop.ShopCatalog.DEFAULT_PET)
+            ).toString()
+            prefs[equippedPetKey] = com.luv.couple.shop.ShopCatalog.DEFAULT_PET
+            prefs.remove(profileCanvasKey)
+            prefs.remove(inventorySeenKey)
+            prefs.remove(inventoryUnseenKey)
         }
     }
 

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.39",
+            listOf(
+                "Ohne Google: keine untere Leiste; Abmelden leert Inventar; Trial-Zurück startet Onboarding",
+            )
+        ),
+        Entry(
             "2.2.38",
             listOf(
                 "Lobby-Reihenfolge mit Google-Konto speichern; Käufe und Freunde reagieren sofort",

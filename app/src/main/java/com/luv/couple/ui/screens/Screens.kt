@@ -641,6 +641,29 @@ fun LobbiesScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             UpdateBanner(state = updateState, onUpdate = onUpdateApp)
+
+            if (requireGoogleLogin) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 48.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                    LuvWordmark(fontSize = 40.sp, showHeart = true)
+                    if (!error.isNullOrBlank()) {
+                        Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
+                    }
+                    PrimaryButton(
+                        if (googleBusy) "Einen Moment…" else "Mit Google anmelden",
+                        AccentRose,
+                        onGoogleSignIn,
+                        enabled = !googleBusy
+                    )
+                }
+                return@Column
+            }
+
             val equippedPet by LuvApp.instance.prefs.equippedPetFlow
                 .collectAsStateWithLifecycle(initialValue = com.luv.couple.shop.ShopCatalog.DEFAULT_PET)
             Row(
@@ -690,92 +713,53 @@ fun LobbiesScreen(
                         fontSize = 13.sp
                     )
                 }
-                if (!requireGoogleLogin) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (!eventGlyph.isNullOrBlank() && primaryEvent != null) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(accent.copy(alpha = 0.22f))
-                                    .border(1.dp, accent.copy(alpha = 0.45f), CircleShape)
-                                    .clickable { showEventInfoDialog = true },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(eventGlyph, fontSize = 20.sp)
-                            }
-                        } else if (!eventGlyph.isNullOrBlank()) {
-                            Text(eventGlyph, fontSize = 22.sp)
-                        }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (!eventGlyph.isNullOrBlank() && primaryEvent != null) {
                         Box(
                             modifier = Modifier
-                                .onGloballyPositioned { coords ->
-                                    val p = coords.positionInRoot()
-                                    coachPlus = reportCoachHole(
-                                        Offset(
-                                            p.x + coords.size.width / 2f,
-                                            p.y + coords.size.height / 2f
-                                        ),
-                                        coords.size
-                                    )
-                                }
-                                .fillMaxHeight()
-                                .aspectRatio(1f)
+                                .size(40.dp)
                                 .clip(CircleShape)
-                                .background(accent)
-                                .clickable { showLobbyPlusDialog = true },
+                                .background(accent.copy(alpha = 0.22f))
+                                .border(1.dp, accent.copy(alpha = 0.45f), CircleShape)
+                                .clickable { showEventInfoDialog = true },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                "+",
-                                color = Color.White,
-                                fontFamily = DisplayFont,
-                                fontSize = 36.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Text(eventGlyph, fontSize = 20.sp)
                         }
+                    } else if (!eventGlyph.isNullOrBlank()) {
+                        Text(eventGlyph, fontSize = 22.sp)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .onGloballyPositioned { coords ->
+                                val p = coords.positionInRoot()
+                                coachPlus = reportCoachHole(
+                                    Offset(
+                                        p.x + coords.size.width / 2f,
+                                        p.y + coords.size.height / 2f
+                                    ),
+                                    coords.size
+                                )
+                            }
+                            .fillMaxHeight()
+                            .aspectRatio(1f)
+                            .clip(CircleShape)
+                            .background(accent)
+                            .clickable { showLobbyPlusDialog = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "+",
+                            color = Color.White,
+                            fontFamily = DisplayFont,
+                            fontSize = 36.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
-            }
-
-            if (requireGoogleLogin) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 36.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Text(
-                        "Mit Google anmelden",
-                        color = TextPrimary,
-                        fontFamily = DisplayFont,
-                        fontSize = 24.sp,
-                        textAlign = TextAlign.Center
-                    )
-                    Text(
-                        "Ohne Google-Anmeldung siehst du keine Lobbys und kannst nichts kaufen. " +
-                            "So bleiben deine Coins und Freunde sicher.",
-                        color = TextMuted,
-                        fontFamily = BodyFont,
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        textAlign = TextAlign.Center
-                    )
-                    if (!error.isNullOrBlank()) {
-                        Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
-                    }
-                    PrimaryButton(
-                        if (googleBusy) "Google…" else "Mit Google anmelden",
-                        AccentRose,
-                        onGoogleSignIn,
-                        enabled = !googleBusy
-                    )
-                }
-                return@Column
             }
 
             if (!error.isNullOrBlank()) {
