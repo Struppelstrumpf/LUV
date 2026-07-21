@@ -161,23 +161,66 @@ fun MarketScreen(
         deepLinked = onLeaveDeepLink != null
         onStartPanelConsumed()
     }
+    var showHubLootbox by remember { mutableStateOf(false) }
+    var hubLootBusy by remember { mutableStateOf<String?>(null) }
+    var hubLootRefresh by remember { mutableIntStateOf(0) }
+    val hubAccount by AccountSession.account.collectAsStateWithLifecycle()
     when (panel) {
-        MarketPanel.Hub -> MarketHub(
-            packs = packs,
-            onOpenMarketplace = {
-                deepLinked = false
-                panel = MarketPanel.Marketplace
-            },
-            onOpenItemShop = {
-                deepLinked = false
-                shopTabSeed = 0
-                panel = MarketPanel.ItemShop
-            },
-            onOpenCoinShop = {
-                deepLinked = false
-                panel = MarketPanel.CoinShop
+        MarketPanel.Hub -> {
+            MarketHub(
+                packs = packs,
+                lootRefreshKey = hubLootRefresh,
+                onOpenMarketplace = {
+                    deepLinked = false
+                    panel = MarketPanel.Marketplace
+                },
+                onOpenItemShop = {
+                    deepLinked = false
+                    shopTabSeed = 0
+                    panel = MarketPanel.ItemShop
+                },
+                onOpenCoinShop = {
+                    deepLinked = false
+                    panel = MarketPanel.CoinShop
+                },
+                onOpenLootbox = {
+                    if (!economyUnlocked) onRequireGoogle()
+                    else showHubLootbox = true
+                }
+            )
+            if (showHubLootbox) {
+                AlertDialog(
+                    onDismissRequest = {
+                        showHubLootbox = false
+                        hubLootRefresh++
+                    },
+                    containerColor = BgSoft,
+                    title = {
+                        Text("Lootbox", fontFamily = DisplayFont, color = TextPrimary, fontSize = 22.sp)
+                    },
+                    text = {
+                        Box(modifier = Modifier.fillMaxWidth().height(520.dp)) {
+                            LootboxTab(
+                                coins = hubAccount?.coins ?: 0,
+                                busy = hubLootBusy != null,
+                                onBusy = { hubLootBusy = it },
+                                onRefresh = { onRefreshInventory() },
+                                economyUnlocked = economyUnlocked,
+                                onRequireGoogle = onRequireGoogle
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showHubLootbox = false
+                            hubLootRefresh++
+                        }) {
+                            Text("Schließen", color = AccentRose, fontFamily = DisplayFont)
+                        }
+                    }
+                )
             }
-        )
+        }
         MarketPanel.Marketplace -> MarketExpandShell(
             title = "Marktplatz",
             onBack = { backFromPanel() }
@@ -248,11 +291,14 @@ private object MarketHubCache {
 @Composable
 private fun MarketHub(
     packs: List<ShopPack>,
+    lootRefreshKey: Int = 0,
     onOpenMarketplace: () -> Unit,
     onOpenItemShop: () -> Unit,
-    onOpenCoinShop: () -> Unit
+    onOpenCoinShop: () -> Unit,
+    onOpenLootbox: () -> Unit
 ) {
     var hub by remember { mutableStateOf(MarketHubCache.latest) }
+    var lootPending by remember { mutableIntStateOf(0) }
     val marketAlert by com.luv.couple.net.NotificationBadges.hasMarketDot.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
         val fresh = runCatching { LuvApiClient.fetchMarketHub() }.getOrNull()
@@ -262,21 +308,32 @@ private fun MarketHub(
         }
         com.luv.couple.net.NotificationBadges.refreshPendingSales()
     }
+    LaunchedEffect(lootRefreshKey) {
+        lootPending = runCatching { LuvApiClient.pendingLootboxes().size }.getOrDefault(0)
+    }
     val marketPreviews = hub?.marketNewest.orEmpty()
     val shopPreviews = hub?.shopTop.orEmpty()
-    val coinPreviews = remember(hub, packs) {
-        val fromApi = hub?.coinNewest.orEmpty()
-        if (fromApi.isNotEmpty()) fromApi
-        else packs.take(2).map { pack ->
+    val offerPack = remember(packs, hub) {
+        packs.firstOrNull { it.isOffer || it.onceOnly }
+            ?: packs.firstOrNull {
+                it.amountEur.replace(',', '.').trim().startsWith("0.99")
+            }
+            ?: hub?.coinNewest?.firstOrNull()?.let { preview ->
+                packs.firstOrNull { it.id == preview.packId }
+            }
+    }
+    val coinPreview = remember(offerPack, hub) {
+        offerPack?.let { pack ->
             LuvApiClient.MarketHubPreview(
                 emoji = "🪙",
                 label = ShopCatalog.playfulPackTitle(pack),
-                detail = "${pack.amountEur} € · ${pack.coins}",
+                detail = "${pack.amountEur.replace('.', ',')} € · ${pack.coins}",
                 packId = pack.id,
                 packCoins = pack.coins
             )
-        }
+        } ?: hub?.coinNewest?.firstOrNull()
     }
+    val lootPrice = ShopCatalog.LOOTBOX_PRICE_COINS
     MenuBackdrop(includeNavigationBars = false) {
         BoxWithConstraints(
             modifier = Modifier
@@ -290,7 +347,7 @@ private fun MarketHub(
             ) {
                 MarketTile(
                     modifier = Modifier
-                        .weight(1f)
+                        .weight(1.15f)
                         .fillMaxWidth(),
                     title = "Marktplatz",
                     badge = if (marketAlert) "Verkauf!" else "Neueste Angebote",
@@ -302,7 +359,7 @@ private fun MarketHub(
                 )
                 MarketTile(
                     modifier = Modifier
-                        .weight(1f)
+                        .weight(1.15f)
                         .fillMaxWidth(),
                     title = "Itemshop",
                     badge = "Meistgekauft",
@@ -311,16 +368,88 @@ private fun MarketHub(
                     emptyHint = "Beliebte Items laden…",
                     onClick = onOpenItemShop
                 )
-                MarketTile(
+                Row(
                     modifier = Modifier
-                        .weight(1f)
+                        .weight(0.95f)
                         .fillMaxWidth(),
-                    title = "Coinshop",
-                    badge = "Angebote",
-                    brush = Brush.linearGradient(listOf(Color(0xFF3A3020), Color(0xFF241C12))),
-                    previews = coinPreviews,
-                    emptyHint = "Bald verfügbar",
-                    onClick = onOpenCoinShop
+                    horizontalArrangement = Arrangement.spacedBy(gap)
+                ) {
+                    MarketTile(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxSize(),
+                        title = "Coinshop",
+                        badge = "",
+                        brush = Brush.linearGradient(listOf(Color(0xFF3A3020), Color(0xFF241C12))),
+                        previews = listOfNotNull(coinPreview),
+                        emptyHint = "Bald verfügbar",
+                        onClick = onOpenCoinShop
+                    )
+                    MarketLootboxTile(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxSize(),
+                        pendingCount = lootPending,
+                        priceCoins = lootPrice,
+                        onClick = onOpenLootbox
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarketLootboxTile(
+    modifier: Modifier,
+    pendingCount: Int,
+    priceCoins: Int,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(22.dp))
+            .background(Brush.linearGradient(listOf(Color(0xFF243848), Color(0xFF152028))))
+            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(22.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                "Lootbox",
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 20.sp,
+                maxLines = 1
+            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("🎁", fontSize = 44.sp)
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    if (pendingCount > 0) {
+                        if (pendingCount == 1) "1 ungeöffnet" else "$pendingCount ungeöffnet"
+                    } else {
+                        "Keine ungeöffnet"
+                    },
+                    color = if (pendingCount > 0) MaleBlue else TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    "$priceCoins Coins",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 12.sp
                 )
             }
         }
@@ -372,14 +501,16 @@ private fun MarketTile(
                     maxLines = 1,
                     modifier = Modifier.weight(1f)
                 )
-                Text(
-                    badge,
-                    color = if (alertDot) AccentRose else TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    softWrap = false
-                )
+                if (badge.isNotBlank()) {
+                    Text(
+                        badge,
+                        color = if (alertDot) AccentRose else TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
             }
             if (previews.isEmpty()) {
                 Box(
@@ -565,8 +696,13 @@ private fun CoinShopContent(
 ) {
     val account by AccountSession.account.collectAsStateWithLifecycle()
     var pendingPack by remember { mutableStateOf<ShopPack?>(null) }
-    val offers = remember(packs) { packs.filter { it.isOffer || it.onceOnly } }
-    val normals = remember(packs) { packs.filterNot { it.isOffer || it.onceOnly } }
+    // Nur das 0,99-€-Angebot — keine weiteren Pakete / kein „Angebote“-Titel
+    val offerPack = remember(packs) {
+        packs.firstOrNull { it.isOffer || it.onceOnly }
+            ?: packs.firstOrNull {
+                it.amountEur.replace(',', '.').trim().startsWith("0.99")
+            }
+    }
     fun requestBuy(pack: ShopPack) {
         if (!economyUnlocked) {
             onRequireGoogle()
@@ -650,31 +786,16 @@ private fun CoinShopContent(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            if (offers.isNotEmpty()) {
-                Text(
-                    "Angebote",
-                    color = TextPrimary,
-                    fontFamily = DisplayFont,
-                    fontSize = 16.sp
-                )
-                offers.forEach { pack ->
-                    CoinPackCard(
-                        pack = pack,
-                        onBuy = { requestBuy(pack) }
-                    )
-                }
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    "Coin-Pakete",
-                    color = TextPrimary,
-                    fontFamily = DisplayFont,
-                    fontSize = 16.sp
-                )
-            }
-            normals.forEach { pack ->
+            val pack = offerPack
+            if (pack != null) {
                 CoinPackCard(
                     pack = pack,
                     onBuy = { requestBuy(pack) }
+                )
+            } else {
+                EmptyMarketCard(
+                    title = "Kein Angebot",
+                    body = "Aktuell ist kein Coin-Angebot verfügbar."
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -807,7 +928,6 @@ private fun ItemShopContent(
     var tab by remember {
         mutableIntStateOf(initialTab.coerceIn(0, ShopCatalog.ITEM_SHOP_TAB_LABELS.lastIndex))
     }
-    var showLootbox by remember { mutableStateOf(false) }
     var purchaseFlash by remember { mutableStateOf<Pair<String, Int>?>(null) }
     LaunchedEffect(purchaseFlash) {
         if (purchaseFlash == null) return@LaunchedEffect
@@ -1089,26 +1209,12 @@ private fun ItemShopContent(
                     )
                     .padding(horizontal = s(14.dp), vertical = s(12.dp))
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "${account?.coins ?: 0} Coins",
-                        color = TextPrimary,
-                        fontFamily = DisplayFont,
-                        fontSize = (15f * scale).sp
-                    )
-                    TextButton(onClick = { showLootbox = true }) {
-                        Text(
-                            "Lootbox",
-                            color = AccentRose,
-                            fontFamily = DisplayFont,
-                            fontSize = (14f * scale).sp
-                        )
-                    }
-                }
+                Text(
+                    "${account?.coins ?: 0} Coins",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = (15f * scale).sp
+                )
             }
             Spacer(modifier = Modifier.height(s(10.dp)))
             // Featured preview — Demnächst immer, Pool = voller lokaler Katalog
@@ -1488,32 +1594,6 @@ private fun ItemShopContent(
                     }
                 }
             }
-            if (showLootbox) {
-                AlertDialog(
-                    onDismissRequest = { showLootbox = false },
-                    containerColor = BgSoft,
-                    title = {
-                        Text("Lootbox", fontFamily = DisplayFont, color = TextPrimary, fontSize = 22.sp)
-                    },
-                    text = {
-                        Box(modifier = Modifier.fillMaxWidth().height(520.dp)) {
-                            LootboxTab(
-                                coins = account?.coins ?: 0,
-                                busy = busyKey != null,
-                                onBusy = { busyKey = it },
-                                onRefresh = { reloadShopAndInventory() },
-                                economyUnlocked = economyUnlocked,
-                                onRequireGoogle = onRequireGoogle
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { showLootbox = false }) {
-                            Text("Schließen", color = AccentRose, fontFamily = DisplayFont)
-                        }
-                    }
-                )
-            }
             purchaseFlash?.let { (title, pricePaid) ->
                 PurchaseFlashPopup(
                     title = title,
@@ -1588,6 +1668,8 @@ private fun LootboxTab(
     var flash by remember { mutableFloatStateOf(0f) }
     var showConfirmBuy by remember { mutableStateOf(false) }
     var buyQty by remember { mutableIntStateOf(1) }
+    /** Sofort sichtbar nach Kauf — nicht erst nach Server-Antwort (~sekunden). */
+    var displayPending by remember { mutableIntStateOf(0) }
     val shakeAnim by animateFloatAsState(shake, label = "lootShake")
     val flashAnim by animateFloatAsState(flash, label = "lootFlash")
     val maxAffordable = (coins / ShopCatalog.LOOTBOX_PRICE_COINS).coerceAtLeast(0)
@@ -1611,6 +1693,7 @@ private fun LootboxTab(
     fun beginOpening(next: com.luv.couple.net.LootboxResult, rest: List<com.luv.couple.net.LootboxResult>) {
         activePendingId = next.pendingId
         queue = rest
+        displayPending = 1 + rest.size
         tapsLeft = ShopCatalog.LOOTBOX_TAP_COUNT
         phase = "tapping"
         revealedReward = null
@@ -1633,6 +1716,9 @@ private fun LootboxTab(
                 prevAccount.copy(coins = (prevAccount.coins - total).coerceAtLeast(0))
             )
         }
+        // Sofort „Noch X Lootbox“ — API darf danach noch laden
+        val beforeOpt = displayPending
+        displayPending = (displayPending + qty).coerceAtLeast(qty)
         onBusy("lootbox")
         scope.launch {
             runCatching { LuvApiClient.buyLootbox(qty) }
@@ -1640,6 +1726,7 @@ private fun LootboxTab(
                     val all = result.pending.ifEmpty { result.purchased }
                     val first = all.firstOrNull()
                     if (first == null) {
+                        displayPending = beforeOpt
                         Toast.makeText(context, "Kauf fehlgeschlagen", Toast.LENGTH_SHORT).show()
                     } else {
                         beginOpening(first, all.drop(1))
@@ -1653,6 +1740,7 @@ private fun LootboxTab(
                     onBusy(null)
                 }
                 .onFailure {
+                    displayPending = beforeOpt
                     prevAccount?.let { AccountSession.setAccount(it) }
                     onBusy(null)
                     Toast.makeText(
@@ -1684,6 +1772,7 @@ private fun LootboxTab(
                     revealedReward = reward
                     phase = "reveal"
                     activePendingId = null
+                    displayPending = queue.size + 1
                     onBusy(null)
                     // Inventar im Hintergrund — Chance/Reveal sofort zeigen
                     scope.launch { runCatching { onRefresh() } }
@@ -1718,9 +1807,11 @@ private fun LootboxTab(
             phase = "idle"
             tapsLeft = 0
             activePendingId = null
+            displayPending = 0
             scope.launch {
                 runCatching { LuvApiClient.pendingLootboxes() }
                     .onSuccess { list ->
+                        displayPending = list.size
                         if (list.isNotEmpty()) {
                             beginOpening(list.first(), list.drop(1))
                         }
@@ -1732,6 +1823,7 @@ private fun LootboxTab(
         if (!economyUnlocked) return@LaunchedEffect
         runCatching { LuvApiClient.pendingLootboxes() }
             .onSuccess { list ->
+                displayPending = list.size
                 if (list.isNotEmpty() && phase == "idle") {
                     beginOpening(list.first(), list.drop(1))
                 }
@@ -1845,10 +1937,20 @@ private fun LootboxTab(
                     fontFamily = BodyFont,
                     fontSize = 15.sp
                 )
-                val waiting = queue.size + if (phase == "tapping" || phase == "reveal") 1 else 0
-                if (waiting > 1 || (waiting == 1 && phase != "idle")) {
+                val waiting = maxOf(
+                    displayPending,
+                    queue.size + if (phase == "tapping" || phase == "reveal") 1 else 0
+                )
+                if (waiting > 0) {
                     Text(
-                        if (phase == "idle") "$waiting ungeöffnet" else "Noch $waiting Boxen",
+                        when {
+                            phase == "idle" && busy ->
+                                if (waiting == 1) "Noch 1 Lootbox…" else "Noch $waiting Lootboxen…"
+                            phase == "idle" ->
+                                if (waiting == 1) "1 ungeöffnet" else "$waiting ungeöffnet"
+                            waiting == 1 -> "Noch 1 Lootbox"
+                            else -> "Noch $waiting Lootboxen"
+                        },
                         color = MaleBlue,
                         fontFamily = BodyFont,
                         fontSize = 13.sp

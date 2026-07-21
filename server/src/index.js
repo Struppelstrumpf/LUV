@@ -15122,6 +15122,15 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(
     `luv-api :${PORT} rooms=${rooms.size} maxPeers=${MAX_PEERS} maxLobbies=${MAX_LOBBIES} clearCost=${CLEAR_COST} lobbyCreate=${LOBBY_CREATE_COST} shop=${shopPurchasesEnabled()}`
   );
+  // Lootbox-Pool vorwärmen — erster Kauf sonst oft mehrere Sekunden
+  setImmediate(() => {
+    try {
+      const pool = buildLootboxPoolForUser({ inventory: {} });
+      console.log(`[lootbox] pool warmed (${pool?.length || 0} items)`);
+    } catch (e) {
+      console.error("[lootbox] pool warm failed", e);
+    }
+  });
   try {
     ensureWeddingDir();
     const n = marriage.recoverAllOrphanedWeddings(getDb(), WEDDING_DIR);

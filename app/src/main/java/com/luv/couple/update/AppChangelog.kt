@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.43",
+            listOf(
+                "Markt: Coinshop und Lootbox nebeneinander; Lootbox-Bestand nach Kauf sofort sichtbar",
+            )
+        ),
+        Entry(
             "2.2.42",
             listOf(
                 "Team-Geschenke nur einmal als Hinweis — nicht dauerhaft unter Freunde; Absender immer „Team“",
