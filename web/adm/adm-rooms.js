@@ -1,6 +1,6 @@
 /**
  * Admin: Räume — Layout-Editor (Hochzeit).
- * Hängt an window.LuvAdmRooms — braucht LuvAdmHost (api/esc/content).
+ * Zonen nur im Admin sichtbar; App nutzt sie unsichtbar.
  */
 (() => {
   function host() {
@@ -17,11 +17,12 @@
   }
 
   const TOOLS = [
-    { id: "red-rect", label: "Rot eckig", color: "red", shape: "rect", hint: "Blockiert" },
-    { id: "green-rect", label: "Grün eckig", color: "green", shape: "rect", hint: "Begehbar" },
-    { id: "yellow-circle", label: "Gelb rund", color: "yellow", shape: "circle", hint: "Eheleute" },
-    { id: "blue-rect", label: "Blau eckig", color: "blue", shape: "rect", hint: "Sitz" },
-    { id: "blue-circle", label: "Blau rund", color: "blue", shape: "circle", hint: "Sitz" },
+    { id: "red-rect", label: "Rot eckig", color: "red", shape: "rect", hint: "Hindernis (Bänke) — drum herum" },
+    { id: "green-rect", label: "Grün eckig", color: "green", shape: "rect", hint: "Nur hier laufen; Schnitt → ein Bereich" },
+    { id: "yellow-circle", label: "Gelb rund", color: "yellow", shape: "circle", hint: "Sitz Eheleute" },
+    { id: "blue-circle", label: "Blau rund", color: "blue", shape: "circle", hint: "Sitz (Tipp → hinlaufen & setzen)" },
+    { id: "brown-circle", label: "Braun rund", color: "brown", shape: "circle", hint: "Spawn aller Avatare" },
+    { id: "orange-circle", label: "Orange rund", color: "orange", shape: "circle", hint: "Avatar-Größe" },
   ];
 
   const FILL = {
@@ -29,15 +30,91 @@
     green: "rgba(67, 160, 71, 0.4)",
     yellow: "rgba(255, 213, 79, 0.5)",
     blue: "rgba(66, 165, 245, 0.45)",
+    brown: "rgba(141, 110, 99, 0.5)",
+    orange: "rgba(255, 152, 0, 0.45)",
   };
   const STROKE = {
     red: "#e53935",
     green: "#43a047",
     yellow: "#ffd54f",
     blue: "#42a5f5",
+    brown: "#8d6e63",
+    orange: "#ff9800",
+  };
+
+  const LABEL = {
+    red: "Rot Hindernis",
+    green: "Grün laufen",
+    yellow: "Gelb Eheleute",
+    blue: "Blau Sitz",
+    brown: "Braun Spawn",
+    orange: "Orange Avatar-Größe",
   };
 
   let editor = null;
+
+  function rectsOverlapOrTouch(a, b, eps = 0.002) {
+    return !(
+      a.x + a.w < b.x - eps ||
+      b.x + b.w < a.x - eps ||
+      a.y + a.h < b.y - eps ||
+      b.y + b.h < a.y - eps
+    );
+  }
+
+  function mergeGreens(zones) {
+    const greens = zones.filter((z) => z.color === "green" && z.shape === "rect");
+    const others = zones.filter((z) => !(z.color === "green" && z.shape === "rect"));
+    if (greens.length <= 1) return zones.slice();
+    const n = greens.length;
+    const parent = Array.from({ length: n }, (_, i) => i);
+    const find = (i) => {
+      while (parent[i] !== i) {
+        parent[i] = parent[parent[i]];
+        i = parent[i];
+      }
+      return i;
+    };
+    const uni = (a, b) => {
+      const ra = find(a);
+      const rb = find(b);
+      if (ra !== rb) parent[rb] = ra;
+    };
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        if (rectsOverlapOrTouch(greens[i], greens[j])) uni(i, j);
+      }
+    }
+    const groups = new Map();
+    for (let i = 0; i < n; i++) {
+      const r = find(i);
+      if (!groups.has(r)) groups.set(r, []);
+      groups.get(r).push(greens[i]);
+    }
+    const merged = [];
+    for (const list of groups.values()) {
+      let x0 = Infinity;
+      let y0 = Infinity;
+      let x1 = -Infinity;
+      let y1 = -Infinity;
+      for (const g of list) {
+        x0 = Math.min(x0, g.x);
+        y0 = Math.min(y0, g.y);
+        x1 = Math.max(x1, g.x + g.w);
+        y1 = Math.max(y1, g.y + g.h);
+      }
+      merged.push({
+        id: list[0].id,
+        color: "green",
+        shape: "rect",
+        x: x0,
+        y: y0,
+        w: Math.max(0.01, x1 - x0),
+        h: Math.max(0.01, y1 - y0),
+      });
+    }
+    return [...others, ...merged];
+  }
 
   async function renderRooms() {
     const root = contentEl();
@@ -52,7 +129,7 @@
     root.innerHTML = `
       <div class="panel">
         <h3>Räume</h3>
-        <p class="help">Bereiche einzeichnen und speichern — das Hochzeits-System in der App nutzt sie sofort (laufen, blockieren, setzen).</p>
+        <p class="help">Bereiche selbst einzeichnen und speichern. In der App sind sie unsichtbar — nur Lauf-/Sitz-/Spawn-Logik.</p>
         <div class="room-list">
           ${rooms
             .map(
@@ -62,7 +139,7 @@
               <span class="muted">${r.zoneCount || 0} Bereiche${
                 r.updatedAt
                   ? " · gespeichert " + new Date(r.updatedAt).toLocaleString("de-DE")
-                  : " · Standard"
+                  : " · leer"
               }</span>
             </button>`
             )
@@ -87,12 +164,11 @@
       return;
     }
 
-    let zones = (layout.zones || []).map((z) => ({ ...z }));
+    let zones = mergeGreens((layout.zones || []).map((z) => ({ ...z })));
     let tool = TOOLS[0].id;
     let selectedId = null;
     let draft = null;
     let dirty = false;
-    let status = "";
 
     root.innerHTML = `
       <div class="room-editor">
@@ -101,7 +177,10 @@
           <h3 style="margin:0">Raum: ${esc(layout.name)}</h3>
           <button type="button" class="btn" id="roomSave">Speichern</button>
         </div>
-        <p class="help" id="roomHint">Werkzeug wählen, dann auf dem Bild ziehen. Rot = blockiert, Grün = begehbar, Gelb = Eheleute, Blau = Sitz (Tipp → hinlaufen).</p>
+        <p class="help">
+          Rot = Hindernis · Grün = laufen (Schnitt → ein Bereich) · Blau = Sitz · Gelb = Eheleute ·
+          Braun = Spawn · Orange = Avatar-Größe. In der Hochzeit unsichtbar.
+        </p>
         <div class="room-tools" id="roomTools"></div>
         <div class="room-editor-body">
           <div class="room-canvas-wrap">
@@ -112,7 +191,7 @@
             <h4>Bereiche</h4>
             <ul class="room-zone-list" id="roomZoneList"></ul>
             <button type="button" class="btn ghost danger" id="roomDelete" disabled>Ausgewählten löschen</button>
-            <button type="button" class="btn ghost" id="roomResetDefaults" style="margin-top:0.5rem">Standard-Sitze laden</button>
+            <button type="button" class="btn ghost danger" id="roomClearAll" style="margin-top:0.5rem">Alle löschen</button>
           </div>
         </div>
       </div>`;
@@ -124,9 +203,8 @@
     let imgReady = false;
 
     function setStatus(msg) {
-      status = msg || "";
       const el = root.querySelector("#roomStatus");
-      if (el) el.textContent = status + (dirty ? " · ungespeichert" : "");
+      if (el) el.textContent = (msg || "") + (dirty ? " · ungespeichert" : "");
     }
 
     function paintTools() {
@@ -153,18 +231,10 @@
       const ul = root.querySelector("#roomZoneList");
       ul.innerHTML = zones
         .map((z, i) => {
-          const label =
-            z.color === "red"
-              ? "Rot blockiert"
-              : z.color === "green"
-                ? "Grün begehbar"
-                : z.color === "yellow"
-                  ? "Gelb Eheleute"
-                  : "Blau Sitz";
           const shape = z.shape === "circle" ? "rund" : "eckig";
           return `<li class="${selectedId === z.id ? "sel" : ""}" data-zid="${esc(z.id)}">
-            <span class="dot" style="background:${STROKE[z.color]}"></span>
-            ${i + 1}. ${label} (${shape}) <code>${esc(z.id)}</code>
+            <span class="dot" style="background:${STROKE[z.color] || "#fff"}"></span>
+            ${i + 1}. ${LABEL[z.color] || z.color} (${shape}) <code>${esc(z.id)}</code>
           </li>`;
         })
         .join("");
@@ -181,11 +251,9 @@
 
     function normFromEvent(ev) {
       const rect = canvas.getBoundingClientRect();
-      const x = (ev.clientX - rect.left) / rect.width;
-      const y = (ev.clientY - rect.top) / rect.height;
       return {
-        x: Math.min(1, Math.max(0, x)),
-        y: Math.min(1, Math.max(0, y)),
+        x: Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width)),
+        y: Math.min(1, Math.max(0, (ev.clientY - rect.top) / rect.height)),
       };
     }
 
@@ -203,21 +271,16 @@
         ctx.fill();
         ctx.stroke();
       } else {
-        const x = z.x * canvas.width;
-        const y = z.y * canvas.height;
-        const w = z.w * canvas.width;
-        const h = z.h * canvas.height;
-        ctx.fillRect(x, y, w, h);
-        ctx.strokeRect(x, y, w, h);
+        ctx.fillRect(z.x * canvas.width, z.y * canvas.height, z.w * canvas.width, z.h * canvas.height);
+        ctx.strokeRect(z.x * canvas.width, z.y * canvas.height, z.w * canvas.width, z.h * canvas.height);
       }
       ctx.restore();
     }
 
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (imgReady) {
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      } else {
+      if (imgReady) ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      else {
         ctx.fillStyle = "#1a1520";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
@@ -230,7 +293,16 @@
     }
 
     function newId(color) {
-      const prefix = color === "yellow" ? "altar_" : color === "blue" ? "sit_" : `${color}_`;
+      const prefix =
+        color === "yellow"
+          ? "altar_"
+          : color === "blue"
+            ? "sit_"
+            : color === "brown"
+              ? "spawn_"
+              : color === "orange"
+                ? "avatar_"
+                : `${color}_`;
       return `${prefix}${Math.random().toString(36).slice(2, 8)}`;
     }
 
@@ -264,9 +336,8 @@
       if (draft.shape === "circle") {
         draft.cx = start.x;
         draft.cy = start.y;
-        const dx = p.x - start.x;
-        const dy = p.y - start.y;
-        draft.r = Math.min(0.45, Math.max(0.015, Math.hypot(dx, dy)));
+        const minR = draft.color === "orange" ? 0.008 : 0.012;
+        draft.r = Math.min(0.45, Math.max(minR, Math.hypot(p.x - start.x, p.y - start.y)));
       } else {
         draft.x = Math.min(start.x, p.x);
         draft.y = Math.min(start.y, p.y);
@@ -280,7 +351,8 @@
       if (!drawing) return;
       drawing = false;
       if (draft) {
-        if (draft.shape === "circle" && draft.r >= 0.015) {
+        const minR = draft.color === "orange" ? 0.008 : 0.012;
+        if (draft.shape === "circle" && draft.r >= minR) {
           zones.push({
             id: draft.id,
             color: draft.color,
@@ -303,6 +375,10 @@
           });
           selectedId = draft.id;
           dirty = true;
+        }
+        if (dirty) {
+          zones = mergeGreens(zones);
+          selectedId = zones.find((z) => z.id === selectedId)?.id || selectedId;
         }
       }
       draft = null;
@@ -331,36 +407,27 @@
       draw();
     });
 
-    root.querySelector("#roomResetDefaults").addEventListener("click", () => {
-      if (!confirm("Standard-Sitze (gelb/blau) laden? Aktuelle Zonen werden ersetzt.")) return;
-      zones = [
-        { id: "altar_a", color: "yellow", shape: "circle", cx: 0.4, cy: 0.3, r: 0.04 },
-        { id: "altar_b", color: "yellow", shape: "circle", cx: 0.6, cy: 0.3, r: 0.04 },
-        { id: "bench_0", color: "blue", shape: "circle", cx: 0.3, cy: 0.44, r: 0.035 },
-        { id: "bench_1", color: "blue", shape: "circle", cx: 0.3, cy: 0.54, r: 0.035 },
-        { id: "bench_2", color: "blue", shape: "circle", cx: 0.3, cy: 0.63, r: 0.035 },
-        { id: "bench_3", color: "blue", shape: "circle", cx: 0.3, cy: 0.72, r: 0.035 },
-        { id: "bench_4", color: "blue", shape: "circle", cx: 0.7, cy: 0.44, r: 0.035 },
-        { id: "bench_5", color: "blue", shape: "circle", cx: 0.7, cy: 0.54, r: 0.035 },
-        { id: "bench_6", color: "blue", shape: "circle", cx: 0.7, cy: 0.63, r: 0.035 },
-        { id: "bench_7", color: "blue", shape: "circle", cx: 0.7, cy: 0.72, r: 0.035 },
-      ];
-      dirty = true;
+    root.querySelector("#roomClearAll").addEventListener("click", () => {
+      if (!zones.length) return;
+      if (!confirm("Wirklich alle Bereiche löschen?")) return;
+      zones = [];
       selectedId = null;
+      dirty = true;
       paintList();
-      setStatus("Standard geladen");
+      setStatus("Leer — speichern, damit die App das übernimmt");
       draw();
     });
 
     root.querySelector("#roomSave").addEventListener("click", async () => {
       try {
+        zones = mergeGreens(zones);
         const res = await api(`/admin/room-layouts/${encodeURIComponent(roomId)}`, {
           method: "PUT",
           body: JSON.stringify({ zones }),
         });
-        zones = (res.layout?.zones || zones).map((z) => ({ ...z }));
+        zones = mergeGreens((res.layout?.zones || zones).map((z) => ({ ...z })));
         dirty = false;
-        setStatus(res.message || "Gespeichert — gilt sofort im Hochzeits-Trausaal");
+        setStatus(res.message || "Gespeichert — gilt sofort im Trausaal (unsichtbar)");
         paintList();
         draw();
       } catch (e) {
@@ -370,12 +437,11 @@
 
     paintTools();
     paintList();
-    setStatus(`${zones.length} Bereiche`);
+    setStatus(zones.length ? `${zones.length} Bereiche` : "Leer — Bereiche selbst einzeichnen");
     draw();
 
     img.onload = () => {
       imgReady = true;
-      // canvas aspect an Bild anpassen
       const maxW = 900;
       const scale = maxW / img.naturalWidth;
       canvas.width = maxW;

@@ -64,7 +64,9 @@ import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.LuvTheme
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
+import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.sin
 import kotlin.random.Random
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -84,7 +86,9 @@ class WeddingRoomActivity : ComponentActivity() {
     }
 }
 
-private const val AVATAR_R = 0.028f
+private const val DEFAULT_AVATAR_R = 0.028f
+private const val GRID_W = 48
+private const val GRID_H = 64
 
 private fun zoneContains(z: LuvApiClient.RoomZone, x: Float, y: Float, pad: Float = 0f): Boolean {
     return if (z.shape == "circle") {
@@ -95,30 +99,149 @@ private fun zoneContains(z: LuvApiClient.RoomZone, x: Float, y: Float, pad: Floa
     }
 }
 
-private fun blockedAt(zones: List<LuvApiClient.RoomZone>, x: Float, y: Float): Boolean {
-    return zones.any { it.isBlock && zoneContains(it, x, y, AVATAR_R * 0.35f) }
+private fun pointInGreen(zones: List<LuvApiClient.RoomZone>, x: Float, y: Float): Boolean {
+    return zones.any { it.isWalk && zoneContains(it, x, y, 0f) }
 }
 
-private fun walkableAt(zones: List<LuvApiClient.RoomZone>, x: Float, y: Float): Boolean {
-    if (blockedAt(zones, x, y)) return false
-    val greens = zones.filter { it.isWalk }
-    if (greens.isEmpty()) return true
-    return greens.any { zoneContains(it, x, y, AVATAR_R) }
+/** Avatar komplett in Grün, ohne Rot zu schneiden. */
+private fun walkableAt(
+    zones: List<LuvApiClient.RoomZone>,
+    x: Float,
+    y: Float,
+    avatarR: Float,
+): Boolean {
+    if (zones.none { it.isWalk }) return false
+    val samples = ArrayList<Pair<Float, Float>>(13)
+    samples += x to y
+    for (i in 0 until 12) {
+        val a = (i / 12f) * (Math.PI.toFloat() * 2f)
+        samples += (x + cos(a) * avatarR) to (y + sin(a) * avatarR)
+    }
+    if (samples.any { !pointInGreen(zones, it.first, it.second) }) return false
+    if (zones.any { it.isBlock && zoneContains(it, x, y, avatarR) }) return false
+    return true
 }
 
-/** Läuft in Richtung Ziel; stoppt vor roten Bereichen. */
-private fun walkStepToward(
+private fun cellCenter(ix: Int, iy: Int): Pair<Float, Float> =
+    ((ix + 0.5f) / GRID_W) to ((iy + 0.5f) / GRID_H)
+
+private fun toCell(x: Float, y: Float): Pair<Int, Int> =
+    (x * GRID_W).toInt().coerceIn(0, GRID_W - 1) to
+        (y * GRID_H).toInt().coerceIn(0, GRID_H - 1)
+
+private fun buildWalkGrid(zones: List<LuvApiClient.RoomZone>, avatarR: Float): BooleanArray {
+    val walk = BooleanArray(GRID_W * GRID_H)
+    for (iy in 0 until GRID_H) {
+        for (ix in 0 until GRID_W) {
+            val (cx, cy) = cellCenter(ix, iy)
+            walk[iy * GRID_W + ix] = walkableAt(zones, cx, cy, avatarR)
+        }
+    }
+    return walk
+}
+
+private fun nearestWalkable(
+    walk: BooleanArray,
+    x: Float,
+    y: Float,
+): Pair<Int, Int>? {
+    val (sx, sy) = toCell(x, y)
+    if (walk[sy * GRID_W + sx]) return sx to sy
+    var best: Pair<Int, Int>? = null
+    var bestD = Float.MAX_VALUE
+    for (iy in 0 until GRID_H) {
+        for (ix in 0 until GRID_W) {
+            if (!walk[iy * GRID_W + ix]) continue
+            val (cx, cy) = cellCenter(ix, iy)
+            val d = hypot(cx - x, cy - y)
+            if (d < bestD) {
+                bestD = d
+                best = ix to iy
+            }
+        }
+    }
+    return best
+}
+
+/** A* nur in Grün, um Rot herum. */
+private fun findPath(
+    zones: List<LuvApiClient.RoomZone>,
     fromX: Float,
     fromY: Float,
     toX: Float,
     toY: Float,
-    zones: List<LuvApiClient.RoomZone>,
-): Pair<Float, Float> {
-    val dist = hypot(toX - fromX, toY - fromY).coerceAtLeast(0.0001f)
-    val step = 0.012f
-    val nx = fromX + (toX - fromX) / dist * step.coerceAtMost(dist)
-    val ny = fromY + (toY - fromY) / dist * step.coerceAtMost(dist)
-    return if (walkableAt(zones, nx, ny)) nx to ny else fromX to fromY
+    avatarR: Float,
+): List<Pair<Float, Float>> {
+    val walk = buildWalkGrid(zones, avatarR)
+    val start = nearestWalkable(walk, fromX, fromY) ?: return emptyList()
+    val goal = nearestWalkable(walk, toX, toY) ?: return emptyList()
+    data class Node(val ix: Int, val iy: Int, val g: Float, val f: Float)
+    fun key(ix: Int, iy: Int) = iy * GRID_W + ix
+    val open = ArrayList<Node>()
+    open += Node(start.first, start.second, 0f, 0f)
+    val came = HashMap<Int, Int>()
+    val gScore = HashMap<Int, Float>()
+    gScore[key(start.first, start.second)] = 0f
+    val closed = HashSet<Int>()
+    val dirs = arrayOf(
+        1 to 0, -1 to 0, 0 to 1, 0 to -1,
+        1 to 1, 1 to -1, -1 to 1, -1 to -1
+    )
+    while (open.isNotEmpty()) {
+        open.sortBy { it.f }
+        val cur = open.removeAt(0)
+        val ck = key(cur.ix, cur.iy)
+        if (!closed.add(ck)) continue
+        if (cur.ix == goal.first && cur.iy == goal.second) {
+            val path = ArrayList<Pair<Float, Float>>()
+            var k = ck
+            while (came.containsKey(k)) {
+                val ix = k % GRID_W
+                val iy = k / GRID_W
+                path += cellCenter(ix, iy)
+                k = came[k]!!
+            }
+            path.reverse()
+            return path
+        }
+        for ((dx, dy) in dirs) {
+            val nix = cur.ix + dx
+            val niy = cur.iy + dy
+            if (nix !in 0 until GRID_W || niy !in 0 until GRID_H) continue
+            val nk = key(nix, niy)
+            if (!walk[nk] || closed.contains(nk)) continue
+            if (dx != 0 && dy != 0) {
+                if (!walk[key(cur.ix + dx, cur.iy)] || !walk[key(cur.ix, cur.iy + dy)]) continue
+            }
+            val step = if (dx != 0 && dy != 0) 1.414f else 1f
+            val ng = (gScore[ck] ?: 0f) + step
+            if (ng >= (gScore[nk] ?: Float.MAX_VALUE)) continue
+            came[nk] = ck
+            gScore[nk] = ng
+            val h = hypot((nix - goal.first).toFloat(), (niy - goal.second).toFloat())
+            open += Node(nix, niy, ng, ng + h)
+        }
+    }
+    return emptyList()
+}
+
+private suspend fun walkAlongPath(
+    path: List<Pair<Float, Float>>,
+    setPos: (Float, Float) -> Unit,
+    getX: () -> Float,
+    getY: () -> Float,
+) {
+    for ((tx, ty) in path) {
+        var guard = 0
+        while (hypot(tx - getX(), ty - getY()) > 0.012f && guard < 40) {
+            val dist = hypot(tx - getX(), ty - getY()).coerceAtLeast(0.0001f)
+            val step = 0.012f.coerceAtMost(dist)
+            setPos(getX() + (tx - getX()) / dist * step, getY() + (ty - getY()) / dist * step)
+            delay(50)
+            guard++
+        }
+        setPos(tx, ty)
+    }
 }
 
 @Composable
@@ -137,22 +260,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     var confetti by remember { mutableStateOf(false) }
     var myReaction by remember { mutableStateOf<String?>(null) }
     var layout by remember { mutableStateOf<LuvApiClient.RoomLayout?>(null) }
+    var spawned by remember { mutableStateOf(false) }
 
-    val fallbackZones = remember {
-        listOf(
-            LuvApiClient.RoomZone("altar_a", "yellow", "circle", cx = 0.4f, cy = 0.3f, r = 0.04f),
-            LuvApiClient.RoomZone("altar_b", "yellow", "circle", cx = 0.6f, cy = 0.3f, r = 0.04f),
-            LuvApiClient.RoomZone("bench_0", "blue", "circle", cx = 0.3f, cy = 0.44f, r = 0.035f),
-            LuvApiClient.RoomZone("bench_1", "blue", "circle", cx = 0.3f, cy = 0.54f, r = 0.035f),
-            LuvApiClient.RoomZone("bench_2", "blue", "circle", cx = 0.3f, cy = 0.63f, r = 0.035f),
-            LuvApiClient.RoomZone("bench_3", "blue", "circle", cx = 0.3f, cy = 0.72f, r = 0.035f),
-            LuvApiClient.RoomZone("bench_4", "blue", "circle", cx = 0.7f, cy = 0.44f, r = 0.035f),
-            LuvApiClient.RoomZone("bench_5", "blue", "circle", cx = 0.7f, cy = 0.54f, r = 0.035f),
-            LuvApiClient.RoomZone("bench_6", "blue", "circle", cx = 0.7f, cy = 0.63f, r = 0.035f),
-            LuvApiClient.RoomZone("bench_7", "blue", "circle", cx = 0.7f, cy = 0.72f, r = 0.035f),
-        )
-    }
-    val zones = layout?.zones?.takeIf { it.isNotEmpty() } ?: fallbackZones
+    val zones = layout?.zones.orEmpty()
+    val avatarR = layout?.avatarR?.takeIf { it > 0f } ?: DEFAULT_AVATAR_R
     val sitZones = remember(zones, ceremony) {
         val meCouple = ceremony?.gathering?.find { it.userId == myId }?.isCouple == true
         zones.filter { z ->
@@ -165,22 +276,36 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
-        // Layout kommt mit der Zeremonie-API (Admin-Speichern → sofort live)
         runCatching { LuvApiClient.fetchRoomLayout("wedding") }
-            .onSuccess { layout = it }
+            .onSuccess {
+                layout = it
+                if (!spawned) {
+                    myX = it.spawnX
+                    myY = it.spawnY
+                    spawned = true
+                }
+            }
         while (!married && rejectName == null) {
             runCatching { LuvApiClient.fetchCeremony() }
                 .onSuccess {
                     ceremony = it.ceremony
-                    if (it.roomLayout != null && it.roomLayout.zones.isNotEmpty()) {
+                    if (it.roomLayout != null) {
                         layout = it.roomLayout
+                        if (!spawned) {
+                            myX = it.roomLayout.spawnX
+                            myY = it.roomLayout.spawnY
+                            spawned = true
+                        }
                     }
                     val me = it.ceremony?.gathering?.find { g -> g.userId == myId }
                     if (me != null) {
                         if (me.seatedSeatId != null) seated = true
-                        if (!seated) {
-                            myX = me.x
-                            myY = me.y
+                        if (!seated && spawned) {
+                            // Fremd-Sync nur wenn wir nicht lokal laufen
+                            if (hypot(me.x - myX, me.y - myY) > 0.08f) {
+                                myX = me.x
+                                myY = me.y
+                            }
                         }
                     }
                     if (it.ceremony?.phase == "altar" || it.ceremony?.phase == "vows") {
@@ -267,6 +392,19 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                             entered = true
                             scope.launch {
                                 runCatching { LuvApiClient.ceremonyPresence("gathering") }
+                                    .onSuccess { c ->
+                                        ceremony = c
+                                        val me = c?.gathering?.find { it.userId == myId }
+                                        if (me != null) {
+                                            myX = me.x
+                                            myY = me.y
+                                            spawned = true
+                                        } else if (layout != null) {
+                                            myX = layout!!.spawnX
+                                            myY = layout!!.spawnY
+                                            spawned = true
+                                        }
+                                    }
                             }
                         }
                         .padding(horizontal = 28.dp, vertical = 14.dp)
@@ -276,39 +414,14 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             }
         } else {
             val c = ceremony
-            // Gelbe/blaue Sitz-Zonen aus Admin-Layout
-            sitZones.forEach { seat ->
-                val taken = c?.gathering?.any { it.seatedSeatId == seat.id } == true
-                val markerColor = when {
-                    seat.isCoupleSeat -> Color(0xFFFFD54F)
-                    else -> Color(0xFF64B5F6)
-                }
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(
-                            start = (roomW * seat.sitX) - 18.dp,
-                            top = (roomH * seat.sitY) - 18.dp
-                        )
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .border(
-                                2.dp,
-                                if (taken) markerColor else markerColor.copy(0.55f),
-                                CircleShape
-                            )
-                            .background(Color.Black.copy(0.25f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (!taken) Text("·", color = Color.White.copy(0.5f))
-                    }
+            // Zonen unsichtbar — nur Avatare
+            val avatarDp = (roomW * (avatarR * 2f)).let { s ->
+                when {
+                    s < 22.dp -> 22.dp
+                    s > 72.dp -> 72.dp
+                    else -> s
                 }
             }
-
-            // Guests / couple avatars
             c?.gathering?.forEach { g ->
                 val ax = if (g.userId == myId) myX else g.x
                 val ay = if (g.userId == myId) myY else g.y
@@ -316,10 +429,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(
-                            start = (roomW * ax) - 22.dp,
-                            top = (roomH * ay) - 22.dp
+                            start = (roomW * ax) - avatarDp / 2,
+                            top = (roomH * ay) - avatarDp / 2
                         )
-                        .size(44.dp)
+                        .size(avatarDp)
                         .clip(CircleShape)
                         .background(Color(0xFF4A3728))
                         .border(2.dp, if (g.isCouple) Color(0xFFFFD54F) else Color.White.copy(0.4f), CircleShape),
@@ -330,8 +443,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         g.reaction != null && g.reactionUntil > System.currentTimeMillis() -> g.reaction
                         else -> null
                     }
-                    Text(showReact ?: g.petEmoji, fontSize = 22.sp)
-                    // Vow progress ring
+                    val emojiSp = (avatarDp.value * 0.5f).sp
+                    Text(showReact ?: g.petEmoji, fontSize = emojiSp)
                     if (g.isCouple && g.vowProgress > 0f) {
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             drawArc(
@@ -380,92 +493,58 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 }
             }
 
-            // Tippen → Schritttempo laufen; an roten Bereichen stoppen
+            // Tippen: unsichtbare Sitze / Laufen nur in Grün, um Rot herum
             if (!seated) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(zones) {
+                        .pointerInput(zones, avatarR, sitZones) {
                             detectTapGestures { offset ->
-                                val rawX = (offset.x / size.width).coerceIn(0.02f, 0.98f)
-                                val rawY = (offset.y / size.height).coerceIn(0.02f, 0.98f)
-                                // Blau/Gelb tippen → in die Nähe laufen und setzen
+                                val rawX = (offset.x / size.width).coerceIn(0.01f, 0.99f)
+                                val rawY = (offset.y / size.height).coerceIn(0.01f, 0.99f)
+                                val hitR = (avatarR * 1.8f).coerceAtLeast(0.035f)
                                 val hitSit = sitZones.firstOrNull { z ->
-                                    val taken = ceremony?.gathering?.any { it.seatedSeatId == z.id } == true
+                                    val taken =
+                                        ceremony?.gathering?.any { it.seatedSeatId == z.id } == true
                                     !taken && (
-                                        zoneContains(z, rawX, rawY, 0.025f) ||
-                                            hypot(rawX - z.sitX, rawY - z.sitY) < 0.045f
+                                        zoneContains(z, rawX, rawY, 0.02f) ||
+                                            hypot(rawX - z.sitX, rawY - z.sitY) < hitR
                                         )
                                 }
                                 if (hitSit != null) {
                                     scope.launch {
-                                        val tx = hitSit.sitX
-                                        val ty = hitSit.sitY
-                                        var guard = 0
-                                        while (hypot(tx - myX, ty - myY) > 0.04f && guard < 220) {
-                                            val (nx, ny) = walkStepToward(myX, myY, tx, ty, zones)
-                                            if (nx == myX && ny == myY) break
-                                            myX = nx
-                                            myY = ny
-                                            delay(55)
-                                            guard++
-                                        }
+                                        val path = findPath(
+                                            zones, myX, myY, hitSit.sitX, hitSit.sitY, avatarR
+                                        )
+                                        walkAlongPath(path, { x, y -> myX = x; myY = y }, { myX }, { myY })
                                         runCatching { LuvApiClient.ceremonyMove(myX, myY) }
-                                        if (hypot(tx - myX, ty - myY) <= 0.09f) {
-                                            runCatching { LuvApiClient.ceremonySit(hitSit.id) }
-                                                .onSuccess {
-                                                    ceremony = it
-                                                    seated = true
-                                                    myX = tx
-                                                    myY = ty
-                                                }
-                                                .onFailure {
-                                                    Toast.makeText(
-                                                        context,
-                                                        it.message ?: "Sitz belegt",
-                                                        Toast.LENGTH_SHORT
-                                                    ).show()
-                                                }
-                                        }
+                                        // Auch wenn Blau außerhalb Grün / hinter Rot: setzen
+                                        runCatching { LuvApiClient.ceremonySit(hitSit.id) }
+                                            .onSuccess {
+                                                ceremony = it
+                                                seated = true
+                                                myX = hitSit.sitX
+                                                myY = hitSit.sitY
+                                            }
+                                            .onFailure {
+                                                Toast.makeText(
+                                                    context,
+                                                    it.message ?: "Sitz belegt",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
                                     }
                                     return@detectTapGestures
                                 }
-                                var tx = rawX
-                                var ty = rawY
-                                if (!walkableAt(zones, tx, ty)) {
-                                    var found = false
-                                    for (r in 1..12) {
-                                        val d = r * 0.02f
-                                        val candidates = listOf(
-                                            tx to (ty - d), tx to (ty + d),
-                                            (tx - d) to ty, (tx + d) to ty,
-                                        )
-                                        val ok = candidates.firstOrNull { (x, y) ->
-                                            walkableAt(
-                                                zones,
-                                                x.coerceIn(0.02f, 0.98f),
-                                                y.coerceIn(0.02f, 0.98f)
-                                            )
-                                        }
-                                        if (ok != null) {
-                                            tx = ok.first.coerceIn(0.02f, 0.98f)
-                                            ty = ok.second.coerceIn(0.02f, 0.98f)
-                                            found = true
-                                            break
-                                        }
-                                    }
-                                    if (!found) return@detectTapGestures
+                                if (!walkableAt(zones, rawX, rawY, avatarR) &&
+                                    zones.none { it.isWalk }
+                                ) {
+                                    return@detectTapGestures
                                 }
                                 scope.launch {
-                                    var guard = 0
-                                    while (hypot(tx - myX, ty - myY) > 0.015f && guard < 280) {
-                                        val (nx, ny) = walkStepToward(myX, myY, tx, ty, zones)
-                                        if (nx == myX && ny == myY) break
-                                        myX = nx
-                                        myY = ny
-                                        delay(55)
-                                        guard++
-                                    }
+                                    val path = findPath(zones, myX, myY, rawX, rawY, avatarR)
+                                    if (path.isEmpty()) return@launch
+                                    walkAlongPath(path, { x, y -> myX = x; myY = y }, { myX }, { myY })
                                     runCatching { LuvApiClient.ceremonyMove(myX, myY) }
                                 }
                             }

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.70",
+            listOf(
+                "Hochzeit: Laufen nur auf Grün, Umweg um Bänke, unsichtbare Sitze und Spawn",
+            )
+        ),
+        Entry(
             "2.2.69",
             listOf(
                 "Hochzeit: Admin-Raum-Layout gilt sofort im Trausaal (Laufen, Stopp, Sitze)",

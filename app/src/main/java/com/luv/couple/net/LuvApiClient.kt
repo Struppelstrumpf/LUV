@@ -2568,6 +2568,8 @@ object LuvApiClient {
         val isGuestSeat: Boolean get() = color == "blue"
         val isBlock: Boolean get() = color == "red"
         val isWalk: Boolean get() = color == "green"
+        val isSpawn: Boolean get() = color == "brown"
+        val isAvatarSize: Boolean get() = color == "orange"
     }
 
     data class RoomLayout(
@@ -2575,11 +2577,14 @@ object LuvApiClient {
         val name: String,
         val zones: List<RoomZone>,
         val updatedAt: Long = 0L,
+        val avatarR: Float = 0.028f,
+        val spawnX: Float = 0.5f,
+        val spawnY: Float = 0.86f,
     )
 
     private fun parseRoomLayout(o: JSONObject?, fallbackId: String = "wedding"): RoomLayout? {
         if (o == null) return null
-        val arr = o.optJSONArray("zones") ?: return null
+        val arr = o.optJSONArray("zones") ?: return RoomLayout(id = fallbackId, name = fallbackId, zones = emptyList())
         val zones = buildList {
             for (i in 0 until arr.length()) {
                 val z = arr.optJSONObject(i) ?: continue
@@ -2599,11 +2604,24 @@ object LuvApiClient {
                 )
             }
         }
+        val spawn = o.optJSONObject("spawn")
+        val orangeR = zones.firstOrNull { it.isAvatarSize }?.r
         return RoomLayout(
             id = o.optString("id", fallbackId),
             name = o.optString("name", fallbackId),
             zones = zones,
             updatedAt = o.optLong("updatedAt", 0L),
+            avatarR = when {
+                o.has("avatarR") -> o.optDouble("avatarR", 0.028).toFloat()
+                orangeR != null && orangeR > 0f -> orangeR
+                else -> 0.028f
+            },
+            spawnX = spawn?.optDouble("x", 0.5)?.toFloat()
+                ?: zones.firstOrNull { it.isSpawn }?.cx
+                ?: 0.5f,
+            spawnY = spawn?.optDouble("y", 0.86)?.toFloat()
+                ?: zones.firstOrNull { it.isSpawn }?.cy
+                ?: 0.86f,
         )
     }
 
@@ -2626,6 +2644,7 @@ object LuvApiClient {
         withContext(Dispatchers.IO) {
             val body = JSONObject().put("bucket", bucket).toString()
             val json = authedPost("/v1/me/marriage/ceremony/presence", body)
+            // roomLayout ggf. mitgeliefert — Caller pollt sowieso; Spawn steckt in ceremony.positions
             parseCeremonyInfo(json.optJSONObject("ceremony"))
         }
 

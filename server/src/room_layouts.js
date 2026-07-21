@@ -2,11 +2,15 @@
  * Admin-konfigurierbare Raum-Layouts (z. B. Hochzeitskapelle).
  * Zonen: normalisierte 0–1 Koordinaten relativ zum Raumbild.
  *
- * Farben:
- *  - green  + rect   → begehbar
- *  - red    + rect   → blockiert (Avatar stoppt am Rand)
- *  - yellow + circle → Sitzplätze Eheleute
- *  - blue   + rect|circle → Sitzplätze (Tipp → hinlaufen & setzen)
+ *  - green  + rect   → nur hier darf gelaufen werden (Avatar komplett drin)
+ *  - red    + rect   → Hindernis (Bänke etc.) — drum herum laufen
+ *  - yellow + circle → Sitz Eheleute
+ *  - blue   + circle → Sitz (auch außerhalb Grün / in Rot)
+ *  - brown  + circle → Spawn aller Avatare
+ *  - orange + circle → Avatar-Radius (Größe der runden Avatare)
+ *
+ * Schneiden sich zwei Grüns → ein Rechteck (Bounding-Box der Komponente).
+ * In der App sind die Zonen unsichtbar — nur System-Logik.
  */
 
 const ROOM_DEFS = {
@@ -17,20 +21,9 @@ const ROOM_DEFS = {
   },
 };
 
-function defaultWeddingZones() {
-  return [
-    { id: "altar_a", color: "yellow", shape: "circle", cx: 0.4, cy: 0.3, r: 0.04 },
-    { id: "altar_b", color: "yellow", shape: "circle", cx: 0.6, cy: 0.3, r: 0.04 },
-    { id: "bench_0", color: "blue", shape: "circle", cx: 0.3, cy: 0.44, r: 0.035 },
-    { id: "bench_1", color: "blue", shape: "circle", cx: 0.3, cy: 0.54, r: 0.035 },
-    { id: "bench_2", color: "blue", shape: "circle", cx: 0.3, cy: 0.63, r: 0.035 },
-    { id: "bench_3", color: "blue", shape: "circle", cx: 0.3, cy: 0.72, r: 0.035 },
-    { id: "bench_4", color: "blue", shape: "circle", cx: 0.7, cy: 0.44, r: 0.035 },
-    { id: "bench_5", color: "blue", shape: "circle", cx: 0.7, cy: 0.54, r: 0.035 },
-    { id: "bench_6", color: "blue", shape: "circle", cx: 0.7, cy: 0.63, r: 0.035 },
-    { id: "bench_7", color: "blue", shape: "circle", cx: 0.7, cy: 0.72, r: 0.035 },
-  ];
-}
+const DEFAULT_AVATAR_R = 0.028;
+const GRID_W = 48;
+const GRID_H = 64;
 
 function ensureStore(db) {
   if (!db.roomLayouts || typeof db.roomLayouts !== "object") {
@@ -49,18 +42,29 @@ function sanitizeZone(raw, index) {
   if (!raw || typeof raw !== "object") return null;
   const color = String(raw.color || "").toLowerCase();
   const shape = String(raw.shape || "").toLowerCase();
-  if (!["red", "green", "yellow", "blue"].includes(color)) return null;
+  if (!["red", "green", "yellow", "blue", "brown", "orange"].includes(color)) {
+    return null;
+  }
   if (!["rect", "circle"].includes(shape)) return null;
-  if (color === "yellow" && shape !== "circle") return null;
+  if (["yellow", "blue", "brown", "orange"].includes(color) && shape !== "circle") {
+    return null;
+  }
   if ((color === "red" || color === "green") && shape !== "rect") return null;
 
   let id = String(raw.id || "").trim().slice(0, 48);
   if (!id) {
     const prefix =
-      color === "yellow" ? "altar_" : color === "blue" ? "sit_" : `${color}_`;
+      color === "yellow"
+        ? "altar_"
+        : color === "blue"
+          ? "sit_"
+          : color === "brown"
+            ? "spawn_"
+            : color === "orange"
+              ? "avatar_"
+              : `${color}_`;
     id = `${prefix}${index}_${Date.now().toString(36)}`;
   }
-  // Eheleute: Id mit altar_ für Rückwärtskompatibilität
   if (color === "yellow" && !id.startsWith("altar_")) {
     id = `altar_${id.replace(/^altar_/, "")}`.slice(0, 48);
   }
@@ -68,7 +72,8 @@ function sanitizeZone(raw, index) {
   if (shape === "circle") {
     const cx = clamp01(raw.cx ?? raw.x, 0.5);
     const cy = clamp01(raw.cy ?? raw.y, 0.5);
-    const r = Math.min(0.5, Math.max(0.01, Number(raw.r) || 0.04));
+    const minR = color === "orange" ? 0.008 : 0.01;
+    const r = Math.min(0.5, Math.max(minR, Number(raw.r) || DEFAULT_AVATAR_R));
     return { id, color, shape, cx, cy, r };
   }
   const x = clamp01(raw.x, 0);
@@ -86,11 +91,78 @@ function sanitizeZone(raw, index) {
   };
 }
 
+function rectsOverlapOrTouch(a, b, eps = 0.002) {
+  return !(
+    a.x + a.w < b.x - eps ||
+    b.x + b.w < a.x - eps ||
+    a.y + a.h < b.y - eps ||
+    b.y + b.h < a.y - eps
+  );
+}
+
+/** Schneiden/berühren sich Grüns → zu einem Rechteck (Bounding-Box) mergen. */
+function mergeGreenZones(zones) {
+  const greens = zones.filter((z) => z.color === "green" && z.shape === "rect");
+  const others = zones.filter((z) => !(z.color === "green" && z.shape === "rect"));
+  if (greens.length <= 1) return zones;
+
+  const n = greens.length;
+  const parent = Array.from({ length: n }, (_, i) => i);
+  function find(i) {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i]];
+      i = parent[i];
+    }
+    return i;
+  }
+  function uni(a, b) {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[rb] = ra;
+  }
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (rectsOverlapOrTouch(greens[i], greens[j])) uni(i, j);
+    }
+  }
+  const groups = new Map();
+  for (let i = 0; i < n; i++) {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(greens[i]);
+  }
+  const merged = [];
+  let gi = 0;
+  for (const list of groups.values()) {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const g of list) {
+      x0 = Math.min(x0, g.x);
+      y0 = Math.min(y0, g.y);
+      x1 = Math.max(x1, g.x + g.w);
+      y1 = Math.max(y1, g.y + g.h);
+    }
+    merged.push({
+      id: list[0].id || `green_${gi}`,
+      color: "green",
+      shape: "rect",
+      x: clamp01(x0),
+      y: clamp01(y0),
+      w: Math.min(1, Math.max(0.01, x1 - x0)),
+      h: Math.min(1, Math.max(0.01, y1 - y0)),
+    });
+    gi++;
+  }
+  return [...others, ...merged];
+}
+
 function listRooms(db) {
   ensureStore(db);
   return Object.values(ROOM_DEFS).map((def) => {
     const saved = db.roomLayouts[def.id];
-    const zones = Array.isArray(saved?.zones) ? saved.zones : defaultWeddingZones();
+    const zones = Array.isArray(saved?.zones) ? saved.zones : [];
     return {
       id: def.id,
       name: def.name,
@@ -107,14 +179,16 @@ function getLayout(db, roomId) {
   ensureStore(db);
   const saved = db.roomLayouts[def.id];
   const zones = Array.isArray(saved?.zones)
-    ? saved.zones.map((z, i) => sanitizeZone(z, i)).filter(Boolean)
-    : defaultWeddingZones();
+    ? mergeGreenZones(saved.zones.map((z, i) => sanitizeZone(z, i)).filter(Boolean))
+    : [];
   return {
     id: def.id,
     name: def.name,
     imageUrl: def.imageUrl,
     updatedAt: saved?.updatedAt || null,
     zones,
+    avatarR: avatarRadius(zones),
+    spawn: spawnPoint(zones),
   };
 }
 
@@ -123,10 +197,12 @@ function saveLayout(db, roomId, zonesRaw) {
   if (!def) return { error: "unknown_room" };
   if (!Array.isArray(zonesRaw)) return { error: "bad_zones" };
   ensureStore(db);
-  const zones = zonesRaw
-    .slice(0, 200)
-    .map((z, i) => sanitizeZone(z, i))
-    .filter(Boolean);
+  const zones = mergeGreenZones(
+    zonesRaw
+      .slice(0, 200)
+      .map((z, i) => sanitizeZone(z, i))
+      .filter(Boolean)
+  );
   const next = {
     id: def.id,
     name: def.name,
@@ -160,13 +236,9 @@ function isCoupleSeat(zoneOrId) {
 
 function isGuestSeat(zoneOrId) {
   if (!zoneOrId) return false;
-  if (typeof zoneOrId === "string") {
-    return !zoneOrId.startsWith("altar_");
-  }
+  if (typeof zoneOrId === "string") return !zoneOrId.startsWith("altar_");
   return zoneOrId.color === "blue";
 }
-
-const AVATAR_R = 0.028;
 
 function zoneContains(z, x, y, pad = 0) {
   if (!z) return false;
@@ -183,38 +255,198 @@ function zoneContains(z, x, y, pad = 0) {
   );
 }
 
-function isBlocked(layout, x, y) {
-  const zones = layout?.zones || [];
-  return zones.some((z) => z.color === "red" && zoneContains(z, x, y, AVATAR_R * 0.35));
+function avatarRadius(zones) {
+  const orange = (zones || []).find((z) => z.color === "orange" && z.shape === "circle");
+  if (orange && Number(orange.r) > 0) return Number(orange.r);
+  return DEFAULT_AVATAR_R;
 }
 
+function spawnPoint(zones) {
+  const brown = (zones || []).find((z) => z.color === "brown" && z.shape === "circle");
+  if (brown) return { x: brown.cx, y: brown.cy };
+  return { x: 0.5, y: 0.86 };
+}
+
+/** Punkt in mind. einem Grün (ohne Pad). */
+function pointInGreen(zones, x, y) {
+  return (zones || []).some((z) => z.color === "green" && zoneContains(z, x, y, 0));
+}
+
+/** Avatar-Kreis komplett in Grün und ohne Rot-Schnitt. */
 function isWalkable(layout, x, y) {
-  if (isBlocked(layout, x, y)) return false;
-  const greens = (layout?.zones || []).filter((z) => z.color === "green");
-  if (!greens.length) return true;
-  return greens.some((z) => zoneContains(z, x, y, AVATAR_R));
+  const zones = layout?.zones || [];
+  const r = layout?.avatarR != null ? layout.avatarR : avatarRadius(zones);
+  const greens = zones.filter((z) => z.color === "green");
+  if (!greens.length) return false;
+
+  const samples = [[x, y]];
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    samples.push([x + Math.cos(a) * r, y + Math.sin(a) * r]);
+  }
+  for (const [px, py] of samples) {
+    if (!pointInGreen(zones, px, py)) return false;
+  }
+  const reds = zones.filter((z) => z.color === "red");
+  for (const red of reds) {
+    if (zoneContains(red, x, y, r)) return false;
+  }
+  return true;
 }
 
-/** Bewegung schrittweise clampen — stoppt vor roten Bereichen. */
+function isBlocked(layout, x, y) {
+  return !isWalkable(layout, x, y);
+}
+
+function cellCenter(ix, iy) {
+  return {
+    x: (ix + 0.5) / GRID_W,
+    y: (iy + 0.5) / GRID_H,
+  };
+}
+
+function toCell(x, y) {
+  return {
+    ix: Math.min(GRID_W - 1, Math.max(0, Math.floor(x * GRID_W))),
+    iy: Math.min(GRID_H - 1, Math.max(0, Math.floor(y * GRID_H))),
+  };
+}
+
+function buildWalkGrid(layout) {
+  const walk = new Array(GRID_W * GRID_H).fill(false);
+  for (let iy = 0; iy < GRID_H; iy++) {
+    for (let ix = 0; ix < GRID_W; ix++) {
+      const { x, y } = cellCenter(ix, iy);
+      walk[iy * GRID_W + ix] = isWalkable(layout, x, y);
+    }
+  }
+  return walk;
+}
+
+function nearestWalkableCell(layout, walk, x, y) {
+  const start = toCell(x, y);
+  if (walk[start.iy * GRID_W + start.ix]) return start;
+  let best = null;
+  let bestD = Infinity;
+  for (let iy = 0; iy < GRID_H; iy++) {
+    for (let ix = 0; ix < GRID_W; ix++) {
+      if (!walk[iy * GRID_W + ix]) continue;
+      const c = cellCenter(ix, iy);
+      const d = Math.hypot(c.x - x, c.y - y);
+      if (d < bestD) {
+        bestD = d;
+        best = { ix, iy };
+      }
+    }
+  }
+  return best;
+}
+
+/** A* in Grün um Rot herum. Ziel = nächste begehbare Zelle zum Wunschpunkt. */
+function findPath(layout, fromX, fromY, toX, toY) {
+  const walk = buildWalkGrid(layout);
+  const start = nearestWalkableCell(layout, walk, fromX, fromY);
+  const goal = nearestWalkableCell(layout, walk, toX, toY);
+  if (!start || !goal) return [];
+
+  const key = (ix, iy) => iy * GRID_W + ix;
+  const open = [{ ix: start.ix, iy: start.iy, g: 0, f: 0 }];
+  const came = new Map();
+  const gScore = new Map([[key(start.ix, start.iy), 0]]);
+  const closed = new Set();
+  const dirs = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+    [1, 1],
+    [1, -1],
+    [-1, 1],
+    [-1, -1],
+  ];
+
+  while (open.length) {
+    open.sort((a, b) => a.f - b.f);
+    const cur = open.shift();
+    const ck = key(cur.ix, cur.iy);
+    if (closed.has(ck)) continue;
+    closed.add(ck);
+    if (cur.ix === goal.ix && cur.iy === goal.iy) {
+      const path = [];
+      let k = ck;
+      while (came.has(k)) {
+        const ix = k % GRID_W;
+        const iy = (k / GRID_W) | 0;
+        path.push(cellCenter(ix, iy));
+        k = came.get(k);
+      }
+      path.reverse();
+      return path;
+    }
+    for (const [dx, dy] of dirs) {
+      const nix = cur.ix + dx;
+      const niy = cur.iy + dy;
+      if (nix < 0 || niy < 0 || nix >= GRID_W || niy >= GRID_H) continue;
+      const nk = key(nix, niy);
+      if (!walk[nk] || closed.has(nk)) continue;
+      // Diagonale: beide Seiten müssen begehbar sein
+      if (dx !== 0 && dy !== 0) {
+        if (!walk[key(cur.ix + dx, cur.iy)] || !walk[key(cur.ix, cur.iy + dy)]) continue;
+      }
+      const step = dx !== 0 && dy !== 0 ? 1.414 : 1;
+      const ng = (gScore.get(ck) || 0) + step;
+      if (ng >= (gScore.get(nk) ?? Infinity)) continue;
+      came.set(nk, ck);
+      gScore.set(nk, ng);
+      const h = Math.hypot(nix - goal.ix, niy - goal.iy);
+      open.push({ ix: nix, iy: niy, g: ng, f: ng + h });
+    }
+  }
+  return [];
+}
+
+/** Erste Position am braunen Spawn (oder nächstes begehbares Grün). */
+function ensureSpawnPosition(layout, positions, userId) {
+  if (!positions || !userId || positions[userId]) return positions?.[userId] || null;
+  const sp = layout?.spawn || spawnPoint(layout?.zones || []);
+  if (isWalkable(layout, sp.x, sp.y)) {
+    positions[userId] = { x: sp.x, y: sp.y };
+    return positions[userId];
+  }
+  const walk = buildWalkGrid(layout);
+  const near = nearestWalkableCell(layout, walk, sp.x, sp.y);
+  if (near) {
+    const c = cellCenter(near.ix, near.iy);
+    positions[userId] = { x: c.x, y: c.y };
+  } else {
+    positions[userId] = { x: sp.x, y: sp.y };
+  }
+  return positions[userId];
+}
+
+/** Bewegung entlang Pathfinding; stoppt am Grün-Rand / vor Rot. */
 function clampMove(layout, fromX, fromY, toX, toY) {
   let x = Math.min(1, Math.max(0, Number(fromX) || 0.5));
   let y = Math.min(1, Math.max(0, Number(fromY) || 0.75));
   const tx = Math.min(1, Math.max(0, Number(toX) || x));
   const ty = Math.min(1, Math.max(0, Number(toY) || y));
   if (!layout) return { x: tx, y: ty };
-  const dist = Math.hypot(tx - x, ty - y);
-  if (dist < 1e-6) return { x, y };
-  const steps = Math.min(80, Math.max(1, Math.ceil(dist / 0.012)));
-  for (let i = 1; i <= steps; i++) {
-    const nx = x + ((tx - x) * i) / steps;
-    const ny = y + ((ty - y) * i) / steps;
-    if (!isWalkable(layout, nx, ny)) {
-      return { x, y, blocked: true };
+  const path = findPath(layout, x, y, tx, ty);
+  if (!path.length) {
+    // Geradeaus so weit wie möglich in Grün
+    const dist = Math.hypot(tx - x, ty - y);
+    const steps = Math.min(80, Math.max(1, Math.ceil(dist / 0.01)));
+    for (let i = 1; i <= steps; i++) {
+      const nx = x + ((tx - x) * i) / steps;
+      const ny = y + ((ty - y) * i) / steps;
+      if (!isWalkable(layout, nx, ny)) return { x, y, blocked: true };
+      x = nx;
+      y = ny;
     }
-    x = nx;
-    y = ny;
+    return { x, y, blocked: false };
   }
-  return { x, y, blocked: false };
+  const last = path[path.length - 1];
+  return { x: last.x, y: last.y, blocked: false, path };
 }
 
 module.exports = {
@@ -229,5 +461,11 @@ module.exports = {
   isBlocked,
   isWalkable,
   clampMove,
-  defaultWeddingZones,
+  findPath,
+  mergeGreenZones,
+  avatarRadius,
+  spawnPoint,
+  ensureSpawnPosition,
+  zoneContains,
+  DEFAULT_AVATAR_R,
 };

@@ -8659,11 +8659,17 @@ app.post("/v1/me/marriage/ceremony/presence", (req, res) => {
   if (m.status === "ceremony_pending") {
     weddingCeremony.ensureCeremony(m).phase = "presence";
   }
+  if (bucket === "gathering") {
+    const c = weddingCeremony.ensureCeremony(m);
+    const layout = roomLayouts.getLayout(db, "wedding");
+    roomLayouts.ensureSpawnPosition(layout, c.positions, ctx.user.id);
+  }
   scheduleSave();
   return res.json({
     ok: true,
     ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
     marriage: publicMarriageView(m, ctx.user.id),
+    roomLayout: roomLayouts.getLayout(db, "wedding"),
   });
 });
 
