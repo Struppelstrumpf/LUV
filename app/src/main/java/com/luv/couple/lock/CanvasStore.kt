@@ -180,6 +180,22 @@ object CanvasStore {
     }
 
     /**
+     * Lobbys mit freiem Mehrfarben-Pinsel trotz Partner (Event, Hochzeitsleinwand):
+     * neue Striche behalten ihre Farbe, Wechsel färbt Altes nicht um.
+     */
+    private val freeMultiColorLobbyIds = ConcurrentHashMap.newKeySet<String>()
+
+    fun setFreeMultiColorLobby(lobbyId: String?, enabled: Boolean) {
+        val id = lobbyId?.trim()?.takeIf { it.isNotBlank() } ?: return
+        if (enabled) freeMultiColorLobbyIds.add(id) else freeMultiColorLobbyIds.remove(id)
+    }
+
+    fun preservesPerStrokeColors(lobbyId: String?): Boolean {
+        val id = resolveLobbyId(lobbyId) ?: return true
+        return isSoloLobby(id) || id in freeMultiColorLobbyIds
+    }
+
+    /**
      * Eigene Striche auf [colorIndex] bringen — nur im Mehrpersonen-Modus und nur
      * nicht-gesperrte Striche (Solo-Zeichnungen behalten ihre Farben).
      */
@@ -192,7 +208,7 @@ object CanvasStore {
         if (broadcast && ::appContext.isInitialized) {
             PairConnectionService.sendRecolor(appContext, nick, safe, id)
         }
-        if (isSoloLobby(id)) return
+        if (preservesPerStrokeColors(id)) return
         val c = canvas(id)
         var changed = false
         val updated = c.strokes.map { stroke ->
@@ -485,7 +501,7 @@ object CanvasStore {
             nickname = cachedNickname,
             colorIndex = cachedColorIndex,
             authorId = AccountSession.account.value?.id?.takeIf { it.isNotBlank() },
-            colorLocked = isSoloLobby(id)
+            colorLocked = preservesPerStrokeColors(id)
         )
         val c = canvas(id)
         c.strokes.add(stroke)
@@ -578,7 +594,7 @@ object CanvasStore {
             colorIndex = cachedColorIndex,
             authorId = AccountSession.account.value?.id?.takeIf { it.isNotBlank() },
             emoji = emojiText,
-            colorLocked = isSoloLobby(lobby)
+            colorLocked = preservesPerStrokeColors(lobby)
         )
         val c = canvas(lobby)
         if (c.strokes.any { it.id == stroke.id }) return null

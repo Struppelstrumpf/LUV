@@ -438,7 +438,12 @@ class LockDrawActivity : ComponentActivity() {
             }
             CanvasStore.updateProfile(snap.nickname, myColor)
             eventLobbyActive = lobby?.isEventLobby == true
-            weddingLobbyActive = lobby?.isWedding == true
+            weddingLobbyActive = lobby?.isWedding == true && lobby?.isWeddingCeremony != true
+            // Hochzeitsleinwand (+ Event): Mehrfarben wie Solo — Striche behalten Farbe
+            CanvasStore.setFreeMultiColorLobby(
+                lobbyId,
+                enabled = eventLobbyActive || weddingLobbyActive
+            )
             eventEndsAtMs = lobby?.eventEndsAt.asCleanJsonString()?.let { iso ->
                 runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrNull()
             }
