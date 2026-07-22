@@ -186,6 +186,8 @@ class LockDrawActivity : ComponentActivity() {
     private var weddingConfirmPartner = false
     private var weddingConfirmBusy = false
     private var eventLobbyActive = false
+    /** Hochzeitsbild: Farben frei wechseln wie Event-Lobby. */
+    private var weddingLobbyActive = false
     private var eventEndsAtMs: Long? = null
     private var eventPromptText: String? = null
     private var eventPromptChoices: List<String> = emptyList()
@@ -436,6 +438,7 @@ class LockDrawActivity : ComponentActivity() {
             }
             CanvasStore.updateProfile(snap.nickname, myColor)
             eventLobbyActive = lobby?.isEventLobby == true
+            weddingLobbyActive = lobby?.isWedding == true
             eventEndsAtMs = lobby?.eventEndsAt.asCleanJsonString()?.let { iso ->
                 runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrNull()
             }
@@ -443,6 +446,7 @@ class LockDrawActivity : ComponentActivity() {
             eventPromptChoices = lobby?.eventPromptChoices.orEmpty()
             lobbyTitle.text = when {
                 eventLobbyActive -> "Event"
+                weddingLobbyActive -> lobby?.name?.ifBlank { "Hochzeitsbild" } ?: "Hochzeitsbild"
                 else -> lobby?.name.orEmpty()
             }
             lobbyTitle.maxLines = if (eventLobbyActive) 2 else 1
@@ -1831,7 +1835,11 @@ class LockDrawActivity : ComponentActivity() {
         val id = lobbyId ?: return
         val mine = CanvasStore.cachedColorIndex
         val myUserId = AccountSession.account.value?.id
-        val taken = if (eventLobbyActive || mode == BrushStudioMode.THICKNESS) {
+        val taken = if (
+            eventLobbyActive ||
+            weddingLobbyActive ||
+            mode == BrushStudioMode.THICKNESS
+        ) {
             emptySet()
         } else {
             PairSessionState.takenColorIndices(

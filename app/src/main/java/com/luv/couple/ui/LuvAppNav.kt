@@ -2194,7 +2194,18 @@ fun LuvAppNav() {
                                     ?.set("peer_nick", nick)
                                 navController.navigate(Routes.peerProfile(userId))
                             },
-                            onCreateEventLobby = { event -> createEventLobby(event) }
+                            onCreateEventLobby = { event -> createEventLobby(event) },
+                            onSyncWeddingLobbies = {
+                                scope.launch {
+                                    runCatching { syncCloudAccount(force = true) }
+                                }
+                            },
+                            onWeddingLobbyOpened = {
+                                scope.launch {
+                                    runCatching { syncCloudAccount(force = true) }
+                                    tab = 0
+                                }
+                            }
                         )
                         2 -> InventoryScreen(
                             nickname = nickname ?: "Du",
@@ -2324,6 +2335,10 @@ fun LuvAppNav() {
                                 // Update-Check bei Tab-Wechsel (Käufe/API laufen weiter)
                                 runCatching { AppUpdater.checkOnNavigate(context) }
                                 when (next) {
+                                    0 -> {
+                                        // Hochzeitsbild-Lobby o.ä. ohne App-Neustart sichtbar
+                                        runCatching { syncCloudAccount(force = true) }
+                                    }
                                     1 -> {
                                         // Punkt sofort weg — Coins bleiben in Erfolge abholbar
                                         com.luv.couple.net.NotificationBadges.markSozialSeen()

@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.87",
+            listOf(
+                "Hochzeitsbild-Lobby erscheint sofort (ohne App-Neustart)",
+                "Hochzeitslobby: Farben frei wechseln wie im Event",
+            )
+        ),
+        Entry(
             "2.2.86",
             listOf(
                 "Heiratsanfrage: wieder sichtbar zum Annehmen (Sozial + Profil)",

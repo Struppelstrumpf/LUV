@@ -78,6 +78,10 @@ fun SocialScreen(
     initialTab: Int = 0,
     onOpenFriendProfile: (userId: String, nickname: String) -> Unit,
     onCreateEventLobby: (SeasonEvent) -> Unit = {},
+    /** Nur Lobby-Liste vom Server holen (Partner). */
+    onSyncWeddingLobbies: () -> Unit = {},
+    /** Nach Öffnen der Hochzeitsbild-Lobby: Cloud-Sync + Home. */
+    onWeddingLobbyOpened: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 2)) }
@@ -159,7 +163,9 @@ fun SocialScreen(
             when (tab) {
                 0 -> FriendsPanel(
                     modifier = Modifier.weight(1f),
-                    onOpenFriendProfile = onOpenFriendProfile
+                    onOpenFriendProfile = onOpenFriendProfile,
+                    onSyncWeddingLobbies = onSyncWeddingLobbies,
+                    onWeddingLobbyOpened = onWeddingLobbyOpened
                 )
                 1 -> EventsPanel(
                     modifier = Modifier.weight(1f),
@@ -194,7 +200,9 @@ fun SocialScreen(
 @Composable
 private fun FriendsPanel(
     modifier: Modifier = Modifier,
-    onOpenFriendProfile: (userId: String, nickname: String) -> Unit
+    onOpenFriendProfile: (userId: String, nickname: String) -> Unit,
+    onSyncWeddingLobbies: () -> Unit = {},
+    onWeddingLobbyOpened: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -245,6 +253,8 @@ private fun FriendsPanel(
         }
     }
 
+    var lastWeddingLobbyCode by remember { mutableStateOf<String?>(null) }
+
     fun applyFriendsSnap(it: LuvApiClient.FriendsBag) {
         friends = it.friends
         incoming = it.incoming
@@ -257,6 +267,16 @@ private fun FriendsPanel(
             it.incoming.size + it.marriageProposals.size + it.lobbyInvites.size
         )
         com.luv.couple.net.NotificationBadges.syncAppBadge(context)
+        // Partner: Lobby syncen ohne zwingend nach Home zu springen
+        val code = it.myMarriage?.weddingLobbyCode?.trim()?.uppercase()?.takeIf { c -> c.isNotBlank() }
+        if (
+            it.myMarriage?.status == "wedding" &&
+            code != null &&
+            code != lastWeddingLobbyCode
+        ) {
+            lastWeddingLobbyCode = code
+            onSyncWeddingLobbies()
+        }
     }
 
     fun reload(force: Boolean = false) {
@@ -556,11 +576,16 @@ private fun FriendsPanel(
                                     runCatching { LuvApiClient.openWeddingLobbyFree() }
                                         .onSuccess {
                                             myMarriage = it.marriage
+                                            lastWeddingLobbyCode =
+                                                it.marriage?.weddingLobbyCode
+                                                    ?.trim()
+                                                    ?.uppercase()
                                             Toast.makeText(
                                                 context,
-                                                "Hochzeitsbild-Lobby ist bereit — schau unter Home.",
+                                                "Hochzeitsbild-Lobby ist bereit",
                                                 Toast.LENGTH_SHORT
                                             ).show()
+                                            onWeddingLobbyOpened()
                                         }
                                         .onFailure { e ->
                                             Toast.makeText(
