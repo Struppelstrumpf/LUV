@@ -319,7 +319,8 @@ data class ShopPack(
 
 class LuvApiException(
     message: String,
-    val error: String? = null
+    val error: String? = null,
+    val roomCode: String? = null
 ) : Exception(message) {
     val isNoCoins: Boolean
         get() = error == "no_coins" ||
@@ -4634,7 +4635,8 @@ object LuvApiClient {
                         "unauthorized" -> "Bitte neu anmelden."
                         else -> "API-Fehler (${response.code})"
                     },
-                    error = err
+                    error = err,
+                    roomCode = json?.optString("code")?.trim()?.takeIf { it.isNotBlank() }
                 )
             }
             val parsed = json ?: throw LuvApiException("Ungültige Server-Antwort")
