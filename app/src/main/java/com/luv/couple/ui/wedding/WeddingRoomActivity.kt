@@ -167,8 +167,10 @@ private val IdleRing = Color(0x99FFFFFF)
 private const val PRIEST_X = 0.50f
 private const val PRIEST_Y = 0.175f
 private val PriestSize = 30.dp
-private val SeatPlusSize = 28.dp
+private val SeatPlusSize = 34.dp
 private val MoneyTreeSize = 40.dp
+/** Großzügiger Sitz-Treffer (Norm-Koordinaten 0–1) */
+private const val SIT_SNAP_R = 0.22f
 
 @Composable
 fun WeddingRoomScreen(onClose: () -> Unit) {
@@ -254,13 +256,16 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         marriage = it.marriage
         applyLayout(it.roomLayout)
         val me = it.ceremony?.gathering?.find { g -> g.userId == myId }
-        if (me != null) {
-            if (me.seatedSeatId != null) seated = true
-            if (!walking && !seated && spawned) {
-                if (hypot(me.x - myX, me.y - myY) > 0.12f) {
-                    myX = me.x
-                    myY = me.y
-                }
+        if (me != null && !walking) {
+            // Immer vom Server — sonst bleibt blauer Ring nach Aufstehen „kleben“
+            seated = me.seatedSeatId != null
+            if (seated) {
+                myX = me.x
+                myY = me.y
+                spawned = true
+            } else if (spawned && hypot(me.x - myX, me.y - myY) > 0.14f) {
+                myX = me.x
+                myY = me.y
             }
         }
         if (
@@ -300,13 +305,22 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         }
     }
 
+    val meOnAltarSeat = remember(ceremony, seated, zones, myId) {
+        if (!seated) return@remember false
+        val seatId = ceremony?.gathering?.find { it.userId == myId }?.seatedSeatId
+            ?: return@remember false
+        val isCouple = ceremony?.gathering?.find { it.userId == myId }?.isCouple == true
+        isCouple && zones.any { it.id == seatId && it.isCoupleSeat }
+    }
+
     LaunchedEffect(
         ceremony?.altarHoldActive,
         ceremony?.pastorPhase,
-        ceremony?.seatingLocked,
         ceremony?.phase,
+        meOnAltarSeat,
+        seated,
     ) {
-        chapelMusic.sync(ceremony)
+        chapelMusic.sync(ceremony, coupleOnAltar = meOnAltarSeat)
     }
 
     // Presence-Heartbeat — sonst verschwinden Idle-Gäste nach dem TTL
@@ -319,7 +333,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         }
     }
 
-    // Remote-Avatare weich zur Server-Position bewegen (kein Teleport)
+    // Remote-Avatare weich zur Server-Position (schnell genug für flüssiges Laufen)
     LaunchedEffect(Unit) {
         while (true) {
             ceremony?.gathering
@@ -327,8 +341,16 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 ?.forEach { g ->
                     val cx = remoteX[g.userId] ?: g.x
                     val cy = remoteY[g.userId] ?: g.y
-                    remoteX[g.userId] = cx + (g.x - cx) * 0.32f
-                    remoteY[g.userId] = cy + (g.y - cy) * 0.32f
+                    val dx = g.x - cx
+                    val dy = g.y - cy
+                    val dist = hypot(dx, dy)
+                    val t = when {
+                        dist > 0.20f -> 0.55f
+                        dist > 0.08f -> 0.42f
+                        else -> 0.28f
+                    }
+                    remoteX[g.userId] = cx + dx * t
+                    remoteY[g.userId] = cy + dy * t
                 }
             delay(16)
         }
@@ -380,7 +402,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     cNow?.pastorPhase == "vows" ||
                     cNow?.pastorPhase == "closing_no" ||
                     cNow?.pastorPhase == "married"
-            delay(if (fast) 400 else 900)
+            // Im Raum oft pollen = flüssigeres Laufen für andere
+            delay(if (fast) 280 else if (entered) 380 else 900)
         }
     }
 
@@ -592,7 +615,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     ?.forEach { g ->
                     val ax = if (g.userId == myId) myX else remoteX[g.userId] ?: g.x
                     val ay = if (g.userId == myId) myY else remoteY[g.userId] ?: g.y
-                    val isSeatedHere = if (g.userId == myId) seated else g.seatedSeatId != null
+                    // Blauer Ring nur bei echtem Sitz (Server-seatedSeatId)
+                    val isSeatedHere = g.seatedSeatId != null &&
+                        (g.userId != myId || seated)
+                    val vowsActive = c?.vowsReady == true
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopStart)
@@ -615,9 +641,12 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                             g.reaction != null && g.reactionUntil > System.currentTimeMillis() -> g.reaction
                             else -> null
                         }
+                        // Daumen nur während aktivem Ja-Sagen, nicht danach
                         val vowThumb = when {
-                            g.isCouple && g.vowProgress > 0f && g.vow == "no" -> "👎"
-                            g.isCouple && g.vowProgress > 0f && g.vow == "yes" -> "👍"
+                            vowsActive && g.isCouple && g.vowProgress > 0f && g.vowProgress < 1f &&
+                                g.vow == "no" -> "👎"
+                            vowsActive && g.isCouple && g.vowProgress > 0f && g.vowProgress < 1f &&
+                                g.vow == "yes" -> "👍"
                             else -> null
                         }
                         val glyphSp = (avatarDp.value * 0.52f).sp
@@ -629,7 +658,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                 fontSize = glyphSp,
                             )
                         }
-                        if (g.isCouple && g.vowProgress > 0f) {
+                        if (vowsActive && g.isCouple && g.vowProgress > 0f && g.vowProgress < 1f) {
                             Canvas(modifier = Modifier.fillMaxSize()) {
                                 drawArc(
                                     color = if (g.vow == "no") Color(0xFFE53935) else Color(0xFF43A047),
@@ -679,15 +708,14 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                 if (walking) return@detectTapGestures
                                 val rawX = (offset.x / size.width).coerceIn(0.01f, 0.99f)
                                 val rawY = (offset.y / size.height).coerceIn(0.01f, 0.99f)
-                                val hitR = (avatarR * 5.2f).coerceAtLeast(0.09f)
-                                val sitPad = 0.08f
+                                val sitPad = 0.12f
 
                                 // Geldbaum tippen (auch leicht daneben)
                                 val hitTree = zones.firstOrNull { z ->
                                     z.isMoneyTree &&
                                         (
                                             zoneContains(z, rawX, rawY, sitPad) ||
-                                                hypot(rawX - z.sitX, rawY - z.sitY) < hitR
+                                                hypot(rawX - z.sitX, rawY - z.sitY) < SIT_SNAP_R
                                             )
                                 }
                                 if (hitTree != null) {
@@ -743,9 +771,9 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                         { myY },
                                         onStep = {
                                             val now = SystemClock.elapsedRealtime()
-                                            if (now - lastSend >= 110L) {
+                                            // ~13 Updates/s — flüssig, aber leicht für den Server
+                                            if (now - lastSend >= 75L) {
                                                 lastSend = now
-                                                // Live-Position für andere Gäste (ohne Ceremony-State zu überschreiben)
                                                 scope.launch {
                                                     runCatching {
                                                         LuvApiClient.ceremonyMove(myX, myY)
@@ -767,7 +795,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                 }
 
                                 if (seated) {
-                                    if (ceremony?.canStand == false || ceremony?.seatingLocked == true) {
+                                    if (ceremony?.canStand == false) {
                                         scope.launch {
                                             Toast.makeText(
                                                 context,
@@ -792,29 +820,34 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                     return@detectTapGestures
                                 }
 
-                                val hitSit = sitZones.firstOrNull { z ->
-                                    val taken =
-                                        ceremony?.gathering?.any {
-                                            it.seatedSeatId == z.id &&
-                                                it.userId != myId &&
-                                                it.present
-                                        } == true
-                                    !taken && (
-                                        zoneContains(z, rawX, rawY, sitPad) ||
-                                            hypot(rawX - z.sitX, rawY - z.sitY) < hitR
-                                        )
-                                }
+                                // Nächster freier Sitz in großzügigem Radius → automatisch hinsetzen
+                                fun seatFree(z: LuvApiClient.RoomZone): Boolean =
+                                    ceremony?.gathering?.none {
+                                        it.seatedSeatId == z.id &&
+                                            it.userId != myId &&
+                                            it.present
+                                    } != false
+
+                                val hitSit = sitZones
+                                    .filter { seatFree(it) }
+                                    .map { z -> z to hypot(rawX - z.sitX, rawY - z.sitY) }
+                                    .filter { (z, d) ->
+                                        d < SIT_SNAP_R || zoneContains(z, rawX, rawY, sitPad)
+                                    }
+                                    .minByOrNull { it.second }
+                                    ?.first
                                 if (hitSit != null) {
                                     scope.launch {
                                         walking = true
                                         val near =
-                                            hypot(myX - hitSit.sitX, myY - hitSit.sitY) < 0.16f
+                                            hypot(myX - hitSit.sitX, myY - hitSit.sitY) < 0.20f
                                         if (!near) {
                                             val approach = nearestWalkablePoint(
                                                 zones, hitSit.sitX, hitSit.sitY, avatarR
                                             ) ?: (hitSit.sitX to hitSit.sitY)
                                             walkTo(approach.first, approach.second)
                                         }
+                                        // Direkt auf Sitz setzen — Server snappt Position
                                         runCatching { LuvApiClient.ceremonySit(hitSit.id) }
                                             .onSuccess {
                                                 ceremony = it
@@ -967,20 +1000,37 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         if (confetti) {
             ConfettiOverlay()
             LaunchedEffect(Unit) {
-                delay(4500)
+                delay(5200)
                 confetti = false
             }
             if (meIsCouple) {
-                Text(
-                    "Glückwunsch — ihr seid verheiratet!",
-                    color = Color(0xFFFFD54F),
-                    fontFamily = DisplayFont,
-                    fontSize = 20.sp,
-                    textAlign = TextAlign.Center,
+                Column(
                     modifier = Modifier
                         .align(Alignment.Center)
-                        .padding(24.dp)
-                )
+                        .padding(horizontal = 28.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Color(0xF2FFF8F0))
+                        .border(2.dp, Color(0xFFD4A017), RoundedCornerShape(24.dp))
+                        .padding(horizontal = 22.dp, vertical = 18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("💍", fontSize = 28.sp)
+                    SpacerH()
+                    Text(
+                        "Glückwunsch",
+                        color = Color(0xFF5C2A3A),
+                        fontFamily = DisplayFont,
+                        fontSize = 26.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                    Text(
+                        "Ihr seid verheiratet!",
+                        color = Color(0xFF3E2723),
+                        fontFamily = BodyFont,
+                        fontSize = 17.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
         }
 

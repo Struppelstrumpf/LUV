@@ -39,7 +39,6 @@ import androidx.compose.ui.unit.sp
 import com.luv.couple.R
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
-import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.delay
 import kotlin.math.ceil
 
@@ -148,17 +147,18 @@ fun PastorSpeechTile(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 "Pastor",
-                color = Color(0xFF5D4037),
+                color = Color(0xFF6D4C41),
                 fontFamily = DisplayFont,
                 fontSize = 13.sp
             )
             Text(
                 visibleText.ifBlank { "…" },
-                color = TextPrimary,
+                // Dunkel auf weißem Tile — TextPrimary wäre creme/grau und kaum lesbar
+                color = Color(0xFF2C1810),
                 fontFamily = BodyFont,
-                fontSize = 13.sp,
-                lineHeight = 17.sp,
-                maxLines = 4,
+                fontSize = 14.sp,
+                lineHeight = 19.sp,
+                maxLines = 5,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.heightIn(min = 34.dp)
             )

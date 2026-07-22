@@ -8,19 +8,20 @@ import com.luv.couple.net.LuvApiClient
 import kotlin.math.roundToInt
 
 /**
- * Hochzeits-Musikphasen:
- * - Ambient-Orgel (loop) vor dem 30s-Altar-Timer und wieder nach der Pastor-Rede
- * - Music-Box (einmal) wenn der 30s-Timer startet
- * - danach Stille bis Pastor fertig (vows / Empfang)
+ * Musik:
+ * - Orgel (Ambient), solange man nicht am Altar sitzt
+ * - Music-Box einmal, wenn Brautpaar sich auf Altar-Platz setzt
+ * - wieder Orgel beim Aufstehen
+ * - Music-Box erneut, wenn man wieder sitzt und der 30s-Timer startet
  */
 class WeddingChapelMusic(context: Context) {
     private val appContext = context.applicationContext
     private val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private var player: MediaPlayer? = null
     private var mode: Mode = Mode.NONE
-    private var bridalStarted = false
-    private var bridalFinished = false
     private var pausedByLifecycle = false
+    private var wasOnAltar = false
+    private var timerBridalPlayed = false
 
     var volume: Float = prefs.getFloat(KEY_VOLUME, DEFAULT_VOLUME)
         private set
@@ -29,7 +30,7 @@ class WeddingChapelMusic(context: Context) {
 
     fun start() {
         pausedByLifecycle = false
-        sync(null)
+        ensureAmbient()
     }
 
     fun pause() {
@@ -72,40 +73,50 @@ class WeddingChapelMusic(context: Context) {
     fun release() {
         releasePlayer()
         mode = Mode.NONE
+        wasOnAltar = false
+        timerBridalPlayed = false
     }
 
-    /** An Ceremony-Status koppeln (poll). */
-    fun sync(ceremony: LuvApiClient.CeremonyInfo?) {
+    /**
+     * @param coupleOnAltar lokaler Spieler ist Brautpaar und sitzt auf gelbem Altar-Platz
+     */
+    fun sync(ceremony: LuvApiClient.CeremonyInfo?, coupleOnAltar: Boolean) {
         if (pausedByLifecycle) return
-        val c = ceremony
-        val startBridal =
-            c != null &&
-                !bridalStarted &&
-                (
-                    c.altarHoldActive ||
-                        (c.seatingLocked && c.pastorPhase == "dots")
-                    )
-        if (startBridal) {
-            bridalStarted = true
+
+        if (!coupleOnAltar) {
+            wasOnAltar = false
+            timerBridalPlayed = false
+            ensureAmbient()
+            return
+        }
+
+        val timerOn = ceremony?.altarHoldActive == true
+
+        // Gerade hingesetzt → Music-Box
+        if (!wasOnAltar) {
+            wasOnAltar = true
             playBridalOnce()
             return
         }
-        if (bridalStarted && !bridalFinished) {
-            // Music-Box läuft noch
+
+        // Timer startet (erneut) → Music-Box nochmal von vorn
+        if (timerOn && !timerBridalPlayed) {
+            timerBridalPlayed = true
+            playBridalOnce()
             return
         }
-        val pastorDone =
-            c != null &&
-                (
-                    c.pastorPhase == "vows" ||
-                        c.pastorPhase == "reception" ||
-                        c.phase == "reception"
-                    )
-        if (bridalFinished && !pastorDone) {
-            goSilent()
-            return
+
+        // Music-Box läuft noch — nicht unterbrechen
+        if (mode == Mode.BRIDAL && player?.isPlaying == true) return
+
+        // Nach Music-Box am Altar: kurz Stille (Pastor), sonst Ambient wenn Empfang
+        val afterPastor =
+            ceremony?.pastorPhase == "reception" ||
+                ceremony?.phase == "reception" ||
+                ceremony?.pastorPhase == "vows"
+        if (afterPastor && mode != Mode.BRIDAL) {
+            ensureAmbient()
         }
-        ensureAmbient()
     }
 
     private fun playBridalOnce() {
@@ -113,22 +124,20 @@ class WeddingChapelMusic(context: Context) {
         mode = Mode.BRIDAL
         runCatching {
             val p = MediaPlayer.create(appContext, R.raw.wedding_march_music_box) ?: run {
-                bridalFinished = true
-                goSilent()
+                mode = Mode.SILENT
                 return
             }
             p.isLooping = false
             p.setAudioAttributes(audioAttrs())
             p.setOnCompletionListener {
-                bridalFinished = true
-                goSilent()
+                mode = Mode.SILENT
+                releasePlayer()
             }
             player = p
             applyVolume()
-            p.start()
+            if (!pausedByLifecycle) p.start()
         }.onFailure {
-            bridalFinished = true
-            goSilent()
+            mode = Mode.SILENT
         }
     }
 
@@ -153,11 +162,6 @@ class WeddingChapelMusic(context: Context) {
             applyVolume()
             if (!pausedByLifecycle) p.start()
         }
-    }
-
-    private fun goSilent() {
-        releasePlayer()
-        mode = Mode.SILENT
     }
 
     private fun releasePlayer() {

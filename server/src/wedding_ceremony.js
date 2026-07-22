@@ -421,6 +421,8 @@ function startMarriedSpeech(m) {
   c.pastorLineIndex = 0;
   c.pastorLineStartedAt = Date.now();
   c.phase = "gifts";
+  // Daumen/Vow-UI zurücksetzen
+  c.vows = {};
   if (!c.receptionEndsAt) {
     // Empfang startet nach Abschluss-Rede; vorläufig setzen für Home-Timer
     c.receptionEndsAt = Date.now() + RECEPTION_MS;
@@ -430,8 +432,11 @@ function startMarriedSpeech(m) {
 function canStand(m, userId) {
   const c = ensureCeremony(m);
   if (!c.seatingLocked) return true;
-  // Nach Lock: wer sitzt, bleibt sitzen
-  if (c.seated[userId]) return false;
+  // Bis Pastor fertig gesprochen hat (inkl. „ihr seid verheiratet“) sitzen bleiben
+  if (["dots", "speech", "vows", "closing_no", "married"].includes(c.pastorPhase)) {
+    return false;
+  }
+  // Empfang: Plätze wieder verlassen
   return true;
 }
 
