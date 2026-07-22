@@ -2234,7 +2234,8 @@ object LuvApiClient {
         val lobbyName: String,
         val fromUserId: String,
         val fromNickname: String,
-        val fromPetEmoji: String
+        val fromPetEmoji: String,
+        val isWeddingCeremony: Boolean = false
     )
 
     data class FriendsBag(
@@ -2507,7 +2508,8 @@ object LuvApiClient {
                         lobbyName = o.optString("lobbyName").ifBlank { "Lobby" },
                         fromUserId = o.optString("fromUserId"),
                         fromNickname = o.optString("fromNickname").ifBlank { "Jemand" },
-                        fromPetEmoji = o.optString("fromPetEmoji").ifBlank { "🐣" }
+                        fromPetEmoji = o.optString("fromPetEmoji").ifBlank { "🐣" },
+                        isWeddingCeremony = o.optBoolean("isWeddingCeremony", false)
                     )
                 )
             }

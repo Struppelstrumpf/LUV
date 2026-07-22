@@ -277,6 +277,7 @@ private fun FriendsPanel(
             friendRequests = it.incoming.size,
             marriageProposals = it.marriageProposals.size,
             lobbyInvites = it.lobbyInvites.size,
+            weddingCeremonyInvites = it.lobbyInvites.any { inv -> inv.isWeddingCeremony },
         )
         val m = it.myMarriage
         if (m?.status == "ceremony_scheduled") {
@@ -771,7 +772,13 @@ private fun FriendsPanel(
                     ),
                     busy = busyId == "l-${inv.id}",
                     acceptLabel = "Beitreten",
-                    subtitle = "Einladung zu „${inv.lobbyName}“",
+                    subtitle = if (inv.isWeddingCeremony ||
+                        inv.lobbyName.equals("Hochzeit", ignoreCase = true)
+                    ) {
+                        "Hochzeitseinladung — als Gast beitreten"
+                    } else {
+                        "Einladung zu „${inv.lobbyName}“"
+                    },
                     onAccept = {
                         busyId = "l-${inv.id}"
                         scope.launch {

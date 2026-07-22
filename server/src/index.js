@@ -4491,10 +4491,17 @@ function publicRoom(room, code) {
   const online = roster.filter((m) => m.online).length;
   const peak = Math.max(1, Number(room.peakPeers) || 1, online);
   const hasSnap = inviteTrial.hasInviteSnapshot(SNAPSHOT_DIR, code);
+  const isCeremony = Boolean(room.isWeddingCeremony);
   const hasDrawing =
+    isCeremony ||
     hasSnap ||
     (Array.isArray(room.strokes) && room.strokes.length > 0) ||
     Number(room.lastCanvasAt) > 0;
+  const inviteImageUrl = isCeremony
+    ? inviteTrial.WEDDING_ALTAR_OG
+    : hasSnap
+      ? `/v1/rooms/${code}/invite-image`
+      : null;
   return {
     code,
     name: room.name || "Lobby",
@@ -4505,6 +4512,7 @@ function publicRoom(room, code) {
     isFree: Boolean(room.isFree),
     isRandom: Boolean(room.isRandom),
     isWedding: Boolean(room.isWedding),
+    isWeddingCeremony: isCeremony,
     weddingRetake: Boolean(room.weddingRetake),
     hostColorSide: normalizeHostColorSide(room.hostColorSide),
     peakPeers: peak,
@@ -4521,7 +4529,7 @@ function publicRoom(room, code) {
     eventEndsAt: room.eventEndsAt || null,
     invitesAllowed: room.invitesAllowed !== false,
     hasDrawing: Boolean(hasDrawing),
-    inviteImageUrl: hasSnap ? `/v1/rooms/${code}/invite-image` : null,
+    inviteImageUrl,
     inviteBlurb: invitePublicBlurb(room, room.hostNickname || "Host"),
     ...inviteFor(code),
   };
@@ -4914,7 +4922,19 @@ function roomMemberNicknames(room) {
   return names;
 }
 
+function ceremonyCoupleLine(room) {
+  const cn = room?.coupleNicknames;
+  const a = String(cn?.a || "").trim().slice(0, 18);
+  const b = String(cn?.b || "").trim().slice(0, 18);
+  if (a && b) return `${a} & ${b}`;
+  const host = String(room?.hostNickname || "").trim().slice(0, 18);
+  return host || "Ein Paar";
+}
+
 function invitePublicBlurb(room, hostNickname) {
+  if (room?.isWeddingCeremony) {
+    return `${ceremonyCoupleLine(room)} laden dich zur Hochzeit ein`;
+  }
   const host = String(hostNickname || room?.hostNickname || "Jemand").trim() || "Jemand";
   return `${host} lädt dich zu einer gemeinsamen Leinwand ein`;
 }
@@ -8439,10 +8459,17 @@ function listLobbyInvitesFor(user) {
   const db = getDb();
   return ensureLobbyInvites(user).map((inv) => {
     const from = db.users?.[inv.fromUserId];
+    const code = String(inv.roomCode || "").toUpperCase();
+    const live = rooms.get(code);
+    const stored = db.rooms?.[code];
+    const isCeremony = Boolean(
+      inv.isWeddingCeremony || live?.isWeddingCeremony || stored?.isWeddingCeremony
+    );
     return {
       id: inv.id,
       roomCode: inv.roomCode,
-      lobbyName: inv.lobbyName || "Lobby",
+      lobbyName: isCeremony ? "Hochzeit" : inv.lobbyName || "Lobby",
+      isWeddingCeremony: isCeremony,
       expiresAt: inv.expiresAt,
       fromUserId: inv.fromUserId,
       fromNickname: from?.nickname || "Jemand",
@@ -8544,7 +8571,8 @@ app.post("/v1/me/lobby-invites", (req, res) => {
     fromUserId: ctx.user.id,
     toUserId: friendUserId,
     roomCode,
-    lobbyName,
+    lobbyName: isCeremony ? "Hochzeit" : lobbyName,
+    isWeddingCeremony: Boolean(isCeremony),
     createdAt: Date.now(),
     expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
   };
@@ -16935,6 +16963,7 @@ app.get("/invite/:code", (req, res) => {
   const deep = code ? `luv://join/${code}` : "https://reineke.pro/luv/";
   const playUrl = inviteTrial.playStoreUrl(code);
   const found = Boolean(room);
+  const isCeremony = Boolean(found && room.isWeddingCeremony);
   const hasSnap = found && inviteTrial.hasInviteSnapshot(SNAPSHOT_DIR, code);
   const hasDrawing = found && inviteTrial.roomHasDrawing(SNAPSHOT_DIR, code, room);
   let imageVer = Date.now();
@@ -16947,9 +16976,11 @@ app.get("/invite/:code", (req, res) => {
     const memAt = Number(canvasMemories()?.[code]?.updatedAt) || 0;
     if (memAt > 0) imageVer = Math.max(imageVer, memAt);
   }
-  const inviteImageUrl = hasSnap
-    ? inviteTrial.inviteImageAbsoluteUrl(code, imageVer)
-    : null;
+  const inviteImageUrl = isCeremony
+    ? inviteTrial.WEDDING_ALTAR_OG
+    : hasSnap
+      ? inviteTrial.inviteImageAbsoluteUrl(code, imageVer)
+      : null;
   // Immer 200 — WhatsApp/Link-Preview crawlen keine 404-Seiten für OG-Tags
   res
     .status(200)
@@ -16960,11 +16991,13 @@ app.get("/invite/:code", (req, res) => {
         found,
         host,
         lobbyName: room?.name || "Lobby",
-        hasDrawing: Boolean(hasDrawing && hasSnap),
+        hasDrawing: isCeremony ? true : Boolean(hasDrawing && hasSnap),
         inviteImageUrl,
         joinUrl,
         deep,
         playUrl,
+        isWeddingCeremony: isCeremony,
+        coupleLine: isCeremony ? ceremonyCoupleLine(room) : "",
       })
     );
 });

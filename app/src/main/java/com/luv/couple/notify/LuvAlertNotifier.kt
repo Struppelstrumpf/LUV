@@ -497,21 +497,22 @@ object LuvAlertNotifier {
         }
     }
 
-    fun onLobbyInvite(context: Context, count: Int) {
+    fun onLobbyInvite(context: Context, count: Int, weddingCeremony: Boolean = false) {
         scope.launch {
             if (count <= 0) return@launch
             if (QuietHoursGate.isQuietNow()) return@launch
             if (!prefsEnabled()) return@launch
             ensureChannel(context)
-            val text = if (count == 1) {
-                "Neue Lobby-Einladung"
-            } else {
-                "$count neue Lobby-Einladungen"
+            val text = when {
+                weddingCeremony && count == 1 -> "Hochzeitseinladung"
+                weddingCeremony -> "$count Hochzeitseinladungen"
+                count == 1 -> "Neue Lobby-Einladung"
+                else -> "$count neue Lobby-Einladungen"
             }
             notifyOpenMain(
                 context = context.applicationContext,
                 notificationId = NOTIFY_LOBBY_INVITE,
-                title = "Sozial · Freunde",
+                title = if (weddingCeremony) "Sozial · Hochzeit" else "Sozial · Freunde",
                 text = text,
                 extras = {
                     putExtra(MainActivity.EXTRA_OPEN_SOZIAL, true)

@@ -121,6 +121,7 @@ object NotificationBadges {
         friendRequests: Int,
         marriageProposals: Int = 0,
         lobbyInvites: Int = 0,
+        weddingCeremonyInvites: Boolean = false,
     ) {
         val friends = friendRequests.coerceAtLeast(0)
         val marriages = marriageProposals.coerceAtLeast(0)
@@ -142,7 +143,13 @@ object NotificationBadges {
             }
             if (invites > hadInvites) {
                 anyNew = true
-                runCatching { LuvAlertNotifier.onLobbyInvite(ctx, invites) }
+                runCatching {
+                    LuvAlertNotifier.onLobbyInvite(
+                        ctx,
+                        invites,
+                        weddingCeremony = weddingCeremonyInvites
+                    )
+                }
             }
             if (anyNew) {
                 sozialSeen = false
@@ -253,6 +260,7 @@ object NotificationBadges {
                 friendRequests = friends.incoming.size,
                 marriageProposals = friends.marriageProposals.size,
                 lobbyInvites = friends.lobbyInvites.size,
+                weddingCeremonyInvites = friends.lobbyInvites.any { it.isWeddingCeremony },
             )
             val m = friends.myMarriage
             if (m?.status == "ceremony_scheduled") {
@@ -280,6 +288,7 @@ object NotificationBadges {
                 friendRequests = friends.incoming.size,
                 marriageProposals = friends.marriageProposals.size,
                 lobbyInvites = friends.lobbyInvites.size,
+                weddingCeremonyInvites = friends.lobbyInvites.any { it.isWeddingCeremony },
             )
             val m = friends.myMarriage
             if (m?.status == "ceremony_scheduled") {

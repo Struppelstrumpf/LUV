@@ -6,6 +6,7 @@ const path = require("path");
 
 const TRIAL_DRAW_MS = 30_000;
 const FALLBACK_OG = "https://reineke.pro/downloads/luv/og.jpg?v=1813";
+const WEDDING_ALTAR_OG = "https://reineke.pro/luv/og-wedding-altar.jpg";
 
 function escapeHtml(value) {
   return String(value || "")
@@ -56,6 +57,7 @@ function inviteImageAbsoluteUrl(code, version) {
 
 /**
  * Emotionale Invite-Landingseite (neutral: Partner oder Freund).
+ * isWeddingCeremony → Altar-OG + Hochzeits-Texte (kein „zeichnet gerade“).
  */
 function buildInviteLandingHtml({
   code,
@@ -67,30 +69,55 @@ function buildInviteLandingHtml({
   joinUrl,
   deep,
   playUrl,
+  isWeddingCeremony = false,
+  coupleLine = "",
 }) {
   const safeHost = String(host || "Jemand").trim() || "Jemand";
+  const couple =
+    String(coupleLine || "").trim() ||
+    safeHost;
   // Klar & einfach — WhatsApp zeigt title/description + Bild
-  const title = found
-    ? "Du wurdest eingeladen mitzuzeichnen"
-    : "LUV — Einladung";
-  const lede = found
-    ? hasDrawing && inviteImageUrl
-      ? `${safeHost} zeichnet gerade — das ist die Leinwand. Komm rein und male mit.`
-      : `${safeHost} zeichnet gerade auf LUV — komm rein und male mit.`
-    : "Diese Einladung ist gerade nicht erreichbar. Bitte den Link später erneut öffnen.";
-  const ogImage = hasDrawing && inviteImageUrl ? inviteImageUrl : FALLBACK_OG;
-  const ogType = hasDrawing && inviteImageUrl ? "image/png" : "image/jpeg";
-  const ctaLabel = "Jetzt mitmachen!";
-  const headline = found
-    ? "Du wurdest eingeladen mitzuzeichnen"
-    : "Einladung";
+  let title;
+  let lede;
+  let headline;
+  let ctaLabel;
+  let ogImage;
+  let ogType;
+  let previewBlock;
 
-  const previewBlock = hasDrawing && inviteImageUrl
-    ? `<figure class="lobby-preview">
+  if (isWeddingCeremony && found) {
+    title = "Du bist zur Hochzeit eingeladen";
+    headline = "Hochzeit auf LUV";
+    lede = `${couple} heiraten — komm als Gast zur Zeremonie.`;
+    ctaLabel = "Zur Hochzeit";
+    ogImage = WEDDING_ALTAR_OG;
+    ogType = "image/jpeg";
+    const previewSrc = inviteImageUrl || WEDDING_ALTAR_OG;
+    previewBlock = `<figure class="lobby-preview lobby-preview--altar">
+      <img src="${escapeHtml(previewSrc)}" alt="Hochzeitsaltar" width="1200" height="1200" loading="eager" />
+      <figcaption>Hochzeit · ${escapeHtml(couple)}</figcaption>
+    </figure>`;
+  } else {
+    title = found
+      ? "Du wurdest eingeladen mitzuzeichnen"
+      : "LUV — Einladung";
+    lede = found
+      ? hasDrawing && inviteImageUrl
+        ? `${safeHost} zeichnet gerade — das ist die Leinwand. Komm rein und male mit.`
+        : `${safeHost} zeichnet gerade auf LUV — komm rein und male mit.`
+      : "Diese Einladung ist gerade nicht erreichbar. Bitte den Link später erneut öffnen.";
+    ogImage = hasDrawing && inviteImageUrl ? inviteImageUrl : FALLBACK_OG;
+    ogType = hasDrawing && inviteImageUrl ? "image/png" : "image/jpeg";
+    ctaLabel = "Jetzt mitmachen!";
+    headline = found
+      ? "Du wurdest eingeladen mitzuzeichnen"
+      : "Einladung";
+    previewBlock = hasDrawing && inviteImageUrl
+      ? `<figure class="lobby-preview">
       <img src="${escapeHtml(inviteImageUrl)}" alt="Leinwand von ${escapeHtml(safeHost)}" width="720" height="1280" loading="eager" />
       <figcaption>${escapeHtml(lobbyName || "Lobby")} · ${escapeHtml(safeHost)}</figcaption>
     </figure>`
-    : `<div class="fake-lobby" aria-hidden="true">
+      : `<div class="fake-lobby" aria-hidden="true">
       <div class="fake-phone">
         <div class="fake-notch"></div>
         <div class="fake-canvas">
@@ -100,6 +127,7 @@ function buildInviteLandingHtml({
         </div>
       </div>
     </div>`;
+  }
 
   const cleanCode = String(code || "")
     .toUpperCase()
@@ -193,6 +221,12 @@ function buildInviteLandingHtml({
     .lobby-preview img {
       display: block; width: 100%; height: 100%; min-height: 0;
       flex: 1 1 auto; object-fit: cover; aspect-ratio: 9/16;
+      max-height: calc(min(38dvh, 42vh) - 1.6rem);
+    }
+    .lobby-preview--altar { width: min(14rem, 52vw); }
+    .lobby-preview--altar img {
+      aspect-ratio: 1/1;
+      object-fit: cover;
       max-height: calc(min(38dvh, 42vh) - 1.6rem);
     }
     .lobby-preview figcaption {
@@ -334,6 +368,7 @@ function buildInviteLandingHtml({
 module.exports = {
   TRIAL_DRAW_MS,
   FALLBACK_OG,
+  WEDDING_ALTAR_OG,
   escapeHtml,
   snapshotFile,
   hasInviteSnapshot,

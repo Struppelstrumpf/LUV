@@ -254,28 +254,37 @@ fun LuvAppNav() {
 
     fun inviteMessage(lobby: Lobby): String {
         // Kurz im Chat; Bild + Titel kommen aus der Link-Vorschau (OG)
+        if (lobby.isWeddingCeremony) {
+            val couple = listOfNotNull(
+                lobby.coupleNameA?.trim()?.takeIf { it.isNotBlank() },
+                lobby.coupleNameB?.trim()?.takeIf { it.isNotBlank() }
+            ).joinToString(" & ").ifBlank { "Wir" }
+            return "$couple heiraten — du bist eingeladen!\n${lobby.joinUrl}"
+        }
         return "Das zeichnen wir gerade — komm mit rein!\n${lobby.joinUrl}"
     }
 
     fun shareInviteLink(lobby: Lobby) {
         scope.launch {
-            CanvasStore.setActiveLobby(lobby.id)
-            PairConnectionService.startAll(context)
-            // History vom Server abwarten, falls lokal noch leer (Home → Teilen)
-            if (CanvasStore.snapshot(lobby.id).isEmpty()) {
-                for (i in 0 until 12) {
-                    kotlinx.coroutines.delay(250)
-                    if (CanvasStore.snapshot(lobby.id).isNotEmpty()) break
+            if (!lobby.isWeddingCeremony) {
+                CanvasStore.setActiveLobby(lobby.id)
+                PairConnectionService.startAll(context)
+                // History vom Server abwarten, falls lokal noch leer (Home → Teilen)
+                if (CanvasStore.snapshot(lobby.id).isEmpty()) {
+                    for (i in 0 until 12) {
+                        kotlinx.coroutines.delay(250)
+                        if (CanvasStore.snapshot(lobby.id).isNotEmpty()) break
+                    }
                 }
-            }
-            var uploaded = runCatching {
-                CanvasMemoryKeeper.uploadSnapshot(lobby, allowEmpty = false)
-            }.getOrDefault(false)
-            if (!uploaded && CanvasStore.snapshot(lobby.id).isNotEmpty()) {
-                kotlinx.coroutines.delay(400)
-                uploaded = runCatching {
+                var uploaded = runCatching {
                     CanvasMemoryKeeper.uploadSnapshot(lobby, allowEmpty = false)
                 }.getOrDefault(false)
+                if (!uploaded && CanvasStore.snapshot(lobby.id).isNotEmpty()) {
+                    kotlinx.coroutines.delay(400)
+                    uploaded = runCatching {
+                        CanvasMemoryKeeper.uploadSnapshot(lobby, allowEmpty = false)
+                    }.getOrDefault(false)
+                }
             }
             shareText(inviteMessage(lobby))
             inviteLobby = null
@@ -1788,7 +1797,9 @@ fun LuvAppNav() {
             onShare = { shareInviteLink(lobby) },
             onShareToFriend = { friend ->
                 scope.launch {
-                    runCatching { CanvasMemoryKeeper.uploadSnapshot(lobby) }
+                    if (!lobby.isWeddingCeremony) {
+                        runCatching { CanvasMemoryKeeper.uploadSnapshot(lobby) }
+                    }
                     runCatching {
                         LuvApiClient.inviteFriendToLobby(friend.userId, lobby.code)
                     }.onSuccess {
