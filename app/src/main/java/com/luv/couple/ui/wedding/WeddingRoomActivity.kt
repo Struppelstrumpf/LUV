@@ -616,6 +616,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             when (layoutId) {
                 "wedding_small" -> R.drawable.wedding_small_room
                 "wedding_grand" -> R.drawable.wedding_grand_room
+                "wedding_island" -> R.drawable.wedding_island_room
                 else -> R.drawable.wedding_chapel_room
             }
         )

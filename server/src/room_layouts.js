@@ -30,6 +30,12 @@ const WEDDING_BUILTINS = {
     imageUrl: "/luv/wedding-grand-room.png",
     builtin: true,
   },
+  wedding_island: {
+    id: "wedding_island",
+    name: "Insel",
+    imageUrl: "/luv/wedding-island-room.png",
+    builtin: true,
+  },
 };
 
 function isWeddingBuiltin(id) {

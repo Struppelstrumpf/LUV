@@ -15,7 +15,12 @@
     return host().content;
   }
 
-  const WEDDING_ROOM_IDS = ["wedding_small", "wedding", "wedding_grand"];
+  const WEDDING_ROOM_IDS = [
+    "wedding_small",
+    "wedding",
+    "wedding_grand",
+    "wedding_island",
+  ];
   const PLACE_PROP_COLORS = new Set(["gold", "pink", "lime", "violet"]);
   const DEFAULT_PROP_R = { gold: 0.032, pink: 0.036, lime: 0.045, violet: 0.05 };
   const PROP_ICON_URL = {
@@ -324,7 +329,9 @@
                   ? "Klein"
                   : id === "wedding_grand"
                     ? "Prunk"
-                    : "Kapelle"
+                    : id === "wedding_island"
+                      ? "Insel"
+                      : "Kapelle"
               }</option>`
           ).join("")}
         </select>`

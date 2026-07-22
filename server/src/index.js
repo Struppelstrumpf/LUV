@@ -11425,8 +11425,15 @@ app.get("/v1/room-layouts/:roomId/image", (req, res) => {
   const id = String(req.params.roomId || "").trim();
   const file = roomLayouts.findImageFile(id);
   if (!file) {
-    if (id === "wedding") {
-      const fallback = path.join(WEB_DIR, "wedding-chapel-room.png");
+    const weddingFallback = {
+      wedding: "wedding-chapel-room.png",
+      wedding_small: "wedding-small-room.png",
+      wedding_grand: "wedding-grand-room.png",
+      wedding_island: "wedding-island-room.png",
+    };
+    const fbName = weddingFallback[id];
+    if (fbName) {
+      const fallback = path.join(WEB_DIR, fbName);
       if (fs.existsSync(fallback)) {
         res.type("png");
         return res.sendFile(fallback);
