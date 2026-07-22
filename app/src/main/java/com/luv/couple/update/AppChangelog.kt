@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.122",
+            listOf(
+                "Hochzeit: Priester am Altar, Reaktionen über dem Raum, klassische Orgel-Musik",
+                "Offline-Partner erscheint nicht mehr als Geist; Eintreten ohne API-Fehler",
+            )
+        ),
+        Entry(
             "2.2.121",
             listOf(
                 "Zur Hochzeit: Kapelle öffnet sofort (kein Warten mehr vor dem Raum)",

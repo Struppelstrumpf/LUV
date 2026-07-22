@@ -7,7 +7,7 @@ import com.luv.couple.R
 import kotlin.math.roundToInt
 
 /**
- * Seichte Kapellen-Hintergrundmusik — lokal, loop, mit Stumm/Lautstärke.
+ * Klassische Hochzeitsmusik (Orgel-Stil Bridal Chorus) — lokal, loop, Stumm/Lautstärke.
  */
 class WeddingChapelMusic(context: Context) {
     private val appContext = context.applicationContext

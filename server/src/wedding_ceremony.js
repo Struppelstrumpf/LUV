@@ -478,9 +478,20 @@ function receptionRemainingMs(m) {
   return Math.max(0, ends - Date.now());
 }
 
+function pruneStaleGathering(m) {
+  const c = ensureCeremony(m);
+  if (!c || c.seatingLocked) return;
+  for (const uid of Object.keys(c.seated || {})) {
+    if (!isPresent(m, uid, "gathering")) {
+      delete c.seated[uid];
+    }
+  }
+}
+
 function publicCeremony(m, viewerId, users = {}) {
   if (!m) return null;
   const c = ensureCeremony(m);
+  pruneStaleGathering(m);
   const now = Date.now();
   const couplePresent = countCouplePresence(m, "presence");
   const startConfirmA = Boolean(c.startConfirm[m.a]);
@@ -494,17 +505,19 @@ function publicCeremony(m, viewerId, users = {}) {
   const memberIds = Array.isArray(m.ceremonyMemberIds) ? m.ceremonyMemberIds : [m.a, m.b];
   const gathering = memberIds.map((uid) => {
     const u = users[uid];
+    const present = isPresent(m, uid, "gathering");
     return {
       userId: uid,
       nickname: u ? String(u.nickname || "").trim().slice(0, 18) || "Jemand" : "Jemand",
       petEmoji: u?.inventory?.equippedPet || "🐣",
-      present: isPresent(m, uid, "gathering"),
+      present,
       isCouple: uid === m.a || uid === m.b,
-      seatedSeatId: c.seated[uid] || null,
-      x: Number(c.positions[uid]?.x) || 0.5,
-      y: Number(c.positions[uid]?.y) || 0.75,
-      reaction: c.reactions[uid]?.emoji || null,
-      reactionUntil: Number(c.reactions[uid]?.until) || 0,
+      // Offline: kein Sitz / Default-Spawn — sonst „Geister“ am alten Platz
+      seatedSeatId: present ? c.seated[uid] || null : null,
+      x: present ? Number(c.positions[uid]?.x) || 0.5 : 0.5,
+      y: present ? Number(c.positions[uid]?.y) || 0.75 : 0.86,
+      reaction: present ? c.reactions[uid]?.emoji || null : null,
+      reactionUntil: present ? Number(c.reactions[uid]?.until) || 0 : 0,
       vow: c.vows[uid]?.choice || null,
       vowProgress: Number(c.vows[uid]?.progress) || 0,
     };

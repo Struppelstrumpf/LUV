@@ -117,10 +117,10 @@ class WeddingRoomActivity : ComponentActivity() {
 private const val DEFAULT_AVATAR_R = 0.056f
 private val SitRingBlue = Color(0xFF42A5F5)
 private val CoupleAvatarBlue = Color(0xFF1E88E5)
-/** Priester mittig auf der Blumenstraße, halb so groß wie früher */
+/** Priester am Altar (oben auf dem Podest), nicht zwischen den vorderen Bänken */
 private const val PRIEST_X = 0.50f
-private const val PRIEST_Y = 0.42f
-private val PriestSize = 26.dp
+private const val PRIEST_Y = 0.175f
+private val PriestSize = 30.dp
 
 @Composable
 fun WeddingRoomScreen(onClose: () -> Unit) {
@@ -396,6 +396,13 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                                 spawned = true
                                             }
                                         }
+                                        .onFailure { e ->
+                                            Toast.makeText(
+                                                context,
+                                                e.message ?: "Eintreten fehlgeschlagen",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
                                 }
                             }
                             .padding(horizontal = 28.dp, vertical = 14.dp)
@@ -426,7 +433,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         if (z.isFlame) FlameDecor(size = sz) else DecorMarker(size = sz)
                     }
                 }
-                c?.gathering?.forEach { g ->
+                // Nur Anwesende zeichnen — Offline-Partner nicht als Geist im Raum
+                c?.gathering
+                    ?.filter { it.userId == myId || it.present }
+                    ?.forEach { g ->
                     val ax = if (g.userId == myId) myX else g.x
                     val ay = if (g.userId == myId) myY else g.y
                     val isSeatedHere = if (g.userId == myId) seated else g.seatedSeatId != null
@@ -490,7 +500,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     }
                 }
 
-                // Priester mittig auf der Blumenstraße — erstmal still
+                // Priester am Altar
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -670,7 +680,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     )
                 }
 
-                // Timer / Pastor-Rede oben (nicht über Reaktionsleiste hinaus)
+                // Timer / Pastor-Rede oben im Raum
                 Column(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -693,57 +703,64 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                             ReceptionTimerBanner(remainingMs = c.receptionRemainingMs)
                     }
                 }
+            }
+        } // Kapellen-Box
 
-                // Reaktionsleiste: nach unten expandieren, Höhe begrenzen
-                Column(
+        // Reaktions-Emoji: rechts oben über dem Kapellenbild (nicht im Raum)
+        if (entered) {
+            val roomTop = (maxHeight - roomH) / 2
+            val roomEndPad = (maxWidth - roomW) / 2
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(
+                        top = (roomTop - 52.dp).coerceAtLeast(4.dp),
+                        end = (roomEndPad + 4.dp).coerceAtLeast(8.dp),
+                    )
+                    .heightIn(max = roomH * 0.55f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xCC1E2430))
+                    .padding(6.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 8.dp, end = 10.dp)
-                        .heightIn(max = roomH * 0.55f)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xCC1E2430))
-                        .padding(6.dp)
-                        .verticalScroll(rememberScrollState()),
-                    horizontalAlignment = Alignment.CenterHorizontally,
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { reactionExpanded = !reactionExpanded },
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable { reactionExpanded = !reactionExpanded },
-                        contentAlignment = Alignment.Center,
+                    Text("🙂", fontSize = 22.sp)
+                }
+                if (reactionExpanded) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        Text("🙂", fontSize = 22.sp)
-                    }
-                    if (reactionExpanded) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            emojiBar.forEach { emo ->
-                                Box(
-                                    modifier = Modifier
-                                        .size(44.dp, 40.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(Color.White.copy(0.08f))
-                                        .clickable {
-                                            scope.launch {
-                                                runCatching { LuvApiClient.ceremonyReact(emo) }
-                                                myReaction = emo
-                                                delay(2000)
-                                                if (myReaction == emo) myReaction = null
-                                            }
-                                        },
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    ItemGlyph(id = emo, fontSize = 22.sp)
-                                }
+                        emojiBar.forEach { emo ->
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp, 40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color.White.copy(0.08f))
+                                    .clickable {
+                                        scope.launch {
+                                            runCatching { LuvApiClient.ceremonyReact(emo) }
+                                            myReaction = emo
+                                            delay(2000)
+                                            if (myReaction == emo) myReaction = null
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                ItemGlyph(id = emo, fontSize = 22.sp)
                             }
                         }
                     }
                 }
             }
-        } // Kapellen-Box
+        }
 
         if (confetti) {
             ConfettiOverlay()

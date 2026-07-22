@@ -4683,6 +4683,12 @@ object LuvApiClient {
             "bad_nick" -> "Spitzname ungültig."
             "nickname_taken" -> "Spitzname schon vergeben."
             "nickname_locked" -> "Spitzname kann nicht geändert werden."
+            "not_in_room" -> serverMsg ?: "Bitte zuerst eintreten."
+            "wrong_phase" -> serverMsg ?: "Gerade nicht möglich."
+            "seat_taken" -> "Sitz schon belegt."
+            "couple_altar_only" -> serverMsg ?: "Bitte auf einen gelben Platz setzen."
+            "guest_bench_only" -> "Bitte auf eine Gästebank setzen."
+            "seating_locked" -> serverMsg ?: "Während der Zeremonie bleibt ihr sitzen."
             else -> null
         }
         throw LuvApiException(

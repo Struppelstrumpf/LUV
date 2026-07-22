@@ -9393,7 +9393,12 @@ app.post("/v1/me/marriage/ceremony/presence", (req, res) => {
   if (!ctx) return;
   const db = getDb();
   const m = findMarriageForCeremonyMember(db, ctx.user.id);
-  if (!m || (m.status !== "ceremony_pending" && m.status !== "ceremony_scheduled")) {
+  if (
+    !m ||
+    (m.status !== "ceremony_pending" &&
+      m.status !== "ceremony_scheduled" &&
+      m.status !== "married")
+  ) {
     return res.status(400).json({ error: "wrong_phase", message: "Keine offene Zeremonie." });
   }
   const bucket = String(req.body?.bucket || "presence") === "gathering" ? "gathering" : "presence";
@@ -9406,6 +9411,15 @@ app.post("/v1/me/marriage/ceremony/presence", (req, res) => {
   }
   if (bucket === "gathering") {
     const c = weddingCeremony.ensureCeremony(m);
+    // Ohne phase=gathering/altar schlagen move/sit mit API-Fehler (400) fehl
+    if (
+      !c.phase ||
+      c.phase === "none" ||
+      c.phase === "presence" ||
+      c.phase === "scheduled"
+    ) {
+      c.phase = "gathering";
+    }
     const layout = roomLayouts.getLayout(db, "wedding");
     roomLayouts.ensureSpawnPosition(layout, c.positions, ctx.user.id);
   }
@@ -9781,13 +9795,23 @@ app.post("/v1/me/marriage/ceremony/move", (req, res) => {
   }
   const c = weddingCeremony.ensureCeremony(m);
   if (
+    c.phase === "none" ||
+    c.phase === "presence" ||
+    c.phase === "scheduled"
+  ) {
+    c.phase = "gathering";
+  }
+  if (
     c.phase !== "altar" &&
     c.phase !== "vows" &&
     c.phase !== "gifts" &&
     c.phase !== "reception" &&
     c.phase !== "gathering"
   ) {
-    return res.status(400).json({ error: "not_in_room" });
+    return res.status(400).json({
+      error: "not_in_room",
+      message: "Bitte zuerst eintreten.",
+    });
   }
   // Nach Sitz-Lock: Sitzende dürfen nicht mehr aufstehen
   if (c.seated[ctx.user.id] && !weddingCeremony.canStand(m, ctx.user.id)) {
@@ -9811,6 +9835,7 @@ app.post("/v1/me/marriage/ceremony/move", (req, res) => {
     Number(req.body?.y)
   );
   c.positions[ctx.user.id] = { x: clamped.x, y: clamped.y };
+  weddingCeremony.touchPresence(m, ctx.user.id, "gathering");
   tickCeremonyRitual(m, db);
   scheduleSave();
   return res.json({
@@ -9831,13 +9856,23 @@ app.post("/v1/me/marriage/ceremony/sit", (req, res) => {
   }
   const c = weddingCeremony.ensureCeremony(m);
   if (
+    c.phase === "none" ||
+    c.phase === "presence" ||
+    c.phase === "scheduled"
+  ) {
+    c.phase = "gathering";
+  }
+  if (
     c.phase !== "altar" &&
     c.phase !== "vows" &&
     c.phase !== "gifts" &&
     c.phase !== "reception" &&
     c.phase !== "gathering"
   ) {
-    return res.status(400).json({ error: "not_in_room" });
+    return res.status(400).json({
+      error: "not_in_room",
+      message: "Bitte zuerst eintreten.",
+    });
   }
   if (c.seated[ctx.user.id]) {
     return res.json({
