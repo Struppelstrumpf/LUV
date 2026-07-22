@@ -42,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -634,20 +635,36 @@ private fun FriendsPanel(
                 )
         ) {
             val scheduled = ceremonyM.status == "ceremony_scheduled"
+            val gold = Color(0xFFFFD54F)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Color(0x22FFD54F))
-                    .border(1.dp, Color(0xFFFFD54F).copy(0.45f), RoundedCornerShape(18.dp))
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(
+                        brush = Brush.verticalGradient(
+                            listOf(Color(0x55FFD54F), Color(0x22E94E77), BgSoft)
+                        )
+                    )
+                    .border(1.5.dp, gold.copy(0.65f), RoundedCornerShape(20.dp))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    "💒 Hochzeit mit ${ceremonyM.partnerNickname ?: "…"}",
+                    "Hochzeit",
                     color = TextPrimary,
                     fontFamily = DisplayFont,
-                    fontSize = 16.sp
+                    fontSize = 22.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    "mit ${ceremonyM.partnerNickname ?: "…"}",
+                    color = gold,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
                 )
                 Text(
                     when {
@@ -656,29 +673,27 @@ private fun FriendsPanel(
                         scheduled ->
                             "Termin geplant · Lobby wird geladen…"
                         ceremonyM.hasWeddingImage ->
-                            "Hochzeitsbild fertig · jetzt Zeremonie vorbereiten (beide anwesend)"
+                            "Hochzeitsbild fertig · Zeremonie vorbereiten (beide anwesend)"
                         else ->
-                            "Hochzeitsbild-Phase vorbei · Zeremonie vorbereiten"
+                            "Nächster Schritt: Anwesenheit & Termin"
                     },
-                    color = Color(0xFFFFD54F),
+                    color = TextMuted,
                     fontFamily = BodyFont,
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
                 )
-                Text(
-                    if (scheduled) "Zur Hochzeit / Lobby" else "Anwesenheit · Termin wählen",
-                    color = AccentRose,
-                    fontFamily = DisplayFont,
-                    fontSize = 15.sp,
-                    modifier = Modifier
-                        .clickable {
-                            if (scheduled) {
-                                onSyncWeddingLobbies()
-                                showCeremonyGathering = true
-                            } else {
-                                showCeremonyPresence = true
-                            }
+                PrimaryButton(
+                    label = if (scheduled) "Zur Hochzeit" else "Hochzeit öffnen",
+                    color = AccentRose.copy(alpha = 0.85f),
+                    onClick = {
+                        if (scheduled) {
+                            onSyncWeddingLobbies()
+                            showCeremonyGathering = true
+                        } else {
+                            showCeremonyPresence = true
                         }
-                        .padding(vertical = 4.dp)
+                    }
                 )
             }
         }
