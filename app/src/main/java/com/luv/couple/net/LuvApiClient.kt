@@ -3032,6 +3032,12 @@ object LuvApiClient {
             parseCeremonyInfo(json.optJSONObject("ceremony"))
         }
 
+    /** Kapelle schließen — Avatar für andere sofort unsichtbar. */
+    suspend fun ceremonyExitRoom(): Boolean = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/me/marriage/ceremony/exit-room", "{}")
+        json.optBoolean("ok", false) || json.optBoolean("left", false)
+    }
+
     suspend fun ceremonyStartConfirm(): CeremonyInfo? = withContext(Dispatchers.IO) {
         val json = authedPost("/v1/me/marriage/ceremony/start-confirm", "{}")
         parseCeremonyInfo(json.optJSONObject("ceremony"))

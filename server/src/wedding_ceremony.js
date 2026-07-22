@@ -169,6 +169,17 @@ function touchPresence(m, userId, bucket = "presence") {
   return now;
 }
 
+/** Raum verlassen — Avatar sofort weg für alle anderen */
+function clearGatheringPresence(m, userId) {
+  const c = ensureCeremony(m);
+  if (!c || !userId) return;
+  delete c.gatheringPresence[userId];
+  // Sitz freigeben, solange die Zeremonie nicht gelockt ist
+  if (!c.seatingLocked && c.seated) {
+    delete c.seated[userId];
+  }
+}
+
 function countCouplePresence(m, bucket = "presence") {
   const c = ensureCeremony(m);
   const now = Date.now();
@@ -643,6 +654,7 @@ module.exports = {
   ensureCeremony,
   isCouple,
   touchPresence,
+  clearGatheringPresence,
   countCouplePresence,
   isPresent,
   validateCeremonyAt,

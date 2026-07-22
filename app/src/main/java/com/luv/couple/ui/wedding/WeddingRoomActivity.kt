@@ -64,9 +64,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.addCallback
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import com.luv.couple.LuvApp
 import com.luv.couple.R
 import com.luv.couple.net.AccountSession
@@ -99,13 +101,20 @@ import kotlinx.coroutines.withContext
  * Vogelperspektive Hochzeitsraum — eigener Screen, kein Canvas/LockDraw.
  */
 class WeddingRoomActivity : ComponentActivity() {
+    private var exitSent = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         enableEdgeToEdge()
+        onBackPressedDispatcher.addCallback(this) {
+            leaveRoomThenFinish()
+        }
         setContent {
             LuvTheme {
-                WeddingRoomScreen(onClose = { finish() })
+                WeddingRoomScreen(
+                    onClose = { leaveRoomThenFinish() },
+                )
             }
         }
     }
@@ -113,6 +122,40 @@ class WeddingRoomActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    override fun onDestroy() {
+        if (isFinishing) {
+            // Fallback, falls finish ohne await (z. B. System)
+            fireExitRoomAsync()
+        }
+        super.onDestroy()
+    }
+
+    private fun leaveRoomThenFinish() {
+        if (exitSent) {
+            if (!isFinishing) finish()
+            return
+        }
+        exitSent = true
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching { LuvApiClient.ceremonyExitRoom() }
+            }
+            finish()
+        }
+    }
+
+    private fun fireExitRoomAsync() {
+        if (exitSent) return
+        exitSent = true
+        Thread {
+            runCatching {
+                kotlinx.coroutines.runBlocking {
+                    LuvApiClient.ceremonyExitRoom()
+                }
+            }
+        }.start()
     }
 }
 
@@ -174,6 +217,13 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     var spawned by remember { mutableStateOf(cachedLayout != null) }
     var reactionExpanded by remember { mutableStateOf(false) }
     var emojiBar by remember { mutableStateOf(ShopCatalog.DEFAULT_BAR) }
+    var leaving by remember { mutableStateOf(false) }
+
+    fun leaveRoom() {
+        if (leaving) return
+        leaving = true
+        onClose()
+    }
 
     val zones = layout?.zones.orEmpty()
     val avatarR = layout?.avatarR?.takeIf { it > 0f } ?: DEFAULT_AVATAR_R
@@ -260,8 +310,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     }
 
     // Presence-Heartbeat — sonst verschwinden Idle-Gäste nach dem TTL
-    LaunchedEffect(entered) {
-        if (!entered) return@LaunchedEffect
+    LaunchedEffect(entered, leaving) {
+        if (!entered || leaving) return@LaunchedEffect
         while (true) {
             runCatching { LuvApiClient.ceremonyPresence("gathering") }
                 .onSuccess { c -> if (c != null) ceremony = c }
@@ -997,7 +1047,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         .height(42.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color.White.copy(0.10f))
-                        .clickable(onClick = onClose)
+                        .clickable(onClick = { leaveRoom() })
                         .padding(vertical = 6.dp),
                 )
                 if (canGift) {

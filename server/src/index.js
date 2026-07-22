@@ -10103,6 +10103,24 @@ app.post("/v1/me/marriage/ceremony/mark-gifted", (req, res) => {
   });
 });
 
+/** Kapelle verlassen — nur Presence weg, Zeremonie bleibt. */
+app.post("/v1/me/marriage/ceremony/exit-room", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const m = findMarriageForCeremonyMember(db, ctx.user.id);
+  if (!m) {
+    return res.json({ ok: true, left: true });
+  }
+  weddingCeremony.clearGatheringPresence(m, ctx.user.id);
+  scheduleSave();
+  return res.json({
+    ok: true,
+    left: true,
+    ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+  });
+});
+
 /** Cold feet: 30s Hold-Slider bestätigt — Zeremonie abbrechen. */
 app.post("/v1/me/marriage/ceremony/leave", (req, res) => {
   const ctx = requireAuth(req, res);
