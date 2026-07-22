@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.153",
+            listOf(
+                "Räume: nur Grün laufen, Rot sperrt darin (keine volle rote Basis mehr)",
+            )
+        ),
+        Entry(
             "2.2.152",
             listOf(
                 "Hochzeit: 60-Min-Timer fürs Ja-Wort, sonst Coins zurück",

@@ -50,7 +50,7 @@
   const TOOLS = [
     { id: "view-rect", label: "Weiß Karte", color: "white", shape: "rect", hint: "Gesamte Lauffläche" },
     { id: "camera-rect", label: "Schwarz Kamera", color: "black", shape: "rect", hint: "Was auf dem Handy sichtbar ist" },
-    { id: "red-rect", label: "Rot", color: "red", shape: "rect", hint: "Gesperrt (Basis oft ganze Karte)" },
+    { id: "red-rect", label: "Rot", color: "red", shape: "rect", hint: "Sperre im Grün (nicht betretbar)" },
     { id: "green-rect", label: "Grün □", color: "green", shape: "rect", hint: "Laufen: Rechteck ziehen (Form bleibt, kein Verbreitern)" },
     { id: "green-lasso", label: "Grün Lasso", color: "green", shape: "poly", hint: "Laufen: frei einzeichnen, Loslassen schließt" },
     { id: "blue-rect", label: "Blau Gäste", color: "blue", shape: "rect", hint: "Gast-Bereich = sitzen" },
@@ -131,10 +131,6 @@
   /** Kein Bounding-Box-Merge mehr — überlappende Grüns bleiben in ihrer Form. */
   function mergeGreens(zones) {
     return Array.isArray(zones) ? zones.slice() : [];
-  }
-
-  function fullMapRed() {
-    return { id: "red_base", color: "red", shape: "rect", x: 0, y: 0, w: 1, h: 1 };
   }
 
   function fileToDataUrl(file) {
@@ -278,9 +274,6 @@
 
     // Builtin-Flag vom Server ist maßgeblich (nicht nur ID-String)
     const weddingMode = Boolean(layout.builtin) || isWeddingBuiltin(roomId);
-    if (weddingMode && !zones.length) {
-      zones = [fullMapRed()];
-    }
 
     const weddingSwitch = weddingMode
       ? `<select id="roomWeddingSwitch" class="room-wedding-switch" title="Hochzeits-Raum">
@@ -321,8 +314,8 @@
         </div>
         <p class="help">${
           weddingMode
-            ? "Hochzeit: Karte startet <b>rot</b> (gesperrt). <b>Grün □ / Lasso</b> = Laufen (Form bleibt, kein Verbreitern). Props tippen+ziehen. Gelb=Brautpaar, Blau=Gäste."
-            : "Weiß = ganze Karte · Schwarz = Kamera · Grün □/Lasso = Laufen · Blau = Sitze."
+            ? "Hochzeit: <b>Grün □ / Lasso</b> = Laufen · <b>Rot</b> = Sperre (auch mitten im Grün). Props tippen+ziehen. Gelb=Brautpaar, Blau=Gäste."
+            : "Weiß = ganze Karte · Schwarz = Kamera · Grün □/Lasso = Laufen · Rot = Sperre · Blau = Sitze."
         }</p>
         <div class="room-tools" id="roomTools"></div>
         <p class="hint" id="roomToolHint" style="margin:0.35rem 0 0"></p>
@@ -1033,13 +1026,13 @@
     });
     root.querySelector("#roomClearAll").addEventListener("click", () => {
       if (!confirm("Alle Zonen, Portale und Aktionen löschen?")) return;
-      zones = weddingMode ? [fullMapRed()] : [];
+      zones = [];
       portals = [];
       actions = [];
       selectedId = null;
       dirty = true;
       paintList();
-      setStatus(weddingMode ? "Ganze Karte rot — Grün einzeichnen" : "Leer");
+      setStatus("Leer — Grün = Laufen, Rot = Sperre");
       draw();
     });
     const pickableEl = root.querySelector("#roomPickable");

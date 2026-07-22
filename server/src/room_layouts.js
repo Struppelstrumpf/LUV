@@ -259,6 +259,7 @@ function mergeGreenZones(zones) {
   return Array.isArray(zones) ? zones.slice() : [];
 }
 
+/** @deprecated früher volle rote Basis — nicht mehr nutzen */
 function fullMapRedZone() {
   return {
     id: "red_base",
@@ -269,6 +270,23 @@ function fullMapRedZone() {
     w: 1,
     h: 1,
   };
+}
+
+/** Volle rote Basis (id red_base oder 0–1-Rect) raus — sonst sperrt Rot jedes Grün. */
+function isLegacyFullMapRed(z) {
+  if (!z || z.color !== "red") return false;
+  if (String(z.id || "") === "red_base") return true;
+  if (z.shape !== "rect") return false;
+  const x = Number(z.x) || 0;
+  const y = Number(z.y) || 0;
+  const w = Number(z.w) || 0;
+  const h = Number(z.h) || 0;
+  return x <= 0.002 && y <= 0.002 && w >= 0.996 && h >= 0.996;
+}
+
+function stripLegacyFullMapRed(zones) {
+  if (!Array.isArray(zones)) return [];
+  return zones.filter((z) => !isLegacyFullMapRed(z));
 }
 
 function imagePublicUrl(roomId, ver) {
@@ -381,9 +399,15 @@ function getLayout(db, roomId) {
   const builtin = Boolean(builtinMeta);
   if (!saved && !builtin) return null;
 
-  const zones = Array.isArray(saved?.zones)
+  let zones = Array.isArray(saved?.zones)
     ? mergeGreenZones(saved.zones.map((z, i) => sanitizeZone(z, i)).filter(Boolean))
     : [];
+  const beforeStrip = zones.length;
+  zones = stripLegacyFullMapRed(zones);
+  if (saved && zones.length !== beforeStrip) {
+    saved.zones = zones;
+    saved.updatedAt = Date.now();
+  }
   const viewRect = sanitizeViewRect(saved?.viewRect);
   const cameraRect = sanitizeCameraRect(saved?.cameraRect, viewRect);
   const img = findImageFile(id);
@@ -475,11 +499,13 @@ function saveLayout(db, roomId, body = {}) {
     );
   }
   if (Array.isArray(body.zones)) {
-    prev.zones = mergeGreenZones(
-      body.zones
-        .slice(0, 200)
-        .map((z, i) => sanitizeZone(z, i))
-        .filter(Boolean)
+    prev.zones = stripLegacyFullMapRed(
+      mergeGreenZones(
+        body.zones
+          .slice(0, 200)
+          .map((z, i) => sanitizeZone(z, i))
+          .filter(Boolean)
+      )
     );
   }
   if (Array.isArray(body.portals)) {
@@ -701,9 +727,10 @@ function pointInGreen(zones, x, y) {
 
 function isWalkable(layout, x, y) {
   const zones = layout?.zones || [];
-  // Grün gewinnt über Rot (volle rote Basis + grüne Laufwege)
-  if (!zones.some((z) => z.color === "green")) return false;
-  return pointInGreen(zones, x, y);
+  // Nur Grün = laufen; Rot darin sperrt (Loch im Grün)
+  if (!pointInGreen(zones, x, y)) return false;
+  if (zones.some((z) => z.color === "red" && zoneContains(z, x, y, 0))) return false;
+  return true;
 }
 
 function isBlocked(layout, x, y) {
@@ -887,6 +914,7 @@ module.exports = {
   findPath,
   mergeGreenZones,
   fullMapRedZone,
+  stripLegacyFullMapRed,
   avatarRadius,
   spawnPoint,
   ensureSpawnPosition,

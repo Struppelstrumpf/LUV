@@ -43,19 +43,17 @@ private fun pointInGreen(zones: List<LuvApiClient.RoomZone>, x: Float, y: Float)
     return zones.any { it.isWalk && zoneContains(it, x, y, 0f) }
 }
 
-/**
- * Laufbar: Mittelpunkt in Grün, nicht zu tief in Rot.
- * (Früher: ganzer Avatar-Kreis in Grün → schmale Gassen / Sitze unmöglich.)
- */
+/** Laufbar nur auf Grün; Rot darin = Sperre (Loch). */
 fun walkableAt(
     zones: List<LuvApiClient.RoomZone>,
     x: Float,
     y: Float,
     avatarR: Float,
 ): Boolean {
-    // Grün gewinnt über Rot (volle rote Basis + grüne Laufwege)
-    if (zones.none { it.isWalk }) return false
-    return pointInGreen(zones, x, y)
+    // Nur Grün = laufen; Rot darin sperrt (Loch im Grün)
+    if (!pointInGreen(zones, x, y)) return false
+    if (zones.any { it.isBlock && zoneContains(it, x, y, 0f) }) return false
+    return true
 }
 
 /** Nächster laufbarer Punkt in der Nähe von [x],[y] (für Sitze auf Rot). */
