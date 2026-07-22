@@ -54,7 +54,6 @@ import com.luv.couple.LuvApp
 import com.luv.couple.billing.PlayBilling
 import com.luv.couple.billing.PlayBillingException
 import com.luv.couple.billing.findActivity
-import com.luv.couple.data.ConnectionState
 import com.luv.couple.data.Lobby
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Role
@@ -244,8 +243,6 @@ fun LuvAppNav() {
             !PendingSplashSkip.peek() && PendingJoin.peek().isNullOrBlank()
         )
     }
-    /** Handy/Herz-Animation hält bis Lobbys verbunden (nicht das Vorschaubild). */
-    var showSplashPhones by remember { mutableStateOf(false) }
     var tutorialReplay by remember { mutableStateOf(false) }
     fun shareText(text: String) {
         val send = Intent(Intent.ACTION_SEND).apply {
@@ -334,7 +331,6 @@ fun LuvAppNav() {
         joinPreviewLoading = true
         joinError = null
         showPublicSplash = false
-        showSplashPhones = false
         if (asOverlay) {
             showInviteOverlay = true
         } else {
@@ -1479,7 +1475,6 @@ fun LuvAppNav() {
         if (startDestination == null) return@LaunchedEffect
         PendingJoin.consume()
         showPublicSplash = false
-        showSplashPhones = false
         openJoinPreview(code, asOverlay = true)
     }
 
@@ -1489,7 +1484,6 @@ fun LuvAppNav() {
         if (startDestination == null) return@LaunchedEffect
         PendingOnboardingRestart.consume()
         showPublicSplash = false
-        showSplashPhones = false
         restartOnboardingAfterTrial()
     }
 
@@ -1499,7 +1493,6 @@ fun LuvAppNav() {
         if (startDestination == null) return@LaunchedEffect
         PendingTutorialKeepAuth.consume()
         showPublicSplash = false
-        showSplashPhones = false
         startTutorialKeepAuthAfterTrial()
     }
 
@@ -1521,7 +1514,6 @@ fun LuvAppNav() {
         if (PendingTutorialKeepAuth.peek()) return@LaunchedEffect
         if (navController.currentDestination?.route == Routes.TUTORIAL) return@LaunchedEffect
         showPublicSplash = false
-        showSplashPhones = false
         if (startDestination != Routes.MAIN) startDestination = Routes.MAIN
         tryInviteRejoin(openCanvas = true)
     }
@@ -1705,7 +1697,6 @@ fun LuvAppNav() {
         if (startDestination != Routes.MAIN) return@LaunchedEffect
         val target = com.luv.couple.net.PendingDeepLink.consume() ?: return@LaunchedEffect
         showPublicSplash = false
-        showSplashPhones = false
         when (target) {
             com.luv.couple.net.DeepLinkTarget.Home -> tab = 0
             com.luv.couple.net.DeepLinkTarget.SozialWedding -> {
@@ -1782,23 +1773,14 @@ fun LuvAppNav() {
             Routes.MAIN -> {
                 if (PendingSplashSkip.consume() || !PendingJoin.peek().isNullOrBlank()) {
                     showPublicSplash = false
-                    showSplashPhones = false
-                } else if (!showSplashPhones) {
+                } else {
                     showPublicSplash = true
                 }
             }
             else -> {
                 showPublicSplash = false
-                showSplashPhones = false
             }
         }
-    }
-
-    // Lobby-WS schon während Splash-Bild aufbauen — nicht erst danach warten
-    LaunchedEffect(showPublicSplash, startDestination) {
-        if (!showPublicSplash || startDestination != Routes.MAIN) return@LaunchedEffect
-        if (LuvApiClient.sessionToken.isNullOrBlank()) return@LaunchedEffect
-        PairConnectionService.startAll(context)
     }
 
     if (pendingCeremonyGathering) {
@@ -2925,30 +2907,7 @@ fun LuvAppNav() {
 
     if (showPublicSplash && !showInviteOverlay) {
         PublicCanvasSplash(
-            onFinished = {
-                showPublicSplash = false
-                scope.launch {
-                    val ids = runCatching { prefs.snapshot().lobbies.map { it.id } }
-                        .getOrElse { lobbies.map { it.id } }
-                    if (ids.isEmpty()) return@launch
-                    PairConnectionService.startAll(context)
-                    // Max kurz „Verbinde…“ — eine Lobby reicht; Rest im Hintergrund
-                    val already = ids.any { id ->
-                        val s = lobbyStates[id]
-                        s == ConnectionState.CONNECTED || s == ConnectionState.HOSTING
-                    }
-                    if (already) return@launch
-                    showSplashPhones = true
-                    PairConnectionService.awaitLobbiesConnected(ids, timeoutMs = 2_500L)
-                    showSplashPhones = false
-                }
-            },
-        )
-    }
-    if (showSplashPhones && !showInviteOverlay) {
-        SplashPhonesLoader(
-            modifier = Modifier.fillMaxSize().zIndex(75f),
-            statusText = "Verbinde Lobbys...",
+            onFinished = { showPublicSplash = false },
         )
     }
 

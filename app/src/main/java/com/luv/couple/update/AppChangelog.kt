@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.160",
+            listOf(
+                "Start: Vorschau mit Rand-Balken bis alle Lobbys verbunden; ohne Handy-Animation",
+            )
+        ),
+        Entry(
             "2.2.159",
             listOf(
                 "Lobbys wieder schnell verbunden: WebSocket direkt mit gespeichertem Token",
