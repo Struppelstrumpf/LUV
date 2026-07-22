@@ -205,10 +205,10 @@ class PairConnectionService : Service() {
             .filter { it.lobby.code.trim().uppercase() in wantedCodes && it.lobby.id !in wanted }
             .map { it.lobby.id }
             .forEach { stopLobby(it) }
-        // Gestaffelt starten — sonst alle WS gleichzeitig → Proxy-Frame-Fehler
+        // Leicht gestaffelt — früher 350ms/Index war spürbar langsam bei mehreren Lobbys
         unique.forEachIndexed { index, lobby ->
             scope.launch {
-                if (index > 0) delay(350L * index)
+                if (index > 0) delay(80L * index)
                 ensureLobbySession(lobby)
             }
         }
@@ -429,18 +429,8 @@ class PairConnectionService : Service() {
 
     private suspend fun connectOnce(session: LobbySession): ConnectResult {
         if (!session.accessHealed) {
+            // refreshLobbyAccess macht bei Host bereits ensureRoom — kein zweiter HTTP-RTT
             runCatching { refreshLobbyAccess(session) }
-            if (
-                session.lobby.role == Role.HOST &&
-                session.lobby.code.isNotBlank() &&
-                session.lobby.token.isNotBlank()
-            ) {
-                runCatching {
-                    LuvApiClient.ensureRoom(session.lobby.code, session.lobby.token)
-                }.onFailure {
-                    Log.w(TAG, "ensureRoom failed code=${session.lobby.code}: ${it.message}")
-                }
-            }
             session.accessHealed = true
         }
         val lobbyNow = session.lobby

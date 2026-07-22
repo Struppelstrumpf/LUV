@@ -3047,9 +3047,13 @@ function abortWeddingCeremony(
   delete all[key];
 }
 
-/** Nein am Altar: kein Scheidungs-/Antrags-Cooldown. */
+/** Nein am Altar: kein Scheidungs-/Antrags-Cooldown; beide Partner informieren. */
 function abortWeddingCeremonyRejected(m, leftByUserId) {
-  abortWeddingCeremony(m, leftByUserId, { divorceCooldown: false });
+  abortWeddingCeremony(m, leftByUserId, {
+    divorceCooldown: false,
+    notifyBoth: true,
+    noticeText: "Die Trauung wurde abgebrochen — ihr könnt euch erneut verloben.",
+  });
 }
 
 /** Coins aus Buchung zurück (beide Partner). */
@@ -3174,15 +3178,21 @@ function tickCeremonyRitual(m, db) {
   };
   weddingCeremony.syncAltarHold(m, isCoupleSeat);
   const adv = weddingCeremony.advancePastor(m, db.users);
-  if (adv?.rejectDone) {
-    abortWeddingCeremonyRejected(m, m.ceremony?.rejectUserId || null);
-    return { dissolved: true };
-  }
   if (adv?.receptionStarted) {
     keepCeremonyLobbyForGifts(m);
   }
   // Empfang abgelaufen → Gäste raus, Geschenke würfeln, Paar Claim (Lobby bleibt)
   const c = weddingCeremony.ensureCeremony(m);
+  // Nach Nein-Rede: kurz phase=ended halten, damit beide Clients das Ende sehen
+  const rejectDoneAt = Number(c.rejectFinishedAt) || 0;
+  if (
+    rejectDoneAt > 0 &&
+    (c.pastorPhase === "ended" || c.phase === "ended") &&
+    Date.now() - rejectDoneAt >= 8_000
+  ) {
+    abortWeddingCeremonyRejected(m, c.rejectUserId || null);
+    return { dissolved: true };
+  }
   const ends = Number(c.receptionEndsAt) || 0;
   if (
     ends > 0 &&
@@ -10768,7 +10778,7 @@ app.post("/v1/me/marriage/ceremony/vow", (req, res) => {
   c.vows[ctx.user.id] = { choice, progress, at: Date.now() };
   if (choice === "no" && progress >= 1) {
     const nick = String(ctx.user.nickname || "").trim().slice(0, 18) || "Jemand";
-    weddingCeremony.startRejectClosing(m, ctx.user.id);
+    weddingCeremony.startRejectClosing(m, ctx.user.id, nick);
     scheduleSave();
     return res.json({
       ok: true,

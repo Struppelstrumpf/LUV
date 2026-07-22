@@ -520,17 +520,28 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         onClose()
                         return@LaunchedEffect
                     }
+                    val liveWindowAbort =
+                        e.message?.contains("Trauungszeit", ignoreCase = true) == true
                     if (
                         err == "ceremony_aborted" ||
+                        err == "no_marriage" ||
                         e.message?.contains("abgebrochen", ignoreCase = true) == true ||
-                        e.message?.contains("Trauungszeit", ignoreCase = true) == true
+                        liveWindowAbort
                     ) {
-                        Toast.makeText(
-                            context,
-                            e.message ?: "Die Trauung wurde beendet.",
-                            Toast.LENGTH_LONG
-                        ).show()
-                        onClose()
+                        if (liveWindowAbort) {
+                            Toast.makeText(
+                                context,
+                                e.message ?: "Die Trauung wurde beendet.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            onClose()
+                            return@LaunchedEffect
+                        }
+                        // Nein-Pfad / Dissolve: Overlay statt eingefrorenem Pastor-Text
+                        if (rejectName == null) {
+                            rejectName = ceremony?.leftByNickname ?: "Die Trauung"
+                        }
+                        ceremony = ceremony?.copy(pastorPhase = "ended", phase = "ended")
                         return@LaunchedEffect
                     }
                 }
@@ -543,8 +554,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     cNow?.pastorPhase == "closing_no" ||
                     cNow?.pastorPhase == "married" ||
                     cNow?.liveWindowActive == true
-            // Im Raum oft pollen = flüssigeres Laufen für andere
-            delay(if (fast) 280 else if (entered) 380 else 900)
+            // Rede: etwas öfter pollen für Phasenwechsel; Typing läuft lokal
+            delay(if (fast) 200 else if (entered) 380 else 900)
         }
     }
 
@@ -1085,11 +1096,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         onNoProgress = { p ->
                             scope.launch {
                                 val r = runCatching { LuvApiClient.ceremonyVow("no", p) }.getOrNull()
-                                if (r?.rejected == true) {
-                                    ceremony = r.ceremony ?: ceremony
-                                } else {
-                                    ceremony = r?.ceremony ?: ceremony
-                                }
+                                ceremony = r?.ceremony ?: ceremony
+                                // Rede läuft noch — Overlay erst nach pastorPhase=ended
                             }
                         }
                     )
@@ -1112,7 +1120,12 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         c?.pastorPhase == "speech" ||
                             c?.pastorPhase == "closing_no" ||
                             c?.pastorPhase == "married" ->
-                            PastorSpeechTile(visibleText = c.pastorLineVisible)
+                            PastorSpeechTile(
+                                visibleText = c.pastorLineVisible,
+                                fullText = c.pastorLineFull,
+                                startedAtMs = c.pastorLineStartedAt,
+                                typeMs = c.pastorLineTypeMs,
+                            )
                         (c?.pastorPhase == "reception" || c?.phase == "reception") &&
                             c.receptionRemainingMs > 0L ->
                             ReceptionTimerBanner(remainingMs = c.receptionRemainingMs)

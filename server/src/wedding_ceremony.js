@@ -37,9 +37,10 @@ function ensureCeremony(m) {
       leftNotify: {},
       seatingLocked: false,
       altarHoldStartedAt: 0,
-      pastorPhase: "idle", // idle | dots | speech | vows | closing_no | married | reception
+      pastorPhase: "idle", // idle | dots | speech | vows | closing_no | married | reception | ended
       pastorLineIndex: 0,
       pastorLineStartedAt: 0,
+      rejectFinishedAt: 0,
       receptionEndsAt: 0,
       liveWindowEndsAt: 0,
       liveWindowCleared: false,
@@ -80,6 +81,7 @@ function ensureCeremony(m) {
   if (!m.ceremony.pastorPhase) m.ceremony.pastorPhase = "idle";
   if (!Number.isFinite(Number(m.ceremony.pastorLineIndex))) m.ceremony.pastorLineIndex = 0;
   if (!Number.isFinite(Number(m.ceremony.pastorLineStartedAt))) m.ceremony.pastorLineStartedAt = 0;
+  if (!Number.isFinite(Number(m.ceremony.rejectFinishedAt))) m.ceremony.rejectFinishedAt = 0;
   if (!Number.isFinite(Number(m.ceremony.receptionEndsAt))) m.ceremony.receptionEndsAt = 0;
   if (!Number.isFinite(Number(m.ceremony.liveWindowEndsAt))) m.ceremony.liveWindowEndsAt = 0;
   if (typeof m.ceremony.liveWindowCleared !== "boolean") m.ceremony.liveWindowCleared = false;
@@ -401,7 +403,7 @@ function advancePastor(m, users = {}) {
     const started = Number(c.pastorLineStartedAt) || now;
     // Typdauer grob + 5s Halt
     const line = lines[idx] || "";
-    const typeMs = Math.min(12_000, Math.max(2_500, line.length * 45));
+    const typeMs = Math.min(12_000, Math.max(2_500, line.length * 45 || 2500));
     if (now - started >= typeMs + PASTOR_LINE_HOLD_MS) {
       if (idx + 1 < lines.length) {
         c.pastorLineIndex = idx + 1;
@@ -421,16 +423,21 @@ function advancePastor(m, users = {}) {
     const idx = Number(c.pastorLineIndex) || 0;
     const started = Number(c.pastorLineStartedAt) || now;
     const line = lines[idx] || "";
-    const typeMs = Math.min(10_000, Math.max(2_000, line.length * 45));
+    const typeMs = Math.min(12_000, Math.max(2_500, line.length * 45 || 2500));
     if (now - started >= typeMs + PASTOR_LINE_HOLD_MS) {
       if (idx + 1 < lines.length) {
         c.pastorLineIndex = idx + 1;
         c.pastorLineStartedAt = now;
         return { changed: true };
       }
+      // Beide Clients sollen phase=ended sehen — Dissolve erst nach Grace
       c.pastorPhase = "ended";
       c.phase = "ended";
-      return { changed: true, rejectDone: true };
+      c.rejectFinishedAt = now;
+      if (!c.leftByNickname) {
+        c.leftByNickname = nickOf(users, c.rejectUserId, "Partner");
+      }
+      return { changed: true, rejectEnded: true };
     }
     return { changed: false };
   }
@@ -440,7 +447,7 @@ function advancePastor(m, users = {}) {
     const idx = Number(c.pastorLineIndex) || 0;
     const started = Number(c.pastorLineStartedAt) || now;
     const line = lines[idx] || "";
-    const typeMs = Math.min(10_000, Math.max(2_000, line.length * 45));
+    const typeMs = Math.min(12_000, Math.max(2_500, line.length * 45 || 2500));
     if (now - started >= typeMs + PASTOR_LINE_HOLD_MS) {
       if (idx + 1 < lines.length) {
         c.pastorLineIndex = idx + 1;
@@ -459,13 +466,16 @@ function advancePastor(m, users = {}) {
   return { changed: false };
 }
 
-function startRejectClosing(m, rejectedByUserId) {
+function startRejectClosing(m, rejectedByUserId, rejectedByNickname) {
   const c = ensureCeremony(m);
   c.pastorPhase = "closing_no";
   c.rejectUserId = rejectedByUserId;
   c.pastorLineIndex = 0;
   c.pastorLineStartedAt = Date.now();
+  c.rejectFinishedAt = 0;
   c.phase = "vows";
+  const nick = String(rejectedByNickname || "").trim().slice(0, 18);
+  if (nick) c.leftByNickname = nick;
 }
 
 function startMarriedSpeech(m) {
@@ -483,6 +493,8 @@ function startMarriedSpeech(m) {
 function canStand(m, userId) {
   const c = ensureCeremony(m);
   if (!c.seatingLocked) return true;
+  // Nach Nein-Ende wieder frei (Dissolve kommt per Grace)
+  if (c.pastorPhase === "ended" || c.phase === "ended") return true;
   // Bis Pastor fertig gesprochen hat (inkl. „ihr seid verheiratet“) sitzen bleiben
   if (["dots", "speech", "vows", "closing_no", "married"].includes(c.pastorPhase)) {
     return false;
@@ -629,10 +641,13 @@ function publicCeremony(m, viewerId, users = {}) {
   const pastorLineIndex = Number(c.pastorLineIndex) || 0;
   const pastorLineFull = pastorLines[pastorLineIndex] || "";
   const pastorStarted = Number(c.pastorLineStartedAt) || now;
-  const typeMs = Math.min(12_000, Math.max(2_000, pastorLineFull.length * 45 || 2000));
+  const pastorLineTypeMs = Math.min(
+    12_000,
+    Math.max(2_500, pastorLineFull.length * 45 || 2500)
+  );
   const typedChars = Math.min(
     pastorLineFull.length,
-    Math.floor(((now - pastorStarted) / typeMs) * pastorLineFull.length)
+    Math.floor(((now - pastorStarted) / pastorLineTypeMs) * pastorLineFull.length)
   );
   const pastorLineVisible =
     c.pastorPhase === "speech" ||
@@ -706,6 +721,8 @@ function publicCeremony(m, viewerId, users = {}) {
     pastorLineIndex,
     pastorLineFull,
     pastorLineVisible,
+    pastorLineStartedAt: pastorStarted,
+    pastorLineTypeMs,
     pastorLineCount: pastorLines.length,
     coupleNicknames: coupleNicks,
     receptionEndsAt: Number(c.receptionEndsAt) || 0,

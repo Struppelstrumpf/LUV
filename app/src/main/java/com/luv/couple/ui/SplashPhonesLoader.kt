@@ -56,7 +56,8 @@ import kotlin.math.sin
  */
 @Composable
 fun SplashPhonesLoader(
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    statusText: String = "Verbunden...",
 ) {
     val transition = rememberInfiniteTransition(label = "splashPhones")
     val cycle by transition.animateFloat(
@@ -143,7 +144,7 @@ fun SplashPhonesLoader(
                 )
             }
             Text(
-                "Verbunden …",
+                statusText,
                 color = TextMuted.copy(0.75f),
                 fontFamily = BodyFont,
                 fontSize = 13.sp,

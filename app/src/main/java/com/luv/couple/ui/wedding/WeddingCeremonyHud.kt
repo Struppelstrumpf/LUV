@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -152,8 +153,41 @@ fun PastorDotsBubble(modifier: Modifier = Modifier) {
 @Composable
 fun PastorSpeechTile(
     visibleText: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    fullText: String = "",
+    startedAtMs: Long = 0L,
+    typeMs: Long = 0L,
 ) {
+    // Lokaler Typewriter (~60fps) — Server-Poll allein wirkt stockend
+    var shown by remember(fullText, startedAtMs) {
+        mutableStateOf(visibleText.ifBlank { "…" })
+    }
+    LaunchedEffect(fullText, startedAtMs, typeMs, visibleText) {
+        val source = fullText.ifBlank { visibleText }
+        if (source.isBlank()) {
+            shown = "…"
+            return@LaunchedEffect
+        }
+        if (startedAtMs <= 0L || fullText.isBlank()) {
+            shown = source
+            return@LaunchedEffect
+        }
+        val total = if (typeMs > 0L) {
+            typeMs
+        } else {
+            (source.length * 45L).coerceIn(2_500L, 12_000L)
+        }
+        while (true) {
+            val elapsed = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(0L)
+            val n = ((elapsed.toDouble() / total) * source.length)
+                .toInt()
+                .coerceIn(0, source.length)
+            shown = source.take(n).ifBlank { "…" }
+            if (n >= source.length) break
+            delay(16)
+        }
+        shown = source
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -182,7 +216,7 @@ fun PastorSpeechTile(
                 fontSize = 13.sp
             )
             Text(
-                visibleText.ifBlank { "…" },
+                shown,
                 // Dunkel auf weißem Tile — TextPrimary wäre creme/grau und kaum lesbar
                 color = Color(0xFF2C1810),
                 fontFamily = BodyFont,
