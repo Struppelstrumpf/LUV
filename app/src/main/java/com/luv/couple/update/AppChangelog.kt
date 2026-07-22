@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.118",
+            listOf(
+                "Lootbox-Popup neu: Footer komplett sichtbar (Safe-Frame)",
+            )
+        ),
+        Entry(
             "2.2.117",
             listOf(
                 "Lootbox: Kauf bestätigen + AGB nicht mehr unter der Gestenleiste",

@@ -19,24 +19,14 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.mandatorySystemGestures
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.systemGestures
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.union
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.unit.max
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -214,23 +204,26 @@ fun MarketScreen(
                 }
             )
             if (showHubLootbox) {
+                fun dismissLoot() {
+                    showHubLootbox = false
+                    hubLootBusy = null
+                    hubLootRefresh++
+                }
                 Dialog(
-                    onDismissRequest = {
-                        showHubLootbox = false
-                        hubLootBusy = null
-                        hubLootRefresh++
-                    },
+                    onDismissRequest = { dismissLoot() },
                     properties = DialogProperties(
                         usePlatformDefaultWidth = false,
-                        // false: Insets selbst steuern (Edge-to-Edge) —
-                        // sonst liegt der Footer oft unter der Gestenleiste.
                         decorFitsSystemWindows = false
                     )
                 ) {
+                    // Scrim + Safe-Frame: Inhalt nie bündig mit Displaykante
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(BgDeep)
+                            .background(Color(0xF20A0D14))
+                            .systemBarsPadding()
+                            // Harter Extra-Rand — auch wenn Dialog-Insets 0 melden
+                            .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 48.dp)
                     ) {
                         LootboxTab(
                             coins = hubAccount?.coins ?: 0,
@@ -239,11 +232,7 @@ fun MarketScreen(
                             onRefresh = { onRefreshInventory() },
                             economyUnlocked = economyUnlocked,
                             onRequireGoogle = onRequireGoogle,
-                            onClose = {
-                                showHubLootbox = false
-                                hubLootBusy = null
-                                hubLootRefresh++
-                            }
+                            onClose = { dismissLoot() }
                         )
                     }
                 }
@@ -2182,27 +2171,17 @@ private fun LootboxTab(
             }
         )
     }
-    // Footer fest am unteren Rand — Insets + Mindestabstand (Gestenleiste).
-    val density = LocalDensity.current
-    val bottomInsets = WindowInsets.navigationBars
-        .union(WindowInsets.systemGestures)
-        .union(WindowInsets.mandatorySystemGestures)
-        .asPaddingValues()
-        .calculateBottomPadding()
-    val footerBottomPad = max(bottomInsets, 28.dp)
-    var footerHeight by remember { mutableStateOf(0.dp) }
-
+    // Einfache Column: Footer ist normales letztes Kind — kein absolut positioniertes
+    // Overlay mehr (das ist unter Gestenleiste/Edge-to-Edge Dialog immer wieder kaputtgegangen).
     BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.statusBars.union(WindowInsets.ime))
+        modifier = Modifier.fillMaxSize()
     ) {
         val reveal = revealedReward?.takeIf { phase == "reveal" }
         val shortScreen = maxHeight < 640.dp
         val giftSize = minOf(
-            maxWidth * if (shortScreen) 0.34f else 0.44f,
-            maxHeight * if (shortScreen) 0.22f else 0.30f,
-            if (shortScreen) 150.dp else 210.dp
+            maxWidth * if (shortScreen) 0.32f else 0.42f,
+            maxHeight * if (shortScreen) 0.20f else 0.28f,
+            if (shortScreen) 140.dp else 200.dp
         )
         val showBox = phase == "idle" || phase == "tapping" || phase == "opening" ||
             (phase == "reveal" && explodeAnim.value < 0.95f)
@@ -2210,9 +2189,10 @@ private fun LootboxTab(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 18.dp)
-                .padding(top = 8.dp)
-                .padding(bottom = if (footerVisible) footerHeight else footerBottomPad + 12.dp),
+                .clip(RoundedCornerShape(22.dp))
+                .background(BgDeep)
+                .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(22.dp))
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(
@@ -2247,7 +2227,7 @@ private fun LootboxTab(
                     .weight(1f, fill = true)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(bottom = 8.dp)
+                    .padding(vertical = 8.dp)
             ) {
                 val waiting = maxOf(
                     displayPending,
@@ -2336,7 +2316,6 @@ private fun LootboxTab(
                             .background(BgSoft)
                             .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(18.dp))
                             .padding(horizontal = 16.dp, vertical = 12.dp)
-                            .verticalScroll(rememberScrollState())
                     ) {
                         Text(
                             "Lootbox geöffnet",
@@ -2426,66 +2405,60 @@ private fun LootboxTab(
                     )
                 }
             }
-        }
-        if (footerVisible) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .background(BgDeep)
-                    .onGloballyPositioned { coords ->
-                        footerHeight = with(density) { coords.size.height.toDp() }
-                    }
-                    .padding(start = 18.dp, end = 18.dp, top = 10.dp)
-                    .padding(bottom = footerBottomPad + 8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+            if (footerVisible) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 4.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Kauf bestätigen",
-                            color = TextPrimary,
-                            fontFamily = DisplayFont,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            if (confirmBuy) {
-                                "Vor dem Kauf nachfragen · Menge wählbar"
-                            } else {
-                                "Direkt mit Tippen kaufen"
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Kauf bestätigen",
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                if (confirmBuy) {
+                                    "Vor dem Kauf nachfragen · Menge wählbar"
+                                } else {
+                                    "Direkt mit Tippen kaufen"
+                                },
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Switch(
+                            checked = confirmBuy,
+                            onCheckedChange = { on ->
+                                scope.launch { prefs.setLootboxConfirmBuy(on) }
                             },
-                            color = TextMuted,
-                            fontFamily = BodyFont,
-                            fontSize = 12.sp
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = MaleBlue,
+                                uncheckedThumbColor = Color.White.copy(alpha = 0.85f),
+                                uncheckedTrackColor = Color.White.copy(alpha = 0.18f)
+                            )
                         )
                     }
-                    Switch(
-                        checked = confirmBuy,
-                        onCheckedChange = { on ->
-                            scope.launch { prefs.setLootboxConfirmBuy(on) }
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = MaleBlue,
-                            uncheckedThumbColor = Color.White.copy(alpha = 0.85f),
-                            uncheckedTrackColor = Color.White.copy(alpha = 0.18f)
-                        )
+                    Text(
+                        "Zufälliger Inhalt · Duplikate möglich · nicht erstattungsfähig — Details in den AGB.",
+                        color = TextMuted.copy(alpha = 0.85f),
+                        fontFamily = BodyFont,
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2
                     )
                 }
-                Text(
-                    "Zufälliger Inhalt · Duplikate möglich · nicht erstattungsfähig — Details in den AGB.",
-                    color = TextMuted.copy(alpha = 0.85f),
-                    fontFamily = BodyFont,
-                    fontSize = 11.sp,
-                    lineHeight = 14.sp,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2
-                )
             }
         }
     }

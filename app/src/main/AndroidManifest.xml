@@ -48,6 +48,12 @@
             android:windowSoftInputMode="stateAlwaysHidden"
             tools:replace="android:screenOrientation" />
 
+        <!-- Layout-Probe Lootbox-Footer (adb am start …LootboxLayoutSmokeActivity) -->
+        <activity
+            android:name=".ui.screens.LootboxLayoutSmokeActivity"
+            android:exported="false"
+            android:theme="@style/Theme.LUV" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
