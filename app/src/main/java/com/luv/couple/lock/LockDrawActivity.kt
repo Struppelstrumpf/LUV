@@ -461,8 +461,8 @@ class LockDrawActivity : ComponentActivity() {
                 setupEventLobbyUi()
                 maybeShowEventPromptPick(lobby)
             }
-            weddingRetakeActive = lobby?.isWeddingRetake == true ||
-                (lobby?.isWedding == true && lobby.name.contains("Hochzeitsbild", ignoreCase = true))
+            // ✓ nur bei echtem Nachhol-Flow (Ehe ohne Bild) — nicht bei normaler Hochzeitsbild-Lobby
+            weddingRetakeActive = lobby?.isWeddingRetake == true
             setupWeddingConfirmUi()
             applyMyColor(myColor, persist = false, sync = false)
             // Eigene Historie an aktuelle Farbe anpassen (sonst gemischte Farben bis zum Picker)
@@ -948,12 +948,18 @@ class LockDrawActivity : ComponentActivity() {
         }
         btnWeddingConfirm.visibility = View.VISIBLE
         btnWeddingConfirm.setOnClickListener { onWeddingConfirmTap() }
+        if (!weddingRetakeActive) {
+            btnWeddingConfirm.visibility = View.GONE
+            return
+        }
         paintWeddingConfirmButton()
         lifecycleScope.launch {
             val state = withContext(Dispatchers.IO) {
                 runCatching { LuvApiClient.fetchWeddingImageConfirm() }.getOrNull()
-            } ?: return@launch
-            if (!state.weddingImageRetake && !weddingRetakeActive) {
+            }
+            if (state == null || !state.weddingImageRetake) {
+                // Server: kein Retake (z. B. noch Verlobung/Hochzeit, nicht „married“)
+                weddingRetakeActive = false
                 btnWeddingConfirm.visibility = View.GONE
                 return@launch
             }

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.101",
+            listOf(
+                "Hochzeitsbild: ✓-Button nur noch beim echten Nachholen",
+            )
+        ),
+        Entry(
             "2.2.100",
             listOf(
                 "Heiratsantrag: Benachrichtigung heißt nicht mehr Freundschaftsanfrage",
