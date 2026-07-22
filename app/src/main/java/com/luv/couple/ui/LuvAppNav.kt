@@ -109,7 +109,6 @@ import com.luv.couple.ui.screens.ProfileCanvasScreen
 import com.luv.couple.ui.screens.QuietHoursScreen
 import com.luv.couple.ui.screens.SettingsScreen
 import com.luv.couple.ui.screens.RedeemScreen
-import com.luv.couple.ui.screens.RenameLobbyScreen
 import com.luv.couple.ui.screens.SimpleBottomBar
 import com.luv.couple.ui.screens.SocialScreen
 import com.luv.couple.ui.screens.TutorialFinishPayload
@@ -143,8 +142,6 @@ object Routes {
     const val SETTINGS = "settings"
     const val QUIET_HOURS = "quiet_hours"
     const val HELP = "help"
-    const val RENAME = "rename/{lobbyId}"
-    fun rename(lobbyId: String) = "rename/$lobbyId"
 }
 
 @Composable
@@ -2280,9 +2277,6 @@ fun LuvAppNav() {
                             },
                             onInviteSeat = { lobby -> inviteSeat(lobby) },
                             onBuySeat = { lobby -> buySeat(lobby) },
-                            onRenameLobby = { lobby ->
-                                navController.navigate(Routes.rename(lobby.id))
-                            },
                             onLeaveLobby = { lobby ->
                                 if (lobby.isWeddingCeremony) {
                                     coldFeetLobby = lobby
@@ -2794,44 +2788,6 @@ fun LuvAppNav() {
             )
         }
 
-        composable(
-            route = Routes.RENAME,
-            arguments = listOf(navArgument("lobbyId") { type = NavType.StringType })
-        ) { entry ->
-            val lobbyId = entry.arguments?.getString("lobbyId")
-            val lobby = lobbies.firstOrNull { it.id == lobbyId }
-            if (lobby == null) {
-                LaunchedEffect(Unit) { navController.popBackStack() }
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(BgDeep),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("Zurück …", color = TextMuted, fontFamily = BodyFont, fontSize = 15.sp)
-                }
-                return@composable
-            }
-            RenameLobbyScreen(
-                currentName = lobby.name,
-                onSave = { name ->
-                    scope.launch {
-                        prefs.renameLobby(lobby.id, name)
-                        runCatching { LuvApiClient.renameRoom(lobby.code, name) }
-                            .onFailure {
-                                Toast.makeText(
-                                    context,
-                                    "Name lokal gespeichert — Sync später",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        LockScreenWidgetProvider.requestUpdate(context)
-                        navController.popBackStack()
-                    }
-                },
-                onBack = { navController.popBackStack() }
-            )
-        }
     }
     } // destination != null
 

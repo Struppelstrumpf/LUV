@@ -2530,7 +2530,7 @@ function syncCeremonyGiftMeta(m) {
 }
 
 function finalizeWeddingMarriage(m, { force = false } = {}) {
-  // Ehe nur nach Zeremonie (oder Staff-Force aus wedding/ceremony_*)
+  // Ehepartner erst nach beiderseitigem Ja am Altar (Staff: force + bothVowsOk)
   if (
     !m ||
     (m.status !== "ceremony_scheduled" &&
@@ -2539,7 +2539,21 @@ function finalizeWeddingMarriage(m, { force = false } = {}) {
   ) {
     return false;
   }
-  if (m.status === "wedding" && !force && !weddingStrokesReadyFor(m)) return false;
+  const c0 = weddingCeremony.ensureCeremony(m);
+  const vowA = c0.vows?.[m.a];
+  const vowB = c0.vows?.[m.b];
+  const bothSaidYes =
+    vowA?.choice === "yes" &&
+    vowB?.choice === "yes" &&
+    (Number(vowA.progress) || 0) >= 1 &&
+    (Number(vowB.progress) || 0) >= 1;
+  if (!bothSaidYes && !force) {
+    return false;
+  }
+  // Mal-Phase allein macht niemanden zum Ehepartner
+  if (m.status === "wedding" && !bothSaidYes && !force) {
+    return false;
+  }
   const db = getDb();
   const a = db.users?.[m.a];
   const b = db.users?.[m.b];
@@ -9907,7 +9921,8 @@ app.post("/v1/me/marriage/ceremony/vow", (req, res) => {
     (Number(vowA.progress) || 0) >= 1 &&
     (Number(vowB.progress) || 0) >= 1
   ) {
-    finalizeWeddingMarriage(m, { force: true });
+    // force=false: Ehe nur wenn beide Ja gesagt haben (Guard in finalizeWeddingMarriage)
+    finalizeWeddingMarriage(m, { force: false });
     scheduleSave();
     return res.json({
       ok: true,
@@ -17305,58 +17320,13 @@ app.get("/v1/rooms/:code", (req, res) => {
   return res.json(publicRoom(room, code));
 });
 
-/** Host: Lobby umbenennen — sync an alle verbundenen Clients */
+/** Lobby-Umbenennen ist abgeschaltet (UI entfernt). */
 app.patch("/v1/rooms/:code", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
-  const code = String(req.params.code || "")
-    .toUpperCase()
-    .replace(/^LUV-/, "");
-  let room = rooms.get(code);
-  if (!room) {
-    const saved = getDb().rooms?.[code];
-    if (saved) {
-      room = hydrateRoom(code, saved);
-      rooms.set(code, room);
-    } else {
-      const meta = ctx.user.hostedRooms?.[code];
-      if (meta) {
-        room = hydrateRoom(code, {
-          token: meta.token,
-          hostUserId: ctx.user.id,
-          name: meta.name || "Lobby",
-          hostNickname: ctx.user.nickname || "Host",
-          isFree: Boolean(meta.isFree),
-          capacity: meta.capacity,
-          hostColorSide: meta.hostColorSide,
-          colorByUserId: meta.colorByUserId,
-        });
-        rooms.set(code, room);
-      }
-    }
-  }
-  if (!room) {
-    return res.status(404).json({ error: "room_not_found", message: "Lobby nicht gefunden." });
-  }
-  if (room.hostUserId !== ctx.user.id) {
-    return res.status(403).json({ error: "not_host", message: "Nur der Host kann umbenennen." });
-  }
-  const name = String(req.body?.name || "").trim().slice(0, MAX_LOBBY_NAME_LENGTH);
-  if (!name) {
-    return res.status(400).json({ error: "bad_name", message: "Name fehlt." });
-  }
-  room.name = name;
-  ensureHostedRooms(ctx.user);
-  if (ctx.user.hostedRooms[code]) {
-    ctx.user.hostedRooms[code].name = name;
-  }
-  touchRoom(room);
-  persistRooms();
-  scheduleSave();
-  broadcastRoom(room, { type: "lobby_rename", name });
-  return res.json({
-    name,
-    ...inviteFor(code),
+  return res.status(410).json({
+    error: "rename_disabled",
+    message: "Lobbys können nicht mehr umbenannt werden.",
   });
 });
 

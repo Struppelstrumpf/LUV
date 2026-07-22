@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.110",
+            listOf(
+                "Ehe erst nach beiderseitigem Ja am Altar",
+                "Lobby-Umbenennen entfernt",
+            )
+        ),
+        Entry(
             "2.2.109",
             listOf(
                 "Hochzeit: Brautmarsch, Altar-Timer, Pastor-Rede & Ja/Nein",

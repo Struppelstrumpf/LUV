@@ -300,7 +300,6 @@ fun LobbiesScreen(
     onToggleSpaceBell: (Lobby) -> Unit = {},
     onInviteSeat: (Lobby) -> Unit,
     onBuySeat: (Lobby) -> Unit,
-    onRenameLobby: (Lobby) -> Unit,
     onLeaveLobby: (Lobby) -> Unit,
     onReconnect: (Lobby) -> Unit,
     onOpenProfile: () -> Unit,
@@ -834,7 +833,6 @@ fun LobbiesScreen(
                         onOpen = { onOpenLobby(lobby) },
                         onInviteSeat = { onInviteSeat(lobby) },
                         onBuySeat = { onBuySeat(lobby) },
-                        onRename = { onRenameLobby(lobby) },
                         onLeave = { onLeaveLobby(lobby) },
                         onReconnect = { onReconnect(lobby) },
                         onToggleSpaceBell = { onToggleSpaceBell(lobby) },
@@ -946,7 +944,6 @@ private fun LobbyCard(
     onOpen: () -> Unit,
     onInviteSeat: () -> Unit,
     onBuySeat: () -> Unit,
-    onRename: () -> Unit,
     onLeave: () -> Unit,
     onReconnect: () -> Unit,
     onToggleSpaceBell: () -> Unit = {},
@@ -1322,9 +1319,6 @@ private fun LobbyCard(
                         null
                     }
                 )
-            }
-            if (lobby.role == Role.HOST && !lobby.isRandom && !lobby.isWedding && !lobby.isWeddingCeremony && !lobby.isEventLobby) {
-                PrimaryButton("Umbenennen", Color.Transparent, onRename, bordered = true)
             }
             val paintLobbyGhost =
                 !lobby.isWeddingCeremony &&
@@ -2357,48 +2351,6 @@ fun JoinScreen(
                 bordered = true
             )
             PrimaryButton("Abbrechen", BgSoft, onBack, bordered = true)
-        }
-    }
-}
-
-@Composable
-fun RenameLobbyScreen(
-    currentName: String,
-    onSave: (String) -> Unit,
-    onBack: () -> Unit
-) {
-    var name by remember { mutableStateOf(currentName) }
-    ScreenBackdrop {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(28.dp),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column {
-                Text(
-                    "Zurück",
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    modifier = Modifier
-                        .clickable(onClick = onBack)
-                        .padding(vertical = 8.dp)
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("Lobby umbenennen", fontFamily = DisplayFont, fontSize = 30.sp, color = TextPrimary)
-                Spacer(modifier = Modifier.height(24.dp))
-                SoftField(
-                    value = name,
-                    onValueChange = { name = it.take(PeerPalette.MAX_LOBBY_NAME_LENGTH) },
-                    hint = "Familie",
-                    onConfirm = {
-                        if (name.trim().isNotEmpty()) onSave(name.trim())
-                    }
-                )
-            }
-            PrimaryButton("Speichern", AccentRose, {
-                if (name.trim().isNotEmpty()) onSave(name.trim())
-            })
         }
     }
 }
