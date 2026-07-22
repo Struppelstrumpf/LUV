@@ -162,12 +162,24 @@ object PeerPalette {
     }
 }
 
-/** Ceremony oben, dann Hochzeitsbild-Mal-Lobby — Rest unveränderte Relative-Order. */
+/** Ceremony oben, dann eine Hochzeitsbild-Mal-Lobby — Rest unveränderte Relative-Order. */
 fun pinSpecialLobbies(list: List<Lobby>): List<Lobby> {
     if (list.size <= 1) return list
     val ceremony = list.filter { it.isWeddingCeremony }
-    val paint = list.filter { it.isWedding && !it.isWeddingCeremony }
-    val rest = list.filter { !it.isWeddingCeremony && !(it.isWedding && !it.isWeddingCeremony) }
+    val paintAll = list.filter { it.isWedding && !it.isWeddingCeremony }
+    // Sync-Geister: nur eine Hochzeitsbild-Lobby
+    val paint = when {
+        paintAll.size <= 1 -> paintAll
+        else -> listOf(
+            paintAll.maxWithOrNull(
+                compareBy<Lobby> { it.lastCanvasAt }
+                    .thenBy { if (it.isWeddingRetake) 1 else 0 }
+            ) ?: paintAll.first()
+        )
+    }
+    val rest = list.filter { lobby ->
+        !lobby.isWeddingCeremony && !(lobby.isWedding && !lobby.isWeddingCeremony)
+    }
     if (ceremony.isEmpty() && paint.isEmpty()) return list
     return ceremony + paint + rest
 }

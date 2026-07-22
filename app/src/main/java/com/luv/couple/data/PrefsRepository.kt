@@ -504,14 +504,15 @@ class PrefsRepository(private val context: Context) {
                 // Sonst Server-JOIN gewinnt (auch wenn lokal fälschlich HOST nach Failover)
                 upsert(r, Role.JOIN)
             }
-            // Nur Event-Hosts ohne Server-Eintrag entfernen (geschlossen).
+            // Nur Event-/Hochzeitsbild-Hosts ohne Server-Eintrag entfernen (geschlossen).
             // Normale Freund-Hosts bleiben lokal, außer Server listet denselben Code als Join
             // (dann hat upsert schon Role.JOIN gesetzt).
             for (code in byCode.keys.toList()) {
                 val lobby = byCode[code] ?: continue
                 if (lobby.role != Role.HOST) continue
                 if (code in hostedCodes) continue
-                if (lobby.isEventLobby) byCode.remove(code)
+                val weddingPaint = lobby.isWedding && !lobby.isWeddingCeremony
+                if (lobby.isEventLobby || weddingPaint) byCode.remove(code)
             }
             // Joins: Event-Geister droppen. Normale Freund-Joins nie wegen Sync löschen.
             for (code in byCode.keys.toList()) {
@@ -526,6 +527,8 @@ class PrefsRepository(private val context: Context) {
             val _dropUnknownJoins = dropUnknownJoins
             // Pro Event nur eine Lobby — Geister-/Sync-Duplikate entfernen
             dedupeEventLobbiesInPlace(byCode, hostedCodes, joinedCodes)
+            // Pro Paar nur eine Hochzeitsbild-Lobby
+            dedupeWeddingPaintLobbiesInPlace(byCode, hostedCodes)
             val seen = linkedSetOf<String>()
             val merged = buildList {
                 for (old in existing) {
@@ -1890,5 +1893,38 @@ private fun dedupeEventLobbiesInPlace(
         } else {
             byCode.remove(code)
         }
+    }
+}
+
+/** Höchstens eine Hochzeitsbild-Mal-Lobby (Zeremonie unberührt). */
+private fun dedupeWeddingPaintLobbiesInPlace(
+    byCode: LinkedHashMap<String, Lobby>,
+    hostedCodes: Set<String>,
+) {
+    val paints = byCode
+        .filter { (_, lobby) -> lobby.isWedding && !lobby.isWeddingCeremony }
+        .keys
+        .toList()
+    if (paints.size <= 1) return
+    fun score(code: String, lobby: Lobby): Int {
+        var s = 0
+        if (code in hostedCodes) s += 100
+        if (lobby.isWeddingRetake) s += 5
+        if (lobby.lastCanvasAt > 0L) s += 2
+        if (lobby.role == Role.HOST) s += 1
+        return s
+    }
+    var bestCode = paints.first()
+    var bestScore = -1
+    for (code in paints) {
+        val lobby = byCode[code] ?: continue
+        val sc = score(code, lobby)
+        if (sc > bestScore) {
+            bestScore = sc
+            bestCode = code
+        }
+    }
+    for (code in paints) {
+        if (code != bestCode) byCode.remove(code)
     }
 }

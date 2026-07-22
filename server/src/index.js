@@ -1838,7 +1838,210 @@ function trackFriendshipLevelAch(user, level) {
   if (level >= 100) trackAch(user, "friendship_lvl_100", 1);
 }
 
+function isWeddingPaintMeta(meta) {
+  return Boolean(meta?.isWedding) && !meta?.isWeddingCeremony;
+}
+
+function getWeddingPaintRoom(code) {
+  const c = String(code || "").trim().toUpperCase();
+  if (!c) return null;
+  let room = rooms.get(c) || null;
+  if (!room) {
+    const saved = getDb().rooms?.[c];
+    if (saved) {
+      room = hydrateRoom(c, saved);
+      if (room) rooms.set(c, room);
+    }
+  }
+  if (room && isWeddingPaintMeta(room)) return room;
+  return null;
+}
+
+/** Alle Hochzeitsbild-Codes (ohne Zeremonie) für ein Paar. */
+function collectWeddingPaintCodesForCouple(userA, userB, marriageId) {
+  const codes = new Set();
+  const mid = String(marriageId || "").trim();
+  const aId = userA?.id;
+  const bId = userB?.id;
+  function scanHosted(u) {
+    if (!u?.hostedRooms || typeof u.hostedRooms !== "object") return;
+    for (const [code, meta] of Object.entries(u.hostedRooms)) {
+      if (isWeddingPaintMeta(meta)) codes.add(String(code).trim().toUpperCase());
+    }
+  }
+  scanHosted(userA);
+  scanHosted(userB);
+  for (const [code, room] of rooms.entries()) {
+    if (!isWeddingPaintMeta(room)) continue;
+    const members = Array.isArray(room.memberUserIds) ? room.memberUserIds : [];
+    if (mid && String(room.marriageId || "") === mid) {
+      codes.add(String(code).trim().toUpperCase());
+      continue;
+    }
+    if (aId && bId && members.includes(aId) && members.includes(bId)) {
+      codes.add(String(code).trim().toUpperCase());
+    }
+  }
+  const dbRooms = getDb().rooms || {};
+  for (const [code, saved] of Object.entries(dbRooms)) {
+    if (!isWeddingPaintMeta(saved)) continue;
+    const members = Array.isArray(saved.memberUserIds) ? saved.memberUserIds : [];
+    if (mid && String(saved.marriageId || "") === mid) {
+      codes.add(String(code).trim().toUpperCase());
+      continue;
+    }
+    if (aId && bId && members.includes(aId) && members.includes(bId)) {
+      codes.add(String(code).trim().toUpperCase());
+    }
+  }
+  return [...codes].filter(Boolean);
+}
+
+function syncWeddingPaintHostedMeta(userA, userB, code, room, { retake = false } = {}) {
+  const c = String(code || "").trim().toUpperCase();
+  if (!c || !room) return;
+  const meta = {
+    createdAt: room.createdAt || Date.now(),
+    isFree: true,
+    isRandom: false,
+    isWedding: true,
+    isWeddingCeremony: false,
+    weddingRetake: Boolean(retake || room.weddingRetake),
+    name: room.name || "Hochzeitsbild",
+    capacity: 2,
+    token: room.token,
+    hostColorSide: normalizeHostColorSide(room.hostColorSide),
+    colorByUserId: room.colorByUserId || {},
+    lastCanvasAt: Number(room.lastCanvasAt) || 0,
+    memberUserIds: [userA.id, userB.id],
+    marriageId: room.marriageId || null,
+  };
+  ensureHostedRooms(userA);
+  ensureHostedRooms(userB);
+  userA.hostedRooms[c] = { ...meta };
+  userB.hostedRooms[c] = { ...meta, coHost: true };
+  forgetJoinedLobby(userA, c);
+  forgetJoinedLobby(userB, c);
+}
+
+/** Überzählige Hochzeitsbild-Lobbys auflösen — keepCode behalten. */
+function dissolveOrphanWeddingPaintLobbies(userA, userB, marriageRec, keepCode) {
+  const keep = String(keepCode || "").trim().toUpperCase();
+  const codes = collectWeddingPaintCodesForCouple(
+    userA,
+    userB,
+    marriageRec?.id || marriage.pairKey(userA.id, userB.id)
+  );
+  let removed = 0;
+  for (const code of codes) {
+    if (keep && code === keep) continue;
+    try {
+      console.log(
+        `dissolve orphan wedding-paint ${code} keep=${keep || "-"} marriage=${marriageRec?.id || "?"}`
+      );
+      dissolveWeddingLobby(code);
+      removed += 1;
+    } catch (e) {
+      console.error("dissolve orphan wedding-paint", code, e);
+    }
+  }
+  return removed;
+}
+
+function pickCanonicalWeddingPaintCode(userA, userB, marriageRec, { preferRetake = null } = {}) {
+  const preferred = String(marriageRec?.weddingLobbyCode || "").trim().toUpperCase();
+  if (preferred) {
+    const room = getWeddingPaintRoom(preferred);
+    if (room) {
+      if (preferRetake == null || Boolean(room.weddingRetake) === Boolean(preferRetake)) {
+        return preferred;
+      }
+    }
+  }
+  const codes = collectWeddingPaintCodesForCouple(
+    userA,
+    userB,
+    marriageRec?.id || marriage.pairKey(userA.id, userB.id)
+  );
+  let best = null;
+  let bestScore = -1;
+  for (const code of codes) {
+    const room = getWeddingPaintRoom(code);
+    if (!room) continue;
+    if (preferRetake != null && Boolean(room.weddingRetake) !== Boolean(preferRetake)) continue;
+    let strokes = 0;
+    try {
+      strokes = ensureRoomStrokes(room, code).length;
+    } catch {
+      strokes = Array.isArray(room.strokes) ? room.strokes.length : 0;
+    }
+    const score =
+      strokes * 1_000_000 +
+      (Number(room.lastCanvasAt) || 0) +
+      (Number(room.createdAt) || 0) / 1e13;
+    if (score > bestScore) {
+      bestScore = score;
+      best = code;
+    }
+  }
+  return best;
+}
+
+/** Einmalig: alle Ehen auf max. 1 Hochzeitsbild-Lobby bereinigen. */
+function cleanupAllDuplicateWeddingPaintLobbies() {
+  const db = getDb();
+  let removed = 0;
+  for (const m of Object.values(marriage.ensureMarriages(db))) {
+    if (!m) continue;
+    const a = db.users?.[m.a];
+    const b = db.users?.[m.b];
+    if (!a || !b) continue;
+    const keep = pickCanonicalWeddingPaintCode(a, b, m);
+    if (!keep) continue;
+    if (String(m.weddingLobbyCode || "").trim().toUpperCase() !== keep) {
+      m.weddingLobbyCode = keep;
+    }
+    const room = getWeddingPaintRoom(keep);
+    if (room) syncWeddingPaintHostedMeta(a, b, keep, room, { retake: Boolean(room.weddingRetake) });
+    removed += dissolveOrphanWeddingPaintLobbies(a, b, m, keep);
+  }
+  if (removed > 0) {
+    persistRooms();
+    scheduleSave();
+    console.log(`cleanup duplicate wedding-paint: removed ${removed}`);
+  }
+  return removed;
+}
+
 function createWeddingLobby(userA, userB, marriageRec) {
+  const existingCode = pickCanonicalWeddingPaintCode(userA, userB, marriageRec, {
+    preferRetake: false,
+  });
+  if (existingCode) {
+    const room = getWeddingPaintRoom(existingCode);
+    if (room) {
+      room.isWedding = true;
+      room.isWeddingCeremony = false;
+      room.weddingRetake = false;
+      room.marriageId = marriageRec.id || room.marriageId;
+      room.memberUserIds = [userA.id, userB.id];
+      syncWeddingPaintHostedMeta(userA, userB, existingCode, room, { retake: false });
+      marriageRec.weddingLobbyCode = existingCode;
+      if (!marriageRec.weddingStartedAt) {
+        marriageRec.weddingStartedAt = room.createdAt || Date.now();
+      }
+      if (!marriageRec.weddingEndsAt) {
+        marriageRec.weddingEndsAt =
+          (Number(marriageRec.weddingStartedAt) || Date.now()) + marriage.WEDDING_LOBBY_MS;
+      }
+      marriageRec.status = "wedding";
+      dissolveOrphanWeddingPaintLobbies(userA, userB, marriageRec, existingCode);
+      persistRooms();
+      scheduleSave();
+      return existingCode;
+    }
+  }
+
   let code = randomCode();
   while (rooms.has(code) || getDb().rooms?.[code]) code = randomCode();
   const token = randomToken().slice(0, 32);
@@ -1877,31 +2080,12 @@ function createWeddingLobby(userA, userB, marriageRec) {
     marriageId: marriageRec.id,
   };
   rooms.set(code, room);
-  const meta = {
-    createdAt: now,
-    isFree: true,
-    isRandom: false,
-    isWedding: true,
-    isWeddingCeremony: false,
-    weddingRetake: false,
-    name: "Hochzeitsbild",
-    capacity: 2,
-    token,
-    hostColorSide,
-    colorByUserId: room.colorByUserId,
-    lastCanvasAt: 0,
-  };
-  ensureHostedRooms(userA);
-  ensureHostedRooms(userB);
-  userA.hostedRooms[code] = { ...meta };
-  // Beide sehen die Lobby unter „eigene“ — Partner als Co-Host-Eintrag
-  userB.hostedRooms[code] = { ...meta, coHost: true };
-  forgetJoinedLobby(userA, code);
-  forgetJoinedLobby(userB, code);
+  syncWeddingPaintHostedMeta(userA, userB, code, room, { retake: false });
   marriageRec.weddingLobbyCode = code;
   marriageRec.weddingStartedAt = now;
   marriageRec.weddingEndsAt = now + marriage.WEDDING_LOBBY_MS;
   marriageRec.status = "wedding";
+  dissolveOrphanWeddingPaintLobbies(userA, userB, marriageRec, code);
   persistRooms();
   return code;
 }
@@ -1911,6 +2095,31 @@ function createWeddingLobby(userA, userB, marriageRec) {
  * Status bleibt "married"; Speichern erst nach Bestätigung beider Partner.
  */
 function createWeddingImageRetakeLobby(userA, userB, marriageRec) {
+  const existingCode = pickCanonicalWeddingPaintCode(userA, userB, marriageRec, {
+    preferRetake: true,
+  }) || pickCanonicalWeddingPaintCode(userA, userB, marriageRec);
+  if (existingCode) {
+    const room = getWeddingPaintRoom(existingCode);
+    if (room) {
+      room.isWedding = true;
+      room.weddingRetake = true;
+      room.marriageId =
+        marriageRec.id || marriage.pairKey(userA.id, userB.id) || room.marriageId;
+      room.memberUserIds = [userA.id, userB.id];
+      syncWeddingPaintHostedMeta(userA, userB, existingCode, room, { retake: true });
+      marriageRec.weddingLobbyCode = existingCode;
+      marriageRec.weddingImageRetake = true;
+      if (!marriageRec.weddingConfirm || typeof marriageRec.weddingConfirm !== "object") {
+        marriageRec.weddingConfirm = { [userA.id]: false, [userB.id]: false };
+      }
+      if (!marriageRec.weddingStartedAt) marriageRec.weddingStartedAt = Date.now();
+      dissolveOrphanWeddingPaintLobbies(userA, userB, marriageRec, existingCode);
+      persistRooms();
+      scheduleSave();
+      return existingCode;
+    }
+  }
+
   let code = randomCode();
   while (rooms.has(code) || getDb().rooms?.[code]) code = randomCode();
   const token = randomToken().slice(0, 32);
@@ -1948,32 +2157,13 @@ function createWeddingImageRetakeLobby(userA, userB, marriageRec) {
     marriageId: marriageRec.id || marriage.pairKey(userA.id, userB.id),
   };
   rooms.set(code, room);
-  const meta = {
-    createdAt: now,
-    isFree: true,
-    isRandom: false,
-    isWedding: true,
-    weddingRetake: true,
-    name: "Hochzeitsbild",
-    capacity: 2,
-    token,
-    hostColorSide,
-    colorByUserId: room.colorByUserId,
-    lastCanvasAt: 0,
-    memberUserIds: [userA.id, userB.id],
-    marriageId: room.marriageId,
-  };
-  ensureHostedRooms(userA);
-  ensureHostedRooms(userB);
-  userA.hostedRooms[code] = { ...meta };
-  userB.hostedRooms[code] = { ...meta, coHost: true };
-  forgetJoinedLobby(userA, code);
-  forgetJoinedLobby(userB, code);
+  syncWeddingPaintHostedMeta(userA, userB, code, room, { retake: true });
   marriageRec.weddingLobbyCode = code;
   marriageRec.weddingImageRetake = true;
   marriageRec.weddingConfirm = { [userA.id]: false, [userB.id]: false };
   marriageRec.weddingStartedAt = now;
   marriageRec.weddingEndsAt = 0;
+  dissolveOrphanWeddingPaintLobbies(userA, userB, marriageRec, code);
   persistRooms();
   scheduleSave();
   return code;
@@ -7695,10 +7885,31 @@ app.get("/v1/me/lobbies", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   try {
-    const m = marriage.findMarriageForUser(getDb(), ctx.user.id);
-    if (m) ensureWeddingImageRetake(m);
-  } catch {
-    /* ignore */
+    const db = getDb();
+    const m = marriage.findMarriageForUser(db, ctx.user.id);
+    if (m) {
+      ensureWeddingImageRetake(m);
+      const a = db.users?.[m.a];
+      const b = db.users?.[m.b];
+      if (a && b) {
+        const keep = pickCanonicalWeddingPaintCode(a, b, m);
+        if (keep) {
+          if (String(m.weddingLobbyCode || "").trim().toUpperCase() !== keep) {
+            m.weddingLobbyCode = keep;
+          }
+          const room = getWeddingPaintRoom(keep);
+          if (room) {
+            syncWeddingPaintHostedMeta(a, b, keep, room, {
+              retake: Boolean(room.weddingRetake),
+            });
+          }
+          dissolveOrphanWeddingPaintLobbies(a, b, m, keep);
+          scheduleSave();
+        }
+      }
+    }
+  } catch (e) {
+    console.error("me/lobbies wedding cleanup", e);
   }
   return res.json({
     lobbies: publicHostedLobbies(ctx.user),
@@ -18147,6 +18358,10 @@ server.listen(PORT, "0.0.0.0", () => {
     const retakes = ensureAllWeddingImageRetakes();
     if (retakes > 0) {
       console.log(`[marriage] wedding image retake lobbies: ${retakes}`);
+    }
+    const dupes = cleanupAllDuplicateWeddingPaintLobbies();
+    if (dupes > 0) {
+      console.log(`[marriage] removed ${dupes} duplicate wedding-paint lobby(ies)`);
     }
   } catch (e) {
     console.error("[marriage] boot recover failed", e);
