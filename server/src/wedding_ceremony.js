@@ -3,6 +3,8 @@
  * Unabhängig von Normal-/Event-/Random-/Hochzeitsbild-Lobbys.
  */
 
+const weddingGifts = require("./wedding_gifts");
+
 const CEREMONY_CAPACITY = 10; // 2 Brautpaar + 8 Gäste
 const CEREMONY_MIN_AHEAD_MS = 10 * 60 * 1000;
 const CEREMONY_MAX_AHEAD_MS = 14 * 24 * 60 * 60 * 1000;
@@ -399,7 +401,8 @@ function advancePastor(m, users = {}) {
       }
       c.pastorPhase = "reception";
       c.phase = "reception";
-      if (!c.receptionEndsAt) c.receptionEndsAt = now + RECEPTION_MS;
+      // Volle Empfangszeit ab hier (nicht schon ab dem Ja / Pastor-Rede)
+      c.receptionEndsAt = now + RECEPTION_MS;
       return { changed: true, receptionStarted: true };
     }
     return { changed: false };
@@ -425,10 +428,7 @@ function startMarriedSpeech(m) {
   c.phase = "gifts";
   // Daumen/Vow-UI zurücksetzen
   c.vows = {};
-  if (!c.receptionEndsAt) {
-    // Empfang startet nach Abschluss-Rede; vorläufig setzen für Home-Timer
-    c.receptionEndsAt = Date.now() + RECEPTION_MS;
-  }
+  // Empfangs-Timer startet erst bei pastorPhase=reception
 }
 
 function canStand(m, userId) {
@@ -592,6 +592,8 @@ function publicCeremony(m, viewerId, users = {}) {
   const meGuest = !isCouple(m, viewerId);
   const iGifted = Boolean(c.giftedBy[viewerId]);
   const iGuestbooked = Boolean(c.guestbookedBy[viewerId]);
+  const giftCount = weddingGifts.giverGiftCount(m, viewerId);
+  const canStillGift = giftCount < weddingGifts.MAX_GIFTS_PER_GIVER;
   const inReception =
     !c.receptionEnded &&
     receptionRemainingMs(m) > 0 &&
@@ -634,11 +636,16 @@ function publicCeremony(m, viewerId, users = {}) {
     coupleNicknames: coupleNicks,
     receptionEndsAt: Number(c.receptionEndsAt) || 0,
     receptionRemainingMs: receptionRemainingMs(m),
-    showGiftButton: Boolean(meGuest && inReception && !iGifted && m.status === "married"),
-    showGuestbookButton: Boolean(meGuest && inReception && (iGifted || iGuestbooked)),
+    showGiftButton: Boolean(
+      meGuest && inReception && canStillGift && m.status === "married"
+    ),
+    // Gästebuch parallel zum Schenken (nicht erst nach dem ersten Gift)
+    showGuestbookButton: Boolean(meGuest && inReception && m.status === "married"),
     showApplause: Boolean(meGuest && inReception && m.status === "married"),
     iGifted,
     iGuestbooked,
+    giftsGiven: giftCount,
+    giftsRemaining: Math.max(0, weddingGifts.MAX_GIFTS_PER_GIVER - giftCount),
     vowsReady: c.pastorPhase === "vows",
     marriageStatus: m.status || null,
     applauseBursts: (c.applauseBursts || [])

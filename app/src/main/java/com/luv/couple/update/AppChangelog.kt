@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.142",
+            listOf(
+                "Hochzeit-Gäste: Einladung auch im Empfang, Geschenk + Gästebuch parallel",
+                "Applaus-Button dauerhaft, Empfang volle 60 Min ab Empfangsstart",
+            )
+        ),
+        Entry(
             "2.2.141",
             listOf(
                 "Kapelle: Geldbäume blockieren Laufen und Sitze nicht mehr",

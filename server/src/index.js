@@ -2564,11 +2564,19 @@ function keepCeremonyLobbyForGifts(m) {
   const room = rooms.get(code) || db.rooms?.[code] || null;
   if (!room?.isWeddingCeremony && !db.rooms?.[code]?.isWeddingCeremony) return;
   const c = weddingCeremony.ensureCeremony(m);
+  const inReception =
+    c.pastorPhase === "reception" || c.phase === "reception";
+  // Empfangsende nur setzen wenn Empfang läuft — nicht schon während Pastor-Rede
+  if (inReception && !c.receptionEndsAt) {
+    c.receptionEndsAt = Date.now() + weddingCeremony.RECEPTION_MS;
+  }
   const ends =
     Number(c.receptionEndsAt) ||
     Number(m.giftWindowEndsAt) ||
     Date.now() + weddingCeremony.RECEPTION_MS;
-  if (!c.receptionEndsAt) c.receptionEndsAt = ends;
+  if (inReception) {
+    m.giftWindowEndsAt = ends;
+  }
   room.capacity = Math.max(room.capacity || 10, weddingCeremony.CEREMONY_CAPACITY);
   room.giftWindowEndsAt = ends;
   room.giftPhase = m.giftPhase || "open";
@@ -2760,11 +2768,13 @@ function finalizeWeddingMarriage(m, { force = false } = {}) {
   const c = weddingCeremony.ensureCeremony(m);
   if (!Array.isArray(m.guestbook)) m.guestbook = [];
   weddingGifts.openGiftWindow(m, m.marriedAt);
-  // Empfang = Geschenkfenster = 60 Min (danach rollen + Claim)
+  // Pastor-Rede zuerst; Empfangs-Timer (60 Min) startet erst bei reception
   weddingCeremony.startMarriedSpeech(m);
-  c.receptionEndsAt = m.marriedAt + weddingCeremony.RECEPTION_MS;
-  m.giftWindowEndsAt = c.receptionEndsAt;
   c.receptionEnded = false;
+  // Vorläufiges Geschenkfenster bis Empfang startet (dann auf Empfangsende gesetzt)
+  if (!m.giftWindowEndsAt) {
+    m.giftWindowEndsAt = m.marriedAt + weddingCeremony.RECEPTION_MS;
+  }
   if (m.ceremonyLobbyCode) {
     keepCeremonyLobbyForGifts(m);
   }
@@ -3067,11 +3077,7 @@ function tickCeremonyRitual(m, db) {
     Date.now() >= ends &&
     !c.receptionEnded &&
     m.status === "married" &&
-    (c.pastorPhase === "reception" ||
-      c.phase === "reception" ||
-      c.pastorPhase === "married" ||
-      c.phase === "gifts" ||
-      m.giftPhase === "open")
+    (c.pastorPhase === "reception" || c.phase === "reception")
   ) {
     endCeremonyReception(m);
     return { receptionOver: true, giftsRolled: true };
@@ -9064,15 +9070,24 @@ app.post("/v1/me/lobby-invites/accept", (req, res) => {
     const mid = room.marriageId;
     const m = mid ? marriage.ensureMarriages(db)[mid] : null;
     const giftPhase = String(m?.giftPhase || room.giftPhase || "none");
-    const giftsOnly =
-      giftPhase === "open" ||
-      giftPhase === "rolled" ||
-      m?.ceremony?.phase === "gifts" ||
-      m?.status === "married";
-    if (giftsOnly && (!m || !weddingCeremony.isCouple(m, ctx.user.id))) {
+    const c = m ? weddingCeremony.ensureCeremony(m) : null;
+    // Gäste: während Rede/Empfang ok; blockiert nur nach Empfang / Claim / mitten in der Trauung
+    const guestBlocked =
+      m &&
+      !weddingCeremony.isCouple(m, ctx.user.id) &&
+      (giftPhase === "rolled" ||
+        giftPhase === "done" ||
+        Boolean(c?.receptionEnded) ||
+        c?.pastorPhase === "gifts_claim" ||
+        c?.phase === "gifts_claim" ||
+        (Boolean(c?.seatingLocked) && m.status !== "married"));
+    if (guestBlocked) {
       return res.status(403).json({
         error: "ceremony_gifts_couple_only",
-        message: "Nach dem Ja ist die Kapelle nur noch fürs Ehepaar.",
+        message:
+          m.status === "married"
+            ? "Der Empfang ist vorbei — die Kapelle ist geschlossen."
+            : "Die Zeremonie läuft gerade — bitte wartet bis zum Empfang.",
       });
     }
     const members = Array.isArray(room.memberUserIds) ? room.memberUserIds : [];

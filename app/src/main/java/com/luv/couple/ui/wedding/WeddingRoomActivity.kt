@@ -291,6 +291,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 myY = me.y
             }
         }
+        // Nur auto-eintreten wenn schon present (Reconnect) oder Brautpaar —
+        // sonst umgehen Gäste den Latecomer-Schutz ohne „Eintreten“-Tap
         if (
             it.ceremony?.phase == "altar" ||
             it.ceremony?.phase == "vows" ||
@@ -298,7 +300,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             it.ceremony?.phase == "reception" ||
             it.ceremony?.seatingLocked == true
         ) {
-            entered = true
+            val meNow = it.ceremony.gathering.find { g -> g.userId == myId }
+            if (meNow?.isCouple == true || meNow?.present == true) {
+                entered = true
+            }
         }
         if (
             it.ceremony?.pastorPhase == "gifts_claim" ||
@@ -445,6 +450,15 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         while (rejectName == null) {
             runCatching { LuvApiClient.fetchCeremony() }
                 .onSuccess { bundle ->
+                    if (shouldKickLatecomer(bundle.ceremony)) {
+                        Toast.makeText(
+                            context,
+                            "Die Zeremonie ist im Gange — es wäre unhöflich, jetzt hereinzuplatzen.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        onClose()
+                        return@LaunchedEffect
+                    }
                     applyCeremonyBundle(bundle)
                     val phase = bundle.ceremony?.pastorPhase
                     if (phase == "married" || phase == "reception") {
@@ -1177,12 +1191,18 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             }
         }
 
-        // Konfetti-Burst an Position
+        // Burst-Koordinaten relativ zur Kapelle (nicht Fullscreen)
+        val chapelLeft = (maxWidth - roomW) / 2
+        val chapelTop = (maxHeight - roomH) / 2
         confettiBursts.forEach { (px, py, at) ->
             key(at) {
+                val mappedX =
+                    ((chapelLeft + roomW * px.coerceIn(0f, 1f)) / maxWidth).coerceIn(0.05f, 0.95f)
+                val mappedY =
+                    ((chapelTop + roomH * py.coerceIn(0f, 1f)) / maxHeight).coerceIn(0.05f, 0.95f)
                 PositionedConfettiBurst(
-                    originX = px,
-                    originY = py,
+                    originX = mappedX,
+                    originY = mappedY,
                     onDone = {
                         confettiBursts = confettiBursts.filterNot { it.third == at }
                     }
@@ -1198,8 +1218,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .offset(
-                            x = (maxWidth * px) - 16.dp,
-                            y = (maxHeight * py) - 16.dp
+                            x = chapelLeft + roomW * px.coerceIn(0f, 1f) - 16.dp,
+                            y = chapelTop + roomH * py.coerceIn(0f, 1f) - 16.dp
                         )
                 )
                 LaunchedEffect(at) {
@@ -1209,7 +1229,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             }
         }
 
-        // Applaus-Prompt für Gäste (einmalig, nach Glückwunsch-Fenster)
+        // Applaus-Prompt einmalig (zusätzlich Dauer-Button unten)
         if (!meIsCouple && showGuestApplausePrompt && canApplause) {
             Box(
                 modifier = Modifier
@@ -1222,7 +1242,6 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         scope.launch {
                             playApplauseSound(context)
                             val now = System.currentTimeMillis()
-                            // Viele Applaus-Emojis über den Raum
                             val extras = List(10) {
                                 Triple(
                                     Random.nextFloat() * 0.7f + 0.15f,
@@ -1242,12 +1261,12 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             }
         }
 
-        // Untere Leiste: zurück + Konfetti + Geschenk/Gästebuch + Lautsprecher
+        // Untere Leiste: zurück + Konfetti + Applaus + Geschenk + Gästebuch + Lautsprecher
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .padding(horizontal = 10.dp, vertical = 8.dp)
                 .clip(RoundedCornerShape(18.dp))
                 .background(Color(0xE61E2430))
                 .padding(6.dp),
@@ -1255,15 +1274,15 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
-                    if (!meIsCouple) "Verlassen" else "←",
+                    if (!meIsCouple) "←" else "←",
                     color = Color.White,
-                    fontSize = if (!meIsCouple) 14.sp else 22.sp,
+                    fontSize = 20.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
-                        .weight(1f)
+                        .weight(0.7f)
                         .height(42.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color.White.copy(0.10f))
@@ -1272,10 +1291,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 )
                 Text(
                     "🎉",
-                    fontSize = 20.sp,
+                    fontSize = 18.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
-                        .weight(0.85f)
+                        .weight(0.7f)
                         .height(42.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0x88FFD54F))
@@ -1290,41 +1309,65 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         }
                         .padding(vertical = 8.dp),
                 )
-                if (canGift) {
+                if (canApplause) {
                     Text(
-                        "🎁 Geschenk",
-                        fontSize = 14.sp,
-                        color = Color.White,
+                        "👏",
+                        fontSize = 18.sp,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
-                            .weight(1.2f)
+                            .weight(0.7f)
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0x88E91E63))
+                            .clickable {
+                                guestApplausePromptDone = true
+                                showGuestApplausePrompt = false
+                                scope.launch {
+                                    playApplauseSound(context)
+                                    val now = System.currentTimeMillis()
+                                    applauseBursts = applauseBursts + Triple(myX, myY, now)
+                                    seenApplauseAts = seenApplauseAts + now
+                                    runCatching { LuvApiClient.ceremonyApplause(myX, myY) }
+                                        .onSuccess { if (it != null) ceremony = it }
+                                }
+                            }
+                            .padding(vertical = 8.dp),
+                    )
+                }
+                if (canGift) {
+                    Text(
+                        "🎁",
+                        fontSize = 18.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .weight(0.75f)
                             .height(42.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(Color(0x88E91E63))
                             .clickable { showGiftPicker = true }
-                            .padding(vertical = 10.dp),
+                            .padding(vertical = 8.dp),
                     )
-                } else if (canGuestbook) {
+                }
+                if (canGuestbook) {
                     Text(
-                        "📖 Gästebuch",
-                        fontSize = 14.sp,
-                        color = Color.White,
+                        "📖",
+                        fontSize = 18.sp,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
-                            .weight(1.2f)
+                            .weight(0.75f)
                             .height(42.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(Color(0x887E57C2))
                             .clickable { showGuestbook = true }
-                            .padding(vertical = 10.dp),
+                            .padding(vertical = 8.dp),
                     )
                 }
                 Text(
                     if (musicMuted) "🔇" else "🔊",
-                    fontSize = 20.sp,
+                    fontSize = 18.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
-                        .weight(1f)
+                        .weight(0.7f)
                         .height(42.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(
