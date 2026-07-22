@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.107",
+            listOf(
+                "Hochzeitsteilen: feierliche Einladungskarte mit Datum & Namen",
+            )
+        ),
+        Entry(
             "2.2.106",
             listOf(
                 "Hochzeit teilen: Altar-Vorschau statt „zeichnen gerade“",

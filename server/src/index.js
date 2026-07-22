@@ -28,6 +28,7 @@ const petImages = require("./pet_images");
 const playBilling = require("./play_billing");
 const playIntegrity = require("./play_integrity");
 const inviteTrial = require("./invite_trial");
+const weddingInviteCard = require("./wedding_invite_card");
 const itemTrade = require("./item_trade");
 const itemLabels = require("./item_labels");
 const notifyPhrases = require("./notify_phrases");
@@ -3166,6 +3167,7 @@ function restoreRoomsFromDisk() {
       isFree: Boolean(data.isFree),
       isRandom: Boolean(data.isRandom),
       isWedding: Boolean(data.isWedding),
+      isWeddingCeremony: Boolean(data.isWeddingCeremony),
       weddingRetake: Boolean(data.weddingRetake),
       capacity: Math.min(
         MAX_PEERS,
@@ -3191,6 +3193,13 @@ function restoreRoomsFromDisk() {
           ? data.memberUserIds.filter((id) => typeof id === "string")
           : [],
       marriageId: data.marriageId || null,
+      ceremonyAt: Number(data.ceremonyAt) || 0,
+      giftWindowEndsAt: Number(data.giftWindowEndsAt) || 0,
+      giftPhase: data.giftPhase ? String(data.giftPhase).slice(0, 16) : "none",
+      coupleNicknames:
+        data.coupleNicknames && typeof data.coupleNicknames === "object"
+          ? data.coupleNicknames
+          : null,
       eventId: data.eventId ? String(data.eventId).slice(0, 64) : null,
       eventPrompt: data.eventPrompt ? String(data.eventPrompt).slice(0, 80) : null,
       eventPromptChoices: Array.isArray(data.eventPromptChoices)
@@ -4498,7 +4507,7 @@ function publicRoom(room, code) {
     (Array.isArray(room.strokes) && room.strokes.length > 0) ||
     Number(room.lastCanvasAt) > 0;
   const inviteImageUrl = isCeremony
-    ? inviteTrial.WEDDING_ALTAR_OG
+    ? weddingInviteCard.publicWeddingCardUrl(code, Number(room.ceremonyAt) || 0)
     : hasSnap
       ? `/v1/rooms/${code}/invite-image`
       : null;
@@ -4929,6 +4938,87 @@ function ceremonyCoupleLine(room) {
   if (a && b) return `${a} & ${b}`;
   const host = String(room?.hostNickname || "").trim().slice(0, 18);
   return host || "Ein Paar";
+}
+
+/** Nach Restart oft verloren — Flags aus Marriage / HostedRooms zurückholen. */
+function healCeremonyRoomFlags(room, code) {
+  if (!room || !code) return false;
+  const clean = String(code || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "")
+    .replace(/[^A-Z0-9]/g, "");
+  if (!clean) return false;
+  const db = getDb();
+  let dirty = false;
+
+  let m = null;
+  const mid = room.marriageId;
+  if (mid) m = marriage.ensureMarriages(db)[mid] || null;
+  if (!m) {
+    for (const rec of Object.values(marriage.ensureMarriages(db))) {
+      if (String(rec?.ceremonyLobbyCode || "").toUpperCase() === clean) {
+        m = rec;
+        break;
+      }
+    }
+  }
+
+  if (m && String(m.ceremonyLobbyCode || "").toUpperCase() === clean) {
+    if (!room.isWeddingCeremony) {
+      room.isWeddingCeremony = true;
+      dirty = true;
+    }
+    room.isWedding = false;
+    const at = Number(m.ceremonyAt) || 0;
+    if (at > 0 && Number(room.ceremonyAt) !== at) {
+      room.ceremonyAt = at;
+      dirty = true;
+    }
+    const wantId = m.id || marriage.pairKey(m.a, m.b);
+    if (!room.marriageId || room.marriageId !== wantId) {
+      room.marriageId = wantId;
+      dirty = true;
+    }
+    if (!room.coupleNicknames || typeof room.coupleNicknames !== "object") {
+      const ua = db.users?.[m.a];
+      const ub = db.users?.[m.b];
+      room.coupleNicknames = {
+        a: String(ua?.nickname || "").trim().slice(0, 18) || "Partner",
+        b: String(ub?.nickname || "").trim().slice(0, 18) || "Partner",
+      };
+      dirty = true;
+    }
+  }
+
+  if (!room.isWeddingCeremony) {
+    const memberIds = Array.isArray(room.memberUserIds) ? room.memberUserIds : [];
+    for (const uid of memberIds) {
+      const meta = db.users?.[uid]?.hostedRooms?.[clean];
+      if (!meta?.isWeddingCeremony) continue;
+      room.isWeddingCeremony = true;
+      room.isWedding = false;
+      if (Number(meta.ceremonyAt) > 0) room.ceremonyAt = Number(meta.ceremonyAt);
+      if (meta.coupleNicknames && typeof meta.coupleNicknames === "object") {
+        room.coupleNicknames = meta.coupleNicknames;
+      }
+      if (meta.marriageId) room.marriageId = meta.marriageId;
+      dirty = true;
+      break;
+    }
+  }
+
+  if (dirty) {
+    const saved = db.rooms?.[clean];
+    if (saved && typeof saved === "object") {
+      saved.isWeddingCeremony = Boolean(room.isWeddingCeremony);
+      saved.isWedding = Boolean(room.isWedding);
+      saved.ceremonyAt = Number(room.ceremonyAt) || 0;
+      saved.coupleNicknames = room.coupleNicknames || null;
+      saved.marriageId = room.marriageId || null;
+    }
+    scheduleSave();
+  }
+  return dirty;
 }
 
 function invitePublicBlurb(room, hostNickname) {
@@ -9365,6 +9455,20 @@ function finalizeCeremonySchedule(m, userId, ceremonyAt, db) {
   c.timeProposals = {};
   pushCeremonyScheduledNotices(m, db);
   scheduleSave();
+  // Einladungskarte für Link-Vorschau vorwärmen (best effort)
+  const room = rooms.get(code);
+  if (room) {
+    Promise.resolve()
+      .then(() =>
+        weddingInviteCard.ensureWeddingInviteCardFile(DATA_DIR, {
+          code,
+          coupleNicknames: room.coupleNicknames,
+          hostNickname: room.hostNickname || a.nickname || "Host",
+          ceremonyAt: Number(room.ceremonyAt) || validated.ceremonyAt,
+        })
+      )
+      .catch((e) => console.error("wedding card warm", e?.message || e));
+  }
   return {
     ok: true,
     body: {
@@ -16278,6 +16382,7 @@ function loadRoomForInvite(code) {
       room.strokes = [];
     }
   }
+  if (room) healCeremonyRoomFlags(room, clean);
   return { code: clean, room };
 }
 
@@ -16956,7 +17061,7 @@ app.get("/", serveLandingHtml);
 app.get("/landing", serveLandingHtml);
 
 /** WhatsApp / Social Preview + Invite-Landing für /luv/j/:code */
-app.get("/invite/:code", (req, res) => {
+app.get("/invite/:code", async (req, res) => {
   const { code, room } = loadRoomForInvite(req.params.code);
   const host = room?.hostNickname || "Jemand";
   const joinUrl = `https://reineke.pro/luv/j/${code}`;
@@ -16976,11 +17081,30 @@ app.get("/invite/:code", (req, res) => {
     const memAt = Number(canvasMemories()?.[code]?.updatedAt) || 0;
     if (memAt > 0) imageVer = Math.max(imageVer, memAt);
   }
-  const inviteImageUrl = isCeremony
-    ? inviteTrial.WEDDING_ALTAR_OG
-    : hasSnap
-      ? inviteTrial.inviteImageAbsoluteUrl(code, imageVer)
-      : null;
+
+  let inviteImageUrl = null;
+  let ceremonyDetails = "";
+  if (isCeremony) {
+    const at = Number(room.ceremonyAt) || 0;
+    try {
+      await weddingInviteCard.ensureWeddingInviteCardFile(DATA_DIR, {
+        code,
+        coupleNicknames: room.coupleNicknames,
+        hostNickname: host,
+        ceremonyAt: at,
+      });
+    } catch (e) {
+      console.error("wedding card warm", e?.message || e);
+    }
+    inviteImageUrl = weddingInviteCard.publicWeddingCardUrl(code, at);
+    const when = weddingInviteCard.formatCeremonyParts(at);
+    ceremonyDetails = [when.dateLine, when.umLine, when.timeLine]
+      .filter(Boolean)
+      .join(" · ");
+  } else if (hasSnap) {
+    inviteImageUrl = inviteTrial.inviteImageAbsoluteUrl(code, imageVer);
+  }
+
   // Immer 200 — WhatsApp/Link-Preview crawlen keine 404-Seiten für OG-Tags
   res
     .status(200)
@@ -16998,8 +17122,34 @@ app.get("/invite/:code", (req, res) => {
         playUrl,
         isWeddingCeremony: isCeremony,
         coupleLine: isCeremony ? ceremonyCoupleLine(room) : "",
+        ceremonyDetails,
       })
     );
+});
+
+/** Dynamische Hochzeits-Einladungskarte (OG / WhatsApp). */
+app.get("/v1/rooms/:code/wedding-invite-card", async (req, res) => {
+  const { code, room } = loadRoomForInvite(req.params.code);
+  if (!room) return res.status(404).end();
+  healCeremonyRoomFlags(room, code);
+  if (!room.isWeddingCeremony) return res.status(404).end();
+  try {
+    const file = await weddingInviteCard.ensureWeddingInviteCardFile(DATA_DIR, {
+      code,
+      coupleNicknames: room.coupleNicknames,
+      hostNickname: room.hostNickname || "Host",
+      ceremonyAt: Number(room.ceremonyAt) || 0,
+    });
+    if (!file || !fs.existsSync(file)) {
+      return res.redirect(302, inviteTrial.WEDDING_ALTAR_OG);
+    }
+    res.setHeader("Content-Type", "image/jpeg");
+    res.setHeader("Cache-Control", "public, max-age=300");
+    return fs.createReadStream(file).pipe(res);
+  } catch (e) {
+    console.error("wedding-invite-card", e?.message || e);
+    return res.redirect(302, inviteTrial.WEDDING_ALTAR_OG);
+  }
 });
 
 app.get("/v1/rooms/:code", (req, res) => {

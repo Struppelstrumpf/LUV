@@ -71,11 +71,13 @@ function buildInviteLandingHtml({
   playUrl,
   isWeddingCeremony = false,
   coupleLine = "",
+  ceremonyDetails = "",
 }) {
   const safeHost = String(host || "Jemand").trim() || "Jemand";
   const couple =
     String(coupleLine || "").trim() ||
     safeHost;
+  const details = String(ceremonyDetails || "").trim();
   // Klar & einfach — WhatsApp zeigt title/description + Bild
   let title;
   let lede;
@@ -86,16 +88,18 @@ function buildInviteLandingHtml({
   let previewBlock;
 
   if (isWeddingCeremony && found) {
-    title = "Du bist zur Hochzeit eingeladen";
-    headline = "Hochzeit auf LUV";
-    lede = `${couple} heiraten — komm als Gast zur Zeremonie.`;
+    title = "Einladung zur Hochzeit";
+    headline = "Einladung zur Hochzeit";
+    lede = details
+      ? `${couple} heiraten am ${details}. Du bist herzlich eingeladen!`
+      : `${couple} heiraten — du bist herzlich eingeladen!`;
     ctaLabel = "Zur Hochzeit";
-    ogImage = WEDDING_ALTAR_OG;
+    ogImage = inviteImageUrl || WEDDING_ALTAR_OG;
     ogType = "image/jpeg";
     const previewSrc = inviteImageUrl || WEDDING_ALTAR_OG;
     previewBlock = `<figure class="lobby-preview lobby-preview--altar">
-      <img src="${escapeHtml(previewSrc)}" alt="Hochzeitsaltar" width="1200" height="1200" loading="eager" />
-      <figcaption>Hochzeit · ${escapeHtml(couple)}</figcaption>
+      <img src="${escapeHtml(previewSrc)}" alt="Hochzeitseinladung" width="1080" height="1440" loading="eager" />
+      <figcaption>${escapeHtml(couple)}${details ? " · " + escapeHtml(details) : ""}</figcaption>
     </figure>`;
   } else {
     title = found
@@ -159,8 +163,8 @@ function buildInviteLandingHtml({
   <meta property="og:image:secure_url" content="${escapeHtml(ogImage)}" />
   <meta property="og:image:alt" content="${escapeHtml(title)}" />
   <meta property="og:image:type" content="${ogType}" />
-  <meta property="og:image:width" content="1200" />
-  <meta property="og:image:height" content="1200" />
+  <meta property="og:image:width" content="${isWeddingCeremony && found ? "1080" : "1200"}" />
+  <meta property="og:image:height" content="${isWeddingCeremony && found ? "1440" : "1200"}" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="${escapeHtml(title)}" />
   <meta name="twitter:description" content="${escapeHtml(lede)}" />

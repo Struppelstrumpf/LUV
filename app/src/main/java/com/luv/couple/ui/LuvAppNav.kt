@@ -259,7 +259,34 @@ fun LuvAppNav() {
                 lobby.coupleNameA?.trim()?.takeIf { it.isNotBlank() },
                 lobby.coupleNameB?.trim()?.takeIf { it.isNotBlank() }
             ).joinToString(" & ").ifBlank { "Wir" }
-            return "$couple heiraten — du bist eingeladen!\n${lobby.joinUrl}"
+            val whenLines = if (lobby.ceremonyAt > 0L) {
+                val cal = java.util.Calendar.getInstance().apply {
+                    timeInMillis = lobby.ceremonyAt
+                }
+                val months = arrayOf(
+                    "Januar", "Februar", "März", "April", "Mai", "Juni",
+                    "Juli", "August", "September", "Oktober", "November", "Dezember"
+                )
+                val day = cal.get(java.util.Calendar.DAY_OF_MONTH)
+                val month = months[cal.get(java.util.Calendar.MONTH)]
+                val year = cal.get(java.util.Calendar.YEAR)
+                val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+                val minute = cal.get(java.util.Calendar.MINUTE)
+                val time = String.format(java.util.Locale.GERMANY, "%02d:%02d Uhr", hour, minute)
+                "$day. $month $year\num\n$time"
+            } else {
+                null
+            }
+            return buildString {
+                append(couple)
+                append(" heiraten")
+                if (whenLines != null) {
+                    append('\n')
+                    append(whenLines)
+                }
+                append("\nDu bist herzlich eingeladen!\n")
+                append(lobby.joinUrl)
+            }
         }
         return "Das zeichnen wir gerade — komm mit rein!\n${lobby.joinUrl}"
     }
