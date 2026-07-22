@@ -183,9 +183,10 @@ function clearGatheringPresence(m, userId) {
   const c = ensureCeremony(m);
   if (!c || !userId) return;
   delete c.gatheringPresence[userId];
-  // Sitz freigeben, solange die Zeremonie nicht gelockt ist
-  if (!c.seatingLocked && c.seated) {
-    delete c.seated[userId];
+  // Sitz + Position freigeben (sonst Ghost-Reseat → Altar-Musik mit einer Person)
+  if (!c.seatingLocked) {
+    if (c.seated) delete c.seated[userId];
+    if (c.positions) delete c.positions[userId];
   }
 }
 
@@ -288,9 +289,12 @@ function buildPastorMarriedLines(m, users = {}) {
   ];
 }
 
-/** Beide Eheleute sitzen auf gelben Altar-Plätzen? */
+/** Beide Eheleute sitzen live auf gelben Altar-Plätzen? (beide müssen anwesend sein) */
 function coupleAtAltar(m, isCoupleSeatFn) {
   const c = ensureCeremony(m);
+  if (!isPresent(m, m.a, "gathering") || !isPresent(m, m.b, "gathering")) {
+    return false;
+  }
   if (!c.seated[m.a] || !c.seated[m.b]) return false;
   if (typeof isCoupleSeatFn !== "function") return true;
   return isCoupleSeatFn(c.seated[m.a]) && isCoupleSeatFn(c.seated[m.b]);
@@ -450,8 +454,9 @@ function canStand(m, userId) {
 function canSitAfterLock(m, userId) {
   const c = ensureCeremony(m);
   if (!c.seatingLocked) return true;
-  // Stehende dürfen sich noch setzen; Sitzende bleiben
-  return !c.seated[userId] || true;
+  // Nach Lock: nur wer schon sitzt bleibt; neue Sitze nur Empfang
+  if (c.pastorPhase === "reception" || c.phase === "reception") return true;
+  return Boolean(c.seated[userId]);
 }
 
 /** Darf jemand die Kapelle betreten / rejoinen? */
@@ -491,10 +496,10 @@ function canEnterChapel(m, userId, { isKnownMember = false } = {}) {
   }
   // Zeremonie läuft (nach 30s) — nicht reinplatzen
   if (isCouple(m, userId)) {
-    // Brautpaar darf drin bleiben / reconnect
     return { ok: true };
   }
-  if (isKnownMember && isPresent(m, userId, "gathering")) {
+  // Nur wer schon einen Sitz hatte (Reconnect), nicht bloß Gathering-Heartbeat vom Warte-Dialog
+  if (c.seated[userId]) {
     return { ok: true };
   }
   return {
@@ -525,6 +530,13 @@ function pruneStaleGathering(m) {
   for (const uid of Object.keys(c.seated || {})) {
     if (!isPresent(m, uid, "gathering")) {
       delete c.seated[uid];
+      if (c.positions) delete c.positions[uid];
+    }
+  }
+  // Verwaiste Positionen ohne Presence (Ghost-Reseat verhindern)
+  for (const uid of Object.keys(c.positions || {})) {
+    if (!isPresent(m, uid, "gathering")) {
+      delete c.positions[uid];
     }
   }
 }
@@ -729,8 +741,10 @@ module.exports = {
   startRejectClosing,
   startMarriedSpeech,
   canStand,
+  canSitAfterLock,
   canEnterChapel,
   coupleAtAltar,
+  pruneStaleGathering,
   buildPastorLines,
   altarHoldRemainingMs,
   receptionRemainingMs,

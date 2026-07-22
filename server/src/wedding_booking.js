@@ -71,6 +71,7 @@ function ensureBooking(m) {
       roomId: null,
       confirm: {},
       charged: false,
+      charging: false,
     };
   }
   const b = c.booking;
@@ -78,6 +79,7 @@ function ensureBooking(m) {
   if (!b.roomVotes || typeof b.roomVotes !== "object") b.roomVotes = {};
   if (!b.confirm || typeof b.confirm !== "object") b.confirm = {};
   if (typeof b.charged !== "boolean") b.charged = false;
+  if (typeof b.charging !== "boolean") b.charging = false;
   if (b.moneyTrees !== true && b.moneyTrees !== false) b.moneyTrees = null;
   return b;
 }
@@ -150,6 +152,7 @@ function beginBooking(m, ceremonyAt) {
   b.roomId = null;
   b.confirm = {};
   b.charged = false;
+  b.charging = false;
   m.ceremonyAt = b.ceremonyAt;
   const c = m.ceremony;
   c.phase = "booking";
@@ -216,6 +219,9 @@ function voteConfirm(m, userId, confirm) {
   if (!b || b.step !== "confirm") {
     return { ok: false, error: "wrong_step", message: "Gerade keine Bestätigung." };
   }
+  if (b.charged || b.charging) {
+    return { ok: false, error: "charging", message: "Buchung läuft bereits." };
+  }
   if (!b.roomId || b.moneyTrees === null) {
     return { ok: false, error: "incomplete", message: "Buchung unvollständig." };
   }
@@ -240,6 +246,7 @@ function markBookingDone(m) {
   const b = ensureBooking(m);
   b.step = "done";
   b.charged = true;
+  b.charging = false;
   m.ceremonyLayoutId = b.roomId || "wedding";
   m.moneyTreesEnabled = b.moneyTrees === true;
   m.ceremonyCapacity = getRoomDef(b.roomId)?.capacity || 8;

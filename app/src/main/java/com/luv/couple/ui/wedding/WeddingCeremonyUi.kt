@@ -916,11 +916,17 @@ fun WeddingBookingDialog(
     var needCoins by remember { mutableStateOf(0) }
     var packs by remember { mutableStateOf<List<com.luv.couple.net.ShopPack>>(emptyList()) }
 
-    fun applyCer(c: LuvApiClient.CeremonyInfo?) {
+    fun applyCer(
+        c: LuvApiClient.CeremonyInfo?,
+        marriageStatus: String? = null,
+        marriageLobby: String? = null,
+    ) {
         ceremony = c
         val code = c?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
-        // Erst nach echter Lobby — phase allein reicht nicht (vermeidet Flash/Fehl-Toast)
-        if (!code.isNullOrBlank()) {
+            ?: marriageLobby?.takeIf { it.isNotBlank() }
+        val scheduled = marriageStatus == "ceremony_scheduled" ||
+            (code != null && c?.phase == "scheduled")
+        if (!code.isNullOrBlank() && scheduled) {
             onBooked(code)
         }
     }
@@ -928,7 +934,13 @@ fun WeddingBookingDialog(
     LaunchedEffect(Unit) {
         while (true) {
             runCatching { LuvApiClient.fetchCeremony() }
-                .onSuccess { applyCer(it.ceremony) }
+                .onSuccess {
+                    applyCer(
+                        it.ceremony,
+                        marriageStatus = it.marriage?.status,
+                        marriageLobby = it.marriage?.ceremonyLobbyCode,
+                    )
+                }
             delay(2000)
         }
     }
@@ -1006,7 +1018,13 @@ fun WeddingBookingDialog(
                                 scope.launch {
                                     runCatching {
                                         LuvApiClient.ceremonyBookingMoneyTrees("decline")
-                                    }.onSuccess { applyCer(it.ceremony) }
+                                    }.onSuccess {
+                                        applyCer(
+                                            it.ceremony,
+                                            marriageStatus = it.marriage?.status,
+                                            marriageLobby = it.marriage?.ceremonyLobbyCode,
+                                        )
+                                    }
                                         .onFailure {
                                             Toast.makeText(
                                                 context,
@@ -1029,7 +1047,13 @@ fun WeddingBookingDialog(
                                 scope.launch {
                                     runCatching {
                                         LuvApiClient.ceremonyBookingMoneyTrees("book")
-                                    }.onSuccess { applyCer(it.ceremony) }
+                                    }.onSuccess {
+                                        applyCer(
+                                            it.ceremony,
+                                            marriageStatus = it.marriage?.status,
+                                            marriageLobby = it.marriage?.ceremonyLobbyCode,
+                                        )
+                                    }
                                         .onFailure {
                                             Toast.makeText(
                                                 context,
@@ -1075,7 +1099,13 @@ fun WeddingBookingDialog(
                                     scope.launch {
                                         runCatching {
                                             LuvApiClient.ceremonyBookingRoom(room.id)
-                                        }.onSuccess { applyCer(it.ceremony) }
+                                        }.onSuccess {
+                                            applyCer(
+                                                it.ceremony,
+                                                marriageStatus = it.marriage?.status,
+                                                marriageLobby = it.marriage?.ceremonyLobbyCode,
+                                            )
+                                        }
                                             .onFailure {
                                                 Toast.makeText(
                                                     context,
@@ -1159,7 +1189,11 @@ fun WeddingBookingDialog(
                                             runCatching { LuvApiClient.shopPacks() }
                                                 .onSuccess { packs = it.second }
                                             showCoinGap = true
-                                            applyCer(r.ceremony)
+                                            applyCer(
+                                                r.ceremony,
+                                                marriageStatus = r.marriage?.status,
+                                                marriageLobby = r.marriage?.ceremonyLobbyCode,
+                                            )
                                         } else if (!r.ceremonyLobbyCode.isNullOrBlank()) {
                                             Toast.makeText(
                                                 context,
@@ -1168,7 +1202,11 @@ fun WeddingBookingDialog(
                                             ).show()
                                             onBooked(r.ceremonyLobbyCode)
                                         } else {
-                                            applyCer(r.ceremony)
+                                            applyCer(
+                                                r.ceremony,
+                                                marriageStatus = r.marriage?.status,
+                                                marriageLobby = r.marriage?.ceremonyLobbyCode,
+                                            )
                                         }
                                     }
                                     .onFailure {

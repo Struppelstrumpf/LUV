@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.145",
+            listOf(
+                "Kapelle: Hochzeits-Musikbox erst wenn beide am Altar sitzen",
+                "Hochzeit: Latecomer- und Buchungs-Races abgesichert",
+            )
+        ),
+        Entry(
             "2.2.144",
             listOf(
                 "Hochzeit öffnen: kein kurzes Aufblitzen mehr — Buchungsflow bleibt offen",

@@ -291,18 +291,20 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 myY = me.y
             }
         }
-        // Nur auto-eintreten wenn schon present (Reconnect) oder Brautpaar —
-        // sonst umgehen Gäste den Latecomer-Schutz ohne „Eintreten“-Tap
+        // Auto-Enter: Brautpaar immer; Gäste nur Reconnect mit vorhandenem Sitz
+        // (nicht bloß Gathering-Heartbeat vom Warte-Dialog → Latecomer-Bypass)
         if (
             it.ceremony?.phase == "altar" ||
             it.ceremony?.phase == "vows" ||
             it.ceremony?.phase == "gifts" ||
             it.ceremony?.phase == "reception" ||
+            it.ceremony?.phase == "gathering" ||
             it.ceremony?.seatingLocked == true
         ) {
             val meNow = it.ceremony.gathering.find { g -> g.userId == myId }
-            if (meNow?.isCouple == true || meNow?.present == true) {
-                entered = true
+            when {
+                meNow?.isCouple == true -> entered = true
+                meNow?.present == true && meNow.seatedSeatId != null -> entered = true
             }
         }
         if (
@@ -350,27 +352,32 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
 
     LaunchedEffect(
         ceremony?.altarHoldActive,
+        ceremony?.seatingLocked,
         ceremony?.pastorPhase,
         ceremony?.phase,
         myX,
         myY,
         seated,
         ceremony?.gathering,
+        zones,
     ) {
         val couple = ceremony?.gathering?.filter { it.isCouple }.orEmpty()
-        // Beide müssen auf Altar-Markierung sitzen (Server-Sitz oder lokale Zone)
-        val bothOnAltar = when {
-            couple.size < 2 -> false
-            ceremony?.altarHoldActive == true -> true
-            else -> {
-                val seatedCouple = couple.count { g ->
-                    if (g.userId == myId) {
-                        seated && inRoleSeatZone(true, myX, myY)
-                    } else {
-                        g.seatedSeatId != null
-                    }
-                }
-                seatedCouple >= 2
+        // Music-Box NUR wenn beide live anwesend und auf gelbem Altar sitzen
+        // (altarHoldActive allein reicht nicht — Ghost-Reseat-Bug)
+        fun guestOnCoupleAltar(g: LuvApiClient.CeremonyGuest): Boolean {
+            if (!g.present) return false
+            val seatId = g.seatedSeatId
+            if (seatId != null) {
+                val seatZone = zones.firstOrNull { it.id == seatId }
+                if (seatZone?.isCoupleSeat == true) return true
+            }
+            return inRoleSeatZone(true, g.x, g.y)
+        }
+        val bothOnAltar = couple.size >= 2 && couple.all { g ->
+            if (g.userId == myId) {
+                g.present && seated && inRoleSeatZone(true, myX, myY)
+            } else {
+                guestOnCoupleAltar(g)
             }
         }
         chapelMusic.sync(ceremony, bothCoupleOnAltar = bothOnAltar)

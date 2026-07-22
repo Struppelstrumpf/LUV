@@ -3067,6 +3067,14 @@ function syncWeddingZoneSeating(m, db, onlyUserId = null) {
       ].filter(Boolean);
 
   for (const uid of ids) {
+    // Offline / kein Gathering-Heartbeat → nicht aus alter Position reseaten
+    if (!weddingCeremony.isPresent(m, uid, "gathering")) {
+      if (c.seated[uid] && weddingCeremony.canStand(m, uid) && !c.seatingLocked) {
+        delete c.seated[uid];
+        changed = true;
+      }
+      continue;
+    }
     if (c.seated[uid] && !weddingCeremony.canStand(m, uid)) continue;
     const pos = c.positions[uid];
     if (!pos || !Number.isFinite(Number(pos.x)) || !Number.isFinite(Number(pos.y))) {
@@ -3083,7 +3091,14 @@ function syncWeddingZoneSeating(m, db, onlyUserId = null) {
     if (prev === next) continue;
     if (next) {
       c.seated[uid] = next;
-      if (c.phase === "gathering" || c.phase === "none") c.phase = "altar";
+      // Phase altar nur wenn Brautpaar auf gelbem Sitz — nicht bei Gast-Blau
+      if (
+        couple &&
+        roomLayouts.isCoupleSeat(zone) &&
+        (c.phase === "gathering" || c.phase === "none")
+      ) {
+        c.phase = "altar";
+      }
     } else if (weddingCeremony.canStand(m, uid)) {
       delete c.seated[uid];
     }
@@ -3094,6 +3109,8 @@ function syncWeddingZoneSeating(m, db, onlyUserId = null) {
 
 function tickCeremonyRitual(m, db) {
   if (!m) return null;
+  // Zuerst Ghosts weg, dann Sitze, dann Altar-Hold — sonst Musik mit einer Person
+  weddingCeremony.pruneStaleGathering(m);
   syncWeddingZoneSeating(m, db);
   const isCoupleSeat = (seatId) => {
     const z = roomLayouts.findSitZone(db, ceremonyLayoutIdOf(m), seatId);
@@ -9786,7 +9803,12 @@ app.post("/v1/me/marriage/ceremony/presence", (req, res) => {
   }
   weddingCeremony.touchPresence(m, ctx.user.id, bucket);
   if (m.status === "ceremony_pending") {
-    weddingCeremony.ensureCeremony(m).phase = "presence";
+    const cPend = weddingCeremony.ensureCeremony(m);
+    const bookStep = String(cPend.booking?.step || "none");
+    // Booking-Phase nicht mit „presence“ überschreiben
+    if (bookStep === "none" || bookStep === "done") {
+      cPend.phase = "presence";
+    }
   }
   if (bucket === "gathering") {
     const c = weddingCeremony.ensureCeremony(m);
@@ -10132,6 +10154,17 @@ app.post("/v1/me/marriage/ceremony/booking/confirm", (req, res) => {
       ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
     });
   }
+  const bookingState = weddingCeremony.booking.ensureBooking(m);
+  if (bookingState.charged || bookingState.charging) {
+    return res.status(400).json({
+      error: bookingState.charged ? "already_scheduled" : "charging",
+      message: bookingState.charged
+        ? "Hochzeit ist bereits gebucht."
+        : "Buchung läuft gerade — einen Moment.",
+      ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+      marriage: publicMarriageView(m, ctx.user.id),
+    });
+  }
   const want = req.body?.confirm !== false;
   const result = weddingCeremony.booking.voteConfirm(m, ctx.user.id, want);
   if (!result.ok) return res.status(400).json(result);
@@ -10148,10 +10181,14 @@ app.post("/v1/me/marriage/ceremony/booking/confirm", (req, res) => {
     });
   }
 
+  // Atomar gegen parallele Confirms beider Partner
+  bookingState.charging = true;
+
   const bill = Number(result.billPerPerson) || 0;
   const a = db.users?.[m.a];
   const b = db.users?.[m.b];
   if (!a || !b) {
+    bookingState.charging = false;
     return res.status(400).json({ error: "partner_missing" });
   }
   ensureCoinBuckets(a);
@@ -10161,8 +10198,8 @@ app.post("/v1/me/marriage/ceremony/booking/confirm", (req, res) => {
     const coinsB = Number(b.coins) || 0;
     if (coinsA < bill || coinsB < bill) {
       // Confirm zurücksetzen — beide müssen erneut tippen nach Aufladen
-      const booking = weddingCeremony.booking.ensureBooking(m);
-      booking.confirm = {};
+      bookingState.confirm = {};
+      bookingState.charging = false;
       scheduleSave();
       const shortUser =
         coinsA < bill && coinsB < bill
@@ -10183,10 +10220,12 @@ app.post("/v1/me/marriage/ceremony/booking/confirm", (req, res) => {
       });
     }
     if (!applyLedger(m.a, -bill, "wedding_booking", result.roomId)) {
+      bookingState.charging = false;
       return res.status(500).json({ error: "ledger_failed" });
     }
     if (!applyLedger(m.b, -bill, "wedding_booking", result.roomId)) {
       applyLedger(m.a, bill, "wedding_booking_refund", result.roomId);
+      bookingState.charging = false;
       return res.status(500).json({ error: "ledger_failed" });
     }
     trackAch(a, "coins_spent", bill);
@@ -10199,12 +10238,14 @@ app.post("/v1/me/marriage/ceremony/booking/confirm", (req, res) => {
     moneyTreesEnabled: result.moneyTrees,
   });
   if (!done.ok) {
+    bookingState.charging = false;
     if (bill > 0) {
       applyLedger(m.a, bill, "wedding_booking_refund", result.roomId);
       applyLedger(m.b, bill, "wedding_booking_refund", result.roomId);
     }
     return res.status(done.status).json(done.body);
   }
+  bookingState.charging = false;
   return res.json({
     ...done.body,
     charged: bill,
