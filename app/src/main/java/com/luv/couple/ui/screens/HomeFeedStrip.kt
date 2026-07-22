@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -29,6 +31,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -49,6 +53,9 @@ private const val EMPTY_SHORT = "Nichts Neues hier"
 private const val EMPTY_BODY =
     "Hier erscheinen kurz Nachrichten aus der Community — " +
         "Hochzeiten, Event-Siege, seltene Funde und mehr."
+private const val HIDE_STRIP_HINT =
+    "Die schmale Nachrichten-Kachel auf dem Home kannst du unter " +
+        "Zahnrad → Einstellungen → „Home-Nachrichten“ ausblenden."
 
 @Composable
 fun HomeFeedStrip(
@@ -64,6 +71,7 @@ fun HomeFeedStrip(
     var index by remember { mutableIntStateOf(0) }
     var detail by remember { mutableStateOf<LuvApiClient.HomeFeedItem?>(null) }
     var showEmptyInfo by remember { mutableStateOf(false) }
+    var showHideHint by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -129,11 +137,10 @@ fun HomeFeedStrip(
             onDismissRequest = { showEmptyInfo = false },
             containerColor = BgSoft,
             title = {
-                Text(
-                    EMPTY_SHORT,
-                    fontFamily = DisplayFont,
-                    fontSize = 20.sp,
-                    color = TextPrimary
+                HomeFeedDialogTitle(
+                    title = EMPTY_SHORT,
+                    accent = accent,
+                    onInfoClick = { showHideHint = true }
                 )
             },
             text = {
@@ -170,11 +177,10 @@ fun HomeFeedStrip(
             onDismissRequest = { detail = null },
             containerColor = BgSoft,
             title = {
-                Text(
-                    item.title,
-                    fontFamily = DisplayFont,
-                    fontSize = 20.sp,
-                    color = TextPrimary
+                HomeFeedDialogTitle(
+                    title = item.title,
+                    accent = accent,
+                    onInfoClick = { showHideHint = true }
                 )
             },
             text = {
@@ -214,5 +220,72 @@ fun HomeFeedStrip(
                 }
             }
         )
+    }
+
+    if (showHideHint) {
+        AlertDialog(
+            onDismissRequest = { showHideHint = false },
+            containerColor = BgSoft,
+            title = {
+                Text(
+                    "Home-Nachrichten",
+                    fontFamily = DisplayFont,
+                    fontSize = 20.sp,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Text(
+                    HIDE_STRIP_HINT,
+                    color = TextPrimary,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showHideHint = false }) {
+                    Text("Verstanden", color = accent, fontFamily = BodyFont)
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun HomeFeedDialogTitle(
+    title: String,
+    accent: Color,
+    onInfoClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            title,
+            fontFamily = DisplayFont,
+            fontSize = 20.sp,
+            color = TextPrimary,
+            modifier = Modifier.weight(1f),
+        )
+        Box(
+            modifier = Modifier
+                .size(22.dp)
+                .clip(CircleShape)
+                .border(1.dp, accent.copy(alpha = 0.55f), CircleShape)
+                .clickable(onClick = onInfoClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "i",
+                color = accent,
+                fontFamily = BodyFont,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }

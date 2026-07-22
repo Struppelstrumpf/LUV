@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.136",
+            listOf(
+                "Home-Nachrichten: Info-Hinweis zum Ausblenden in den Einstellungen",
+            )
+        ),
+        Entry(
             "2.2.135",
             listOf(
                 "Home-Nachrichten-Kachel immer sichtbar — leer: „Nichts Neues hier“",
