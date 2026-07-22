@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.85",
+            listOf(
+                "Hochzeit: besser laufen, blauer Sitz-Ring, Reaktionsleiste",
+                "„Neuer Raum“ vorerst ausgeblendet",
+            )
+        ),
+        Entry(
             "2.2.84",
             listOf(
                 "Kochen: Herdplatte lädt wieder, Tippen auf Küche öffnet Popup",

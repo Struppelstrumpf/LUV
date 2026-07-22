@@ -590,14 +590,7 @@ fun LobbiesScreen(
                             onCreateLobby()
                         }
                     )
-                    PrimaryButton(
-                        label = "Neuer Raum",
-                        color = accent,
-                        onClick = {
-                            showLobbyPlusDialog = false
-                            onCreateCustomRoom()
-                        }
-                    )
+                    // „Neuer Raum“ vorerst deaktiviert — Fokus Hochzeit
                     if (eventLobby != null) {
                         PrimaryButton(
                             label = when {

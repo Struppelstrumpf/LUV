@@ -8939,8 +8939,9 @@ app.post("/v1/me/marriage/ceremony/move", (req, res) => {
   if (c.phase !== "altar" && c.phase !== "vows") {
     return res.status(400).json({ error: "not_in_room" });
   }
+  // Aufstehen durch Bewegen (wie Custom-Raum)
   if (c.seated[ctx.user.id]) {
-    return res.status(400).json({ error: "already_seated" });
+    delete c.seated[ctx.user.id];
   }
   const layout = roomLayouts.getLayout(db, "wedding");
   const prev = c.positions[ctx.user.id] || { x: 0.5, y: 0.86 };

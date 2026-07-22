@@ -2060,9 +2060,7 @@ fun LuvAppNav() {
                             },
                             onCreateEventLobby = { event -> createEventLobby(event) },
                             onCreateCustomRoom = {
-                                if (requireGoogleOrToast()) {
-                                    showCustomRoomPicker = true
-                                }
+                                // Vorerst deaktiviert — Fokus Hochzeit
                             },
                             onToggleSpaceBell = { lobby ->
                                 scope.launch {
