@@ -758,7 +758,7 @@ fun LobbiesScreen(
                                     coords.size
                                 )
                             }
-                            .fillMaxHeight()
+                            .fillMaxHeight(0.75f)
                             .aspectRatio(1f)
                             .clip(CircleShape)
                             .background(accent)
@@ -769,7 +769,7 @@ fun LobbiesScreen(
                             "+",
                             color = Color.White,
                             fontFamily = DisplayFont,
-                            fontSize = 36.sp,
+                            fontSize = 27.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
