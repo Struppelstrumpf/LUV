@@ -164,59 +164,82 @@ fun SocialScreen(
                 }
             }
             Spacer(modifier = Modifier.height(14.dp))
-            // Erfolge einmal gemountet lassen — sonst jedes Mal „Lade…“ + Netz-Roundtrip (~Sekunden)
-            var achievementsVisited by remember { mutableStateOf(false) }
+            // Einmal besucht → gemountet lassen. Sonst stirbt rememberCoroutineScope
+            // („coroutine scope left the composition“) und laufende Requests wirken wie Timeout.
+            var visitedFriends by remember { mutableStateOf(tab == 0) }
+            var visitedEvents by remember { mutableStateOf(tab == 1) }
+            var visitedAchievements by remember { mutableStateOf(tab == 2) }
             LaunchedEffect(tab) {
-                if (tab == 2) achievementsVisited = true
+                when (tab) {
+                    0 -> visitedFriends = true
+                    1 -> visitedEvents = true
+                    2 -> visitedAchievements = true
+                }
             }
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxSize()
             ) {
-                when (tab) {
-                    0 -> FriendsPanel(
-                        modifier = Modifier.fillMaxSize(),
-                        onOpenFriendProfile = onOpenFriendProfile,
-                        onSyncWeddingLobbies = onSyncWeddingLobbies,
-                        onWeddingLobbyOpened = onWeddingLobbyOpened
-                    )
-                    1 -> EventsPanel(
-                        modifier = Modifier.fillMaxSize(),
-                        onCoinsGranted = { amount ->
-                            if (amount > 0) {
-                                scope.launch {
-                                    runCatching { LuvApiClient.me() }
-                                        .onSuccess { AccountSession.setAccount(it) }
-                                }
-                            }
-                        },
-                        onCreateEventLobby = onCreateEventLobby
-                    )
+                if (visitedFriends) {
+                    SocialKeepAliveTab(visible = tab == 0) {
+                        FriendsPanel(
+                            modifier = Modifier.fillMaxSize(),
+                            onOpenFriendProfile = onOpenFriendProfile,
+                            onSyncWeddingLobbies = onSyncWeddingLobbies,
+                            onWeddingLobbyOpened = onWeddingLobbyOpened
+                        )
+                    }
                 }
-                if (achievementsVisited) {
-                    val showAchievements = tab == 2
-                    AchievementsPanel(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .then(
-                                if (showAchievements) Modifier
-                                else Modifier
-                                    .alpha(0f)
-                                    .zIndex(-1f)
-                            ),
-                        onCoinsGranted = { amount ->
-                            if (amount > 0) {
-                                scope.launch {
-                                    runCatching { LuvApiClient.me() }
-                                        .onSuccess { AccountSession.setAccount(it) }
+                if (visitedEvents) {
+                    SocialKeepAliveTab(visible = tab == 1) {
+                        EventsPanel(
+                            modifier = Modifier.fillMaxSize(),
+                            onCoinsGranted = { amount ->
+                                if (amount > 0) {
+                                    scope.launch {
+                                        runCatching { LuvApiClient.me() }
+                                            .onSuccess { AccountSession.setAccount(it) }
+                                    }
+                                }
+                            },
+                            onCreateEventLobby = onCreateEventLobby
+                        )
+                    }
+                }
+                if (visitedAchievements) {
+                    SocialKeepAliveTab(visible = tab == 2) {
+                        AchievementsPanel(
+                            modifier = Modifier.fillMaxSize(),
+                            onCoinsGranted = { amount ->
+                                if (amount > 0) {
+                                    scope.launch {
+                                        runCatching { LuvApiClient.me() }
+                                            .onSuccess { AccountSession.setAccount(it) }
+                                    }
                                 }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+/** Sichtbar schalten ohne Dispose — Coroutines/LaunchedEffects bleiben am Leben. */
+@Composable
+private fun SocialKeepAliveTab(
+    visible: Boolean,
+    content: @Composable () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .zIndex(if (visible) 1f else 0f)
+            .alpha(if (visible) 1f else 0f)
+    ) {
+        content()
     }
 }
 
@@ -338,7 +361,7 @@ private fun FriendsPanel(
             runCatching { LuvApiClient.fetchFriends(force = force) }
                 .onSuccess { applyFriendsSnap(it) }
                 .onFailure {
-                    if (cached == null) {
+                    if (cached == null && it !is kotlinx.coroutines.CancellationException) {
                         Toast.makeText(
                             context,
                             it.message ?: "Freunde laden fehlgeschlagen",

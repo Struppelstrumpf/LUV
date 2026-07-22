@@ -99,7 +99,10 @@ fun AchievementsPanel(
                     AchievementsBadge.updateFrom(it)
                 }
                 .onFailure {
-                    if (state == null) {
+                    if (
+                        state == null &&
+                        it !is kotlinx.coroutines.CancellationException
+                    ) {
                         Toast.makeText(
                             context,
                             it.message ?: "Erfolge laden fehlgeschlagen",
