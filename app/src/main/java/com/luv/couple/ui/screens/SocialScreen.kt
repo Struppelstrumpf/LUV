@@ -392,6 +392,17 @@ private fun FriendsPanel(
         if (hasCache) reload(force = true)
     }
 
+    // Verlobung/Hochzeit: Partner merkt schnell, wenn der andere die Lobby öffnet
+    LaunchedEffect(myMarriage?.status, myMarriage?.engageFreeSkipAvailable) {
+        val st = myMarriage?.status
+        if (st != "engaged" && st != "wedding") return@LaunchedEffect
+        while (true) {
+            delay(6_000)
+            runCatching { LuvApiClient.fetchFriends(force = true) }
+                .onSuccess { applyFriendsSnap(it) }
+        }
+    }
+
     fun persistOrder(next: List<LuvApiClient.FriendCard>) {
         friends = next
         scope.launch {
@@ -662,14 +673,20 @@ private fun FriendsPanel(
                                                     ?.uppercase()
                                             LuvApiClient.invalidateFriendsCache()
                                             reload(force = true)
-                                            Toast.makeText(
-                                                context,
-                                                "Hochzeitsbild-Lobby ist bereit",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
+                                            val toast = when {
+                                                it.marriage?.status == "wedding" ||
+                                                    !it.marriage?.weddingLobbyCode.isNullOrBlank() ->
+                                                    "Hochzeitsbild-Lobby ist bereit"
+                                                else -> "Hochzeit aktualisiert"
+                                            }
+                                            Toast.makeText(context, toast, Toast.LENGTH_SHORT).show()
+                                            onSyncWeddingLobbies()
                                             onWeddingLobbyOpened()
                                         }
                                         .onFailure { e ->
+                                            // Partner hat evtl. schon geöffnet — frischen Stand holen
+                                            LuvApiClient.invalidateFriendsCache()
+                                            reload(force = true)
                                             Toast.makeText(
                                                 context,
                                                 e.message ?: "Öffnen fehlgeschlagen",
@@ -680,6 +697,13 @@ private fun FriendsPanel(
                                 }
                             }
                             .padding(vertical = 4.dp)
+                    )
+                } else if (waitM.status == "engaged" && waitM.engageFreeSkipUsed) {
+                    Text(
+                        "Dein Partner hat die Hochzeitsbild-Lobby schon geöffnet — gleich aktualisieren…",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp
                     )
                 } else if (waitM.status == "wedding" && strokesReady) {
                     Text(

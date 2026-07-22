@@ -8,8 +8,9 @@ import com.luv.couple.net.LuvApiClient
 import kotlin.math.roundToInt
 
 /**
- * Kapellen-Musik: erst wenn **beide** vom Brautpaar auf den Altar-Markierungen sitzen.
- * Davor Stille (kein Autoplay beim Betreten).
+ * Kapellen-Musik:
+ * - Ambient (Chapel-Melodie, Loop): sobald man in der Kapelle ist / nicht beide am Altar
+ * - Music-Box (MP3, Loop): wenn **beide** vom Brautpaar auf den Altar-Markierungen sitzen
  */
 class WeddingChapelMusic(context: Context) {
     private val appContext = context.applicationContext
@@ -26,8 +27,7 @@ class WeddingChapelMusic(context: Context) {
 
     fun start() {
         pausedByLifecycle = false
-        // Bewusst still — Musik startet erst bei beiden am Altar
-        mode = Mode.SILENT
+        ensureAmbient()
     }
 
     fun pause() {
@@ -43,7 +43,7 @@ class WeddingChapelMusic(context: Context) {
         applyVolume()
         runCatching {
             val p = player ?: return
-            if (mode != Mode.SILENT && mode != Mode.NONE && !p.isPlaying) p.start()
+            if (mode != Mode.NONE && !p.isPlaying) p.start()
         }
     }
 
@@ -79,32 +79,33 @@ class WeddingChapelMusic(context: Context) {
     fun sync(ceremony: LuvApiClient.CeremonyInfo?, bothCoupleOnAltar: Boolean) {
         if (pausedByLifecycle) return
 
-        if (!bothCoupleOnAltar) {
+        if (bothCoupleOnAltar) {
+            if (!bothWereOnAltar || mode != Mode.ALTAR || player == null) {
+                bothWereOnAltar = true
+                playAltarMusicBox()
+            }
+            return
+        }
+
+        if (bothWereOnAltar || mode != Mode.AMBIENT || player == null) {
             bothWereOnAltar = false
-            stopToSilent()
-            return
-        }
-
-        // Gerade erst beide am Altar → Musik starten
-        if (!bothWereOnAltar) {
-            bothWereOnAltar = true
-            playBridalMarch()
-            return
-        }
-
-        // Läuft noch
-        if (mode == Mode.BRIDAL && player?.isPlaying == true) return
-        if (mode != Mode.BRIDAL || player == null) {
-            playBridalMarch()
+            ensureAmbient()
         }
     }
 
-    private fun playBridalMarch() {
+    private fun ensureAmbient() {
+        if (mode == Mode.AMBIENT && player != null) {
+            runCatching {
+                val p = player ?: return
+                if (!pausedByLifecycle && !p.isPlaying) p.start()
+            }
+            return
+        }
         releasePlayer()
-        mode = Mode.BRIDAL
+        mode = Mode.AMBIENT
         runCatching {
             val p = MediaPlayer.create(appContext, R.raw.wedding_chapel_music) ?: run {
-                mode = Mode.SILENT
+                mode = Mode.NONE
                 return
             }
             p.isLooping = true
@@ -113,14 +114,26 @@ class WeddingChapelMusic(context: Context) {
             applyVolume()
             if (!pausedByLifecycle) p.start()
         }.onFailure {
-            mode = Mode.SILENT
+            mode = Mode.NONE
         }
     }
 
-    private fun stopToSilent() {
-        if (mode == Mode.SILENT && player == null) return
+    private fun playAltarMusicBox() {
         releasePlayer()
-        mode = Mode.SILENT
+        mode = Mode.ALTAR
+        runCatching {
+            val p = MediaPlayer.create(appContext, R.raw.wedding_march_music_box) ?: run {
+                mode = Mode.NONE
+                return
+            }
+            p.isLooping = true
+            p.setAudioAttributes(audioAttrs())
+            player = p
+            applyVolume()
+            if (!pausedByLifecycle) p.start()
+        }.onFailure {
+            mode = Mode.NONE
+        }
     }
 
     private fun releasePlayer() {
@@ -139,13 +152,13 @@ class WeddingChapelMusic(context: Context) {
             .build()
 
     private fun applyVolume() {
-        val v = if (muted || mode == Mode.SILENT) 0f else volume.coerceIn(0f, 1f)
+        val v = if (muted) 0f else volume.coerceIn(0f, 1f)
         runCatching { player?.setVolume(v, v) }
     }
 
     fun volumePercent(): Int = (volume * 100f).roundToInt().coerceIn(0, 100)
 
-    private enum class Mode { NONE, BRIDAL, SILENT }
+    private enum class Mode { NONE, AMBIENT, ALTAR }
 
     companion object {
         private const val PREFS = "luv_wedding_chapel_music"

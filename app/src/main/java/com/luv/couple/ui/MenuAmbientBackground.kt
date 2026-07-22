@@ -57,12 +57,12 @@ fun MenuAmbientBackground(
             Random(it * 41 + (eventDecor?.particles?.hashCode() ?: 7)).nextFloat()
         }
     }
-    // Idle: längsamer Drift als Event-Partikel
+    // Idle: etwas schnellerer Drift als zuvor (noch ruhiger als Event)
     val idlePhase by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 28_000, easing = LinearEasing),
+            animation = tween(durationMillis = 18_000, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "idleAmbientPhase"
@@ -87,15 +87,15 @@ private fun DrawScope.drawSoftIdleAmbient(phase: Float, seeds: List<Float>) {
     val w = size.width
     val h = size.height
     seeds.forEachIndexed { i, s ->
-        val speedX = 0.04f + (i % 5) * 0.012f
-        val speedY = 0.03f + ((i + 2) % 4) * 0.01f
+        val speedX = 0.06f + (i % 5) * 0.018f
+        val speedY = 0.045f + ((i + 2) % 4) * 0.015f
         val dir = if (i % 2 == 0) 1f else -1f
         val x = ((s * 1.61f + phase * speedX * dir + i * 0.03f) % 1f + 1f) % 1f * w
         val yBase = ((s * 0.87f + phase * speedY) % 1f)
-        val sway = sin(phase * 6.28f * 0.7f + i * 0.9f) * (8f + s * 10f)
+        val sway = sin(phase * 6.28f * 0.85f + i * 0.9f) * (8f + s * 10f)
         val y = yBase * h + sway * 0.15f
         val r = 1.6f + s * 2.4f
-        val twinkle = (0.55f + 0.45f * cos(phase * 6.28f * 1.2f + i * 1.3f)).coerceIn(0.4f, 1f)
+        val twinkle = (0.55f + 0.45f * cos(phase * 6.28f * 1.4f + i * 1.3f)).coerceIn(0.4f, 1f)
         val alpha = (0.14f + s * 0.22f) * twinkle
         drawCircle(Color.White.copy(alpha = alpha), r, Offset(x, y))
         // ganz leichter Kern

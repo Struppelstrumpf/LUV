@@ -9540,6 +9540,25 @@ app.post("/v1/me/marriage/open-wedding-lobby", (req, res) => {
   if (!ctx) return;
   const db = getDb();
   const m = marriage.findMarriageForUser(db, ctx.user.id);
+  // Partner hat schon geöffnet → kein Fehler, aktuelle Phase zurückgeben
+  if (
+    m &&
+    (m.status === "wedding" ||
+      m.status === "ceremony_pending" ||
+      m.status === "ceremony_scheduled" ||
+      m.status === "married")
+  ) {
+    return res.json({
+      ok: true,
+      free: true,
+      alreadyOpen: true,
+      phase: m.status,
+      marriage: publicMarriageView(m, ctx.user.id),
+      user: publicUser(ctx.user),
+      weddingLobbyCode: m.weddingLobbyCode || m.ceremonyLobbyCode || null,
+      advanced: false,
+    });
+  }
   if (!m || m.status !== "engaged") {
     return res.status(400).json({
       error: "wrong_phase",
@@ -9548,10 +9567,16 @@ app.post("/v1/me/marriage/open-wedding-lobby", (req, res) => {
     });
   }
   if (m.engageFreeSkipUsed === true) {
-    return res.status(400).json({
-      error: "free_skip_used",
-      message: "Gratis-Öffnen wurde bereits genutzt — bitte den Timer abwarten.",
+    // Skip markiert, aber Phase noch engaged (Randfall) → aktuellen Stand liefern
+    return res.json({
+      ok: true,
+      free: true,
+      alreadyOpen: true,
+      phase: m.status,
       marriage: publicMarriageView(m, ctx.user.id),
+      user: publicUser(ctx.user),
+      weddingLobbyCode: m.weddingLobbyCode || null,
+      advanced: false,
     });
   }
   const advanced = advanceMarriageNextStep(m, { freeEngageSkip: true });
