@@ -334,11 +334,23 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         seated,
         ceremony?.gathering,
     ) {
-        val couple = ceremony?.gathering?.find { it.userId == myId }?.isCouple == true
-        chapelMusic.sync(
-            ceremony,
-            coupleOnAltar = couple && inRoleSeatZone(true, myX, myY),
-        )
+        val couple = ceremony?.gathering?.filter { it.isCouple }.orEmpty()
+        // Beide müssen auf Altar-Markierung sitzen (Server-Sitz oder lokale Zone)
+        val bothOnAltar = when {
+            couple.size < 2 -> false
+            ceremony?.altarHoldActive == true -> true
+            else -> {
+                val seatedCouple = couple.count { g ->
+                    if (g.userId == myId) {
+                        seated && inRoleSeatZone(true, myX, myY)
+                    } else {
+                        g.seatedSeatId != null
+                    }
+                }
+                seatedCouple >= 2
+            }
+        }
+        chapelMusic.sync(ceremony, bothCoupleOnAltar = bothOnAltar)
     }
 
     // Presence-Heartbeat — sonst verschwinden Idle-Gäste nach dem TTL

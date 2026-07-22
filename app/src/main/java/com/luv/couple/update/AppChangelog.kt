@@ -12,6 +12,14 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.138",
+            listOf(
+                "Sozial: Kapellen-Countdown stimmt mit Home überein",
+                "Home-Nachrichten ruhiger — Verlobung weg, nur seltene Erfolge",
+                "Kapellen-Musik startet erst wenn beide am Altar stehen",
+            )
+        ),
+        Entry(
             "2.2.137",
             listOf(
                 "Ohne Event: weiße Partikel langsam im Menü-Hintergrund",

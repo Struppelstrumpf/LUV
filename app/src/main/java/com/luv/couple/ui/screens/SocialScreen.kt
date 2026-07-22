@@ -706,7 +706,10 @@ private fun FriendsPanel(
         val gold = Color(0xFFFFD54F)
         if (ceremonyM != null && ceremonyM.status == "ceremony_scheduled") {
             val nowMs = ceremonyTick.takeIf { it > 0L } ?: System.currentTimeMillis()
-            val until = (ceremonyM.ceremonyAt - nowMs).coerceAtLeast(0L)
+            // Wie Home-Button: Countdown bis Kapelle öffnet (10 Min. vor Termin), nicht bis Termin
+            val openAt = (ceremonyM.ceremonyAt - 10 * 60 * 1000L).coerceAtLeast(0L)
+            val untilOpen = (openAt - nowMs).coerceAtLeast(0L)
+            val openReady = nowMs >= openAt
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -746,7 +749,11 @@ private fun FriendsPanel(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(
-                    "Noch ${formatCountdown(until)} — bis dahin Gäste über die Lobby im Home einladen.",
+                    if (openReady) {
+                        "Kapelle ist offen — Gäste über die Lobby im Home einladen."
+                    } else {
+                        "Noch ${formatCountdown(untilOpen)} bis die Kapelle öffnet — Gäste kannst du schon jetzt einladen."
+                    },
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 13.sp,

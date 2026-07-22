@@ -63,6 +63,12 @@ function publish(db, item) {
 function listPublic(db, now = Date.now()) {
   return pruneFeed(db, now)
     .filter((n) => Number(n.expiresAt) > now)
+    .filter((n) => {
+      const k = String(n.kind || "");
+      // Keine Verlobung / Allerwelts-Käufe in der Home-Kachel
+      if (k === "engagement" || k === "market_sale") return false;
+      return true;
+    })
     .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))
     .map((n) => ({
       id: n.id,

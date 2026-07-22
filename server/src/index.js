@@ -9451,23 +9451,6 @@ app.post("/v1/me/marriage/accept", (req, res) => {
   trackAch(ctx.user, "engagements", 1);
   const proposer = db.users?.[fromId];
   if (proposer) trackAch(proposer, "engagements", 1);
-  try {
-    const nameA =
-      String(ctx.user.nickname || "Jemand").trim().slice(0, 18) || "Jemand";
-    const nameB =
-      String(proposer?.nickname || "Jemand").trim().slice(0, 18) || "Jemand";
-    homeFeed.publish(db, {
-      kind: "engagement",
-      shortText: `${nameA} & ${nameB} sind verlobt!`,
-      title: `${nameA} & ${nameB} sind verlobt`,
-      body: `${nameA} und ${nameB} haben sich verlobt — bald folgt die Hochzeit.`,
-      ttlMs: homeFeed.DEFAULT_TTL_MS,
-      actionType: "profile",
-      actionPayload: { userId: ctx.user.id, nickname: nameA },
-    });
-  } catch (e) {
-    console.error("home feed engagement failed", e);
-  }
   scheduleSave();
   return res.json({
     ok: true,
@@ -13422,19 +13405,25 @@ app.post("/v1/me/achievements/:id/claim", (req, res) => {
   if (result.itemGranted) {
     syncAchInventoryMetrics(ctx.user);
   }
-  // Seltener Erfolg (Item-Belohnung) → Home-Feed
+  // Nur wirklich seltene Erfolge (Pet-Belohnung oder sehr hohe Ziele)
   try {
     const def = (ach.ACHIEVEMENTS || []).find((a) => a.id === req.params.id);
-    if (def?.rewardItem || result.itemGranted) {
+    const ri = def?.rewardItem;
+    const target = Math.floor(Number(def?.target) || 0);
+    const rare =
+      Boolean(result.itemGranted) &&
+      ri &&
+      (ri.kind === "pets" || ri.kind === "themes" || target >= 50);
+    if (rare) {
       const nick = String(ctx.user.nickname || "Jemand").trim().slice(0, 18) || "Jemand";
       homeFeed.publish(getDb(), {
         kind: "achievement",
         shortText: `${nick}: ${String(def?.title || "Erfolg").slice(0, 40)}`,
-        title: `${nick} hat einen besonderen Erfolg`,
+        title: `${nick} hat einen seltenen Erfolg`,
         body:
           `${nick} hat „${String(def?.title || "einen Erfolg")}“ freigeschaltet` +
           (def?.desc ? `: ${String(def.desc).slice(0, 120)}` : ".") +
-          (result.itemGranted ? " und ein besonderes Item erhalten." : "."),
+          " und ein besonderes Item erhalten.",
         ttlMs: homeFeed.DEFAULT_TTL_MS,
         actionType: "profile",
         actionPayload: { userId: ctx.user.id, nickname: nick },
@@ -14917,24 +14906,6 @@ app.post("/v1/market/:id/buy", (req, res) => {
   trackAch(seller, "market_sold", 1);
   syncAchInventoryMetrics(ctx.user);
   syncAchInventoryMetrics(seller);
-  if (price >= 500 && !entry.private) {
-    try {
-      const buyer =
-        String(ctx.user.nickname || "Jemand").trim().slice(0, 18) || "Jemand";
-      const label = String(entry.label || entry.itemId).slice(0, 40);
-      homeFeed.publish(getDb(), {
-        kind: "market_sale",
-        shortText: `${buyer} kaufte ${entry.emoji || "🎁"} ${label}`,
-        title: `Marktplatz · ${price} Coins`,
-        body: `${buyer} hat „${label}“ für ${price} Coins auf dem Marktplatz gekauft.`,
-        ttlMs: homeFeed.DEFAULT_TTL_MS,
-        actionType: "market",
-        actionPayload: { listingId: id, kind: entry.kind, itemId: entry.itemId },
-      });
-    } catch (e) {
-      console.error("home feed market sale failed", e);
-    }
-  }
   scheduleSave();
   return res.json({
     ok: true,
