@@ -2876,9 +2876,20 @@ object LuvApiClient {
         val cx: Float = 0f,
         val cy: Float = 0f,
         val r: Float = 0f,
+        val points: List<Pair<Float, Float>> = emptyList(),
     ) {
-        val sitX: Float get() = if (shape == "circle") cx else x + w / 2f
-        val sitY: Float get() = if (shape == "circle") cy else y + h / 2f
+        val sitX: Float
+            get() = when (shape) {
+                "circle" -> cx
+                "poly" -> if (points.isEmpty()) 0.5f else points.map { it.first }.average().toFloat()
+                else -> x + w / 2f
+            }
+        val sitY: Float
+            get() = when (shape) {
+                "circle" -> cy
+                "poly" -> if (points.isEmpty()) 0.5f else points.map { it.second }.average().toFloat()
+                else -> y + h / 2f
+            }
         val isCoupleSeat: Boolean get() = color == "yellow" || id.startsWith("altar_")
         val isGuestSeat: Boolean get() = color == "blue"
         val isBlock: Boolean get() = color == "red"
@@ -2972,6 +2983,18 @@ object LuvApiClient {
         val zones = buildList {
             for (i in 0 until arr.length()) {
                 val z = arr.optJSONObject(i) ?: continue
+                val ptsArr = z.optJSONArray("points")
+                val pts = buildList {
+                    if (ptsArr != null) {
+                        for (pi in 0 until ptsArr.length()) {
+                            val p = ptsArr.optJSONObject(pi) ?: continue
+                            add(
+                                p.optDouble("x", Double.NaN).toFloat() to
+                                    p.optDouble("y", Double.NaN).toFloat()
+                            )
+                        }
+                    }
+                }.filter { it.first.isFinite() && it.second.isFinite() }
                 add(
                     RoomZone(
                         id = z.optString("id"),
@@ -2984,6 +3007,7 @@ object LuvApiClient {
                         cx = z.optDouble("cx", 0.0).toFloat(),
                         cy = z.optDouble("cy", 0.0).toFloat(),
                         r = z.optDouble("r", 0.0).toFloat(),
+                        points = pts,
                     )
                 )
             }

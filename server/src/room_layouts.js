@@ -157,7 +157,7 @@ function sanitizeZone(raw, index) {
   ) {
     return null;
   }
-  if (!["rect", "circle"].includes(shape)) return null;
+  if (!["rect", "circle", "poly"].includes(shape)) return null;
   // Gelb/Blau: Rechtecke (Sitzbereiche) oder alt Kreise; Spawn/Deko/Pastor bleiben Kreise
   if (
     ["brown", "orange", "gold", "pink", "lime", "violet"].includes(color) &&
@@ -165,7 +165,9 @@ function sanitizeZone(raw, index) {
   ) {
     return null;
   }
-  if ((color === "red" || color === "green") && shape !== "rect") return null;
+  // Grün: Rechteck oder Lasso-Polygon; Rot nur Rechteck
+  if (color === "red" && shape !== "rect") return null;
+  if (color === "green" && shape !== "rect" && shape !== "poly") return null;
   if ((color === "yellow" || color === "blue") && shape !== "rect" && shape !== "circle") {
     return null;
   }
@@ -212,6 +214,19 @@ function sanitizeZone(raw, index) {
     const r = Math.min(0.5, Math.max(minR, Number(raw.r) || DEFAULT_AVATAR_R));
     return { id, color, shape, cx, cy, r };
   }
+  if (shape === "poly") {
+    const rawPts = Array.isArray(raw.points) ? raw.points : [];
+    const points = [];
+    for (const p of rawPts.slice(0, 240)) {
+      if (!p || typeof p !== "object") continue;
+      const px = Number(p.x);
+      const py = Number(p.y);
+      if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+      points.push({ x: clamp01(px, 0), y: clamp01(py, 0) });
+    }
+    if (points.length < 3) return null;
+    return { id, color, shape: "poly", points };
+  }
   const x = clamp01(raw.x, 0);
   const y = clamp01(raw.y, 0);
   const w = Math.min(1, Math.max(0.01, Number(raw.w) || 0.1));
@@ -236,58 +251,24 @@ function rectsOverlapOrTouch(a, b, eps = 0.002) {
   );
 }
 
+/**
+ * Früher: überlappende Grüns → eine gemeinsame Bounding-Box (wurde breiter).
+ * Jetzt: Formen bleiben wie gezeichnet; Überlappung = Union beim Laufen.
+ */
 function mergeGreenZones(zones) {
-  const greens = zones.filter((z) => z.color === "green" && z.shape === "rect");
-  const others = zones.filter((z) => !(z.color === "green" && z.shape === "rect"));
-  if (greens.length <= 1) return zones;
-  const n = greens.length;
-  const parent = Array.from({ length: n }, (_, i) => i);
-  const find = (i) => {
-    while (parent[i] !== i) {
-      parent[i] = parent[parent[i]];
-      i = parent[i];
-    }
-    return i;
+  return Array.isArray(zones) ? zones.slice() : [];
+}
+
+function fullMapRedZone() {
+  return {
+    id: "red_base",
+    color: "red",
+    shape: "rect",
+    x: 0,
+    y: 0,
+    w: 1,
+    h: 1,
   };
-  const uni = (a, b) => {
-    const ra = find(a);
-    const rb = find(b);
-    if (ra !== rb) parent[rb] = ra;
-  };
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      if (rectsOverlapOrTouch(greens[i], greens[j])) uni(i, j);
-    }
-  }
-  const groups = new Map();
-  for (let i = 0; i < n; i++) {
-    const r = find(i);
-    if (!groups.has(r)) groups.set(r, []);
-    groups.get(r).push(greens[i]);
-  }
-  const merged = [];
-  for (const list of groups.values()) {
-    let x0 = Infinity;
-    let y0 = Infinity;
-    let x1 = -Infinity;
-    let y1 = -Infinity;
-    for (const g of list) {
-      x0 = Math.min(x0, g.x);
-      y0 = Math.min(y0, g.y);
-      x1 = Math.max(x1, g.x + g.w);
-      y1 = Math.max(y1, g.y + g.h);
-    }
-    merged.push({
-      id: list[0].id || `green_${merged.length}`,
-      color: "green",
-      shape: "rect",
-      x: clamp01(x0),
-      y: clamp01(y0),
-      w: Math.min(1, Math.max(0.01, x1 - x0)),
-      h: Math.min(1, Math.max(0.01, y1 - y0)),
-    });
-  }
-  return [...others, ...merged];
 }
 
 function imagePublicUrl(roomId, ver) {
@@ -664,10 +645,34 @@ function priestPoint(zones) {
   };
 }
 
+function pointInPoly(points, x, y) {
+  if (!Array.isArray(points) || points.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const xi = Number(points[i].x);
+    const yi = Number(points[i].y);
+    const xj = Number(points[j].x);
+    const yj = Number(points[j].y);
+    const intersect =
+      yi > y !== yj > y &&
+      x < ((xj - xi) * (y - yi)) / (yj - yi + 1e-12) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
 function zoneContains(z, x, y, pad = 0) {
   if (!z) return false;
   if (z.shape === "circle") {
     return Math.hypot(x - z.cx, y - z.cy) <= (Number(z.r) || 0) + pad;
+  }
+  if (z.shape === "poly") {
+    if (pointInPoly(z.points, x, y)) return true;
+    if (!(pad > 0) || !Array.isArray(z.points)) return false;
+    // grober Pad: Nähe zu Kantenpunkten
+    return z.points.some(
+      (p) => Math.hypot(x - Number(p.x), y - Number(p.y)) <= pad
+    );
   }
   return (
     x >= z.x - pad &&
@@ -696,12 +701,9 @@ function pointInGreen(zones, x, y) {
 
 function isWalkable(layout, x, y) {
   const zones = layout?.zones || [];
-  const r = layout?.avatarR != null ? layout.avatarR : avatarRadius(zones);
-  const greens = zones.filter((z) => z.color === "green");
-  if (!greens.length) return false;
-  // Wie App: Mittelpunkt in Grün, Rot nur bei echter Überlappung
-  if (!pointInGreen(zones, x, y)) return false;
-  return !zones.some((z) => z.color === "red" && zoneContains(z, x, y, 0));
+  // Grün gewinnt über Rot (volle rote Basis + grüne Laufwege)
+  if (!zones.some((z) => z.color === "green")) return false;
+  return pointInGreen(zones, x, y);
 }
 
 function isBlocked(layout, x, y) {
@@ -884,6 +886,7 @@ module.exports = {
   clampMove,
   findPath,
   mergeGreenZones,
+  fullMapRedZone,
   avatarRadius,
   spawnPoint,
   ensureSpawnPosition,

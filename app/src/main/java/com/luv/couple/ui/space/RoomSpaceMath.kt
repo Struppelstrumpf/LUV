@@ -10,12 +10,33 @@ private const val GRID_W = 56
 private const val GRID_H = 72
 
 fun zoneContains(z: LuvApiClient.RoomZone, x: Float, y: Float, pad: Float = 0f): Boolean {
-    return if (z.shape == "circle") {
-        hypot(x - z.cx, y - z.cy) <= z.r + pad
-    } else {
-        x >= z.x - pad && x <= z.x + z.w + pad &&
-            y >= z.y - pad && y <= z.y + z.h + pad
+    return when (z.shape) {
+        "circle" -> hypot(x - z.cx, y - z.cy) <= z.r + pad
+        "poly" -> {
+            if (pointInPoly(z.points, x, y)) true
+            else if (pad > 0f) {
+                z.points.any { (px, py) -> hypot(x - px, y - py) <= pad }
+            } else false
+        }
+        else ->
+            x >= z.x - pad && x <= z.x + z.w + pad &&
+                y >= z.y - pad && y <= z.y + z.h + pad
     }
+}
+
+private fun pointInPoly(points: List<Pair<Float, Float>>, x: Float, y: Float): Boolean {
+    if (points.size < 3) return false
+    var inside = false
+    var j = points.lastIndex
+    for (i in points.indices) {
+        val (xi, yi) = points[i]
+        val (xj, yj) = points[j]
+        val intersect = (yi > y) != (yj > y) &&
+            x < (xj - xi) * (y - yi) / (yj - yi + 1e-12f) + xi
+        if (intersect) inside = !inside
+        j = i
+    }
+    return inside
 }
 
 private fun pointInGreen(zones: List<LuvApiClient.RoomZone>, x: Float, y: Float): Boolean {
@@ -32,11 +53,9 @@ fun walkableAt(
     y: Float,
     avatarR: Float,
 ): Boolean {
+    // Grün gewinnt über Rot (volle rote Basis + grüne Laufwege)
     if (zones.none { it.isWalk }) return false
-    if (!pointInGreen(zones, x, y)) return false
-    // Nur echte Überlappung mit Rot (kein großer Sicherheitsradius — sonst „unsichtbare Wände“)
-    if (zones.any { it.isBlock && zoneContains(it, x, y, 0f) }) return false
-    return true
+    return pointInGreen(zones, x, y)
 }
 
 /** Nächster laufbarer Punkt in der Nähe von [x],[y] (für Sitze auf Rot). */

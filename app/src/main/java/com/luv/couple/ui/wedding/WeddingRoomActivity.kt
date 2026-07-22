@@ -857,8 +857,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     Image(
                         painter = painterResource(R.drawable.wedding_priest),
                         contentDescription = "Priester",
-                        modifier = Modifier.size(priestSz),
-                        contentScale = ContentScale.Fit
+                        modifier = Modifier
+                            .size(priestSz)
+                            .clip(CircleShape),
+                        contentScale = ContentScale.Crop,
                     )
                     if (c?.pastorPhase == "dots") {
                         PastorDotsBubble(

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.150",
+            listOf(
+                "Raum-Editor: Grün-Lasso, Formen ohne Verbreitern, Props verschiebbar",
+            )
+        ),
+        Entry(
             "2.2.149",
             listOf(
                 "Hochzeit: neue Raum-Designs inkl. Trauminsel (400 Coins)",

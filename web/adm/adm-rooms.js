@@ -41,7 +41,7 @@
         pending -= 1;
         if (pending <= 0 && typeof onReady === "function") onReady();
       };
-      img.src = url + "?v=20260722p";
+      img.src = url + "?v=20260722s";
       propImages[color] = img;
     }
     if (pending <= 0 && typeof onReady === "function") onReady();
@@ -50,8 +50,9 @@
   const TOOLS = [
     { id: "view-rect", label: "Weiß Karte", color: "white", shape: "rect", hint: "Gesamte Lauffläche" },
     { id: "camera-rect", label: "Schwarz Kamera", color: "black", shape: "rect", hint: "Was auf dem Handy sichtbar ist" },
-    { id: "red-rect", label: "Rot", color: "red", shape: "rect", hint: "Hindernis" },
-    { id: "green-rect", label: "Grün", color: "green", shape: "rect", hint: "Laufen" },
+    { id: "red-rect", label: "Rot", color: "red", shape: "rect", hint: "Gesperrt (Basis oft ganze Karte)" },
+    { id: "green-rect", label: "Grün □", color: "green", shape: "rect", hint: "Laufen: Rechteck ziehen (Form bleibt, kein Verbreitern)" },
+    { id: "green-lasso", label: "Grün Lasso", color: "green", shape: "poly", hint: "Laufen: frei einzeichnen, Loslassen schließt" },
     { id: "blue-rect", label: "Blau Gäste", color: "blue", shape: "rect", hint: "Gast-Bereich = sitzen" },
     { id: "brown-circle", label: "Braun Spawn", color: "brown", shape: "circle", hint: "Spawn" },
     { id: "orange-circle", label: "Orange Größe", color: "orange", shape: "circle", hint: "Avatar" },
@@ -86,14 +87,17 @@
     if (z.shape === "circle") {
       return `${kind} · r=${Math.round((z.r || 0) * 100)}%`;
     }
+    if (z.shape === "poly") {
+      return `${kind} · Lasso (${(z.points || []).length} Punkte)`;
+    }
     return `${kind} · ${Math.round((z.w || 0) * 100)}×${Math.round((z.h || 0) * 100)}%`;
   }
 
   const FILL = {
     white: "rgba(255,255,255,0.12)",
     black: "rgba(0,0,0,0.08)",
-    red: "rgba(229,57,53,0.4)",
-    green: "rgba(67,160,71,0.35)",
+    red: "rgba(229,57,53,0.42)",
+    green: "rgba(67,160,71,0.45)",
     yellow: "rgba(255,213,79,0.45)",
     blue: "rgba(66,165,245,0.45)",
     brown: "rgba(141,110,99,0.45)",
@@ -124,65 +128,13 @@
 
   let editor = null;
 
+  /** Kein Bounding-Box-Merge mehr — überlappende Grüns bleiben in ihrer Form. */
   function mergeGreens(zones) {
-    const greens = zones.filter((z) => z.color === "green" && z.shape === "rect");
-    const others = zones.filter((z) => !(z.color === "green" && z.shape === "rect"));
-    if (greens.length <= 1) return zones.slice();
-    const n = greens.length;
-    const parent = Array.from({ length: n }, (_, i) => i);
-    const find = (i) => {
-      while (parent[i] !== i) {
-        parent[i] = parent[parent[i]];
-        i = parent[i];
-      }
-      return i;
-    };
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const a = greens[i];
-        const b = greens[j];
-        const touch = !(
-          a.x + a.w < b.x - 0.002 ||
-          b.x + b.w < a.x - 0.002 ||
-          a.y + a.h < b.y - 0.002 ||
-          b.y + b.h < a.y - 0.002
-        );
-        if (touch) {
-          const ra = find(i);
-          const rb = find(j);
-          if (ra !== rb) parent[rb] = ra;
-        }
-      }
-    }
-    const groups = new Map();
-    for (let i = 0; i < n; i++) {
-      const r = find(i);
-      if (!groups.has(r)) groups.set(r, []);
-      groups.get(r).push(greens[i]);
-    }
-    const merged = [];
-    for (const list of groups.values()) {
-      let x0 = Infinity,
-        y0 = Infinity,
-        x1 = -Infinity,
-        y1 = -Infinity;
-      for (const g of list) {
-        x0 = Math.min(x0, g.x);
-        y0 = Math.min(y0, g.y);
-        x1 = Math.max(x1, g.x + g.w);
-        y1 = Math.max(y1, g.y + g.h);
-      }
-      merged.push({
-        id: list[0].id,
-        color: "green",
-        shape: "rect",
-        x: x0,
-        y: y0,
-        w: Math.max(0.01, x1 - x0),
-        h: Math.max(0.01, y1 - y0),
-      });
-    }
-    return [...others, ...merged];
+    return Array.isArray(zones) ? zones.slice() : [];
+  }
+
+  function fullMapRed() {
+    return { id: "red_base", color: "red", shape: "rect", x: 0, y: 0, w: 1, h: 1 };
   }
 
   function fileToDataUrl(file) {
@@ -302,7 +254,14 @@
       return;
     }
 
-    let zones = mergeGreens((layout.zones || []).map((z) => ({ ...z })));
+    let zones = mergeGreens(
+      (layout.zones || []).map((z) => ({
+        ...z,
+        points: Array.isArray(z.points)
+          ? z.points.map((p) => ({ x: p.x, y: p.y }))
+          : undefined,
+      }))
+    );
     let portals = (layout.portals || []).map((p) => ({ ...p }));
     let actions = (layout.actions || []).map((a) => ({ ...a }));
     let pickable = layout.pickable !== false;
@@ -311,7 +270,7 @@
       w: layout.cameraRect?.w ?? viewRect.w,
       h: layout.cameraRect?.h ?? viewRect.h,
     };
-    let tool = "view-rect";
+    let tool = "green-rect";
     let selectedId = null;
     let draft = null;
     let dirty = false;
@@ -319,6 +278,9 @@
 
     // Builtin-Flag vom Server ist maßgeblich (nicht nur ID-String)
     const weddingMode = Boolean(layout.builtin) || isWeddingBuiltin(roomId);
+    if (weddingMode && !zones.length) {
+      zones = [fullMapRed()];
+    }
 
     const weddingSwitch = weddingMode
       ? `<select id="roomWeddingSwitch" class="room-wedding-switch" title="Hochzeits-Raum">
@@ -359,8 +321,8 @@
         </div>
         <p class="help">${
           weddingMode
-            ? "Hochzeit: <b>Gelb</b> = Brautpaar · <b>+ Pastor / Kerze / Flamme / Geldbaum</b> = tippen setzt das echte Bild (kein bloßer Kreis). Grün = Laufen, Blau = Gäste."
-            : "Weiß = ganze Karte · Schwarz = Kamera · Grün/Blau = Sitze/Laufen (ziehen)."
+            ? "Hochzeit: Karte startet <b>rot</b> (gesperrt). <b>Grün □ / Lasso</b> = Laufen (Form bleibt, kein Verbreitern). Props tippen+ziehen. Gelb=Brautpaar, Blau=Gäste."
+            : "Weiß = ganze Karte · Schwarz = Kamera · Grün □/Lasso = Laufen · Blau = Sitze."
         }</p>
         <div class="room-tools" id="roomTools"></div>
         <p class="hint" id="roomToolHint" style="margin:0.35rem 0 0"></p>
@@ -416,7 +378,7 @@
       ];
       const iconFor = (t) =>
         PROP_ICON_URL[t.color]
-          ? `<img class="prop-icon" src="${PROP_ICON_URL[t.color]}?v=20260722p" alt="" />`
+          ? `<img class="prop-icon" src="${PROP_ICON_URL[t.color]}?v=20260722s" alt="" />`
           : `<span class="swatch" style="background:${STROKE[t.color]}"></span>`;
       const btn = (t) => `
         <button type="button" class="room-tool ${tool === t.id ? "active" : ""}" data-tool="${t.id}" title="${esc(t.hint || "")}">
@@ -547,8 +509,13 @@
           (Number(z.r) || 0.03) * Math.min(canvas.width, canvas.height)
         );
         const icon = propImages[col];
+        const sz = rPx * 2.2;
         if (icon && icon.complete && icon.naturalWidth > 0) {
-          const sz = rPx * 2.2;
+          // Pastor u. a. rund clippen — keine weißen Ecken
+          ctx.beginPath();
+          ctx.arc(cx, cy, sz / 2, 0, Math.PI * 2);
+          ctx.closePath();
+          ctx.clip();
           ctx.drawImage(icon, cx - sz / 2, cy - sz / 2, sz, sz);
         } else {
           ctx.fillStyle = FILL[col] || "rgba(255,255,255,0.15)";
@@ -556,11 +523,13 @@
           ctx.arc(cx, cy, rPx, 0, Math.PI * 2);
           ctx.fill();
         }
+        ctx.restore();
+        ctx.save();
         if (highlight) {
           ctx.strokeStyle = "#fff";
           ctx.lineWidth = 3;
           ctx.beginPath();
-          ctx.arc(cx, cy, rPx * 1.15, 0, Math.PI * 2);
+          ctx.arc(cx, cy, sz / 2 + 2, 0, Math.PI * 2);
           ctx.stroke();
         }
         ctx.restore();
@@ -573,6 +542,17 @@
         const r = z.r * Math.min(canvas.width, canvas.height);
         ctx.beginPath();
         ctx.arc(z.cx * canvas.width, z.cy * canvas.height, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      } else if (z.shape === "poly" && Array.isArray(z.points) && z.points.length >= 2) {
+        ctx.beginPath();
+        z.points.forEach((pt, i) => {
+          const px = pt.x * canvas.width;
+          const py = pt.y * canvas.height;
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        });
+        if (z.points.length >= 3) ctx.closePath();
         ctx.fill();
         ctx.stroke();
       } else {
@@ -628,7 +608,11 @@
         selectedId === "__camera__",
         "black"
       );
-      zones.forEach((z) => drawZoneShape(z, z.id === selectedId));
+      const zoneOrder = (z) =>
+        z.color === "red" ? 0 : z.color === "green" ? 1 : PLACE_PROP_COLORS.has(z.color) ? 3 : 2;
+      [...zones]
+        .sort((a, b) => zoneOrder(a) - zoneOrder(b))
+        .forEach((z) => drawZoneShape(z, z.id === selectedId));
       portals.forEach((p) => drawLabeledRect(p, "purple", p.id === selectedId));
       actions.forEach((a) => drawLabeledRect(a, "teal", a.id === selectedId));
       if (draft) {
@@ -763,14 +747,29 @@
     let start = null;
     let draggingProp = null;
     let dragOff = null;
+    let lassoing = false;
 
     function hitPropAt(p) {
       for (let i = zones.length - 1; i >= 0; i--) {
         const z = zones[i];
         if (z.shape !== "circle" || !PLACE_PROP_COLORS.has(z.color)) continue;
-        if (Math.hypot(p.x - z.cx, p.y - z.cy) <= (z.r || 0.02) + 0.01) return z;
+        // Treffer ≈ sichtbare Icon-Größe (r * 1.1), nicht nur der kleine Radius
+        const hitR = Math.max(0.035, (Number(z.r) || 0.03) * 1.15);
+        if (Math.hypot(p.x - z.cx, p.y - z.cy) <= hitR) return z;
       }
       return null;
+    }
+
+    function appendLassoPoint(p) {
+      if (!draft || draft.shape !== "poly" || !Array.isArray(draft.points)) return;
+      const last = draft.points[draft.points.length - 1];
+      if (
+        last &&
+        Math.hypot(p.x - last.x, p.y - last.y) < 0.008
+      ) {
+        return;
+      }
+      draft.points.push({ x: p.x, y: p.y });
     }
 
     canvas.addEventListener("mousedown", (ev) => {
@@ -778,12 +777,13 @@
       const t = currentTool();
       const hit = hitPropAt(p);
 
-      // Bestehendes Prop: auswählen + ziehen (Place-Tool: Klick auf Prop = drag, leer = place)
+      // Bestehendes Prop: immer auswählen + ziehen (auch bei Grün/Rot-Tool)
       if (hit) {
         selectedId = hit.id;
         draggingProp = hit;
         dragOff = { x: p.x - hit.cx, y: p.y - hit.cy };
         drawing = false;
+        lassoing = false;
         draft = null;
         paintList();
         updateRadiusUi();
@@ -791,7 +791,7 @@
         return;
       }
 
-      // Click-to-place für Gold / Flamme / Geldbaum
+      // Click-to-place für Pastor / Kerze / Flamme / Geldbaum
       if (PLACE_PROP_COLORS.has(t.color)) {
         const z = {
           id: newId(t.color),
@@ -815,7 +815,16 @@
 
       drawing = true;
       start = p;
-      if (tool === "link-portal") {
+      if (tool === "green-lasso" || t.shape === "poly") {
+        lassoing = true;
+        draft = {
+          id: newId("green"),
+          color: "green",
+          shape: "poly",
+          points: [{ x: p.x, y: p.y }],
+        };
+      } else if (tool === "link-portal") {
+        lassoing = false;
         draft = {
           id: newId("purple"),
           color: "purple",
@@ -827,6 +836,7 @@
           label: "",
         };
       } else if (tool === "add-action") {
+        lassoing = false;
         draft = {
           id: newId("teal"),
           color: "teal",
@@ -838,6 +848,7 @@
           label: "",
         };
       } else {
+        lassoing = false;
         draft = {
           id:
             t.id === "view-rect"
@@ -868,7 +879,9 @@
         return;
       }
       if (!drawing || !draft || !start) return;
-      if (draft.shape === "circle") {
+      if (draft.shape === "poly") {
+        appendLassoPoint(p);
+      } else if (draft.shape === "circle") {
         draft.cx = start.x;
         draft.cy = start.y;
         draft.r = Math.min(0.45, Math.max(0.008, Math.hypot(p.x - start.x, p.y - start.y)));
@@ -880,8 +893,10 @@
       }
       draw();
     });
-    async function finish() {
+    async function finish(fromLeave) {
       if (draggingProp) {
+        // Beim Verlassen der Canvas Drag nicht abbrechen — erst mouseup
+        if (fromLeave) return;
         draggingProp = null;
         dragOff = null;
         paintList();
@@ -894,6 +909,7 @@
       }
       if (!drawing) return;
       drawing = false;
+      lassoing = false;
       const d = draft;
       draft = null;
       start = null;
@@ -912,6 +928,15 @@
             h: Math.min(viewRect.h, Math.max(0.12, d.h)),
           };
           selectedId = "__camera__";
+          dirty = true;
+        } else if (d.shape === "poly" && (d.points || []).length >= 3) {
+          zones.push({
+            id: d.id,
+            color: "green",
+            shape: "poly",
+            points: d.points.map((pt) => ({ x: pt.x, y: pt.y })),
+          });
+          selectedId = d.id;
           dirty = true;
         } else if (d.shape === "circle" && d.r >= 0.008) {
           zones.push({
@@ -935,9 +960,6 @@
           });
           dirty = true;
         }
-        if (dirty && d.color !== "purple" && d.color !== "teal") {
-          zones = mergeGreens(zones);
-        }
       }
       paintList();
       updateRadiusUi();
@@ -946,15 +968,18 @@
       );
       draw();
     }
-    canvas.addEventListener("mouseup", () => {
-      finish();
-    });
+    function onDocUp() {
+      if (draggingProp || drawing) finish(false);
+    }
+    document.addEventListener("mouseup", onDocUp);
     canvas.addEventListener("mouseleave", () => {
-      finish();
+      // Lasso/Rechteck nur beenden wenn nicht gerade Prop gezogen wird
+      if (!draggingProp) finish(true);
     });
 
     root.querySelector("#roomBack").addEventListener("click", () => {
       if (dirty && !confirm("Verwerfen?")) return;
+      document.removeEventListener("mouseup", onDocUp);
       editor = null;
       renderRooms();
     });
@@ -1008,13 +1033,13 @@
     });
     root.querySelector("#roomClearAll").addEventListener("click", () => {
       if (!confirm("Alle Zonen, Portale und Aktionen löschen?")) return;
-      zones = [];
+      zones = weddingMode ? [fullMapRed()] : [];
       portals = [];
       actions = [];
       selectedId = null;
       dirty = true;
       paintList();
-      setStatus("Leer");
+      setStatus(weddingMode ? "Ganze Karte rot — Grün einzeichnen" : "Leer");
       draw();
     });
     const pickableEl = root.querySelector("#roomPickable");
