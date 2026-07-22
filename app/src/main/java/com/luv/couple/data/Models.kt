@@ -200,6 +200,10 @@ data class Lobby(
     val spaceBell: Boolean = true,
     /** Geplante Zeremonie-Zeit (epoch ms), nur Ceremony. */
     val ceremonyAt: Long = 0L,
+    /** Geschenkfenster nach dem Ja (epoch ms). */
+    val giftWindowEndsAt: Long = 0L,
+    /** none | open | rolled | done */
+    val giftPhase: String = "none",
     /** Namen Brautpaar für Ceremony-Karte. */
     val coupleNameA: String? = null,
     val coupleNameB: String? = null,

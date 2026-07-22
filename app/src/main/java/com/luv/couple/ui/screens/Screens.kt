@@ -1268,9 +1268,15 @@ private fun LobbyCard(
             }
             if (lobby.isWeddingCeremony) {
                 val now = System.currentTimeMillis()
+                val giftPhase = lobby.giftPhase.lowercase()
+                val giftEnds = lobby.giftWindowEndsAt
+                val giftRem = (giftEnds - now).coerceAtLeast(0L)
                 val openAt = (lobby.ceremonyAt - 10 * 60 * 1000L).coerceAtLeast(0L)
                 val open = lobby.ceremonyAt > 0L && now >= openAt
                 val label = when {
+                    giftPhase == "rolled" -> "Geschenke abholen"
+                    giftPhase == "open" && giftEnds > 0L ->
+                        "Noch ${formatCountdown(giftRem)} Geschenke"
                     lobby.ceremonyAt <= 0L -> "Hochzeit"
                     open -> "Zur Hochzeit"
                     else -> formatCountdown(openAt - now)

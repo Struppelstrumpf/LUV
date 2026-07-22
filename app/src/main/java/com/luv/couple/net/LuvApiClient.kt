@@ -33,6 +33,8 @@ data class RoomSession(
     val customRoomId: String? = null,
     val customRoomImageUrl: String? = null,
     val ceremonyAt: Long = 0L,
+    val giftWindowEndsAt: Long = 0L,
+    val giftPhase: String = "none",
     val coupleNameA: String? = null,
     val coupleNameB: String? = null,
     val name: String = "Lobby",
@@ -141,6 +143,8 @@ data class RemoteLobby(
     val customRoomId: String? = null,
     val customRoomImageUrl: String? = null,
     val ceremonyAt: Long = 0L,
+    val giftWindowEndsAt: Long = 0L,
+    val giftPhase: String = "none",
     val coupleNameA: String? = null,
     val coupleNameB: String? = null,
     val lastCanvasAt: Long = 0L,
@@ -577,6 +581,8 @@ object LuvApiClient {
                 customRoomId = o.optString("customRoomId").takeIf { it.isNotBlank() },
                 customRoomImageUrl = o.optString("customRoomImageUrl").takeIf { it.isNotBlank() },
                 ceremonyAt = o.optLong("ceremonyAt", 0L),
+                giftWindowEndsAt = o.optLong("giftWindowEndsAt", 0L),
+                giftPhase = o.optString("giftPhase", "none").ifBlank { "none" },
                 coupleNameA = o.optJSONObject("coupleNicknames")?.optString("a")
                     ?.takeIf { it.isNotBlank() },
                 coupleNameB = o.optJSONObject("coupleNicknames")?.optString("b")
@@ -2061,7 +2067,21 @@ object LuvApiClient {
         val ceremonyReady: Boolean = false,
         val ceremonyAt: Long = 0L,
         val ceremonyLobbyCode: String? = null,
-        val ceremonyPhase: String = "none"
+        val ceremonyPhase: String = "none",
+        val giftPhase: String = "none",
+        val giftWindowEndsAt: Long = 0L,
+        val giftPoolCount: Int = 0,
+        val giftRemainingMs: Long = 0L,
+        val canGift: Boolean = false,
+        val myGiftClaimReady: Boolean = false,
+        val myGiftClaimed: Boolean = false,
+        val myGiftPreview: List<WeddingGiftItem> = emptyList()
+    )
+
+    data class WeddingGiftItem(
+        val kind: String,
+        val itemId: String,
+        val fromNickname: String = "Jemand"
     )
 
     data class CeremonyGuest(
@@ -2285,8 +2305,33 @@ object LuvApiClient {
                 status == "ceremony_pending" || status == "ceremony_scheduled",
             ceremonyAt = o.optLong("ceremonyAt", 0L),
             ceremonyLobbyCode = o.optString("ceremonyLobbyCode").takeIf { it.isNotBlank() },
-            ceremonyPhase = o.optString("ceremonyPhase", "none").ifBlank { "none" }
+            ceremonyPhase = o.optString("ceremonyPhase", "none").ifBlank { "none" },
+            giftPhase = o.optString("giftPhase", "none").ifBlank { "none" },
+            giftWindowEndsAt = o.optLong("giftWindowEndsAt", 0L),
+            giftPoolCount = o.optInt("giftPoolCount", 0),
+            giftRemainingMs = o.optLong("giftRemainingMs", 0L),
+            canGift = o.optBoolean("canGift", false),
+            myGiftClaimReady = o.optBoolean("myGiftClaimReady", false),
+            myGiftClaimed = o.optBoolean("myGiftClaimed", false),
+            myGiftPreview = parseWeddingGiftItems(o.optJSONArray("myGiftPreview"))
         )
+    }
+
+    private fun parseWeddingGiftItems(arr: org.json.JSONArray?): List<WeddingGiftItem> {
+        if (arr == null) return emptyList()
+        val out = ArrayList<WeddingGiftItem>(arr.length())
+        for (i in 0 until arr.length()) {
+            val g = arr.optJSONObject(i) ?: continue
+            val kind = g.optString("kind").trim()
+            val itemId = g.optString("itemId").trim()
+            if (kind.isBlank() || itemId.isBlank()) continue
+            out += WeddingGiftItem(
+                kind = kind,
+                itemId = itemId,
+                fromNickname = g.optString("fromNickname", "Jemand").ifBlank { "Jemand" }
+            )
+        }
+        return out
     }
 
     private fun parseCeremonyInfo(o: JSONObject?): CeremonyInfo? {
@@ -3111,6 +3156,47 @@ object LuvApiClient {
             "/v1/users/${userId.trim().encodeURL()}/wedding/guestbook/${entryId.trim().encodeURL()}"
         )
         Unit
+    }
+
+    data class WeddingGiftResult(
+        val giftPoolCount: Int,
+        val marriage: MarriageInfo?
+    )
+
+    data class WeddingGiftClaimResult(
+        val already: Boolean,
+        val items: List<WeddingGiftItem>,
+        val bothClaimed: Boolean,
+        val marriage: MarriageInfo?
+    )
+
+    suspend fun weddingGift(
+        userId: String,
+        kind: String,
+        itemId: String
+    ): WeddingGiftResult = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("kind", kind.trim())
+            .put("itemId", itemId.trim())
+            .toString()
+        val json = authedPost(
+            "/v1/users/${userId.trim().encodeURL()}/wedding/gift",
+            body
+        )
+        WeddingGiftResult(
+            giftPoolCount = json.optInt("giftPoolCount", 0),
+            marriage = parseMarriageInfo(json.optJSONObject("marriage"))
+        )
+    }
+
+    suspend fun claimWeddingGifts(): WeddingGiftClaimResult = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/me/marriage/gifts/claim", "{}")
+        WeddingGiftClaimResult(
+            already = json.optBoolean("already", false),
+            items = parseWeddingGiftItems(json.optJSONArray("items")),
+            bothClaimed = json.optBoolean("bothClaimed", false),
+            marriage = parseMarriageInfo(json.optJSONObject("marriage"))
+        )
     }
 
     suspend fun reportGuestbook(userId: String, entryId: String, reason: String) =
@@ -4586,6 +4672,8 @@ object LuvApiClient {
                 customRoomId = parsed.optString("customRoomId").takeIf { it.isNotBlank() },
                 customRoomImageUrl = parsed.optString("customRoomImageUrl").takeIf { it.isNotBlank() },
                 ceremonyAt = parsed.optLong("ceremonyAt", 0L),
+                giftWindowEndsAt = parsed.optLong("giftWindowEndsAt", 0L),
+                giftPhase = parsed.optString("giftPhase", "none").ifBlank { "none" },
                 coupleNameA = parsed.optJSONObject("coupleNicknames")?.optString("a")
                     ?.takeIf { it.isNotBlank() },
                 coupleNameB = parsed.optJSONObject("coupleNicknames")?.optString("b")

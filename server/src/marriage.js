@@ -499,6 +499,13 @@ function publicMarriage(m, viewerId, users, opts = {}) {
       : 0;
   const ceremonyReady =
     m.status === "ceremony_pending" || m.status === "ceremony_scheduled";
+  // Gift-View lazy laden (vermeidet Zyklus marriage ↔ wedding_gifts)
+  let gift = {};
+  try {
+    gift = require("./wedding_gifts").publicGiftView(m, viewerId) || {};
+  } catch {
+    gift = {};
+  }
   return {
     id: m.id || pairKey(m.a, m.b),
     status: m.status,
@@ -547,6 +554,14 @@ function publicMarriage(m, viewerId, users, opts = {}) {
     ceremonyAt: Number(m.ceremonyAt) || 0,
     ceremonyLobbyCode: m.ceremonyLobbyCode || null,
     ceremonyPhase: m.ceremony?.phase || "none",
+    giftPhase: gift.giftPhase || "none",
+    giftWindowEndsAt: Number(gift.giftWindowEndsAt) || 0,
+    giftPoolCount: Number(gift.giftPoolCount) || 0,
+    giftRemainingMs: Number(gift.giftRemainingMs) || 0,
+    canGift: Boolean(gift.canGift),
+    myGiftClaimReady: Boolean(gift.myGiftClaimReady),
+    myGiftClaimed: Boolean(gift.myGiftClaimed),
+    myGiftPreview: Array.isArray(gift.myGiftPreview) ? gift.myGiftPreview : [],
   };
 }
 

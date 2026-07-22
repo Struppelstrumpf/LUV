@@ -955,6 +955,8 @@ fun LuvAppNav() {
             customRoomId = room.customRoomId,
             customRoomImageUrl = room.customRoomImageUrl,
             ceremonyAt = room.ceremonyAt,
+            giftWindowEndsAt = room.giftWindowEndsAt,
+            giftPhase = room.giftPhase,
             coupleNameA = room.coupleNameA,
             coupleNameB = room.coupleNameB,
             hostNickname = room.hostNickname,
@@ -1138,6 +1140,8 @@ fun LuvAppNav() {
                 customRoomId = room.customRoomId,
                 customRoomImageUrl = room.customRoomImageUrl,
                 ceremonyAt = room.ceremonyAt,
+                giftWindowEndsAt = room.giftWindowEndsAt,
+                giftPhase = room.giftPhase,
                 coupleNameA = room.coupleNameA,
                 coupleNameB = room.coupleNameB,
                 hostNickname = room.hostNickname,
@@ -1998,15 +2002,59 @@ fun LuvAppNav() {
                                 if (requireGoogleOrToast()) {
                                     if (lobby.isWeddingCeremony) {
                                         val now = System.currentTimeMillis()
-                                        val openAt = lobby.ceremonyAt - 10 * 60 * 1000L
-                                        if (lobby.ceremonyAt > 0L && now < openAt) {
-                                            Toast.makeText(
-                                                context,
-                                                "Noch ${com.luv.couple.ui.wedding.formatCountdown(openAt - now)} bis „Zur Hochzeit“",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
+                                        val giftPhase = lobby.giftPhase.lowercase()
+                                        if (giftPhase == "rolled") {
+                                            scope.launch {
+                                                runCatching { LuvApiClient.claimWeddingGifts() }
+                                                    .onSuccess { result ->
+                                                        syncInventory()
+                                                        runCatching { syncCloudAccount(force = true) }
+                                                        val names = result.items.joinToString(" · ") {
+                                                            "${it.itemId} (von ${it.fromNickname})"
+                                                        }
+                                                        val msg = when {
+                                                            result.already -> "Geschenke schon abgeholt."
+                                                            result.items.isEmpty() -> "Keine Geschenke für dich."
+                                                            else -> "Du hast erhalten: $names"
+                                                        }
+                                                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                                        if (result.bothClaimed) {
+                                                            Toast.makeText(
+                                                                context,
+                                                                "Kapelle geschlossen — danke!",
+                                                                Toast.LENGTH_SHORT
+                                                            ).show()
+                                                        }
+                                                    }
+                                                    .onFailure { e ->
+                                                        Toast.makeText(
+                                                            context,
+                                                            (e as? LuvApiException)?.message
+                                                                ?: e.message
+                                                                ?: "Abholen fehlgeschlagen",
+                                                            Toast.LENGTH_SHORT
+                                                        ).show()
+                                                    }
+                                            }
+                                        } else if (giftPhase == "open") {
+                                            // Nach dem Ja: Kapelle nur noch fürs Ehepaar (Geschenkfenster)
+                                            context.startActivity(
+                                                Intent(
+                                                    context,
+                                                    com.luv.couple.ui.wedding.WeddingRoomActivity::class.java
+                                                )
+                                            )
                                         } else {
-                                            pendingCeremonyGathering = true
+                                            val openAt = lobby.ceremonyAt - 10 * 60 * 1000L
+                                            if (lobby.ceremonyAt > 0L && now < openAt) {
+                                                Toast.makeText(
+                                                    context,
+                                                    "Noch ${com.luv.couple.ui.wedding.formatCountdown(openAt - now)} bis „Zur Hochzeit“",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            } else {
+                                                pendingCeremonyGathering = true
+                                            }
                                         }
                                     } else if (lobby.isCustomRoom) {
                                         context.startActivity(

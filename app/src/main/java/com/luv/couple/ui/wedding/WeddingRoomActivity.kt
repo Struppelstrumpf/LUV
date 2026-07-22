@@ -131,6 +131,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         }
     }
     var ceremony by remember { mutableStateOf<LuvApiClient.CeremonyInfo?>(null) }
+    var marriage by remember { mutableStateOf<LuvApiClient.MarriageInfo?>(null) }
+    var showGiftPicker by remember { mutableStateOf(false) }
     var entered by remember { mutableStateOf(false) }
     // Start nahe der Eingangstür (unten im Kapellenbild)
     var myX by remember { mutableFloatStateOf(0.50f) }
@@ -180,6 +182,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             runCatching { LuvApiClient.fetchCeremony() }
                 .onSuccess {
                     ceremony = it.ceremony
+                    marriage = it.marriage
                     if (it.roomLayout != null) {
                         layout = it.roomLayout
                         if (!spawned) {
@@ -206,6 +209,13 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             delay(1500)
         }
     }
+
+    val giftTargetUserId = remember(ceremony, marriage, myId) {
+        ceremony?.gathering?.firstOrNull { it.isCouple }?.userId
+            ?: marriage?.partnerId
+            ?: myId.takeIf { it.isNotBlank() }
+    }
+    val canGift = marriage?.canGift == true && !giftTargetUserId.isNullOrBlank()
 
     if (rejectName != null) {
         Box(
@@ -637,6 +647,20 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         .clickable(onClick = onClose)
                         .padding(vertical = 6.dp),
                 )
+                if (canGift) {
+                    Text(
+                        "🎁",
+                        fontSize = 20.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0x88E91E63))
+                            .clickable { showGiftPicker = true }
+                            .padding(vertical = 8.dp),
+                    )
+                }
                 Text(
                     if (musicMuted) "🔇" else "🔊",
                     fontSize = 20.sp,
@@ -652,6 +676,22 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         .padding(vertical = 8.dp),
                 )
             }
+        }
+
+        if (showGiftPicker && !giftTargetUserId.isNullOrBlank()) {
+            WeddingGiftPickerDialog(
+                targetUserId = giftTargetUserId,
+                onDismiss = { showGiftPicker = false },
+                onGifted = {
+                    scope.launch {
+                        runCatching { LuvApiClient.fetchCeremony() }
+                            .onSuccess {
+                                ceremony = it.ceremony
+                                marriage = it.marriage
+                            }
+                    }
+                }
+            )
         }
 
         if (showMusicPanel) {

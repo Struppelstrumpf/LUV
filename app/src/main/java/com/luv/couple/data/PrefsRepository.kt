@@ -462,6 +462,16 @@ class PrefsRepository(private val context: Context) {
                     customRoomImageUrl = r.customRoomImageUrl ?: prev?.customRoomImageUrl,
                     spaceBell = prev?.spaceBell ?: true,
                     ceremonyAt = r.ceremonyAt.takeIf { it > 0 } ?: (prev?.ceremonyAt ?: 0L),
+                    giftWindowEndsAt = if (r.isWeddingCeremony) {
+                        r.giftWindowEndsAt
+                    } else {
+                        prev?.giftWindowEndsAt ?: 0L
+                    },
+                    giftPhase = if (r.isWeddingCeremony) {
+                        r.giftPhase.ifBlank { "none" }
+                    } else {
+                        prev?.giftPhase ?: "none"
+                    },
                     coupleNameA = r.coupleNameA ?: prev?.coupleNameA,
                     coupleNameB = r.coupleNameB ?: prev?.coupleNameB,
                     hostNickname = r.hostNickname.ifBlank { prev?.hostNickname.orEmpty() },
@@ -1396,6 +1406,8 @@ class PrefsRepository(private val context: Context) {
                                 customRoomImageUrl = o.optString("customRoomImageUrl").takeIf { it.isNotBlank() },
                                 spaceBell = o.optBoolean("spaceBell", true),
                                 ceremonyAt = o.optLong("ceremonyAt", 0L),
+                                giftWindowEndsAt = o.optLong("giftWindowEndsAt", 0L),
+                                giftPhase = o.optString("giftPhase", "none").ifBlank { "none" },
                                 coupleNameA = o.optString("coupleNameA").takeIf { it.isNotBlank() },
                                 coupleNameB = o.optString("coupleNameB").takeIf { it.isNotBlank() },
                                 hostNickname = o.optString("hostNickname", ""),
@@ -1448,6 +1460,8 @@ class PrefsRepository(private val context: Context) {
                         .put("customRoomImageUrl", lobby.customRoomImageUrl ?: "")
                         .put("spaceBell", lobby.spaceBell)
                         .put("ceremonyAt", lobby.ceremonyAt)
+                        .put("giftWindowEndsAt", lobby.giftWindowEndsAt)
+                        .put("giftPhase", lobby.giftPhase)
                         .put("coupleNameA", lobby.coupleNameA ?: "")
                         .put("coupleNameB", lobby.coupleNameB ?: "")
                         .put("hostNickname", lobby.hostNickname)

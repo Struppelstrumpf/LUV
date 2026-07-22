@@ -2969,6 +2969,7 @@ private fun WeddingGuestbookDialog(
     var wedding by remember { mutableStateOf<LuvApiClient.WeddingInfo?>(null) }
     var weddingBmp by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     var showGuestbook by remember { mutableStateOf(false) }
+    var showGiftPicker by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
@@ -3014,6 +3015,9 @@ private fun WeddingGuestbookDialog(
                     wedding = wedding,
                     weddingBmp = weddingBmp,
                     onOpenGuestbook = { showGuestbook = true },
+                    onGift = {
+                        if (wedding?.marriage?.canGift == true) showGiftPicker = true
+                    },
                     onClose = onDismiss,
                     modifier = Modifier
                         .fillMaxWidth(0.92f)
@@ -3078,6 +3082,18 @@ private fun WeddingGuestbookDialog(
                         ) { }
                 )
             }
+
+            if (showGiftPicker) {
+                com.luv.couple.ui.wedding.WeddingGiftPickerDialog(
+                    targetUserId = profileUserId,
+                    onDismiss = { showGiftPicker = false },
+                    onGifted = {
+                        scope.launch {
+                            wedding = LuvApiClient.fetchWedding(profileUserId)
+                        }
+                    }
+                )
+            }
         }
     }
 }
@@ -3088,6 +3104,7 @@ private fun WeddingOverviewCard(
     wedding: LuvApiClient.WeddingInfo?,
     weddingBmp: android.graphics.Bitmap?,
     onOpenGuestbook: () -> Unit,
+    onGift: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -3194,6 +3211,26 @@ private fun WeddingOverviewCard(
                 fontFamily = DisplayFont,
                 fontSize = 17.sp
             )
+        }
+        if (wedding?.marriage?.canGift == true) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(
+                        Brush.horizontalGradient(listOf(WeddingGold, Color(0xFFE8C07A)))
+                    )
+                    .clickable(onClick = onGift),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "🎁  Schenken",
+                    color = WeddingInk,
+                    fontFamily = DisplayFont,
+                    fontSize = 16.sp
+                )
+            }
         }
         Text(
             "Schließen",
