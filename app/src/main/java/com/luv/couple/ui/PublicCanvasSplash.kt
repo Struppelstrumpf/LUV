@@ -165,24 +165,34 @@ fun PublicCanvasSplash(
         }
     }
 
+    // Home früh zeigen: mind. Bildzeit, dann sobald ≥1 Lobby ready (Rest im Hintergrund)
     LaunchedEffect(ready, idsReady, lobbyIds) {
         if (!ready || !idsReady) return@LaunchedEffect
         val shownAt = System.currentTimeMillis()
         val minShowMs = if (bitmap != null) 1_200L else 400L
-        val deadline = shownAt + 10_000L
+        val deadline = shownAt + 3_500L
         while (true) {
             val elapsed = System.currentTimeMillis() - shownAt
             val states = PairConnectionService.lobbyStates.value
-            val lobbiesDone = lobbyIds.isEmpty() || lobbyIds.all { id ->
+            fun online(id: String): Boolean {
                 val s = states[id]
-                s == ConnectionState.CONNECTED || s == ConnectionState.HOSTING
+                return s == ConnectionState.CONNECTED || s == ConnectionState.HOSTING
             }
+            val softReady = lobbyIds.isEmpty() || lobbyIds.any { online(it) }
+            val allReady = lobbyIds.isEmpty() || lobbyIds.all { online(it) }
             val timedOut = System.currentTimeMillis() >= deadline
-            if (elapsed >= minShowMs && (lobbiesDone || timedOut)) break
+            if (elapsed >= minShowMs && (softReady || timedOut)) break
+            if (allReady && elapsed >= minShowMs) break
             delay(80)
         }
-        if (barProgress.value < 1f) {
-            barProgress.animateTo(1f, animationSpec = tween(220, easing = LinearEasing))
+        if (lobbyIds.isEmpty() || lobbyIds.all { id ->
+                val s = PairConnectionService.lobbyStates.value[id]
+                s == ConnectionState.CONNECTED || s == ConnectionState.HOSTING
+            }
+        ) {
+            if (barProgress.value < 1f) {
+                barProgress.animateTo(1f, animationSpec = tween(180, easing = LinearEasing))
+            }
         }
         onFinished()
     }

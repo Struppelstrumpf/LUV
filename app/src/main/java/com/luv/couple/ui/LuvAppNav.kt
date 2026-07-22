@@ -243,6 +243,8 @@ fun LuvAppNav() {
             !PendingSplashSkip.peek() && PendingJoin.peek().isNullOrBlank()
         )
     }
+    /** Markt/Freunde/Cloud erst einmal nach erstem Home (nach Splash). */
+    var secondaryBootDone by remember { mutableStateOf(false) }
     var tutorialReplay by remember { mutableStateOf(false) }
     fun shareText(text: String) {
         val send = Intent(Intent.ACTION_SEND).apply {
@@ -1445,28 +1447,78 @@ fun LuvAppNav() {
         startDestination = if (!snapshot.tutorialDone || !snapshot.hasNickname || snapshot.sessionToken.isNullOrBlank()) {
             Routes.TUTORIAL
         } else {
+            // Nur Lobbys — Markt/Freunde/Cloud erst nach Splash (Home sichtbar)
             if (snapshot.hasLobbies) {
                 CanvasStore.setActiveLobby(snapshot.activeLobbyId)
                 PairConnectionService.startAll(context)
             }
-            scope.launch {
-                runCatching { LuvApiClient.claimDaily(); refreshAccount() }
-                val sessionOk = runCatching {
-                    val user = LuvApiClient.me()
-                    prefs.updateAccount(user)
-                    AccountSession.setAccount(user)
-                    true
-                }.getOrDefault(false)
-                if (sessionOk && AccountSession.account.value?.googleLinked == true) {
-                    runCatching { syncCloudAccount(force = true) }
-                } else if (!sessionOk && !snapshot.sessionToken.isNullOrBlank()) {
-                    accountMessage = "Bitte erneut mit Google anmelden, um Lobbys zu laden."
-                }
-            }
             Routes.MAIN
         }
-        // Marktplatz/Itemshop-Vorschau schon beim Start laden (auch ohne Markt-Tab)
-        scope.launch { runCatching { MarketHubCache.warm() } }
+    }
+
+    // Nach Splash: Home ist da → dann erst Markt, Freunde, Cloud, …
+    LaunchedEffect(showPublicSplash, startDestination) {
+        if (secondaryBootDone) return@LaunchedEffect
+        if (startDestination == null) return@LaunchedEffect
+        if (showPublicSplash) return@LaunchedEffect
+        if (startDestination != Routes.MAIN && startDestination != Routes.TUTORIAL) {
+            return@LaunchedEffect
+        }
+        secondaryBootDone = true
+        // Kurze Pause, damit WS die erste Netz-Sekunde behält
+        delay(400)
+        if (startDestination == Routes.MAIN && !LuvApiClient.sessionToken.isNullOrBlank()) {
+            runCatching { LuvApiClient.claimDaily(); refreshAccount() }
+            val sessionOk = runCatching {
+                val user = LuvApiClient.me()
+                prefs.updateAccount(user)
+                AccountSession.setAccount(user)
+                true
+            }.getOrDefault(false)
+            if (sessionOk && AccountSession.account.value?.googleLinked == true) {
+                runCatching { syncCloudAccount(force = true) }
+            } else if (!sessionOk) {
+                accountMessage = "Bitte erneut mit Google anmelden, um Lobbys zu laden."
+            }
+        }
+        launch { runCatching { MarketHubCache.warm() } }
+        launch { runCatching { AppUpdater.check(context, notify = true) } }
+        if (!LuvApiClient.sessionToken.isNullOrBlank()) {
+            launch {
+                runCatching {
+                    com.luv.couple.net.NotificationBadges.refreshFriends(context, force = true)
+                }
+            }
+            launch { AchievementsBadge.refresh() }
+            launch {
+                runCatching {
+                    LuvApiClient.fetchLiveNotice()?.let { LiveNoticeBus.offer(it) }
+                }
+            }
+            launch {
+                runCatching {
+                    val sn = LuvApiClient.fetchStaffNotices()
+                    StaffWarningBus.offer(sn.pending, sn.warnings)
+                }
+            }
+            launch {
+                val prevSales =
+                    runCatching { prefs.pendingSalesKnownCount() }.getOrDefault(0)
+                val sales =
+                    com.luv.couple.net.NotificationBadges.refreshPendingSales(context)
+                if (sales != null && sales.count > prevSales) {
+                    com.luv.couple.notify.LuvAlertNotifier.onMarketSale(
+                        context,
+                        itemCount = sales.count,
+                        totalCoins = sales.totalCoins
+                    )
+                }
+                if (sales != null) {
+                    runCatching { prefs.setPendingSalesKnownCount(sales.count) }
+                }
+            }
+            com.luv.couple.net.NotificationBadges.syncAppBadge(context)
+        }
     }
 
     // Invite-Deep-Link / Install-Referrer → Overlay (über Tutorial oder Home)
@@ -1531,53 +1583,18 @@ fun LuvAppNav() {
             if (event != Lifecycle.Event.ON_START) return@LifecycleEventObserver
             val isCold = first
             first = false
+            // Kaltstart: Markt/Freunde laufen erst nach Splash (siehe LaunchedEffect oben).
+            // Resume: leicht nachziehen, ohne Cloud-Force.
+            if (isCold) return@LifecycleEventObserver
             scope.launch {
-                // Beim Kaltstart zuerst Lobby-WS — schweres Sync-Zeug etwas später
-                if (isCold) delay(2_800L)
-                launch { runCatching { AppUpdater.check(context, notify = isCold) } }
+                launch { runCatching { AppUpdater.check(context, notify = false) } }
                 launch { runCatching { MarketHubCache.warm() } }
-                if (isCold) {
-                    launch { runCatching { refreshAccount() } }
-                    if (AccountSession.account.value?.googleLinked == true) {
-                        launch { runCatching { syncCloudAccount() } }
-                    }
-                }
                 if (!LuvApiClient.sessionToken.isNullOrBlank()) {
                     launch {
                         com.luv.couple.net.NotificationBadges.refreshFriends(
                             context,
-                            force = isCold,
+                            force = false,
                         )
-                    }
-                    if (isCold) {
-                        launch { AchievementsBadge.refresh() }
-                        launch {
-                            runCatching {
-                                LuvApiClient.fetchLiveNotice()?.let { LiveNoticeBus.offer(it) }
-                            }
-                        }
-                        launch {
-                            runCatching {
-                                val sn = LuvApiClient.fetchStaffNotices()
-                                StaffWarningBus.offer(sn.pending, sn.warnings)
-                            }
-                        }
-                        launch {
-                            val prevSales =
-                                runCatching { prefs.pendingSalesKnownCount() }.getOrDefault(0)
-                            val sales =
-                                com.luv.couple.net.NotificationBadges.refreshPendingSales(context)
-                            if (sales != null && sales.count > prevSales) {
-                                com.luv.couple.notify.LuvAlertNotifier.onMarketSale(
-                                    context,
-                                    itemCount = sales.count,
-                                    totalCoins = sales.totalCoins
-                                )
-                            }
-                            if (sales != null) {
-                                runCatching { prefs.setPendingSalesKnownCount(sales.count) }
-                            }
-                        }
                     }
                     com.luv.couple.net.NotificationBadges.syncAppBadge(context)
                 }
