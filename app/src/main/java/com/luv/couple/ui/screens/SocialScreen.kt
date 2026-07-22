@@ -74,6 +74,7 @@ import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
 import com.luv.couple.ui.wedding.formatCeremonyAt
 import com.luv.couple.ui.wedding.formatCountdown
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -101,8 +102,11 @@ fun SocialScreen(
     LaunchedEffect(Unit) {
         runCatching { LuvApiClient.pingAchievement("social_opens") }
         com.luv.couple.net.NotificationBadges.markSozialSeen()
-        AchievementsBadge.refresh()
-        com.luv.couple.net.NotificationBadges.refreshFriends()
+        // Parallel vorwärmen — nicht nacheinander warten (fühlte sich wie „langsam laden“ an)
+        kotlinx.coroutines.coroutineScope {
+            launch { runCatching { AchievementsBadge.refresh() } }
+            launch { runCatching { com.luv.couple.net.NotificationBadges.refreshFriends() } }
+        }
         com.luv.couple.net.NotificationBadges.markSozialSeen()
     }
 
@@ -350,13 +354,16 @@ private fun FriendsPanel(
 
     fun reload(force: Boolean = false) {
         scope.launch {
-            // Cache-First: sofort anzeigen, Loading nur ohne Cache
+            // Cache-First nur wenn nicht force — sonst überschreibt alter Cache z. B. Skip-Ergebnis
             val cached = LuvApiClient.peekFriendsCache()
-            if (cached != null) {
+            if (!force && cached != null) {
                 applyFriendsSnap(cached)
                 loading = false
-            } else {
+            } else if (cached == null) {
                 loading = true
+            } else {
+                // force + Cache: Inhalt schon da → kein Spinner, still frisch laden
+                loading = false
             }
             runCatching { LuvApiClient.fetchFriends(force = force) }
                 .onSuccess { applyFriendsSnap(it) }
@@ -378,8 +385,12 @@ private fun FriendsPanel(
         }
     }
 
-    // Immer frisch laden — sonst fehlen Heiratsanfragen durch Freunde-Cache (45s)
-    LaunchedEffect(Unit) { reload(force = true) }
+    // Cache sofort, dann Soft-Refresh — force nur wenn Cache fehlt
+    LaunchedEffect(Unit) {
+        val hasCache = LuvApiClient.peekFriendsCache() != null
+        reload(force = !hasCache)
+        if (hasCache) reload(force = true)
+    }
 
     fun persistOrder(next: List<LuvApiClient.FriendCard>) {
         friends = next
@@ -649,6 +660,8 @@ private fun FriendsPanel(
                                                 it.marriage?.weddingLobbyCode
                                                     ?.trim()
                                                     ?.uppercase()
+                                            LuvApiClient.invalidateFriendsCache()
+                                            reload(force = true)
                                             Toast.makeText(
                                                 context,
                                                 "Hochzeitsbild-Lobby ist bereit",
@@ -1037,7 +1050,8 @@ private fun FriendsPanel(
             onDismiss = { showSkipWait = false },
             onSkipped = {
                 myMarriage = it
-                reload()
+                LuvApiClient.invalidateFriendsCache()
+                reload(force = true)
             }
         )
     }

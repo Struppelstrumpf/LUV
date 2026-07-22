@@ -2670,6 +2670,8 @@ object LuvApiClient {
         if (user != null) {
             AccountSession.setAccount(AccountInfo.fromApi(user))
         }
+        // Sonst zeigt Sozial noch 45s die alte „Wartezeit überspringen“-Kachel aus dem Cache
+        invalidateFriendsCache()
         MarriageSkipResult(
             cost = json.optInt("cost", 0),
             marriage = parseMarriageInfo(json.optJSONObject("marriage")),
@@ -2683,6 +2685,7 @@ object LuvApiClient {
         if (user != null) {
             AccountSession.setAccount(AccountInfo.fromApi(user))
         }
+        invalidateFriendsCache()
         MarriageSkipResult(
             cost = 0,
             marriage = parseMarriageInfo(json.optJSONObject("marriage")),

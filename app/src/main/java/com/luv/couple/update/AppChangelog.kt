@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.114",
+            listOf(
+                "Wartezeit überspringen aktualisiert Sozial sofort",
+                "Sozial wieder schneller (Cache sofort, Sync parallel)",
+            )
+        ),
+        Entry(
             "2.2.113",
             listOf(
                 "Sozial-Tabs wechseln ohne Coroutine-/Timeout-Fehler",
