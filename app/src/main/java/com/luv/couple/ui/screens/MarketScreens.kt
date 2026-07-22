@@ -25,11 +25,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.mandatorySystemGestures
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.systemGestures
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.max
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -215,7 +222,9 @@ fun MarketScreen(
                     },
                     properties = DialogProperties(
                         usePlatformDefaultWidth = false,
-                        decorFitsSystemWindows = true
+                        // false: Insets selbst steuern (Edge-to-Edge) —
+                        // sonst liegt der Footer oft unter der Gestenleiste.
+                        decorFitsSystemWindows = false
                     )
                 ) {
                     Box(
@@ -2173,11 +2182,20 @@ private fun LootboxTab(
             }
         )
     }
-    // Footer als bottomBar — immer sichtbar, Inhalt scrollt darüber
+    // Footer fest am unteren Rand — Insets + Mindestabstand (Gestenleiste).
+    val density = LocalDensity.current
+    val bottomInsets = WindowInsets.navigationBars
+        .union(WindowInsets.systemGestures)
+        .union(WindowInsets.mandatorySystemGestures)
+        .asPaddingValues()
+        .calculateBottomPadding()
+    val footerBottomPad = max(bottomInsets, 28.dp)
+    var footerHeight by remember { mutableStateOf(0.dp) }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .windowInsetsPadding(WindowInsets.statusBars.union(WindowInsets.ime))
     ) {
         val reveal = revealedReward?.takeIf { phase == "reveal" }
         val shortScreen = maxHeight < 640.dp
@@ -2194,7 +2212,7 @@ private fun LootboxTab(
                 .fillMaxSize()
                 .padding(horizontal = 18.dp)
                 .padding(top = 8.dp)
-                .padding(bottom = if (footerVisible) 8.dp else 12.dp),
+                .padding(bottom = if (footerVisible) footerHeight else footerBottomPad + 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(
@@ -2229,7 +2247,7 @@ private fun LootboxTab(
                     .weight(1f, fill = true)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(bottom = if (footerVisible) 8.dp else 0.dp)
+                    .padding(bottom = 8.dp)
             ) {
                 val waiting = maxOf(
                     displayPending,
@@ -2408,62 +2426,66 @@ private fun LootboxTab(
                     )
                 }
             }
-            if (reveal == null) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(BgDeep)
-                        .navigationBarsPadding()
-                        .padding(top = 8.dp, bottom = 10.dp)
+        }
+        if (footerVisible) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(BgDeep)
+                    .onGloballyPositioned { coords ->
+                        footerHeight = with(density) { coords.size.height.toDp() }
+                    }
+                    .padding(start = 18.dp, end = 18.dp, top = 10.dp)
+                    .padding(bottom = footerBottomPad + 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Kauf bestätigen",
-                                color = TextPrimary,
-                                fontFamily = DisplayFont,
-                                fontSize = 14.sp
-                            )
-                            Text(
-                                if (confirmBuy) {
-                                    "Vor dem Kauf nachfragen · Menge wählbar"
-                                } else {
-                                    "Direkt mit Tippen kaufen"
-                                },
-                                color = TextMuted,
-                                fontFamily = BodyFont,
-                                fontSize = 12.sp
-                            )
-                        }
-                        Switch(
-                            checked = confirmBuy,
-                            onCheckedChange = { on ->
-                                scope.launch { prefs.setLootboxConfirmBuy(on) }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Kauf bestätigen",
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            if (confirmBuy) {
+                                "Vor dem Kauf nachfragen · Menge wählbar"
+                            } else {
+                                "Direkt mit Tippen kaufen"
                             },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = MaleBlue,
-                                uncheckedThumbColor = Color.White.copy(alpha = 0.85f),
-                                uncheckedTrackColor = Color.White.copy(alpha = 0.18f)
-                            )
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 12.sp
                         )
                     }
-                    Text(
-                        "Zufälliger Inhalt · Duplikate möglich · nicht erstattungsfähig — Details in den AGB.",
-                        color = TextMuted.copy(alpha = 0.85f),
-                        fontFamily = BodyFont,
-                        fontSize = 11.sp,
-                        lineHeight = 14.sp,
-                        textAlign = TextAlign.Center,
-                        maxLines = 2
+                    Switch(
+                        checked = confirmBuy,
+                        onCheckedChange = { on ->
+                            scope.launch { prefs.setLootboxConfirmBuy(on) }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = MaleBlue,
+                            uncheckedThumbColor = Color.White.copy(alpha = 0.85f),
+                            uncheckedTrackColor = Color.White.copy(alpha = 0.18f)
+                        )
                     )
                 }
+                Text(
+                    "Zufälliger Inhalt · Duplikate möglich · nicht erstattungsfähig — Details in den AGB.",
+                    color = TextMuted.copy(alpha = 0.85f),
+                    fontFamily = BodyFont,
+                    fontSize = 11.sp,
+                    lineHeight = 14.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2
+                )
             }
         }
     }
