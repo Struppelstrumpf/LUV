@@ -2140,6 +2140,11 @@ function closeEventLobbyRoom(code, room) {
       const destAbs = path.join(DATA_DIR, destRel);
       fs.copyFileSync(snapPath, destAbs);
       imagePath = destRel.replace(/\\/g, "/");
+      try {
+        require("./contest_thumbs").warmContestThumb(destAbs);
+      } catch (thumbErr) {
+        console.error("closeEventLobby thumb", thumbErr);
+      }
     }
   } catch (e) {
     console.error("closeEventLobby snapshot", e);
@@ -11427,8 +11432,18 @@ app.get("/v1/me/events/:id/contest/entries/:entryId/image", (req, res) => {
     ? entry.imagePath
     : path.join(DATA_DIR, entry.imagePath);
   if (!fs.existsSync(abs)) return res.status(404).json({ error: "missing" });
+  // Vote/Gewinner: JPEG-Thumb (deutlich kleiner); ?full=1 → Original-PNG
+  const wantFull = String(req.query?.full || "") === "1";
+  if (!wantFull) {
+    const thumb = require("./contest_thumbs").ensureContestThumb(abs);
+    if (thumb && fs.existsSync(thumb)) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "private, max-age=604800, immutable");
+      return res.sendFile(thumb);
+    }
+  }
   res.setHeader("Content-Type", "image/png");
-  res.setHeader("Cache-Control", "private, max-age=300");
+  res.setHeader("Cache-Control", "private, max-age=604800, immutable");
   return res.sendFile(abs);
 });
 

@@ -64,14 +64,14 @@ import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
+import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.util.concurrent.TimeUnit
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
+import kotlin.math.max
 
 /** Server liefert oft YYYY-MM-DD — Anzeige als 29.07.2026 (Uhrzeit-Labels bleiben). */
 private fun formatEventWhenPart(raw: String?): String? {
@@ -817,34 +817,70 @@ private fun submitVote(
     }
 }
 
+/** Abstimmung: Bitmaps im Speicher halten (neues OkHttpClient pro Bild war der Bremsklotz). */
+private object ContestImageCache {
+    private const val MAX_SIDE = 1080
+    private val cache = object : LruCache<String, Bitmap>(12) {
+        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    }
+
+    fun get(key: String): Bitmap? = synchronized(cache) { cache.get(key) }
+
+    fun put(key: String, bitmap: Bitmap) {
+        synchronized(cache) { cache.put(key, bitmap) }
+    }
+
+    fun load(entryId: String, imageUrl: String): Bitmap? {
+        val key = entryId.ifBlank { imageUrl }
+        get(key)?.let { return it }
+        val abs = CanvasMemoryKeeper.absoluteImageUrl(imageUrl)
+        val req = Request.Builder().url(abs).get().build()
+        val bytes = LuvApiClient.httpClient().newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) return null
+            resp.body?.bytes()
+        } ?: return null
+        val bmp = decodeSampled(bytes, MAX_SIDE) ?: return null
+        put(key, bmp)
+        return bmp
+    }
+
+    private fun decodeSampled(bytes: ByteArray, maxSide: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        val largest = max(bounds.outWidth, bounds.outHeight).coerceAtLeast(1)
+        while (largest / sample > maxSide) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+    }
+}
+
 @Composable
 private fun ContestEntryImage(
     item: EventContestFeedItem,
     modifier: Modifier = Modifier,
 ) {
-    var bitmap by remember(item.entryId, item.imageUrl) { mutableStateOf<Bitmap?>(null) }
-    var loading by remember(item.entryId) { mutableStateOf(true) }
+    val cacheKey = item.entryId.ifBlank { item.imageUrl.orEmpty() }
+    var bitmap by remember(cacheKey) {
+        mutableStateOf(ContestImageCache.get(cacheKey))
+    }
+    var loading by remember(cacheKey) { mutableStateOf(bitmap == null) }
 
     LaunchedEffect(item.entryId, item.imageUrl) {
-        loading = true
         val url = item.imageUrl
-        bitmap = if (url.isNullOrBlank()) {
-            null
-        } else {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    val abs = CanvasMemoryKeeper.absoluteImageUrl(url)
-                    val client = OkHttpClient.Builder()
-                        .connectTimeout(20, TimeUnit.SECONDS)
-                        .readTimeout(30, TimeUnit.SECONDS)
-                        .build()
-                    val req = Request.Builder().url(abs).get().build()
-                    client.newCall(req).execute().use { resp ->
-                        if (!resp.isSuccessful) return@runCatching null
-                        resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
-                    }
-                }.getOrNull()
-            }
+        if (url.isNullOrBlank()) {
+            bitmap = null
+            loading = false
+            return@LaunchedEffect
+        }
+        ContestImageCache.get(cacheKey)?.let {
+            bitmap = it
+            loading = false
+            return@LaunchedEffect
+        }
+        loading = true
+        bitmap = withContext(Dispatchers.IO) {
+            runCatching { ContestImageCache.load(item.entryId, url) }.getOrNull()
         }
         loading = false
     }
