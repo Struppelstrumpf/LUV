@@ -16817,7 +16817,7 @@ app.post("/v1/rooms/:code/slots", (req, res) => {
   if (room.isWeddingCeremony) {
     return res.status(403).json({
       error: "ceremony_slots_fixed",
-      message: "Die Hochzeits-Lobby hat feste Plätze (Brautpaar + bis zu 8 Gäste).",
+      message: "Die Hochzeits-Lobby hat feste Plätze je nach Raum (Brautpaar + Gäste-Slots).",
     });
   }
   // Nur Host oder Mitglied — fremde Codes nicht manipulieren
