@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.104",
+            listOf(
+                "Hochzeit: Zeiten vorschlagen & gemeinsam festlegen",
+                "Hochzeits-Gäste: Custom-Begleiter als Bild statt img_…",
+            )
+        ),
+        Entry(
             "2.2.103",
             listOf(
                 "Sozial: Hochzeit als sichtbare Kachel mit Tippen-Button",

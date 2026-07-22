@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.luv.couple.net.LuvApiClient
+import com.luv.couple.ui.ItemGlyph
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -237,6 +238,7 @@ fun WeddingScheduleDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
+    var ceremony by remember { mutableStateOf<LuvApiClient.CeremonyInfo?>(null) }
     val cal = remember {
         Calendar.getInstance().apply {
             add(Calendar.MINUTE, 45)
@@ -248,7 +250,50 @@ fun WeddingScheduleDialog(
         mutableStateOf(formatCeremonyAt(cal.timeInMillis))
     }
 
-    Dialog(onDismissRequest = { if (!busy) onDismiss() }) {
+    fun refreshFrom(bundle: LuvApiClient.CeremonyBundle) {
+        ceremony = bundle.ceremony
+        val scheduled = bundle.marriage?.status == "ceremony_scheduled" ||
+            !bundle.ceremony?.ceremonyLobbyCode.isNullOrBlank()
+        if (scheduled) {
+            Toast.makeText(context, "Hochzeit geplant", Toast.LENGTH_SHORT).show()
+            onScheduled(
+                bundle.ceremony?.ceremonyLobbyCode ?: bundle.marriage?.ceremonyLobbyCode
+            )
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            runCatching {
+                LuvApiClient.ceremonyPresence("presence")
+                LuvApiClient.fetchCeremony()
+            }.onSuccess { bundle ->
+                ceremony = bundle.ceremony
+                val scheduled =
+                    bundle.marriage?.status == "ceremony_scheduled" ||
+                        (
+                            (bundle.ceremony?.ceremonyAt ?: 0L) > 0L &&
+                                !bundle.ceremony?.ceremonyLobbyCode.isNullOrBlank()
+                            )
+                if (scheduled) {
+                    onScheduled(
+                        bundle.ceremony?.ceremonyLobbyCode
+                            ?: bundle.marriage?.ceremonyLobbyCode
+                    )
+                    return@LaunchedEffect
+                }
+            }
+            delay(2500)
+        }
+    }
+
+    val proposals = ceremony?.timeProposals.orEmpty()
+    val matches = ceremony?.matchingProposalAts.orEmpty()
+
+    Dialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -261,7 +306,7 @@ fun WeddingScheduleDialog(
         ) {
             Text("Hochzeit planen", color = TextPrimary, fontFamily = DisplayFont, fontSize = 20.sp)
             Text(
-                "Mindestens 30 Minuten, maximal 14 Tage in der Zukunft.",
+                "Zeit vorschlagen — beide sehen die Vorschläge. Termin gilt erst nach Annehmen.",
                 color = TextMuted,
                 fontFamily = BodyFont,
                 fontSize = 13.sp,
@@ -286,15 +331,16 @@ fun WeddingScheduleDialog(
                 onClick = {
                     busy = true
                     scope.launch {
-                        runCatching { LuvApiClient.ceremonySchedule(cal.timeInMillis) }
+                        runCatching { LuvApiClient.ceremonyPropose(cal.timeInMillis) }
                             .onSuccess {
-                                Toast.makeText(context, "Hochzeit geplant", Toast.LENGTH_SHORT).show()
-                                onScheduled(it.ceremony?.ceremonyLobbyCode ?: it.marriage?.ceremonyLobbyCode)
+                                ceremony = it.ceremony
+                                Toast.makeText(context, "Vorschlag gesendet", Toast.LENGTH_SHORT)
+                                    .show()
                             }
                             .onFailure {
                                 Toast.makeText(
                                     context,
-                                    it.message ?: "Planen fehlgeschlagen",
+                                    it.message ?: "Vorschlagen fehlgeschlagen",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
@@ -303,8 +349,154 @@ fun WeddingScheduleDialog(
                 },
                 enabled = !busy
             ) {
-                Text("Bestätigen", color = AccentRose, fontFamily = DisplayFont)
+                Text("Vorschlagen", color = AccentRose, fontFamily = DisplayFont)
             }
+
+            if (matches.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0x332E7D32))
+                        .border(1.dp, Gold.copy(0.5f), RoundedCornerShape(14.dp))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "Treffer — gleiche Zeit",
+                        color = Gold,
+                        fontFamily = DisplayFont,
+                        fontSize = 14.sp
+                    )
+                    matches.forEach { at ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                formatCeremonyAt(at),
+                                color = TextPrimary,
+                                fontFamily = BodyFont,
+                                fontSize = 14.sp
+                            )
+                            TextButton(
+                                onClick = {
+                                    busy = true
+                                    scope.launch {
+                                        runCatching { LuvApiClient.ceremonyProposeAccept(at) }
+                                            .onSuccess { refreshFrom(it) }
+                                            .onFailure {
+                                                Toast.makeText(
+                                                    context,
+                                                    it.message ?: "Festlegen fehlgeschlagen",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        busy = false
+                                    }
+                                },
+                                enabled = !busy
+                            ) {
+                                Text("Gemeinsam festlegen", color = Gold, fontFamily = DisplayFont)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (proposals.isEmpty()) {
+                Text(
+                    "Noch keine Vorschläge — tippt Zeiten und „Vorschlagen“.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center
+                )
+            } else {
+                Text(
+                    "Vorschläge",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 15.sp,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                proposals.forEach { p ->
+                    val isMatch = matches.contains(p.ceremonyAt)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isMatch) Color(0x222E7D32) else Color(0x22000000))
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                if (p.mine) "Du" else p.nickname,
+                                color = if (p.mine) MaleBlue else AccentRose,
+                                fontFamily = DisplayFont,
+                                fontSize = 13.sp
+                            )
+                            Text(
+                                formatCeremonyAt(p.ceremonyAt),
+                                color = TextPrimary,
+                                fontFamily = BodyFont,
+                                fontSize = 14.sp
+                            )
+                        }
+                        if (p.mine) {
+                            TextButton(
+                                onClick = {
+                                    busy = true
+                                    scope.launch {
+                                        runCatching {
+                                            LuvApiClient.ceremonyProposeWithdraw(p.ceremonyAt)
+                                        }
+                                            .onSuccess { ceremony = it.ceremony }
+                                            .onFailure {
+                                                Toast.makeText(
+                                                    context,
+                                                    it.message ?: "Zurücknehmen fehlgeschlagen",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        busy = false
+                                    }
+                                },
+                                enabled = !busy
+                            ) {
+                                Text("Zurück", color = TextMuted, fontSize = 12.sp)
+                            }
+                        } else {
+                            TextButton(
+                                onClick = {
+                                    busy = true
+                                    scope.launch {
+                                        runCatching {
+                                            LuvApiClient.ceremonyProposeAccept(p.ceremonyAt)
+                                        }
+                                            .onSuccess { refreshFrom(it) }
+                                            .onFailure {
+                                                Toast.makeText(
+                                                    context,
+                                                    it.message ?: "Annehmen fehlgeschlagen",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        busy = false
+                                    }
+                                },
+                                enabled = !busy
+                            ) {
+                                Text("Annehmen", color = Gold, fontFamily = DisplayFont)
+                            }
+                        }
+                    }
+                }
+            }
+
             TextButton(onClick = onDismiss, enabled = !busy) {
                 Text("Abbrechen", color = TextMuted)
             }
@@ -368,7 +560,7 @@ fun WeddingGatheringDialog(
                                 .background(if (g.present) Color(0x332E7D32) else BgSoft)
                                 .padding(8.dp)
                         ) {
-                            Text(g.petEmoji, fontSize = 28.sp)
+                            ItemGlyph(id = g.petEmoji, fontSize = 28.sp)
                             Text(
                                 g.nickname,
                                 color = TextPrimary,

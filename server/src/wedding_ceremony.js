@@ -9,6 +9,7 @@ const CEREMONY_MAX_AHEAD_MS = 14 * 24 * 60 * 60 * 1000;
 const CEREMONY_OPEN_BEFORE_MS = 10 * 60 * 1000;
 const PRESENCE_FRESH_MS = 45_000;
 const VOW_HOLD_MS = 15_000;
+const MAX_TIME_PROPOSALS_PER_USER = 3;
 
 function ensureCeremony(m) {
   if (!m) return null;
@@ -21,6 +22,7 @@ function ensureCeremony(m) {
       positions: {},
       vows: {},
       reactions: {},
+      timeProposals: {},
       phase: "none", // none | presence | scheduled | gathering | altar | vows | ended
       leftBy: null,
       leftNotify: {},
@@ -40,7 +42,92 @@ function ensureCeremony(m) {
   if (!m.ceremony.leftNotify || typeof m.ceremony.leftNotify !== "object") {
     m.ceremony.leftNotify = {};
   }
+  if (!m.ceremony.timeProposals || typeof m.ceremony.timeProposals !== "object") {
+    m.ceremony.timeProposals = {};
+  }
   return m.ceremony;
+}
+
+function proposalListFor(c, userId) {
+  const raw = c.timeProposals?.[userId];
+  if (!Array.isArray(raw)) return [];
+  return raw.map((n) => Math.floor(Number(n) || 0)).filter((n) => n > 0);
+}
+
+function proposeTime(m, userId, ceremonyAt) {
+  const validated = validateCeremonyAt(ceremonyAt);
+  if (!validated.ok) return validated;
+  if (!isCouple(m, userId)) {
+    return { ok: false, error: "couple_only", message: "Nur das Brautpaar." };
+  }
+  const c = ensureCeremony(m);
+  const list = proposalListFor(c, userId);
+  const at = validated.ceremonyAt;
+  if (list.includes(at)) {
+    return { ok: true, ceremonyAt: at, already: true };
+  }
+  if (list.length >= MAX_TIME_PROPOSALS_PER_USER) {
+    return {
+      ok: false,
+      error: "too_many",
+      message: `Maximal ${MAX_TIME_PROPOSALS_PER_USER} Vorschläge.`,
+    };
+  }
+  list.push(at);
+  list.sort((a, b) => a - b);
+  c.timeProposals[userId] = list;
+  return { ok: true, ceremonyAt: at };
+}
+
+function withdrawTime(m, userId, ceremonyAt) {
+  if (!isCouple(m, userId)) {
+    return { ok: false, error: "couple_only", message: "Nur das Brautpaar." };
+  }
+  const c = ensureCeremony(m);
+  const at = Math.floor(Number(ceremonyAt) || 0);
+  const list = proposalListFor(c, userId).filter((n) => n !== at);
+  c.timeProposals[userId] = list;
+  return { ok: true, ceremonyAt: at };
+}
+
+/** Accept erlaubt, wenn Partner den Slot vorgeschlagen hat oder beide denselben Slot haben. */
+function canAcceptProposal(m, accepterId, ceremonyAt) {
+  if (!isCouple(m, accepterId)) return false;
+  const at = Math.floor(Number(ceremonyAt) || 0);
+  if (!at) return false;
+  const c = ensureCeremony(m);
+  const partnerId = partnerOf(m, accepterId);
+  if (!partnerId) return false;
+  const mine = proposalListFor(c, accepterId);
+  const theirs = proposalListFor(c, partnerId);
+  return theirs.includes(at) || (mine.includes(at) && theirs.includes(at));
+}
+
+function listPublicProposals(m, viewerId, users = {}) {
+  const c = ensureCeremony(m);
+  const out = [];
+  for (const uid of [m.a, m.b]) {
+    if (!uid) continue;
+    const nick =
+      users[uid] ? String(users[uid].nickname || "").trim().slice(0, 18) || "Jemand" : "Jemand";
+    for (const ceremonyAt of proposalListFor(c, uid)) {
+      out.push({
+        userId: uid,
+        nickname: nick,
+        mine: uid === viewerId,
+        ceremonyAt,
+      });
+    }
+  }
+  out.sort((a, b) => a.ceremonyAt - b.ceremonyAt || Number(a.mine) - Number(b.mine));
+  return out;
+}
+
+function matchingProposalAts(m) {
+  const c = ensureCeremony(m);
+  const a = new Set(proposalListFor(c, m.a));
+  const b = proposalListFor(c, m.b);
+  return b.filter((at) => a.has(at));
 }
 
 function isCouple(m, userId) {
@@ -133,6 +220,8 @@ function publicCeremony(m, viewerId, users = {}) {
     };
   });
   const gatheringPresentCount = gathering.filter((g) => g.present).length;
+  const timeProposals = listPublicProposals(m, viewerId, users);
+  const matchingAts = matchingProposalAts(m);
 
   return {
     phase: c.phase || "none",
@@ -155,6 +244,8 @@ function publicCeremony(m, viewerId, users = {}) {
     leftNotify: Boolean(c.leftNotify[viewerId]),
     leftByNickname: c.leftByNickname || null,
     capacity: CEREMONY_CAPACITY,
+    timeProposals,
+    matchingProposalAts: matchingAts,
   };
 }
 
@@ -179,6 +270,7 @@ module.exports = {
   CEREMONY_OPEN_BEFORE_MS,
   PRESENCE_FRESH_MS,
   VOW_HOLD_MS,
+  MAX_TIME_PROPOSALS_PER_USER,
   ensureCeremony,
   isCouple,
   touchPresence,
@@ -189,4 +281,9 @@ module.exports = {
   publicCeremony,
   partnerOf,
   computeAllGathered,
+  proposeTime,
+  withdrawTime,
+  canAcceptProposal,
+  listPublicProposals,
+  matchingProposalAts,
 };

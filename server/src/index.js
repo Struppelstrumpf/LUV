@@ -9233,7 +9233,105 @@ app.post("/v1/me/marriage/ceremony/start-confirm", (req, res) => {
   });
 });
 
+function ceremonyScheduleGate(m, userId, db) {
+  if (!m || m.status !== "ceremony_pending") {
+    return { ok: false, status: 400, body: { error: "wrong_phase", message: "Zeremonie noch nicht bereit." } };
+  }
+  if (!weddingCeremony.isCouple(m, userId)) {
+    return { ok: false, status: 403, body: { error: "couple_only" } };
+  }
+  const c = weddingCeremony.ensureCeremony(m);
+  if (!c.startConfirm[m.a] || !c.startConfirm[m.b]) {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error: "need_both",
+        message: "Beide müssen „Zur Hochzeit starten“ tippen.",
+        ceremony: weddingCeremony.publicCeremony(m, userId, db.users),
+      },
+    };
+  }
+  if (weddingCeremony.countCouplePresence(m, "presence") < 2) {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error: "need_presence",
+        message: "Beide Partner müssen anwesend sein.",
+        ceremony: weddingCeremony.publicCeremony(m, userId, db.users),
+      },
+    };
+  }
+  if (m.ceremonyLobbyCode) {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error: "already_scheduled",
+        ceremonyLobbyCode: m.ceremonyLobbyCode,
+        ceremony: weddingCeremony.publicCeremony(m, userId, db.users),
+      },
+    };
+  }
+  return { ok: true };
+}
+
+function finalizeCeremonySchedule(m, userId, ceremonyAt, db) {
+  const validated = weddingCeremony.validateCeremonyAt(ceremonyAt);
+  if (!validated.ok) return { ok: false, status: 400, body: validated };
+  const a = db.users?.[m.a];
+  const b = db.users?.[m.b];
+  if (!a || !b) {
+    return { ok: false, status: 400, body: { error: "partner_missing" } };
+  }
+  const code = createWeddingCeremonyLobby(a, b, m, validated.ceremonyAt);
+  const c = weddingCeremony.ensureCeremony(m);
+  c.timeProposals = {};
+  scheduleSave();
+  return {
+    ok: true,
+    body: {
+      ok: true,
+      ceremonyLobbyCode: code,
+      marriage: publicMarriageView(m, userId),
+      ceremony: weddingCeremony.publicCeremony(m, userId, db.users),
+    },
+  };
+}
+
 app.post("/v1/me/marriage/ceremony/schedule", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const m = marriage.findMarriageForUser(db, ctx.user.id);
+  const gate = ceremonyScheduleGate(m, ctx.user.id, db);
+  if (!gate.ok) return res.status(gate.status).json(gate.body);
+  const done = finalizeCeremonySchedule(m, ctx.user.id, req.body?.ceremonyAt, db);
+  if (!done.ok) return res.status(done.status).json(done.body);
+  return res.json(done.body);
+});
+
+app.post("/v1/me/marriage/ceremony/propose", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const m = marriage.findMarriageForUser(db, ctx.user.id);
+  const gate = ceremonyScheduleGate(m, ctx.user.id, db);
+  if (!gate.ok) return res.status(gate.status).json(gate.body);
+  weddingCeremony.touchPresence(m, ctx.user.id, "presence");
+  const result = weddingCeremony.proposeTime(m, ctx.user.id, req.body?.ceremonyAt);
+  if (!result.ok) return res.status(400).json(result);
+  scheduleSave();
+  return res.json({
+    ok: true,
+    ceremonyAt: result.ceremonyAt,
+    ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+    marriage: publicMarriageView(m, ctx.user.id),
+  });
+});
+
+app.post("/v1/me/marriage/ceremony/propose/withdraw", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   const db = getDb();
@@ -9244,44 +9342,36 @@ app.post("/v1/me/marriage/ceremony/schedule", (req, res) => {
   if (!weddingCeremony.isCouple(m, ctx.user.id)) {
     return res.status(403).json({ error: "couple_only" });
   }
-  const c = weddingCeremony.ensureCeremony(m);
-  if (!c.startConfirm[m.a] || !c.startConfirm[m.b]) {
-    return res.status(400).json({
-      error: "need_both",
-      message: "Beide müssen „Zur Hochzeit starten“ tippen.",
-      ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
-    });
-  }
-  if (weddingCeremony.countCouplePresence(m, "presence") < 2) {
-    return res.status(400).json({
-      error: "need_presence",
-      message: "Beide Partner müssen anwesend sein.",
-      ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
-    });
-  }
-  const validated = weddingCeremony.validateCeremonyAt(req.body?.ceremonyAt);
-  if (!validated.ok) {
-    return res.status(400).json(validated);
-  }
-  const a = db.users?.[m.a];
-  const b = db.users?.[m.b];
-  if (!a || !b) {
-    return res.status(400).json({ error: "partner_missing" });
-  }
-  if (m.ceremonyLobbyCode) {
-    return res.status(400).json({
-      error: "already_scheduled",
-      ceremonyLobbyCode: m.ceremonyLobbyCode,
-    });
-  }
-  const code = createWeddingCeremonyLobby(a, b, m, validated.ceremonyAt);
+  weddingCeremony.touchPresence(m, ctx.user.id, "presence");
+  const result = weddingCeremony.withdrawTime(m, ctx.user.id, req.body?.ceremonyAt);
+  if (!result.ok) return res.status(400).json(result);
   scheduleSave();
   return res.json({
     ok: true,
-    ceremonyLobbyCode: code,
-    marriage: publicMarriageView(m, ctx.user.id),
     ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+    marriage: publicMarriageView(m, ctx.user.id),
   });
+});
+
+app.post("/v1/me/marriage/ceremony/propose/accept", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const m = marriage.findMarriageForUser(db, ctx.user.id);
+  const gate = ceremonyScheduleGate(m, ctx.user.id, db);
+  if (!gate.ok) return res.status(gate.status).json(gate.body);
+  const at = Math.floor(Number(req.body?.ceremonyAt) || 0);
+  if (!weddingCeremony.canAcceptProposal(m, ctx.user.id, at)) {
+    return res.status(400).json({
+      error: "not_proposed",
+      message: "Zeit muss vom Partner vorgeschlagen sein (oder Treffer von beiden).",
+      ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+    });
+  }
+  weddingCeremony.touchPresence(m, ctx.user.id, "presence");
+  const done = finalizeCeremonySchedule(m, ctx.user.id, at, db);
+  if (!done.ok) return res.status(done.status).json(done.body);
+  return res.json(done.body);
 });
 
 app.post("/v1/me/marriage/ceremony/remind", (req, res) => {

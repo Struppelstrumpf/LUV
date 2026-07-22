@@ -2100,6 +2100,13 @@ object LuvApiClient {
         val vowProgress: Float = 0f
     )
 
+    data class CeremonyTimeProposal(
+        val userId: String,
+        val nickname: String,
+        val mine: Boolean,
+        val ceremonyAt: Long
+    )
+
     data class CeremonyInfo(
         val phase: String = "none",
         val ceremonyAt: Long = 0L,
@@ -2120,7 +2127,9 @@ object LuvApiClient {
         val allGathered: Boolean = false,
         val leftNotify: Boolean = false,
         val leftByNickname: String? = null,
-        val capacity: Int = 10
+        val capacity: Int = 10,
+        val timeProposals: List<CeremonyTimeProposal> = emptyList(),
+        val matchingProposalAts: List<Long> = emptyList()
     )
 
     data class WeddingImageConfirmResult(
@@ -2358,6 +2367,29 @@ object LuvApiClient {
                 )
             }
         }
+        val timeProposals = ArrayList<CeremonyTimeProposal>()
+        val propArr = o.optJSONArray("timeProposals")
+        if (propArr != null) {
+            for (i in 0 until propArr.length()) {
+                val p = propArr.optJSONObject(i) ?: continue
+                val at = p.optLong("ceremonyAt", 0L)
+                if (at <= 0L) continue
+                timeProposals += CeremonyTimeProposal(
+                    userId = p.optString("userId"),
+                    nickname = p.optString("nickname", "Jemand").ifBlank { "Jemand" },
+                    mine = p.optBoolean("mine", false),
+                    ceremonyAt = at
+                )
+            }
+        }
+        val matching = ArrayList<Long>()
+        val matchArr = o.optJSONArray("matchingProposalAts")
+        if (matchArr != null) {
+            for (i in 0 until matchArr.length()) {
+                val at = matchArr.optLong(i, 0L)
+                if (at > 0L) matching += at
+            }
+        }
         return CeremonyInfo(
             phase = o.optString("phase", "none"),
             ceremonyAt = o.optLong("ceremonyAt", 0L),
@@ -2378,7 +2410,9 @@ object LuvApiClient {
             allGathered = o.optBoolean("allGathered", false),
             leftNotify = o.optBoolean("leftNotify", false),
             leftByNickname = o.optString("leftByNickname").takeIf { it.isNotBlank() },
-            capacity = o.optInt("capacity", 10)
+            capacity = o.optInt("capacity", 10),
+            timeProposals = timeProposals,
+            matchingProposalAts = matching
         )
     }
 
@@ -2945,6 +2979,36 @@ object LuvApiClient {
         withContext(Dispatchers.IO) {
             val body = JSONObject().put("ceremonyAt", ceremonyAtMs).toString()
             val json = authedPost("/v1/me/marriage/ceremony/schedule", body)
+            CeremonyBundle(
+                marriage = parseMarriageInfo(json.optJSONObject("marriage")),
+                ceremony = parseCeremonyInfo(json.optJSONObject("ceremony"))
+            )
+        }
+
+    suspend fun ceremonyPropose(ceremonyAtMs: Long): CeremonyBundle =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("ceremonyAt", ceremonyAtMs).toString()
+            val json = authedPost("/v1/me/marriage/ceremony/propose", body)
+            CeremonyBundle(
+                marriage = parseMarriageInfo(json.optJSONObject("marriage")),
+                ceremony = parseCeremonyInfo(json.optJSONObject("ceremony"))
+            )
+        }
+
+    suspend fun ceremonyProposeWithdraw(ceremonyAtMs: Long): CeremonyBundle =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("ceremonyAt", ceremonyAtMs).toString()
+            val json = authedPost("/v1/me/marriage/ceremony/propose/withdraw", body)
+            CeremonyBundle(
+                marriage = parseMarriageInfo(json.optJSONObject("marriage")),
+                ceremony = parseCeremonyInfo(json.optJSONObject("ceremony"))
+            )
+        }
+
+    suspend fun ceremonyProposeAccept(ceremonyAtMs: Long): CeremonyBundle =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("ceremonyAt", ceremonyAtMs).toString()
+            val json = authedPost("/v1/me/marriage/ceremony/propose/accept", body)
             CeremonyBundle(
                 marriage = parseMarriageInfo(json.optJSONObject("marriage")),
                 ceremony = parseCeremonyInfo(json.optJSONObject("ceremony"))
