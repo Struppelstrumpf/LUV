@@ -119,6 +119,9 @@ import com.luv.couple.profile.ProfileElType
 import com.luv.couple.update.AppUpdater
 import com.luv.couple.update.UpdateUiState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1489,33 +1492,59 @@ fun LuvAppNav() {
             val notify = first
             first = false
             scope.launch {
-                runCatching { AppUpdater.check(context, notify = notify) }
-                runCatching { refreshAccount() }
-                runCatching { MarketHubCache.warm() }
-                if (AccountSession.account.value?.googleLinked == true) {
-                    runCatching { syncCloudAccount() }
+                // Parallel — sequentiell blockiert Home/Markt oft mehrere Sekunden
+                coroutineScope {
+                    val updateJob = async {
+                        runCatching { AppUpdater.check(context, notify = notify) }
+                    }
+                    val accountJob = async {
+                        runCatching { refreshAccount() }
+                    }
+                    val hubJob = async {
+                        runCatching { MarketHubCache.warm() }
+                    }
+                    val cloudJob = async {
+                        if (AccountSession.account.value?.googleLinked == true) {
+                            runCatching { syncCloudAccount() }
+                        }
+                    }
+                    awaitAll(updateJob, accountJob, hubJob, cloudJob)
                 }
                 if (!LuvApiClient.sessionToken.isNullOrBlank()) {
-                    runCatching {
-                        LuvApiClient.fetchLiveNotice()?.let { LiveNoticeBus.offer(it) }
-                    }
-                    runCatching {
-                        val sn = LuvApiClient.fetchStaffNotices()
-                        StaffWarningBus.offer(sn.pending, sn.warnings)
-                    }
-                    val prevSales = runCatching { prefs.pendingSalesKnownCount() }.getOrDefault(0)
-                    val sales = com.luv.couple.net.NotificationBadges.refreshPendingSales(context)
-                    com.luv.couple.net.NotificationBadges.refreshFriends(context)
-                    AchievementsBadge.refresh()
-                    if (sales != null && sales.count > prevSales) {
-                        com.luv.couple.notify.LuvAlertNotifier.onMarketSale(
-                            context,
-                            itemCount = sales.count,
-                            totalCoins = sales.totalCoins
-                        )
-                    }
-                    if (sales != null) {
-                        runCatching { prefs.setPendingSalesKnownCount(sales.count) }
+                    coroutineScope {
+                        val noticeJob = async {
+                            runCatching {
+                                LuvApiClient.fetchLiveNotice()?.let { LiveNoticeBus.offer(it) }
+                            }
+                        }
+                        val staffJob = async {
+                            runCatching {
+                                val sn = LuvApiClient.fetchStaffNotices()
+                                StaffWarningBus.offer(sn.pending, sn.warnings)
+                            }
+                        }
+                        val salesJob = async {
+                            val prevSales =
+                                runCatching { prefs.pendingSalesKnownCount() }.getOrDefault(0)
+                            val sales =
+                                com.luv.couple.net.NotificationBadges.refreshPendingSales(context)
+                            if (sales != null && sales.count > prevSales) {
+                                com.luv.couple.notify.LuvAlertNotifier.onMarketSale(
+                                    context,
+                                    itemCount = sales.count,
+                                    totalCoins = sales.totalCoins
+                                )
+                            }
+                            if (sales != null) {
+                                runCatching { prefs.setPendingSalesKnownCount(sales.count) }
+                            }
+                            sales
+                        }
+                        val friendsJob = async {
+                            com.luv.couple.net.NotificationBadges.refreshFriends(context)
+                        }
+                        val achJob = async { AchievementsBadge.refresh() }
+                        awaitAll(noticeJob, staffJob, salesJob, friendsJob, achJob)
                     }
                     com.luv.couple.net.NotificationBadges.syncAppBadge(context)
                 }

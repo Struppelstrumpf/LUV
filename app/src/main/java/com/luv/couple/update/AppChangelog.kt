@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.108",
+            listOf(
+                "Lootbox: Kauf bestätigen auf allen Displays sichtbar",
+                "App-Start: Ladevorgänge parallel statt nacheinander",
+            )
+        ),
+        Entry(
             "2.2.107",
             listOf(
                 "Hochzeitsteilen: feierliche Einladungskarte mit Datum & Namen",

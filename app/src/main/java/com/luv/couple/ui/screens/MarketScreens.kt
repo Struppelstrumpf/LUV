@@ -220,7 +220,7 @@ fun MarketScreen(
                     },
                     properties = DialogProperties(
                         usePlatformDefaultWidth = false,
-                        decorFitsSystemWindows = false
+                        decorFitsSystemWindows = true
                     )
                 ) {
                     Box(
@@ -311,10 +311,16 @@ fun MarketScreen(
 object MarketHubCache {
     @Volatile
     var latest: LuvApiClient.MarketHubData? = null
+    @Volatile
+    private var lastWarmAt = 0L
+    private const val WARM_MIN_INTERVAL_MS = 45_000L
 
-    suspend fun warm() {
+    suspend fun warm(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && latest != null && now - lastWarmAt in 0 until WARM_MIN_INTERVAL_MS) return
         val fresh = runCatching { LuvApiClient.fetchMarketHub() }.getOrNull() ?: return
         latest = fresh
+        lastWarmAt = now
     }
 }
 
@@ -2094,11 +2100,18 @@ private fun LootboxTab(
         AlertDialog(
             onDismissRequest = { if (!busy) showConfirmBuy = false },
             containerColor = BgSoft,
+            properties = DialogProperties(usePlatformDefaultWidth = true),
             title = {
                 Text("Lootbox kaufen?", fontFamily = DisplayFont, color = TextPrimary)
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     Text(
                         "Zufälliger Inhalt, nicht erstattungsfähig. " +
                             "Gekaufte Boxen bleiben gespeichert, bis du sie öffnest.",
@@ -2165,33 +2178,27 @@ private fun LootboxTab(
             }
         )
     }
-    // Dialog (decorFitsSystemWindows=false): normale navigationBarsPadding oft 0 —
-    // Gesten-/Nav-Insets explizit + Mindestabstand, sonst sitzt der Footer unterm Home-Balken.
-    val lootboxSafeInsets = WindowInsets.safeDrawing.union(
-        WindowInsets.navigationBarsIgnoringVisibility
-            .union(WindowInsets.mandatorySystemGestures)
-            .union(WindowInsets.systemGestures)
-            .only(WindowInsetsSides.Bottom)
-    )
+    // Footer fest unten verankern — auf kurzen Displays Geschenk schrumpfen, nie abschneiden
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .windowInsetsPadding(lootboxSafeInsets)
-            .padding(bottom = 20.dp)
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(bottom = 12.dp)
     ) {
         val reveal = revealedReward?.takeIf { phase == "reveal" }
-        // Unterer Block (Switch + Hinweis) fest reservieren — nicht unter den Bildschirm schieben
-        val bottomReserve = if (reveal == null) 148.dp else 8.dp
-        val headerReserve = 64.dp
-        val middleAvail = (maxHeight - headerReserve - bottomReserve - 16.dp).coerceAtLeast(120.dp)
-        val giftSize = minOf(maxWidth * 0.48f, middleAvail * 0.58f, 260.dp)
+        val shortScreen = maxHeight < 640.dp
+        val giftSize = minOf(
+            maxWidth * if (shortScreen) 0.38f else 0.48f,
+            maxHeight * if (shortScreen) 0.28f else 0.36f,
+            if (shortScreen) 180.dp else 240.dp
+        )
         val showBox = phase == "idle" || phase == "tapping" || phase == "opening" ||
             (phase == "reveal" && explodeAnim.value < 0.95f)
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 18.dp)
-                .padding(top = 8.dp, bottom = 4.dp),
+                .padding(top = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(
@@ -2204,7 +2211,7 @@ private fun LootboxTab(
                         "Lootbox",
                         color = TextPrimary,
                         fontFamily = DisplayFont,
-                        fontSize = 28.sp
+                        fontSize = if (shortScreen) 24.sp else 28.sp
                     )
                     Text(
                         "$price Coins",
@@ -2223,9 +2230,9 @@ private fun LootboxTab(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
                 modifier = Modifier
-                    .weight(1f)
+                    .weight(1f, fill = true)
                     .fillMaxWidth()
-                    .heightIn(max = middleAvail)
+                    .verticalScroll(rememberScrollState())
             ) {
                 val waiting = maxOf(
                     displayPending,
@@ -2407,10 +2414,10 @@ private fun LootboxTab(
             if (reveal == null) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp)
+                        .padding(top = 6.dp, bottom = 4.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
