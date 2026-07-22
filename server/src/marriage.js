@@ -294,12 +294,17 @@ function recoverMarriageFromWeddingDir(db, user, weddingDir) {
     const key = pairKey(user.id, otherId);
     let rec = all[key] || findMarriageBetween(db, user.id, otherId);
     if (rec && isBusyStatus(rec.status)) {
-      if (!rec.weddingImageFile) rec.weddingImageFile = name;
+      // Bild nur verknüpfen — Ehering/Ehepartner erst nach beiden Ja
+      if (rec.status === "married") {
+        if (!rec.weddingImageFile) rec.weddingImageFile = name;
+        grantMarriageItem(user);
+        grantMarriageItem(db.users[otherId]);
+      } else if (!rec.weddingImagePending && !rec.weddingImageFile) {
+        rec.weddingImagePending = name;
+      }
       if (!Array.isArray(rec.guestbook)) rec.guestbook = [];
       clearDivorceCooldown(user);
       clearDivorceCooldown(db.users[otherId]);
-      grantMarriageItem(user);
-      grantMarriageItem(db.users[otherId]);
       return rec;
     }
     rec = {
@@ -523,7 +528,7 @@ function publicMarriage(m, viewerId, users, opts = {}) {
     weddingEndsAt: m.weddingEndsAt || 0,
     weddingRemainingMs,
     marriedAt: m.marriedAt || 0,
-    hasWeddingImage: Boolean(m.weddingImageFile),
+    hasWeddingImage: Boolean(m.weddingImageFile || m.weddingImagePending),
     guestbookCount: Array.isArray(m.guestbook) ? m.guestbook.length : 0,
     engageSkipCost,
     weddingSkipCost,

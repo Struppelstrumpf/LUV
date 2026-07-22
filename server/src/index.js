@@ -1224,7 +1224,11 @@ function clampProfileToInventory(user, profile) {
   const myM = marriage.findMarriageForUser(getDb(), user.id);
   const canSpouse = myM && myM.status === "married";
   const canEngaged =
-    myM && (myM.status === "engaged" || myM.status === "wedding");
+    myM &&
+    (myM.status === "engaged" ||
+      myM.status === "wedding" ||
+      myM.status === "ceremony_pending" ||
+      myM.status === "ceremony_scheduled");
   const partnerNick = canSpouse || canEngaged
     ? (() => {
         const pid = marriage.partnerIdOf(myM, user.id);
@@ -1770,9 +1774,93 @@ function friendPublicCard(user, viewer) {
 }
 
 const WEDDING_DIR = path.join(DATA_DIR, "weddings");
+/** Vor dem Ja: Malbild hier — nie Boot-Recovery als „verheiratet“. */
+const WEDDING_PENDING_DIR = path.join(DATA_DIR, "weddings_pending");
 
 function ensureWeddingDir() {
   fs.mkdirSync(WEDDING_DIR, { recursive: true });
+  fs.mkdirSync(WEDDING_PENDING_DIR, { recursive: true });
+}
+
+function weddingPairFileName(m) {
+  return `${m.id || marriage.pairKey(m.a, m.b)}.png`;
+}
+
+function deleteWeddingImageFiles(m) {
+  if (!m) return;
+  ensureWeddingDir();
+  const names = new Set();
+  if (m.weddingImageFile) names.add(path.basename(String(m.weddingImageFile)));
+  if (m.weddingImagePending) names.add(path.basename(String(m.weddingImagePending)));
+  names.add(weddingPairFileName(m));
+  for (const name of names) {
+    if (!name || !/\.png$/i.test(name)) continue;
+    for (const dir of [WEDDING_DIR, WEDDING_PENDING_DIR]) {
+      try {
+        const fp = path.join(dir, name);
+        if (fs.existsSync(fp)) fs.unlinkSync(fp);
+      } catch (e) {
+        console.error("wedding image delete failed", e);
+      }
+    }
+  }
+  m.weddingImageFile = null;
+  m.weddingImagePending = null;
+}
+
+/** Nach beiden Ja: Pending-Bild → finales Hochzeitsbild. */
+function promotePendingWeddingImage(m) {
+  if (!m) return false;
+  ensureWeddingDir();
+  const destName = weddingPairFileName(m);
+  const pendingName = m.weddingImagePending
+    ? path.basename(String(m.weddingImagePending))
+    : destName;
+  const pendingPath = path.join(WEDDING_PENDING_DIR, pendingName);
+  const finalPath = path.join(WEDDING_DIR, destName);
+  try {
+    if (fs.existsSync(pendingPath)) {
+      fs.copyFileSync(pendingPath, finalPath);
+      try {
+        fs.unlinkSync(pendingPath);
+      } catch {
+        /* ignore */
+      }
+      m.weddingImageFile = destName;
+      m.weddingImagePending = null;
+      return true;
+    }
+    // Alt: Bild lag schon final (vor dem Fix)
+    if (fs.existsSync(finalPath)) {
+      m.weddingImageFile = destName;
+      m.weddingImagePending = null;
+      return true;
+    }
+  } catch (e) {
+    console.error("promote wedding image failed", e);
+  }
+  return false;
+}
+
+/**
+ * Mal-Phase fertig: Snapshot nur als Pending (kein Ehe-Status, kein Boot-Married).
+ */
+function demoteFinalWeddingImageToPending(m) {
+  if (!m?.weddingImageFile) return;
+  ensureWeddingDir();
+  const name = path.basename(String(m.weddingImageFile));
+  const finalPath = path.join(WEDDING_DIR, name);
+  const pendingPath = path.join(WEDDING_PENDING_DIR, name);
+  try {
+    if (fs.existsSync(finalPath)) {
+      fs.copyFileSync(finalPath, pendingPath);
+      fs.unlinkSync(finalPath);
+    }
+  } catch (e) {
+    console.error("demote wedding image failed", e);
+  }
+  m.weddingImagePending = name;
+  m.weddingImageFile = null;
 }
 
 /** Kurzzeit-Cache: Freunde-GET darf nicht jedes Mal 5000 Strokes von Disk lesen. */
@@ -2428,11 +2516,21 @@ function captureWeddingImageAndClosePaintLobby(m) {
     const snap = path.join(SNAPSHOT_DIR, `${code}.png`);
     if (fs.existsSync(snap)) {
       ensureWeddingDir();
-      const destName = `${m.id || marriage.pairKey(m.a, m.b)}.png`;
-      const dest = path.join(WEDDING_DIR, destName);
+      const destName = weddingPairFileName(m);
+      const dest = path.join(WEDDING_PENDING_DIR, destName);
       try {
         fs.copyFileSync(snap, dest);
-        m.weddingImageFile = destName;
+        m.weddingImagePending = destName;
+        // Finales Bild erst nach beiden Ja — sonst Boot-Recovery → fälschlich married
+        if (m.weddingImageFile) {
+          try {
+            const old = path.join(WEDDING_DIR, path.basename(String(m.weddingImageFile)));
+            if (fs.existsSync(old)) fs.unlinkSync(old);
+          } catch {
+            /* ignore */
+          }
+          m.weddingImageFile = null;
+        }
       } catch (e) {
         console.error("wedding image copy failed", e);
       }
@@ -2560,6 +2658,8 @@ function finalizeWeddingMarriage(m, { force = false } = {}) {
   if (m.status === "wedding") {
     captureWeddingImageAndClosePaintLobby(m);
   }
+  // Erst jetzt: Pending-Bild → echtes Hochzeitsbild (Ehepartner)
+  promotePendingWeddingImage(m);
   m.status = "married";
   m.marriedAt = Date.now();
   m.weddingLobbyCode = null;
@@ -2771,8 +2871,15 @@ function abortWeddingCeremony(m, leftByUserId, { divorceCooldown = true } = {}) 
   }
   const all = marriage.ensureMarriages(db);
   const key = m.id || marriage.pairKey(m.a, m.b);
-  if (a) marriage.stripSpouseFromProfile(a);
-  if (b) marriage.stripSpouseFromProfile(b);
+  if (a) {
+    marriage.clearMarriageItem(a);
+    marriage.stripSpouseFromProfile(a);
+  }
+  if (b) {
+    marriage.clearMarriageItem(b);
+    marriage.stripSpouseFromProfile(b);
+  }
+  deleteWeddingImageFiles(m);
   delete all[key];
 }
 
@@ -3045,14 +3152,27 @@ function endMarriageRecord(m, reason) {
     dissolveWeddingLobby(m.weddingLobbyCode);
   }
   // Bild entfernen, sonst würde Boot-Recovery die Ehe nach Scheidung neu anlegen
-  if (m.weddingImageFile) {
+  if (m.weddingImageFile || m.weddingImagePending) {
     try {
-      const fp = path.join(WEDDING_DIR, path.basename(String(m.weddingImageFile)));
-      if (fs.existsSync(fp)) fs.unlinkSync(fp);
+      const names = [
+        m.weddingImageFile && path.basename(String(m.weddingImageFile)),
+        m.weddingImagePending && path.basename(String(m.weddingImagePending)),
+        `${m.id || marriage.pairKey(m.a, m.b)}.png`,
+      ].filter(Boolean);
+      for (const name of names) {
+        for (const dir of [
+          path.join(DATA_DIR, "weddings"),
+          path.join(DATA_DIR, "weddings_pending"),
+        ]) {
+          const fp = path.join(dir, name);
+          if (fs.existsSync(fp)) fs.unlinkSync(fp);
+        }
+      }
     } catch (e) {
       console.error("wedding image delete failed", e);
     }
     m.weddingImageFile = null;
+    m.weddingImagePending = null;
   }
   if (a) {
     marriage.clearMarriageItem(a);
@@ -12876,12 +12996,14 @@ app.get("/v1/me/inventory", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   migrateStickerInventoryIfNeeded(ctx.user);
-  // Verheiratet → Ehering + Kapelle nachreichen, Erfolg claimen falls offen
+  // Verheiratet → Ehering; sonst Ring entfernen (kein Ehepartner vor beiden Ja)
   const myM = marriage.findMarriageForUser(getDb(), ctx.user.id);
   if (myM && myM.status === "married") {
     marriage.grantMarriageItem(ctx.user);
     ach.setMetricAtLeast(ctx.user, "married", 1, todayKey(), null);
     tryClaimAchievementReward(ctx.user, "fs_married");
+  } else {
+    marriage.clearMarriageItem(ctx.user);
   }
   repairAchievementItemRewards(ctx.user);
   const inv = ensureInventory(ctx.user);
@@ -18962,6 +19084,19 @@ server.listen(PORT, "0.0.0.0", () => {
     if (n > 0) {
       scheduleSave();
       console.log(`[marriage] recovered ${n} orphaned wedding(s) on boot`);
+    }
+    // Vor dem Ja: Final-Bilder → Pending, sonst Boot-Recovery macht Ehepartner ohne Ja
+    let demoted = 0;
+    for (const m of Object.values(marriage.ensureMarriages(getDb()))) {
+      if (!m || m.status === "married") continue;
+      if (m.weddingImageFile) {
+        demoteFinalWeddingImageToPending(m);
+        demoted++;
+      }
+    }
+    if (demoted > 0) {
+      scheduleSave();
+      console.log(`[marriage] demoted ${demoted} pre-vow wedding image(s) to pending`);
     }
     const retakes = ensureAllWeddingImageRetakes();
     if (retakes > 0) {

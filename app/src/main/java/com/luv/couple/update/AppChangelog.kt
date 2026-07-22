@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.130",
+            listOf(
+                "Ehepartner erst nach beiden Ja — kein Ehering/Bild-Recovery vorher",
+            )
+        ),
+        Entry(
             "2.2.129",
             listOf(
                 "Hochzeit: Platz-Hinweis, Ja/Nein-Popup 15s, Verlassen-Dialog, Brautpaar darf zurück",
