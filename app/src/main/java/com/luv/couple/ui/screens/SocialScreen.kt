@@ -269,12 +269,16 @@ private fun FriendsPanel(
             lobbyInvites = it.lobbyInvites.size,
         )
         com.luv.couple.net.NotificationBadges.syncAppBadge(context)
-        // Partner: Lobby syncen ohne zwingend nach Home zu springen
-        val code = it.myMarriage?.weddingLobbyCode?.trim()?.uppercase()?.takeIf { c -> c.isNotBlank() }
+        // Partner: Mal- oder Kapellen-Lobby syncen (ohne zwingend nach Home)
+        val code = (
+            it.myMarriage?.ceremonyLobbyCode
+                ?: it.myMarriage?.weddingLobbyCode
+            )?.trim()?.uppercase()?.takeIf { c -> c.isNotBlank() }
+        val phase = it.myMarriage?.status
         if (
-            it.myMarriage?.status == "wedding" &&
             code != null &&
-            code != lastWeddingLobbyCode
+            code != lastWeddingLobbyCode &&
+            (phase == "wedding" || phase == "ceremony_scheduled")
         ) {
             lastWeddingLobbyCode = code
             onSyncWeddingLobbies()
@@ -622,22 +626,61 @@ private fun FriendsPanel(
             }
         }
 
-        if (myMarriage?.ceremonyReady == true ||
-            myMarriage?.status == "ceremony_pending" ||
-            myMarriage?.status == "ceremony_scheduled"
+        val ceremonyM = myMarriage
+        if (ceremonyM != null && (
+                ceremonyM.ceremonyReady ||
+                    ceremonyM.status == "ceremony_pending" ||
+                    ceremonyM.status == "ceremony_scheduled"
+                )
         ) {
-            Text(
-                "Hochzeit",
-                color = AccentRose,
-                fontFamily = DisplayFont,
-                fontSize = 18.sp,
+            val scheduled = ceremonyM.status == "ceremony_scheduled"
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0x33FFD54F))
-                    .clickable { showCeremonyPresence = true }
-                    .padding(14.dp)
-            )
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0x22FFD54F))
+                    .border(1.dp, Color(0xFFFFD54F).copy(0.45f), RoundedCornerShape(18.dp))
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "💒 Hochzeit mit ${ceremonyM.partnerNickname ?: "…"}",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 16.sp
+                )
+                Text(
+                    when {
+                        scheduled && !ceremonyM.ceremonyLobbyCode.isNullOrBlank() ->
+                            "Termin steht · Kapellen-Lobby oben im Home"
+                        scheduled ->
+                            "Termin geplant · Lobby wird geladen…"
+                        ceremonyM.hasWeddingImage ->
+                            "Hochzeitsbild fertig · jetzt Zeremonie vorbereiten (beide anwesend)"
+                        else ->
+                            "Hochzeitsbild-Phase vorbei · Zeremonie vorbereiten"
+                    },
+                    color = Color(0xFFFFD54F),
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp
+                )
+                Text(
+                    if (scheduled) "Zur Hochzeit / Lobby" else "Anwesenheit · Termin wählen",
+                    color = AccentRose,
+                    fontFamily = DisplayFont,
+                    fontSize = 15.sp,
+                    modifier = Modifier
+                        .clickable {
+                            if (scheduled) {
+                                onSyncWeddingLobbies()
+                                showCeremonyGathering = true
+                            } else {
+                                showCeremonyPresence = true
+                            }
+                        }
+                        .padding(vertical = 4.dp)
+                )
+            }
         }
 
         if (lobbyInvites.isNotEmpty()) {
@@ -878,6 +921,8 @@ private fun FriendsPanel(
             onScheduled = {
                 showCeremonyPresence = false
                 reload()
+                onSyncWeddingLobbies()
+                onWeddingLobbyOpened()
                 Toast.makeText(context, "Hochzeit-Lobby oben im Home", Toast.LENGTH_SHORT).show()
             },
             onShareRemind = { text ->
@@ -1156,8 +1201,12 @@ private fun friendSubtitle(card: LuvApiClient.FriendCard): String {
         }
         card.isFiance && m?.status == "wedding" -> {
             val d = (m.weddingRemainingMs / (24 * 60 * 60 * 1000L)).coerceAtLeast(0)
-            "Hochzeit · noch ${d + 1} Tage · Lv. ${card.friendshipLevel}"
+            "Hochzeitsbild · noch ${d + 1} Tage · Lv. ${card.friendshipLevel}"
         }
+        card.isFiance && m?.status == "ceremony_pending" ->
+            "Zeremonie vorbereiten · Lv. ${card.friendshipLevel}"
+        card.isFiance && m?.status == "ceremony_scheduled" ->
+            "Hochzeit geplant · Lv. ${card.friendshipLevel}"
         else -> "Lv. ${card.friendshipLevel} / 100"
     }
 }

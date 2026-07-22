@@ -1751,7 +1751,11 @@ function friendPublicCard(user, viewer) {
       : null;
   const isSpouse = Boolean(m && m.status === "married");
   const isFiance = Boolean(
-    m && (m.status === "engaged" || m.status === "wedding")
+    m &&
+      (m.status === "engaged" ||
+        m.status === "wedding" ||
+        m.status === "ceremony_pending" ||
+        m.status === "ceremony_scheduled")
   );
   return {
     userId: user.id,

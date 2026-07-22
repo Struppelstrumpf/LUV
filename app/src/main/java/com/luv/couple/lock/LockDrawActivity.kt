@@ -948,10 +948,6 @@ class LockDrawActivity : ComponentActivity() {
         }
         btnWeddingConfirm.visibility = View.VISIBLE
         btnWeddingConfirm.setOnClickListener { onWeddingConfirmTap() }
-        if (!weddingRetakeActive) {
-            btnWeddingConfirm.visibility = View.GONE
-            return
-        }
         paintWeddingConfirmButton()
         lifecycleScope.launch {
             val state = withContext(Dispatchers.IO) {
