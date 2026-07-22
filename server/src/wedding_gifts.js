@@ -8,6 +8,18 @@ const MAX_GIFTS_PER_GIVER = 20;
 const MAX_POOL = 100;
 const ALLOWED_KINDS = new Set(["emojis", "stickers", "pets", "themes"]);
 
+/** Trost-Geschenke wenn der Topf leer bleibt — alles Shop ≤20 Coins. */
+const CONSOLATION_ITEMS = [
+  { kind: "stickers", itemId: "🍰" }, // 5 — Tortenstück
+  { kind: "stickers", itemId: "🎀" }, // 12 — Schleife
+  { kind: "stickers", itemId: "✨" }, // 17
+  { kind: "stickers", itemId: "🍪" }, // 20
+  { kind: "stickers", itemId: "🌼" }, // 5
+  { kind: "emojis", itemId: "🤍" }, // 8
+  { kind: "emojis", itemId: "💕" }, // 12
+  { kind: "emojis", itemId: "🍓" }, // 6
+];
+
 function ensureGiftState(m) {
   if (!m) return null;
   if (!Array.isArray(m.giftPool)) m.giftPool = [];
@@ -78,14 +90,47 @@ function shuffleInPlace(arr, rng) {
   return arr;
 }
 
-/** Pool fair auf A/B verteilen. */
+function consolationEntry(rng) {
+  const pick =
+    CONSOLATION_ITEMS[Math.floor(rng() * CONSOLATION_ITEMS.length)] ||
+    CONSOLATION_ITEMS[0];
+  return {
+    kind: pick.kind,
+    itemId: pick.itemId,
+    fromNickname: "LUV",
+    fromUserId: null,
+    giftId: null,
+    consolation: true,
+  };
+}
+
+/**
+ * Pool fair auf A/B verteilen.
+ * - 1 Item: Münzwurf, wer es bekommt
+ * - 0 Items: beide je ein kleines Shop-Favor (≤20 Coins) von LUV
+ */
 function rollGiftPool(m) {
   ensureGiftState(m);
   if (m.giftPhase === "rolled" || m.giftPhase === "done") return { ok: true, already: true };
   const pool = [...(m.giftPool || [])].filter((g) => g && g.kind && g.itemId);
   const seed = hashSeed(`${m.id || m.a}|${m.b}|${m.giftWindowEndsAt || 0}`);
   const rng = mulberry32(seed);
+
+  // Nichts geschenkt → kleines Andenken für beide
+  if (pool.length === 0) {
+    const favorA = consolationEntry(rng);
+    const favorB = consolationEntry(rng);
+    m.giftSplit = {
+      [m.a]: [favorA],
+      [m.b]: [favorB],
+    };
+    m.giftClaimed = {};
+    m.giftPhase = "rolled";
+    return { ok: true, count: 0, consolation: true };
+  }
+
   shuffleInPlace(pool, rng);
+  // 1 Item: Münzwurf; mehrere: abwechselnd ab zufälligem Start
   const startA = rng() < 0.5;
   const splitA = [];
   const splitB = [];
@@ -157,6 +202,7 @@ module.exports = {
   MAX_GIFTS_PER_GIVER,
   MAX_POOL,
   ALLOWED_KINDS,
+  CONSOLATION_ITEMS,
   ensureGiftState,
   openGiftWindow,
   canGiftToMarriage,

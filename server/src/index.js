@@ -2693,11 +2693,7 @@ function tickWeddingGifts(now = Date.now()) {
     ) {
       weddingGifts.rollGiftPool(m);
       syncCeremonyGiftMeta(m);
-      // Leerer Topf: sofort aufräumen
-      const n = Array.isArray(m.giftPool) ? m.giftPool.length : 0;
-      if (n === 0) {
-        finishWeddingGiftsAndDissolve(m);
-      }
+      // Auch leerer Topf → Trost-Items im Split; Claim wie sonst
       dirty = true;
       continue;
     }
