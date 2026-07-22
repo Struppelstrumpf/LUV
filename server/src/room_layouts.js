@@ -114,17 +114,25 @@ function sanitizeZone(raw, index) {
   if (!raw || typeof raw !== "object") return null;
   const color = String(raw.color || "").toLowerCase();
   const shape = String(raw.shape || "").toLowerCase();
-  // gold = Deko-Objekt (Kerze/Box), pink = Flammen-Animation
+  // gold = Deko, pink = Flamme, lime = Geldbaum (Hochzeit, 1 Coin tippen)
   if (
-    !["red", "green", "yellow", "blue", "brown", "orange", "gold", "pink"].includes(
-      color
-    )
+    ![
+      "red",
+      "green",
+      "yellow",
+      "blue",
+      "brown",
+      "orange",
+      "gold",
+      "pink",
+      "lime",
+    ].includes(color)
   ) {
     return null;
   }
   if (!["rect", "circle"].includes(shape)) return null;
   if (
-    ["yellow", "blue", "brown", "orange", "gold", "pink"].includes(color) &&
+    ["yellow", "blue", "brown", "orange", "gold", "pink", "lime"].includes(color) &&
     shape !== "circle"
   ) {
     return null;
@@ -146,11 +154,16 @@ function sanitizeZone(raw, index) {
                 ? "deco_"
                 : color === "pink"
                   ? "flame_"
-                  : `${color}_`;
+                  : color === "lime"
+                    ? "money_"
+                    : `${color}_`;
     id = `${prefix}${index}_${Date.now().toString(36)}`;
   }
   if (color === "yellow" && !id.startsWith("altar_")) {
     id = `altar_${id.replace(/^altar_/, "")}`.slice(0, 48);
+  }
+  if (color === "lime" && !id.startsWith("money_")) {
+    id = `money_${id.replace(/^money_/, "")}`.slice(0, 48);
   }
 
   if (shape === "circle") {
@@ -549,8 +562,14 @@ function isCoupleSeat(zoneOrId) {
 
 function isGuestSeat(zoneOrId) {
   if (!zoneOrId) return false;
-  if (typeof zoneOrId === "string") return !zoneOrId.startsWith("altar_");
+  if (typeof zoneOrId === "string") return zoneOrId.startsWith("sit_");
   return zoneOrId.color === "blue";
+}
+
+function isMoneyTree(zoneOrId) {
+  if (!zoneOrId) return false;
+  if (typeof zoneOrId === "string") return zoneOrId.startsWith("money_");
+  return zoneOrId.color === "lime" || String(zoneOrId.id || "").startsWith("money_");
 }
 
 function zoneContains(z, x, y, pad = 0) {
@@ -762,6 +781,7 @@ module.exports = {
   separateFromOthers,
   isCoupleSeat,
   isGuestSeat,
+  isMoneyTree,
   isBlocked,
   isWalkable,
   clampMove,

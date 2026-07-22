@@ -1,6 +1,7 @@
 package com.luv.couple.ui.wedding
 
 import android.os.Bundle
+import android.os.SystemClock
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -43,6 +44,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -115,12 +117,15 @@ class WeddingRoomActivity : ComponentActivity() {
 }
 
 private const val DEFAULT_AVATAR_R = 0.056f
+private val AvatarFill = Color(0xE6FFFFFF)
 private val SitRingBlue = Color(0xFF42A5F5)
-private val CoupleAvatarBlue = Color(0xFF1E88E5)
+private val IdleRing = Color(0x99FFFFFF)
 /** Priester am Altar (oben auf dem Podest), nicht zwischen den vorderen Bänken */
 private const val PRIEST_X = 0.50f
 private const val PRIEST_Y = 0.175f
 private val PriestSize = 30.dp
+private val SeatPlusSize = 28.dp
+private val MoneyTreeSize = 40.dp
 
 @Composable
 fun WeddingRoomScreen(onClose: () -> Unit) {
@@ -148,6 +153,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         }
     }
     var ceremony by remember { mutableStateOf<LuvApiClient.CeremonyInfo?>(null) }
+    val remoteX = remember { mutableStateMapOf<String, Float>() }
+    val remoteY = remember { mutableStateMapOf<String, Float>() }
     var marriage by remember { mutableStateOf<LuvApiClient.MarriageInfo?>(null) }
     var showGiftPicker by remember { mutableStateOf(false) }
     var showGuestbook by remember { mutableStateOf(false) }
@@ -240,6 +247,40 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         emojiBar = withContext(Dispatchers.IO) {
             runCatching { LuvApp.instance.prefs.emojiBar() }
                 .getOrDefault(ShopCatalog.DEFAULT_BAR)
+        }
+    }
+
+    LaunchedEffect(
+        ceremony?.altarHoldActive,
+        ceremony?.pastorPhase,
+        ceremony?.seatingLocked,
+        ceremony?.phase,
+    ) {
+        chapelMusic.sync(ceremony)
+    }
+
+    // Presence-Heartbeat — sonst verschwinden Idle-Gäste nach dem TTL
+    LaunchedEffect(entered) {
+        if (!entered) return@LaunchedEffect
+        while (true) {
+            runCatching { LuvApiClient.ceremonyPresence("gathering") }
+                .onSuccess { c -> if (c != null) ceremony = c }
+            delay(18_000)
+        }
+    }
+
+    // Remote-Avatare weich zur Server-Position bewegen (kein Teleport)
+    LaunchedEffect(Unit) {
+        while (true) {
+            ceremony?.gathering
+                ?.filter { it.userId != myId && it.present }
+                ?.forEach { g ->
+                    val cx = remoteX[g.userId] ?: g.x
+                    val cy = remoteY[g.userId] ?: g.y
+                    remoteX[g.userId] = cx + (g.x - cx) * 0.32f
+                    remoteY[g.userId] = cy + (g.y - cy) * 0.32f
+                }
+            delay(16)
         }
     }
 
@@ -433,12 +474,74 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         if (z.isFlame) FlameDecor(size = sz) else DecorMarker(size = sz)
                     }
                 }
+                // Freie Sitze: Plus im weißen Kreis (Gäste blau / Brautpaar gelb)
+                sitZones.forEach { z ->
+                    val taken = c?.gathering?.any {
+                        it.seatedSeatId == z.id && it.present
+                    } == true
+                    if (taken) return@forEach
+                    val plusCol = if (z.isCoupleSeat) Color(0xFFFFD54F) else SitRingBlue
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(
+                                start = roomW * z.sitX - SeatPlusSize / 2,
+                                top = roomH * z.sitY - SeatPlusSize / 2,
+                            )
+                            .size(SeatPlusSize)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(0.92f))
+                            .border(2.dp, plusCol, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "+",
+                            color = plusCol,
+                            fontSize = 20.sp,
+                            fontFamily = DisplayFont,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
+
+                // Geldbäume
+                val claimedTrees = c?.claimedMoneyTreeIds.orEmpty().toSet()
+                zones.filter { it.isMoneyTree }.forEach { z ->
+                    val claimed = claimedTrees.contains(z.id)
+                    val sz = MoneyTreeSize
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(
+                                start = roomW * z.sitX - sz / 2,
+                                top = roomH * z.sitY - sz / 2,
+                            )
+                            .size(sz)
+                            .clip(CircleShape)
+                            .background(
+                                if (claimed) Color.White.copy(0.25f)
+                                else Color.White.copy(0.55f)
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Image(
+                            painter = painterResource(R.drawable.wedding_money_tree),
+                            contentDescription = "Geldbaum",
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(4.dp),
+                            contentScale = ContentScale.Fit,
+                            alpha = if (claimed) 0.45f else 1f,
+                        )
+                    }
+                }
+
                 // Nur Anwesende zeichnen — Offline-Partner nicht als Geist im Raum
                 c?.gathering
                     ?.filter { it.userId == myId || it.present }
                     ?.forEach { g ->
-                    val ax = if (g.userId == myId) myX else g.x
-                    val ay = if (g.userId == myId) myY else g.y
+                    val ax = if (g.userId == myId) myX else remoteX[g.userId] ?: g.x
+                    val ay = if (g.userId == myId) myY else remoteY[g.userId] ?: g.y
                     val isSeatedHere = if (g.userId == myId) seated else g.seatedSeatId != null
                     Box(
                         modifier = Modifier
@@ -449,20 +552,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                             )
                             .size(avatarDp)
                             .clip(CircleShape)
-                            .background(
-                                when {
-                                    g.isCouple -> CoupleAvatarBlue.copy(0.92f)
-                                    isImagePetId(clipItemId(g.petEmoji)) -> Color.White.copy(0.92f)
-                                    else -> Color(0xFF4A3728)
-                                }
-                            )
+                            .background(AvatarFill)
                             .border(
                                 2.5.dp,
-                                when {
-                                    g.isCouple -> CoupleAvatarBlue
-                                    isSeatedHere -> SitRingBlue
-                                    else -> Color.White.copy(0.55f)
-                                },
+                                if (isSeatedHere) SitRingBlue else IdleRing,
                                 CircleShape
                             ),
                         contentAlignment = Alignment.Center
@@ -536,7 +629,47 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                 if (walking) return@detectTapGestures
                                 val rawX = (offset.x / size.width).coerceIn(0.01f, 0.99f)
                                 val rawY = (offset.y / size.height).coerceIn(0.01f, 0.99f)
-                                val hitR = (avatarR * 3.2f).coerceAtLeast(0.05f)
+                                val hitR = (avatarR * 5.2f).coerceAtLeast(0.09f)
+                                val sitPad = 0.08f
+
+                                // Geldbaum tippen (auch leicht daneben)
+                                val hitTree = zones.firstOrNull { z ->
+                                    z.isMoneyTree &&
+                                        (
+                                            zoneContains(z, rawX, rawY, sitPad) ||
+                                                hypot(rawX - z.sitX, rawY - z.sitY) < hitR
+                                            )
+                                }
+                                if (hitTree != null) {
+                                    val claimed =
+                                        ceremony?.claimedMoneyTreeIds?.contains(hitTree.id) == true
+                                    if (!claimed) {
+                                        scope.launch {
+                                            runCatching {
+                                                LuvApiClient.ceremonyClaimMoneyTree(hitTree.id)
+                                            }
+                                                .onSuccess { r ->
+                                                    if (r.ceremony != null) ceremony = r.ceremony
+                                                    r.account?.let { AccountSession.setAccount(it) }
+                                                    Toast.makeText(
+                                                        context,
+                                                        r.message
+                                                            ?: if (r.already) "Schon geerntet"
+                                                            else "+1 Coin!",
+                                                        Toast.LENGTH_SHORT,
+                                                    ).show()
+                                                }
+                                                .onFailure { e ->
+                                                    Toast.makeText(
+                                                        context,
+                                                        e.message ?: "Baum leer",
+                                                        Toast.LENGTH_SHORT,
+                                                    ).show()
+                                                }
+                                        }
+                                    }
+                                    return@detectTapGestures
+                                }
 
                                 if (zones.none { it.isWalk }) {
                                     scope.launch {
@@ -552,11 +685,24 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                 suspend fun walkTo(tx: Float, ty: Float): Boolean {
                                     val path = findPath(zones, myX, myY, tx, ty, avatarR)
                                     if (path.isEmpty()) return false
+                                    var lastSend = 0L
                                     walkAlongPath(
                                         path,
                                         { x, y -> myX = x; myY = y },
                                         { myX },
                                         { myY },
+                                        onStep = {
+                                            val now = SystemClock.elapsedRealtime()
+                                            if (now - lastSend >= 110L) {
+                                                lastSend = now
+                                                // Live-Position für andere Gäste (ohne Ceremony-State zu überschreiben)
+                                                scope.launch {
+                                                    runCatching {
+                                                        LuvApiClient.ceremonyMove(myX, myY)
+                                                    }
+                                                }
+                                            }
+                                        },
                                     )
                                     runCatching { LuvApiClient.ceremonyMove(myX, myY) }
                                         .onSuccess { ceremony = it ?: ceremony }
@@ -599,20 +745,26 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                 val hitSit = sitZones.firstOrNull { z ->
                                     val taken =
                                         ceremony?.gathering?.any {
-                                            it.seatedSeatId == z.id && it.userId != myId
+                                            it.seatedSeatId == z.id &&
+                                                it.userId != myId &&
+                                                it.present
                                         } == true
                                     !taken && (
-                                        zoneContains(z, rawX, rawY, 0.04f) ||
+                                        zoneContains(z, rawX, rawY, sitPad) ||
                                             hypot(rawX - z.sitX, rawY - z.sitY) < hitR
                                         )
                                 }
                                 if (hitSit != null) {
                                     scope.launch {
                                         walking = true
-                                        val approach = nearestWalkablePoint(
-                                            zones, hitSit.sitX, hitSit.sitY, avatarR
-                                        ) ?: (hitSit.sitX to hitSit.sitY)
-                                        walkTo(approach.first, approach.second)
+                                        val near =
+                                            hypot(myX - hitSit.sitX, myY - hitSit.sitY) < 0.16f
+                                        if (!near) {
+                                            val approach = nearestWalkablePoint(
+                                                zones, hitSit.sitX, hitSit.sitY, avatarR
+                                            ) ?: (hitSit.sitX to hitSit.sitY)
+                                            walkTo(approach.first, approach.second)
+                                        }
                                         runCatching { LuvApiClient.ceremonySit(hitSit.id) }
                                             .onSuccess {
                                                 ceremony = it

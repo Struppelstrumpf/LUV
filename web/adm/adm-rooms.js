@@ -26,6 +26,7 @@
     { id: "yellow-circle", label: "Gelb Ehe", color: "yellow", shape: "circle", hint: "Nur Hochzeit" },
     { id: "gold-circle", label: "Gold Deko", color: "gold", shape: "circle", hint: "Kerze/Box platzieren" },
     { id: "pink-circle", label: "Rosa Flamme", color: "pink", shape: "circle", hint: "Flammen-Animation" },
+    { id: "lime-circle", label: "Geldbaum", color: "lime", shape: "circle", hint: "1 Coin tippen (einmalig)" },
   ];
 
   const FILL = {
@@ -39,6 +40,7 @@
     orange: "rgba(255,152,0,0.4)",
     gold: "rgba(212,175,55,0.5)",
     pink: "rgba(255,112,67,0.55)",
+    lime: "rgba(124,179,66,0.5)",
     purple: "rgba(156,39,176,0.4)",
     teal: "rgba(0,150,136,0.4)",
   };
@@ -53,6 +55,7 @@
     orange: "#ff9800",
     gold: "#d4af37",
     pink: "#ff7043",
+    lime: "#7cb342",
     purple: "#9c27b0",
     teal: "#009688",
   };
@@ -303,7 +306,7 @@
       const tools =
         roomId === "wedding"
           ? TOOLS
-          : TOOLS.filter((t) => !["yellow", "gold", "pink"].includes(t.color));
+          : TOOLS.filter((t) => !["yellow", "gold", "pink", "lime"].includes(t.color));
       const special = [
         { id: "link-portal", label: "Raum verknüpfen", color: "purple" },
         { id: "add-action", label: "+Aktion", color: "teal" },
@@ -495,11 +498,13 @@
                   ? "deco_"
                   : color === "pink"
                     ? "flame_"
-                    : color === "purple"
-                      ? "portal_"
-                      : color === "teal"
-                        ? "action_"
-                        : `${color}_`;
+                    : color === "lime"
+                      ? "money_"
+                      : color === "purple"
+                        ? "portal_"
+                        : color === "teal"
+                          ? "action_"
+                          : `${color}_`;
       return `${prefix}${Math.random().toString(36).slice(2, 8)}`;
     }
 

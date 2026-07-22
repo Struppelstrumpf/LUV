@@ -7,7 +7,8 @@ const CEREMONY_CAPACITY = 10; // 2 Brautpaar + 8 Gäste
 const CEREMONY_MIN_AHEAD_MS = 30 * 60 * 1000;
 const CEREMONY_MAX_AHEAD_MS = 14 * 24 * 60 * 60 * 1000;
 const CEREMONY_OPEN_BEFORE_MS = 10 * 60 * 1000;
-const PRESENCE_FRESH_MS = 45_000;
+/** Länger + Heartbeat im Client — Idle-Gäste bleiben sichtbar */
+const PRESENCE_FRESH_MS = 120_000;
 const VOW_HOLD_MS = 15_000;
 const ALTAR_HOLD_MS = 30_000;
 const RECEPTION_MS = 60 * 60 * 1000;
@@ -60,6 +61,9 @@ function ensureCeremony(m) {
   if (!m.ceremony.giftedBy || typeof m.ceremony.giftedBy !== "object") m.ceremony.giftedBy = {};
   if (!m.ceremony.guestbookedBy || typeof m.ceremony.guestbookedBy !== "object") {
     m.ceremony.guestbookedBy = {};
+  }
+  if (!m.ceremony.moneyTreesClaimed || typeof m.ceremony.moneyTreesClaimed !== "object") {
+    m.ceremony.moneyTreesClaimed = {};
   }
   if (!Array.isArray(m.ceremony.applauseBursts)) m.ceremony.applauseBursts = [];
   if (typeof m.ceremony.seatingLocked !== "boolean") m.ceremony.seatingLocked = false;
@@ -604,6 +608,10 @@ function publicCeremony(m, viewerId, users = {}) {
     iGuestbooked,
     vowsReady: c.pastorPhase === "vows",
     marriageStatus: m.status || null,
+    claimedMoneyTreeIds: Object.keys(c.moneyTreesClaimed || {})
+      .filter((k) => k.startsWith(`${viewerId}:`))
+      .map((k) => k.slice(String(viewerId).length + 1))
+      .filter(Boolean),
   };
 }
 

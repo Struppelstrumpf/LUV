@@ -9910,6 +9910,7 @@ app.post("/v1/me/marriage/ceremony/sit", (req, res) => {
   const sx = zone.shape === "circle" ? zone.cx : zone.x + zone.w / 2;
   const sy = zone.shape === "circle" ? zone.cy : zone.y + zone.h / 2;
   c.positions[ctx.user.id] = { x: sx, y: sy };
+  weddingCeremony.touchPresence(m, ctx.user.id, "gathering");
   // Phase "vows" erst nach 30s Altar-Hold + Pastor-Rede — nicht sofort bei allen sitzen
   if (c.phase === "gathering" || c.phase === "none") c.phase = "altar";
   tickCeremonyRitual(m, db);
@@ -9918,6 +9919,61 @@ app.post("/v1/me/marriage/ceremony/sit", (req, res) => {
     ok: true,
     ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
     roomLayout: roomLayouts.getLayout(db, "wedding"),
+  });
+});
+
+/** Geldbaum tippen — einmalig 1 Coin pro Baum / Gast */
+app.post("/v1/me/marriage/ceremony/money-tree", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const m = findMarriageForCeremonyMember(db, ctx.user.id);
+  if (!m || (m.status !== "ceremony_scheduled" && m.status !== "married")) {
+    return res.status(400).json({ error: "wrong_phase", message: "Keine offene Zeremonie." });
+  }
+  const c = weddingCeremony.ensureCeremony(m);
+  if (
+    c.phase === "none" ||
+    c.phase === "presence" ||
+    c.phase === "scheduled"
+  ) {
+    c.phase = "gathering";
+  }
+  const treeId = String(req.body?.treeId || "").trim().slice(0, 48);
+  if (!treeId) {
+    return res.status(400).json({ error: "bad_tree", message: "Kein Baum." });
+  }
+  const zone = roomLayouts.findZone(db, "wedding", treeId);
+  if (!zone || !roomLayouts.isMoneyTree(zone)) {
+    return res.status(400).json({ error: "bad_tree", message: "Das ist kein Geldbaum." });
+  }
+  const claimKey = `${ctx.user.id}:${treeId}`;
+  if (!c.moneyTreesClaimed || typeof c.moneyTreesClaimed !== "object") {
+    c.moneyTreesClaimed = {};
+  }
+  if (c.moneyTreesClaimed[claimKey]) {
+    return res.json({
+      ok: true,
+      already: true,
+      coins: 0,
+      ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+      user: publicUser(ctx.user),
+      message: "Diesen Baum hast du schon geerntet.",
+    });
+  }
+  if (!applyLedger(ctx.user.id, 1, "wedding_money_tree", treeId)) {
+    return res.status(500).json({ error: "ledger_failed", message: "Coin konnte nicht gutgeschrieben werden." });
+  }
+  c.moneyTreesClaimed[claimKey] = Date.now();
+  weddingCeremony.touchPresence(m, ctx.user.id, "gathering");
+  scheduleSave();
+  return res.json({
+    ok: true,
+    already: false,
+    coins: 1,
+    ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+    user: publicUser(ctx.user),
+    message: "+1 Coin vom Geldbaum!",
   });
 });
 

@@ -2151,6 +2151,8 @@ object LuvApiClient {
         val iGuestbooked: Boolean = false,
         val vowsReady: Boolean = false,
         val marriageStatus: String? = null,
+        /** Geldbaum-IDs, die dieser Nutzer schon geerntet hat */
+        val claimedMoneyTreeIds: List<String> = emptyList(),
     )
 
     data class WeddingImageConfirmResult(
@@ -2413,6 +2415,14 @@ object LuvApiClient {
             }
         }
         val coupleNicks = o.optJSONObject("coupleNicknames")
+        val claimedTrees = ArrayList<String>()
+        val claimedArr = o.optJSONArray("claimedMoneyTreeIds")
+        if (claimedArr != null) {
+            for (i in 0 until claimedArr.length()) {
+                val id = claimedArr.optString(i).trim()
+                if (id.isNotBlank()) claimedTrees += id
+            }
+        }
         return CeremonyInfo(
             phase = o.optString("phase", "none"),
             ceremonyAt = o.optLong("ceremonyAt", 0L),
@@ -2457,6 +2467,7 @@ object LuvApiClient {
             iGuestbooked = o.optBoolean("iGuestbooked", false),
             vowsReady = o.optBoolean("vowsReady", false),
             marriageStatus = o.optString("marriageStatus").takeIf { it.isNotBlank() },
+            claimedMoneyTreeIds = claimedTrees,
         )
     }
 
@@ -2721,6 +2732,7 @@ object LuvApiClient {
         val isAvatarSize: Boolean get() = color == "orange"
         val isDecor: Boolean get() = color == "gold" || id.startsWith("deco_")
         val isFlame: Boolean get() = color == "pink" || id.startsWith("flame_")
+        val isMoneyTree: Boolean get() = color == "lime" || id.startsWith("money_")
     }
 
     data class RoomViewRect(
@@ -3101,6 +3113,27 @@ object LuvApiClient {
         val json = authedPost("/v1/me/marriage/ceremony/sit", body)
         parseCeremonyInfo(json.optJSONObject("ceremony"))
     }
+
+    data class MoneyTreeClaimResult(
+        val coins: Int,
+        val already: Boolean,
+        val message: String?,
+        val ceremony: CeremonyInfo?,
+        val account: AccountInfo?,
+    )
+
+    suspend fun ceremonyClaimMoneyTree(treeId: String): MoneyTreeClaimResult =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("treeId", treeId).toString()
+            val json = authedPost("/v1/me/marriage/ceremony/money-tree", body)
+            MoneyTreeClaimResult(
+                coins = json.optInt("coins", 0),
+                already = json.optBoolean("already", false),
+                message = json.optString("message").takeIf { it.isNotBlank() },
+                ceremony = parseCeremonyInfo(json.optJSONObject("ceremony")),
+                account = json.optJSONObject("user")?.let { AccountInfo.fromApi(it) },
+            )
+        }
 
     suspend fun ceremonyReact(emoji: String): CeremonyInfo? = withContext(Dispatchers.IO) {
         val body = JSONObject().put("emoji", emoji).toString()
