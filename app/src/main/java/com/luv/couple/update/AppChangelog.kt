@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.115",
+            listOf(
+                "Zeichenfarbe stimmt schon während des Malens (kein Blau→Lila mehr)",
+            )
+        ),
+        Entry(
             "2.2.114",
             listOf(
                 "Wartezeit überspringen aktualisiert Sozial sofort",

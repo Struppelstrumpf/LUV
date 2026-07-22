@@ -716,7 +716,6 @@ class PairConnectionService : Service() {
                                                 lobby.id,
                                                 broadcast = LockDrawActivity.isCanvasForeground(lobby.id)
                                             )
-                                            _events.emit(PairEvent.ColorAssigned(lobby.id, useColor))
                                         } else if (saved != null && saved != suggested) {
                                             // Server hat andere Farbe — lokale Präferenz zurückspielen
                                             sendRecolor(
@@ -726,6 +725,10 @@ class PairConnectionService : Service() {
                                                 lobby.id
                                             )
                                         }
+                                        // Immer UI syncen (Live-Pinsel) — SharedFlow ohne Replay
+                                        // würde ColorAssigned sonst verlieren, wenn die Canvas
+                                        // noch nicht subscribed.
+                                        _events.emit(PairEvent.ColorAssigned(lobby.id, useColor))
                                     }
                                     // Nur echte Leinwand-Präsenz — nicht schon bei Lobby-Verbindung
                                     sendPresence(

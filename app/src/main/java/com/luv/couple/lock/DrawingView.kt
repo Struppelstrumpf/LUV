@@ -51,6 +51,19 @@ class DrawingView @JvmOverloads constructor(
     private var lastTapUptime = 0L
     private var pendingDot: StrokePoint? = null
     var myColorIndex: Int = 0
+        set(value) {
+            val safe = value.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
+            if (field == safe) return
+            field = safe
+            invalidate()
+        }
+
+    /**
+     * Lockscreen/Lobby: Live-Strich immer aus [CanvasStore.cachedColorIndex]
+     * (gleiche Quelle wie addLocalStroke). Verhindert Blau→Lila-Desync wenn
+     * myColorIndex hinter dem Store zurückbleibt.
+     */
+    var followStoreColor: Boolean = false
 
     /** Aktuelle Pinseldicke für den Live-Strich und neue Zeichnungen. */
     var myBrushWidth: Float = 18f
@@ -251,8 +264,10 @@ class DrawingView @JvmOverloads constructor(
                 paint.strokeWidth = core * 1.35f
                 canvas.drawPath(eraserPath, paint)
             }
-        } else {
-            paint.color = PeerPalette.strokeColor(myColorIndex)
+        } else if (!currentPath.isEmpty) {
+            val liveIdx =
+                if (followStoreColor) CanvasStore.cachedColorIndex else myColorIndex
+            paint.color = PeerPalette.strokeColor(liveIdx)
             paint.strokeWidth = myBrushWidth
             canvas.drawPath(currentPath, paint)
         }
@@ -407,6 +422,9 @@ class DrawingView @JvmOverloads constructor(
         }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (followStoreColor) {
+                    myColorIndex = CanvasStore.cachedColorIndex
+                }
                 movedBeyondSlop = false
                 downX = event.x
                 downY = event.y

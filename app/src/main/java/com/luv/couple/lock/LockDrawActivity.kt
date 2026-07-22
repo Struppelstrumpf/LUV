@@ -319,6 +319,7 @@ class LockDrawActivity : ComponentActivity() {
         val bg = CanvasStore.backgroundFor(CanvasStore.cachedColorIndex)
         root.setBackgroundColor(bg)
         drawingView.canvasBackground = bg
+        drawingView.followStoreColor = true
         drawingView.myColorIndex = CanvasStore.cachedColorIndex
         drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
         paintEraserButton()
