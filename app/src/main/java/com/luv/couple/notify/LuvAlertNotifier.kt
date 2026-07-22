@@ -52,6 +52,8 @@ object LuvAlertNotifier {
     private const val NOTIFY_MARKET_SALE = 996
     private const val NOTIFY_APP_BADGE = 997
     private const val NOTIFY_FRIEND = 998
+    private const val NOTIFY_MARRIAGE = 1002
+    private const val NOTIFY_LOBBY_INVITE = 1003
     private const val NOTIFY_ACHIEVEMENT = 999
     private const val NOTIFY_INVENTORY = 1001
 
@@ -460,6 +462,54 @@ object LuvAlertNotifier {
             notifyOpenMain(
                 context = context.applicationContext,
                 notificationId = NOTIFY_FRIEND,
+                title = "Sozial · Freunde",
+                text = text,
+                extras = {
+                    putExtra(MainActivity.EXTRA_OPEN_SOZIAL, true)
+                    putExtra(MainActivity.EXTRA_SOZIAL_TAB, 0)
+                }
+            )
+        }
+    }
+
+    fun onMarriageProposal(context: Context, count: Int) {
+        scope.launch {
+            if (count <= 0) return@launch
+            if (QuietHoursGate.isQuietNow()) return@launch
+            if (!prefsEnabled()) return@launch
+            ensureChannel(context)
+            val text = if (count == 1) {
+                "Neuer Heiratsantrag"
+            } else {
+                "$count neue Heiratsanträge"
+            }
+            notifyOpenMain(
+                context = context.applicationContext,
+                notificationId = NOTIFY_MARRIAGE,
+                title = "Sozial · Heirat",
+                text = text,
+                extras = {
+                    putExtra(MainActivity.EXTRA_OPEN_SOZIAL, true)
+                    putExtra(MainActivity.EXTRA_SOZIAL_TAB, 0)
+                }
+            )
+        }
+    }
+
+    fun onLobbyInvite(context: Context, count: Int) {
+        scope.launch {
+            if (count <= 0) return@launch
+            if (QuietHoursGate.isQuietNow()) return@launch
+            if (!prefsEnabled()) return@launch
+            ensureChannel(context)
+            val text = if (count == 1) {
+                "Neue Lobby-Einladung"
+            } else {
+                "$count neue Lobby-Einladungen"
+            }
+            notifyOpenMain(
+                context = context.applicationContext,
+                notificationId = NOTIFY_LOBBY_INVITE,
                 title = "Sozial · Freunde",
                 text = text,
                 extras = {

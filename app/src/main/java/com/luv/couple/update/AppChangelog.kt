@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.100",
+            listOf(
+                "Heiratsantrag: Benachrichtigung heißt nicht mehr Freundschaftsanfrage",
+            )
+        ),
+        Entry(
             "2.2.99",
             listOf(
                 "Tote Mal-Lobbys: nur löschen wenn App online und Lobby auf dem Server weg",

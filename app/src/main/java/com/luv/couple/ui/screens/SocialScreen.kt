@@ -263,8 +263,10 @@ private fun FriendsPanel(
         lobbyInvites = it.lobbyInvites
         myMarriage = it.myMarriage
         pendingFriendshipCoins = it.pendingFriendshipCoins
-        com.luv.couple.net.NotificationBadges.setFriendIncoming(
-            it.incoming.size + it.marriageProposals.size + it.lobbyInvites.size
+        com.luv.couple.net.NotificationBadges.setSocialIncoming(
+            friendRequests = it.incoming.size,
+            marriageProposals = it.marriageProposals.size,
+            lobbyInvites = it.lobbyInvites.size,
         )
         com.luv.couple.net.NotificationBadges.syncAppBadge(context)
         // Partner: Lobby syncen ohne zwingend nach Home zu springen

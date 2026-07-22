@@ -12,11 +12,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * App-weite Hinweis-Punkte: Freundesanfragen, Erfolge, Markt, Inventar-Neuheiten.
+ * App-weite Hinweis-Punkte: Freundesanfragen, Heirat, Erfolge, Markt, Inventar-Neuheiten.
  */
 object NotificationBadges {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val _friendIncoming = MutableStateFlow(0)
+    private val _friendOnly = MutableStateFlow(0)
+    private val _marriageIncoming = MutableStateFlow(0)
+    private val _lobbyInviteIncoming = MutableStateFlow(0)
+    private val _socialIncomingTotal = MutableStateFlow(0)
     private val _achievementsClaimable = MutableStateFlow(false)
     private val _pendingSales = MutableStateFlow(0)
     private val _inventoryUnseen = MutableStateFlow(0)
@@ -39,7 +42,11 @@ object NotificationBadges {
     private var achievementsBaselineReady = false
     private var inventoryBaselineReady = false
 
-    val friendIncoming: StateFlow<Int> = _friendIncoming.asStateFlow()
+    private fun socialIncomingTotal(): Int =
+        _friendOnly.value + _marriageIncoming.value + _lobbyInviteIncoming.value
+
+    /** Summe offener Freundes-/Heirats-/Lobby-Anfragen (für Badges). */
+    val friendIncoming: StateFlow<Int> = _socialIncomingTotal.asStateFlow()
     val achievementsClaimable: StateFlow<Boolean> = _achievementsClaimable.asStateFlow()
     val pendingSales: StateFlow<Int> = _pendingSales.asStateFlow()
     val hasSozialDot: StateFlow<Boolean> = _sozialDot.asStateFlow()
@@ -56,14 +63,16 @@ object NotificationBadges {
             achievementsCurrentFp != achievementsSeenFp
 
     private fun recompute() {
-        val hasSozialNews = _friendIncoming.value > 0 || hasAchievementsNews()
+        val socialIn = socialIncomingTotal()
+        _socialIncomingTotal.value = socialIn
+        val hasSozialNews = socialIn > 0 || hasAchievementsNews()
         _sozialDot.value = hasSozialNews && !sozialSeen
         _marketDot.value = _pendingSales.value > 0
         _inventoryDot.value = _inventoryUnseen.value > 0
-        _friendsTabDot.value = _friendIncoming.value > 0 && !friendsTabSeen
+        _friendsTabDot.value = socialIn > 0 && !friendsTabSeen
         _achievementsTabDot.value = hasAchievementsNews()
         val sozialCount = if (!sozialSeen) {
-            _friendIncoming.value + if (hasAchievementsNews()) 1 else 0
+            socialIn + if (hasAchievementsNews()) 1 else 0
         } else {
             0
         }
@@ -102,25 +111,56 @@ object NotificationBadges {
         }
     }
 
-    fun setFriendIncoming(count: Int) {
-        val next = count.coerceAtLeast(0)
-        val grew = friendsBaselineReady && next > _friendIncoming.value
-        if (grew) {
-            sozialSeen = false
-            friendsTabSeen = false
-            runCatching {
-                com.luv.couple.notify.LuvAlertNotifier.onFriendRequest(
-                    LuvApp.instance,
-                    next
-                )
+    /**
+     * Offene Sozial-Anfragen getrennt tracken — sonst wird ein Heiratsantrag
+     * als „Neue Freundschaftsanfrage“ gepusht.
+     */
+    fun setSocialIncoming(
+        friendRequests: Int,
+        marriageProposals: Int = 0,
+        lobbyInvites: Int = 0,
+    ) {
+        val friends = friendRequests.coerceAtLeast(0)
+        val marriages = marriageProposals.coerceAtLeast(0)
+        val invites = lobbyInvites.coerceAtLeast(0)
+        val ctx = LuvApp.instance
+        val hadFriends = _friendOnly.value
+        val hadMarriages = _marriageIncoming.value
+        val hadInvites = _lobbyInviteIncoming.value
+
+        if (friendsBaselineReady) {
+            var anyNew = false
+            if (friends > hadFriends) {
+                anyNew = true
+                runCatching { LuvAlertNotifier.onFriendRequest(ctx, friends) }
             }
-        } else if (next > _friendIncoming.value) {
+            if (marriages > hadMarriages) {
+                anyNew = true
+                runCatching { LuvAlertNotifier.onMarriageProposal(ctx, marriages) }
+            }
+            if (invites > hadInvites) {
+                anyNew = true
+                runCatching { LuvAlertNotifier.onLobbyInvite(ctx, invites) }
+            }
+            if (anyNew) {
+                sozialSeen = false
+                friendsTabSeen = false
+            }
+        } else if (friends + marriages + invites > 0) {
             sozialSeen = false
             friendsTabSeen = false
         }
-        _friendIncoming.value = next
+
+        _friendOnly.value = friends
+        _marriageIncoming.value = marriages
+        _lobbyInviteIncoming.value = invites
         friendsBaselineReady = true
         recompute()
+    }
+
+    /** @deprecated Nutze [setSocialIncoming]. */
+    fun setFriendIncoming(count: Int) {
+        setSocialIncoming(friendRequests = count.coerceAtLeast(0))
     }
 
     /**
@@ -138,7 +178,7 @@ object NotificationBadges {
         if (newly) {
             sozialSeen = false
             runCatching {
-                com.luv.couple.notify.LuvAlertNotifier.onAchievementsReady(LuvApp.instance)
+                LuvAlertNotifier.onAchievementsReady(LuvApp.instance)
             }
         }
         _achievementsClaimable.value = claimable
@@ -160,7 +200,7 @@ object NotificationBadges {
         val next = count.coerceAtLeast(0)
         if (inventoryBaselineReady && next > _inventoryUnseen.value) {
             runCatching {
-                com.luv.couple.notify.LuvAlertNotifier.onInventoryNew(LuvApp.instance, next)
+                LuvAlertNotifier.onInventoryNew(LuvApp.instance, next)
             }
         }
         _inventoryUnseen.value = next
@@ -183,8 +223,10 @@ object NotificationBadges {
         ensureAchievementsFpLoaded()
         runCatching {
             val friends = LuvApiClient.fetchFriends(force = true)
-            setFriendIncoming(
-                friends.incoming.size + friends.marriageProposals.size + friends.lobbyInvites.size
+            setSocialIncoming(
+                friendRequests = friends.incoming.size,
+                marriageProposals = friends.marriageProposals.size,
+                lobbyInvites = friends.lobbyInvites.size,
             )
         }
         runCatching {
@@ -202,8 +244,10 @@ object NotificationBadges {
     suspend fun refreshFriends(context: Context? = null) {
         runCatching {
             val friends = LuvApiClient.fetchFriends(force = true)
-            setFriendIncoming(
-                friends.incoming.size + friends.marriageProposals.size + friends.lobbyInvites.size
+            setSocialIncoming(
+                friendRequests = friends.incoming.size,
+                marriageProposals = friends.marriageProposals.size,
+                lobbyInvites = friends.lobbyInvites.size,
             )
         }
         context?.let { syncAppBadge(it) }
