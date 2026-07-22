@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.157",
+            listOf(
+                "App läuft flüssiger; Sozial mit Aktualisieren-Button; Anfragen alle paar Minuten",
+            )
+        ),
+        Entry(
             "2.2.156",
             listOf(
                 "Sozial öffnet wieder bei Freunden; Inventar-Bilder und Ladezeiten flüssiger",

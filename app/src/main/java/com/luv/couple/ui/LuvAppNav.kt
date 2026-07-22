@@ -1529,46 +1529,47 @@ fun LuvAppNav() {
         if (needsGoogleGate) tab = 0
     }
 
-    // Bei jedem App-Start / Zurück aus dem Hintergrund auf Pflicht-Update prüfen
+    // App-Start / Zurück: leicht halten — schwere Syncs nicht alle gleichzeitig blockieren.
+    // Freunde/Heirat: Hintergrund-Poll alle paar Minuten (+ manueller Refresh unter Sozial).
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         var first = true
         val observer = LifecycleEventObserver { _, event ->
             if (event != Lifecycle.Event.ON_START) return@LifecycleEventObserver
-            val notify = first
+            val isCold = first
             first = false
             scope.launch {
-                // Parallel — sequentiell blockiert Home/Markt oft mehrere Sekunden.
-                // MarketHub nicht mit awaiten: konkurriert sonst mit Splash-Bild-Download.
-                scope.launch { runCatching { MarketHubCache.warm() } }
-                coroutineScope {
-                    val updateJob = async {
-                        runCatching { AppUpdater.check(context, notify = notify) }
+                // Fire-and-forget — UI nicht warten lassen
+                launch { runCatching { AppUpdater.check(context, notify = isCold) } }
+                launch { runCatching { MarketHubCache.warm() } }
+                if (isCold) {
+                    launch { runCatching { refreshAccount() } }
+                    if (AccountSession.account.value?.googleLinked == true) {
+                        launch { runCatching { syncCloudAccount() } }
                     }
-                    val accountJob = async {
-                        runCatching { refreshAccount() }
-                    }
-                    val cloudJob = async {
-                        if (AccountSession.account.value?.googleLinked == true) {
-                            runCatching { syncCloudAccount() }
-                        }
-                    }
-                    awaitAll(updateJob, accountJob, cloudJob)
                 }
                 if (!LuvApiClient.sessionToken.isNullOrBlank()) {
-                    coroutineScope {
-                        val noticeJob = async {
+                    // Neuigkeiten (Anfragen/Hochzeit) — Cache ok beim Resume
+                    launch {
+                        com.luv.couple.net.NotificationBadges.refreshFriends(
+                            context,
+                            force = isCold,
+                        )
+                    }
+                    if (isCold) {
+                        launch { AchievementsBadge.refresh() }
+                        launch {
                             runCatching {
                                 LuvApiClient.fetchLiveNotice()?.let { LiveNoticeBus.offer(it) }
                             }
                         }
-                        val staffJob = async {
+                        launch {
                             runCatching {
                                 val sn = LuvApiClient.fetchStaffNotices()
                                 StaffWarningBus.offer(sn.pending, sn.warnings)
                             }
                         }
-                        val salesJob = async {
+                        launch {
                             val prevSales =
                                 runCatching { prefs.pendingSalesKnownCount() }.getOrDefault(0)
                             val sales =
@@ -1583,13 +1584,7 @@ fun LuvAppNav() {
                             if (sales != null) {
                                 runCatching { prefs.setPendingSalesKnownCount(sales.count) }
                             }
-                            sales
                         }
-                        val friendsJob = async {
-                            com.luv.couple.net.NotificationBadges.refreshFriends(context)
-                        }
-                        val achJob = async { AchievementsBadge.refresh() }
-                        awaitAll(noticeJob, staffJob, salesJob, friendsJob, achJob)
                     }
                     com.luv.couple.net.NotificationBadges.syncAppBadge(context)
                 }
@@ -1597,6 +1592,21 @@ fun LuvAppNav() {
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Alle 3 Min: Freunde / Heirat / Einladungen (Badge), ohne UI zu blockieren
+    LaunchedEffect(startDestination, account?.googleLinked) {
+        if (startDestination != Routes.MAIN) return@LaunchedEffect
+        if (account?.googleLinked != true) return@LaunchedEffect
+        while (true) {
+            delay(180_000L)
+            if (LuvApiClient.sessionToken.isNullOrBlank()) continue
+            runCatching {
+                com.luv.couple.net.NotificationBadges.refreshFriends(context, force = true)
+            }
+            runCatching { AchievementsBadge.refresh() }
+            com.luv.couple.net.NotificationBadges.syncAppBadge(context)
+        }
     }
 
     LaunchedEffect(focusUpdate) {
@@ -2583,18 +2593,17 @@ fun LuvAppNav() {
                                 runCatching { AppUpdater.checkOnNavigate(context) }
                                 when (next) {
                                     0 -> {
-                                        // Hochzeitsbild-Lobby o.ä. ohne App-Neustart sichtbar
-                                        runCatching { syncCloudAccount(force = true) }
+                                        // Soft-Sync (20s-Throttle) — kein force bei jedem Home-Tipp
+                                        runCatching { syncCloudAccount() }
                                     }
                                     1 -> {
-                                        // Punkt weg; Friends/Erfolge lädt SocialScreen selbst (kein Doppel-Request)
                                         com.luv.couple.net.NotificationBadges.markSozialSeen()
                                         com.luv.couple.net.NotificationBadges.syncAppBadge(context)
                                     }
                                     2 -> syncInventory()
                                     3 -> {
-                                        refreshAccount()
-                                        syncInventory()
+                                        // Markt: Vorschau + Verkaufs-Hinweise, kein volles Account+Inventar
+                                        runCatching { MarketHubCache.warm() }
                                         com.luv.couple.net.NotificationBadges.refreshPendingSales(context)
                                     }
                                     4 -> {
@@ -2603,7 +2612,7 @@ fun LuvAppNav() {
                                         }.getOrDefault(googleEnabled)
                                         refreshAccount()
                                     }
-                                    else -> refreshAccount()
+                                    else -> Unit
                                 }
                             }
                         }

@@ -72,6 +72,7 @@ private val CATEGORY_ORDER = listOf(
 @Composable
 fun AchievementsPanel(
     modifier: Modifier = Modifier,
+    reloadKey: Int = 0,
     onCoinsGranted: (Int) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -147,6 +148,11 @@ fun AchievementsPanel(
 
     // Soft-Refresh: Cache sofort zeigen, Netzwerk im Hintergrund
     LaunchedEffect(Unit) { reload(forceSpinner = state == null) }
+
+    LaunchedEffect(reloadKey) {
+        if (reloadKey <= 0) return@LaunchedEffect
+        reload(forceSpinner = false)
+    }
 
     previewItem?.let { item ->
         AchievementItemPreviewDialog(

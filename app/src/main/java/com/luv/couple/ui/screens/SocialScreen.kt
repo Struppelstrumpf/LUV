@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -90,8 +91,12 @@ fun SocialScreen(
     /** Parent-State mitsynchronisieren (Deep-Link / Sticky-Tab). */
     onSubTabChange: (Int) -> Unit = {},
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 2)) }
+    var refreshBusy by remember { mutableStateOf(false) }
+    var friendsReloadKey by remember { mutableIntStateOf(0) }
+    var achReloadKey by remember { mutableIntStateOf(0) }
     val friendsTabDot by com.luv.couple.net.NotificationBadges.hasFriendsTabDot
         .collectAsStateWithLifecycle()
     val achievementsTabDot by com.luv.couple.net.NotificationBadges.hasAchievementsTabDot
@@ -104,12 +109,30 @@ fun SocialScreen(
     LaunchedEffect(Unit) {
         runCatching { LuvApiClient.pingAchievement("social_opens") }
         com.luv.couple.net.NotificationBadges.markSozialSeen()
-        // Parallel vorwärmen — Cache nutzen (kein force)
+        // Cache-First — force erst über Aktualisieren-Button
         kotlinx.coroutines.coroutineScope {
             launch { runCatching { AchievementsBadge.refresh() } }
-            launch { runCatching { com.luv.couple.net.NotificationBadges.refreshFriends() } }
+            launch {
+                runCatching {
+                    com.luv.couple.net.NotificationBadges.refreshFriends(force = false)
+                }
+            }
         }
         com.luv.couple.net.NotificationBadges.markSozialSeen()
+    }
+
+    fun refreshNews() {
+        if (refreshBusy) return
+        refreshBusy = true
+        scope.launch {
+            runCatching {
+                com.luv.couple.net.NotificationBadges.refreshAll(context)
+            }
+            friendsReloadKey++
+            achReloadKey++
+            refreshBusy = false
+            Toast.makeText(context, "Aktualisiert", Toast.LENGTH_SHORT).show()
+        }
     }
 
     LaunchedEffect(tab) {
@@ -128,7 +151,8 @@ fun SocialScreen(
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 listOf("Freunde", "Events", "Erfolge").forEachIndexed { index, label ->
                     val active = tab == index
@@ -169,6 +193,30 @@ fun SocialScreen(
                         }
                     }
                 }
+                // Manuell Neuigkeiten vom Server holen (Anfragen, Heirat, Erfolge)
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(BgSoft)
+                        .clickable(enabled = !refreshBusy) { refreshNews() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (refreshBusy) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = AccentRose,
+                        )
+                    } else {
+                        Text(
+                            "↻",
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 20.sp,
+                        )
+                    }
+                }
             }
             Spacer(modifier = Modifier.height(14.dp))
             // Einmal besucht → gemountet lassen. Sonst stirbt rememberCoroutineScope
@@ -192,6 +240,7 @@ fun SocialScreen(
                     SocialKeepAliveTab(visible = tab == 0) {
                         FriendsPanel(
                             modifier = Modifier.fillMaxSize(),
+                            reloadKey = friendsReloadKey,
                             onOpenFriendProfile = onOpenFriendProfile,
                             onSyncWeddingLobbies = onSyncWeddingLobbies,
                             onWeddingLobbyOpened = onWeddingLobbyOpened
@@ -218,6 +267,7 @@ fun SocialScreen(
                     SocialKeepAliveTab(visible = tab == 2) {
                         AchievementsPanel(
                             modifier = Modifier.fillMaxSize(),
+                            reloadKey = achReloadKey,
                             onCoinsGranted = { amount ->
                                 if (amount > 0) {
                                     scope.launch {
@@ -253,6 +303,7 @@ private fun SocialKeepAliveTab(
 @Composable
 private fun FriendsPanel(
     modifier: Modifier = Modifier,
+    reloadKey: Int = 0,
     onOpenFriendProfile: (userId: String, nickname: String) -> Unit,
     onSyncWeddingLobbies: () -> Unit = {},
     onWeddingLobbyOpened: () -> Unit = {},
@@ -288,7 +339,7 @@ private fun FriendsPanel(
     LaunchedEffect(Unit) {
         while (true) {
             runCatching { LuvApiClient.fetchLiveCount() }.onSuccess { liveCount = it }
-            delay(15_000)
+            delay(60_000)
         }
     }
 
@@ -296,13 +347,23 @@ private fun FriendsPanel(
         if (com.luv.couple.net.PendingWeddingCeremony.consume()) {
             showCeremonyPresence = true
         }
+    }
+
+    // Kapelle nur pollen, wenn wirklich was läuft — sonst alle 3 Min leicht
+    LaunchedEffect(myMarriage?.status) {
+        val st = myMarriage?.status
+        val active =
+            st == "ceremony_scheduled" ||
+                st == "ceremony_pending" ||
+                st == "wedding" ||
+                st == "engaged"
         while (true) {
             runCatching { LuvApiClient.fetchCeremony() }.onSuccess { bundle ->
                 if (bundle.ceremony?.leftNotify == true) {
                     leftNoticeName = bundle.ceremony.leftByNickname
                 }
             }
-            delay(8_000)
+            delay(if (active) 12_000L else 180_000L)
         }
     }
 
@@ -388,19 +449,24 @@ private fun FriendsPanel(
         }
     }
 
-    // Cache sofort, dann Soft-Refresh — force nur wenn Cache fehlt
+    // Cache sofort; Soft-Refresh im Hintergrund (force nur bei Reload-Button)
     LaunchedEffect(Unit) {
         val hasCache = LuvApiClient.peekFriendsCache() != null
         reload(force = !hasCache)
-        if (hasCache) reload(force = true)
+        if (hasCache) reload(force = false)
     }
 
-    // Verlobung/Hochzeit: Partner merkt schnell, wenn der andere die Lobby öffnet
+    LaunchedEffect(reloadKey) {
+        if (reloadKey <= 0) return@LaunchedEffect
+        reload(force = true)
+    }
+
+    // Verlobung/Hochzeit: Partner merkt die Lobby — alle 20s reicht
     LaunchedEffect(myMarriage?.status, myMarriage?.engageFreeSkipAvailable) {
         val st = myMarriage?.status
         if (st != "engaged" && st != "wedding") return@LaunchedEffect
         while (true) {
-            delay(6_000)
+            delay(20_000)
             runCatching { LuvApiClient.fetchFriends(force = true) }
                 .onSuccess { applyFriendsSnap(it) }
         }

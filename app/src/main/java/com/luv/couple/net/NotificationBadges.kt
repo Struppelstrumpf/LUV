@@ -311,9 +311,13 @@ object NotificationBadges {
         context?.let { syncAppBadge(it) }
     }
 
-    suspend fun refreshFriends(context: Context? = null) {
+    /**
+     * Freunde / Heirat / Lobby-Einladungen.
+     * [force]=false nutzt den 45s-Client-Cache — gut für Hintergrund-Poll.
+     */
+    suspend fun refreshFriends(context: Context? = null, force: Boolean = true) {
         runCatching {
-            val friends = LuvApiClient.fetchFriends(force = true)
+            val friends = LuvApiClient.fetchFriends(force = force)
             setSocialIncoming(
                 friendRequests = friends.incoming.size,
                 marriageProposals = friends.marriageProposals.size,

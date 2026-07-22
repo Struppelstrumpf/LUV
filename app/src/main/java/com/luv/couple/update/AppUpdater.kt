@@ -90,7 +90,7 @@ object AppUpdater {
     private val downloading = AtomicBoolean(false)
     @Volatile
     private var lastNavCheckAt = 0L
-    private const val NAV_CHECK_MIN_MS = 8_000L
+    private const val NAV_CHECK_MIN_MS = 120_000L
 
     @Volatile
     private var playUpdateManager: AppUpdateManager? = null
