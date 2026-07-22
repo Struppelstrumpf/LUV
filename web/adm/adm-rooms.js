@@ -285,7 +285,10 @@
     let dirty = false;
     let pendingImage = null;
 
-    const weddingSwitch = isWeddingBuiltin(roomId)
+    // Builtin-Flag vom Server ist maßgeblich (nicht nur ID-String)
+    const weddingMode = Boolean(layout.builtin) || isWeddingBuiltin(roomId);
+
+    const weddingSwitch = weddingMode
       ? `<select id="roomWeddingSwitch" class="room-wedding-switch" title="Hochzeits-Raum">
           ${WEDDING_ROOM_IDS.map(
             (id) =>
@@ -320,7 +323,11 @@
               : `<button type="button" class="btn ghost danger" id="roomDel">Löschen</button>`
           }
         </div>
-        <p class="help">Weiß = ganze Karte · Schwarz = Kamera · Grün/Blau/Gelb = Sitze/Laufen (ziehen). Gold/Flamme/Geldbaum: Werkzeug wählen, dann <b>klicken</b> zum Setzen. Auswahl ziehen oder Größe unten.</p>
+        <p class="help">${
+          weddingMode
+            ? "Hochzeit: <b>Gelb</b> = Brautpaar ziehen · <b>+ Geldbaum / Flamme / Kerze</b> = einmal tippen setzt Prop. Grün = Laufen, Blau = Gäste."
+            : "Weiß = ganze Karte · Schwarz = Kamera · Grün/Blau = Sitze/Laufen (ziehen)."
+        }</p>
         <div class="room-tools" id="roomTools"></div>
         <p class="hint" id="roomToolHint" style="margin:0.35rem 0 0"></p>
         <div class="room-fit-wrap" id="roomFit">
@@ -355,30 +362,28 @@
 
     function paintTools() {
       const box = root.querySelector("#roomTools");
-      const tools = isWeddingBuiltin(roomId)
+      const baseTools = weddingMode
         ? TOOLS
         : TOOLS.filter((t) => !["yellow", "gold", "pink", "lime"].includes(t.color));
+      const weddingPropIds = new Set(["yellow-rect", "gold-circle", "pink-circle", "lime-circle"]);
+      const mainTools = baseTools.filter((t) => !weddingPropIds.has(t.id));
+      const weddingTools = baseTools.filter((t) => weddingPropIds.has(t.id));
       const special = [
         { id: "link-portal", label: "Raum verknüpfen", color: "purple" },
         { id: "add-action", label: "+Aktion", color: "teal" },
       ];
-      box.innerHTML =
-        tools
-          .map(
-            (t) => `
+      const btn = (t) => `
         <button type="button" class="room-tool ${tool === t.id ? "active" : ""}" data-tool="${t.id}" title="${esc(t.hint || "")}">
           <span class="swatch" style="background:${STROKE[t.color]}"></span>${esc(t.label)}
-        </button>`
-          )
-          .join("") +
-        special
-          .map(
-            (t) => `
-        <button type="button" class="room-tool ${tool === t.id ? "active" : ""}" data-tool="${t.id}">
-          <span class="swatch" style="background:${STROKE[t.color]}"></span>${esc(t.label)}
-        </button>`
-          )
-          .join("");
+        </button>`;
+      box.innerHTML =
+        mainTools.map(btn).join("") +
+        special.map(btn).join("") +
+        (weddingMode && weddingTools.length
+          ? `<div class="room-tools-wedding"><span class="room-tools-wedding-label">Hochzeit</span>${weddingTools
+              .map(btn)
+              .join("")}</div>`
+          : "");
       box.querySelectorAll("[data-tool]").forEach((b) => {
         b.addEventListener("click", () => {
           tool = b.getAttribute("data-tool");

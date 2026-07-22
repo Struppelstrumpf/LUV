@@ -2063,6 +2063,26 @@ button.cal-inv-tile { cursor: pointer; }
   flex-wrap: wrap;
   gap: 0.45rem;
   margin: 0.75rem 0;
+  align-items: center;
+}
+.room-tools-wedding {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 213, 79, 0.45);
+  background: rgba(255, 213, 79, 0.08);
+}
+.room-tools-wedding-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #ffd54f;
+  margin-right: 0.25rem;
+  letter-spacing: 0.02em;
 }
 .room-tool {
   display: inline-flex;

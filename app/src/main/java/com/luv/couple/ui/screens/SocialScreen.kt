@@ -1096,16 +1096,19 @@ private fun FriendsPanel(
     if (showCeremonyPresence) {
         com.luv.couple.ui.wedding.WeddingPresenceDialog(
             onDismiss = { showCeremonyPresence = false },
-            onScheduled = {
+            onScheduled = { code ->
                 showCeremonyPresence = false
-                reload()
-                onSyncWeddingLobbies()
-                onWeddingLobbyOpened()
-                Toast.makeText(
-                    context,
-                    "Hochzeit-Lobby erstellt — Gäste bis zum Termin einladen",
-                    Toast.LENGTH_LONG
-                ).show()
+                LuvApiClient.invalidateFriendsCache()
+                reload(force = true)
+                if (!code.isNullOrBlank()) {
+                    onSyncWeddingLobbies()
+                    onWeddingLobbyOpened()
+                    Toast.makeText(
+                        context,
+                        "Hochzeit-Lobby erstellt — Gäste bis zum Termin einladen",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
             },
             onShareRemind = { text ->
                 com.luv.couple.ui.wedding.shareWeddingText(context, text)

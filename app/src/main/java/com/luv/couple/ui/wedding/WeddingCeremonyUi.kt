@@ -97,6 +97,14 @@ fun WeddingPresenceDialog(
     var busy by remember { mutableStateOf(false) }
     var showSchedule by remember { mutableStateOf(false) }
     var showBooking by remember { mutableStateOf(false) }
+    var loaded by remember { mutableStateOf(false) }
+
+    fun lobbyCodeOf(
+        m: LuvApiClient.MarriageInfo?,
+        c: LuvApiClient.CeremonyInfo?,
+    ): String? =
+        c?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
+            ?: m?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -106,17 +114,15 @@ fun WeddingPresenceDialog(
             }.onSuccess {
                 ceremony = it.ceremony
                 marriage = it.marriage
+                loaded = true
+                val code = lobbyCodeOf(it.marriage, it.ceremony)
+                // Nur mit echter Lobby abschließen — nie bei bloßem Booking/Pending
+                if (!code.isNullOrBlank() && it.marriage?.status == "ceremony_scheduled") {
+                    onScheduled(code)
+                    return@LaunchedEffect
+                }
                 if (it.ceremony?.booking?.active == true) {
                     showBooking = true
-                }
-                if (
-                    it.marriage?.status == "ceremony_scheduled" ||
-                    !it.ceremony?.ceremonyLobbyCode.isNullOrBlank()
-                ) {
-                    onScheduled(
-                        it.ceremony?.ceremonyLobbyCode ?: it.marriage?.ceremonyLobbyCode
-                    )
-                    return@LaunchedEffect
                 }
             }
             delay(2500)
@@ -128,7 +134,7 @@ fun WeddingPresenceDialog(
             onDismiss = onDismiss,
             onBooked = { code ->
                 showBooking = false
-                onScheduled(code)
+                if (!code.isNullOrBlank()) onScheduled(code)
             }
         )
         return
@@ -139,9 +145,34 @@ fun WeddingPresenceDialog(
             onDismiss = { showSchedule = false },
             onScheduled = { code ->
                 showSchedule = false
-                onScheduled(code)
+                if (!code.isNullOrBlank()) onScheduled(code)
             }
         )
+        return
+    }
+
+    if (!loaded) {
+        Dialog(
+            onDismissRequest = { if (!busy) onDismiss() },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(BgSoft)
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    "Hochzeit wird geladen…",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                )
+            }
+        }
         return
     }
 
@@ -278,13 +309,11 @@ fun WeddingScheduleDialog(
 
     fun refreshFrom(bundle: LuvApiClient.CeremonyBundle) {
         ceremony = bundle.ceremony
-        val scheduled = bundle.marriage?.status == "ceremony_scheduled" ||
-            !bundle.ceremony?.ceremonyLobbyCode.isNullOrBlank()
-        if (scheduled) {
+        val code = bundle.ceremony?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
+            ?: bundle.marriage?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
+        if (!code.isNullOrBlank() && bundle.marriage?.status == "ceremony_scheduled") {
             Toast.makeText(context, "Hochzeit gebucht", Toast.LENGTH_SHORT).show()
-            onScheduled(
-                bundle.ceremony?.ceremonyLobbyCode ?: bundle.marriage?.ceremonyLobbyCode
-            )
+            onScheduled(code)
             return
         }
         if (bundle.ceremony?.booking?.active == true) {
@@ -299,14 +328,10 @@ fun WeddingScheduleDialog(
                 LuvApiClient.fetchCeremony()
             }.onSuccess { bundle ->
                 ceremony = bundle.ceremony
-                val scheduled =
-                    bundle.marriage?.status == "ceremony_scheduled" ||
-                        !bundle.ceremony?.ceremonyLobbyCode.isNullOrBlank()
-                if (scheduled) {
-                    onScheduled(
-                        bundle.ceremony?.ceremonyLobbyCode
-                            ?: bundle.marriage?.ceremonyLobbyCode
-                    )
+                val code = bundle.ceremony?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
+                    ?: bundle.marriage?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
+                if (!code.isNullOrBlank() && bundle.marriage?.status == "ceremony_scheduled") {
+                    onScheduled(code)
                     return@LaunchedEffect
                 }
                 if (bundle.ceremony?.booking?.active == true) {
@@ -322,7 +347,7 @@ fun WeddingScheduleDialog(
             onDismiss = onDismiss,
             onBooked = { code ->
                 showBooking = false
-                onScheduled(code)
+                if (!code.isNullOrBlank()) onScheduled(code)
             }
         )
         return
@@ -893,8 +918,10 @@ fun WeddingBookingDialog(
 
     fun applyCer(c: LuvApiClient.CeremonyInfo?) {
         ceremony = c
-        if (c?.ceremonyLobbyCode != null || c?.phase == "scheduled") {
-            onBooked(c.ceremonyLobbyCode)
+        val code = c?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
+        // Erst nach echter Lobby — phase allein reicht nicht (vermeidet Flash/Fehl-Toast)
+        if (!code.isNullOrBlank()) {
+            onBooked(code)
         }
     }
 

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.144",
+            listOf(
+                "Hochzeit öffnen: kein kurzes Aufblitzen mehr — Buchungsflow bleibt offen",
+            )
+        ),
+        Entry(
             "2.2.143",
             listOf(
                 "Hochzeit buchen: Geldbäume, Raumwahl (klein/Kapelle/Prunk), gemeinsame Abbuchung",
