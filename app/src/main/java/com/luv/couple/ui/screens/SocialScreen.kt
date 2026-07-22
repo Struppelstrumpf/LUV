@@ -463,6 +463,24 @@ private fun FriendsPanel(
         reload(force = true)
     }
 
+    // Annehmen/Trennen/Heirat aus Profil oder hier → Liste sofort neu
+    val friendsRev by LuvApiClient.friendsListRevision.collectAsStateWithLifecycle()
+    var lastFriendsRev by remember { mutableIntStateOf(0) }
+    LaunchedEffect(friendsRev) {
+        if (friendsRev <= 0 || friendsRev == lastFriendsRev) return@LaunchedEffect
+        lastFriendsRev = friendsRev
+        reload(force = true)
+    }
+
+    // Level/Status: alle 3 Min leise (Anfragen/Level) — kein Spinner
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(180_000L)
+            runCatching { LuvApiClient.fetchFriends(force = true) }
+                .onSuccess { applyFriendsSnap(it) }
+        }
+    }
+
     // Verlobung/Hochzeit: Partner merkt die Lobby — alle 20s reicht
     LaunchedEffect(myMarriage?.status, myMarriage?.engageFreeSkipAvailable) {
         val st = myMarriage?.status
@@ -1033,13 +1051,22 @@ private fun FriendsPanel(
                         busyId = card.userId
                         scope.launch {
                             runCatching { LuvApiClient.acceptFriend(card.userId) }
-                                .onSuccess { reload() }
+                                .onSuccess { accepted ->
+                                    // Sofort in der Liste, nicht auf Cache warten
+                                    incoming = incoming.filter { it.userId != card.userId }
+                                    if (accepted != null) {
+                                        friends = listOf(accepted) +
+                                            friends.filter { it.userId != accepted.userId }
+                                    }
+                                    reload(force = true)
+                                }
                                 .onFailure {
                                     Toast.makeText(
                                         context,
                                         it.message ?: "Annehmen fehlgeschlagen",
                                         Toast.LENGTH_SHORT
                                     ).show()
+                                    reload(force = true)
                                 }
                             busyId = null
                         }
@@ -1048,13 +1075,17 @@ private fun FriendsPanel(
                         busyId = card.userId
                         scope.launch {
                             runCatching { LuvApiClient.declineFriend(card.userId) }
-                                .onSuccess { reload() }
+                                .onSuccess {
+                                    incoming = incoming.filter { it.userId != card.userId }
+                                    reload(force = true)
+                                }
                                 .onFailure {
                                     Toast.makeText(
                                         context,
                                         it.message ?: "Ablehnen fehlgeschlagen",
                                         Toast.LENGTH_SHORT
                                     ).show()
+                                    reload(force = true)
                                 }
                             busyId = null
                         }
@@ -1148,7 +1179,7 @@ private fun FriendsPanel(
             onDismiss = { showAddFriend = false },
             onSent = {
                 showAddFriend = false
-                reload()
+                reload(force = true)
             },
             onOpenProfile = { id, nick ->
                 showAddFriend = false

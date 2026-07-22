@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.165",
+            listOf(
+                "Freunde-Liste aktualisiert sich sofort bei Annehmen, Trennen und Heirat",
+            )
+        ),
+        Entry(
             "2.2.164",
             listOf(
                 "Lobby: Verbunden/Verbinde wieder sichtbar; nach 15s Kein-Internet mit Neu laden",

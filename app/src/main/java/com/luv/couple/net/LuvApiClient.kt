@@ -7,6 +7,9 @@ import com.luv.couple.data.RoomPreview
 import com.luv.couple.data.RosterMember
 import com.luv.couple.data.optCleanString
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import okhttp3.Dispatcher
 import okhttp3.MediaType.Companion.toMediaType
@@ -2681,9 +2684,14 @@ object LuvApiClient {
     private var friendsCache: FriendsBag? = null
     private const val FRIENDS_CACHE_MS = 45_000L
 
+    /** Steigt bei jeder Freunde-/Heirats-Mutation — UI kann Liste erzwingen. */
+    private val _friendsListRevision = MutableStateFlow(0)
+    val friendsListRevision: StateFlow<Int> = _friendsListRevision.asStateFlow()
+
     fun invalidateFriendsCache() {
         friendsCache = null
         friendsCacheAt = 0L
+        _friendsListRevision.value = _friendsListRevision.value + 1
     }
 
     /** Sofort anzeigbarer Cache (auch abgelaufen) — für Cache-First-UI. */
@@ -2832,8 +2840,10 @@ object LuvApiClient {
     }
 
     suspend fun divorceMarriage() = withContext(Dispatchers.IO) {
+        invalidateFriendsCache()
         val body = JSONObject().put("confirm", "scheiden").toString()
         authedPost("/v1/me/marriage/divorce", body)
+        invalidateFriendsCache()
         Unit
     }
 
