@@ -4,7 +4,7 @@
  */
 
 const CEREMONY_CAPACITY = 10; // 2 Brautpaar + 8 Gäste
-const CEREMONY_MIN_AHEAD_MS = 30 * 60 * 1000;
+const CEREMONY_MIN_AHEAD_MS = 10 * 60 * 1000;
 const CEREMONY_MAX_AHEAD_MS = 14 * 24 * 60 * 60 * 1000;
 const CEREMONY_OPEN_BEFORE_MS = 10 * 60 * 1000;
 /** Länger + Heartbeat im Client — Idle-Gäste bleiben sichtbar */
@@ -207,7 +207,7 @@ function validateCeremonyAt(ts) {
     return {
       ok: false,
       error: "too_soon",
-      message: "Mindestens 30 Minuten in der Zukunft.",
+      message: "Mindestens 10 Minuten in der Zukunft.",
     };
   }
   if (at > now + CEREMONY_MAX_AHEAD_MS) {

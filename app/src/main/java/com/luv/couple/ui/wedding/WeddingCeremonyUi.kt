@@ -241,7 +241,7 @@ fun WeddingScheduleDialog(
     var ceremony by remember { mutableStateOf<LuvApiClient.CeremonyInfo?>(null) }
     val cal = remember {
         Calendar.getInstance().apply {
-            add(Calendar.MINUTE, 45)
+            add(Calendar.MINUTE, 15)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
         }
@@ -314,6 +314,10 @@ fun WeddingScheduleDialog(
             )
             Text(label, color = Gold, fontFamily = DisplayFont, fontSize = 18.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = {
+                    cal.add(Calendar.MINUTE, 10)
+                    label = formatCeremonyAt(cal.timeInMillis)
+                }) { Text("+10 Min", color = TextPrimary) }
                 TextButton(onClick = {
                     cal.add(Calendar.MINUTE, 30)
                     label = formatCeremonyAt(cal.timeInMillis)
