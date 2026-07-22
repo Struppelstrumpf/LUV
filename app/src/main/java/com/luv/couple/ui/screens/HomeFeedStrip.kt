@@ -45,6 +45,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private const val EMPTY_SHORT = "Nichts Neues hier"
+private const val EMPTY_BODY =
+    "Hier erscheinen kurz Nachrichten aus der Community — " +
+        "Hochzeiten, Event-Siege, seltene Funde und mehr."
+
 @Composable
 fun HomeFeedStrip(
     accent: Color,
@@ -58,6 +63,7 @@ fun HomeFeedStrip(
     var items by remember { mutableStateOf<List<LuvApiClient.HomeFeedItem>>(emptyList()) }
     var index by remember { mutableIntStateOf(0) }
     var detail by remember { mutableStateOf<LuvApiClient.HomeFeedItem?>(null) }
+    var showEmptyInfo by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -72,16 +78,17 @@ fun HomeFeedStrip(
     }
 
     LaunchedEffect(items) {
-        if (items.isEmpty()) return@LaunchedEffect
+        if (items.size <= 1) return@LaunchedEffect
         while (true) {
             delay(10_000)
-            if (items.isEmpty()) break
+            if (items.size <= 1) break
             index = (index + 1) % items.size
         }
     }
 
-    val current = items.getOrNull(index.coerceIn(0, (items.size - 1).coerceAtLeast(0)))
-    if (current == null) return
+    val current = items.getOrNull(index.coerceAtMost((items.size - 1).coerceAtLeast(0)))
+    val displayText = current?.shortText ?: EMPTY_SHORT
+    val displayKey = current?.id ?: "empty"
 
     val shape = RoundedCornerShape(12.dp)
     Box(
@@ -91,12 +98,15 @@ fun HomeFeedStrip(
             .clip(shape)
             .background(BgSoft.copy(alpha = 0.92f))
             .border(1.dp, accent.copy(alpha = 0.35f), shape)
-            .clickable { detail = current }
+            .clickable {
+                if (current != null) detail = current
+                else showEmptyInfo = true
+            }
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         AnimatedContent(
-            targetState = current.id to current.shortText,
+            targetState = displayKey to displayText,
             transitionSpec = {
                 fadeIn() togetherWith fadeOut()
             },
@@ -104,7 +114,7 @@ fun HomeFeedStrip(
         ) { (_, text) ->
             Text(
                 text = text,
-                color = TextPrimary,
+                color = if (current == null) TextMuted else TextPrimary,
                 fontFamily = BodyFont,
                 fontSize = 13.sp,
                 maxLines = 1,
@@ -112,6 +122,35 @@ fun HomeFeedStrip(
                 modifier = Modifier.fillMaxWidth()
             )
         }
+    }
+
+    if (showEmptyInfo) {
+        AlertDialog(
+            onDismissRequest = { showEmptyInfo = false },
+            containerColor = BgSoft,
+            title = {
+                Text(
+                    EMPTY_SHORT,
+                    fontFamily = DisplayFont,
+                    fontSize = 20.sp,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Text(
+                    EMPTY_BODY,
+                    color = TextPrimary,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showEmptyInfo = false }) {
+                    Text("Schließen", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
     }
 
     detail?.let { item ->

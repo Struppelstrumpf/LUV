@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.135",
+            listOf(
+                "Home-Nachrichten-Kachel immer sichtbar — leer: „Nichts Neues hier“",
+            )
+        ),
+        Entry(
             "2.2.134",
             listOf(
                 "Home: Plus-Kachel rechts oben etwas kleiner",
