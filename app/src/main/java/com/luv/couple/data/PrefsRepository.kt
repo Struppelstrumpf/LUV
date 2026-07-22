@@ -511,7 +511,9 @@ class PrefsRepository(private val context: Context) {
                 val lobby = byCode[code] ?: continue
                 if (lobby.role != Role.HOST) continue
                 if (code in hostedCodes) continue
-                val weddingPaint = lobby.isWedding && !lobby.isWeddingCeremony
+                val weddingPaint =
+                    (lobby.isWedding && !lobby.isWeddingCeremony) ||
+                        lobby.name.contains("Hochzeitsbild", ignoreCase = true)
                 if (lobby.isEventLobby || weddingPaint) byCode.remove(code)
             }
             // Joins: Event-Geister droppen. Normale Freund-Joins nie wegen Sync löschen.

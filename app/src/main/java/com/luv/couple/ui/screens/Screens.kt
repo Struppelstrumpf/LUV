@@ -1336,9 +1336,14 @@ private fun LobbyCard(
             if (lobby.role == Role.HOST && !lobby.isRandom && !lobby.isWedding && !lobby.isWeddingCeremony && !lobby.isEventLobby) {
                 PrimaryButton("Umbenennen", Color.Transparent, onRename, bordered = true)
             }
-            if (!lobby.isWedding || lobby.isWeddingCeremony || lobby.isCustomRoom) {
+            val weddingPaintGhost =
+                lobby.isWedding &&
+                    !lobby.isWeddingCeremony &&
+                    state != ConnectionState.CONNECTED &&
+                    state != ConnectionState.HOSTING
+            if (!lobby.isWedding || lobby.isWeddingCeremony || lobby.isCustomRoom || weddingPaintGhost) {
                 Text(
-                    "Verlassen",
+                    if (weddingPaintGhost) "Entfernen" else "Verlassen",
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 13.sp,

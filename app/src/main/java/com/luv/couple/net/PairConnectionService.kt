@@ -321,6 +321,24 @@ class PairConnectionService : Service() {
                 if (stable) {
                     session.attempt = 0
                     clearReconnect(lobby.id)
+                } else {
+                    session.attempt += 1
+                }
+
+                // Tote Lobby (z. B. aufgelöste Hochzeitsbild-Lobby) lokal entfernen
+                if (!stable && isLobbyGone(result, lobby)) {
+                    Log.i(TAG, "lobby gone code=${lobby.code} — drop local prefs")
+                    session.lobbyGone = true
+                    session.running.set(false)
+                    runCatching {
+                        (application as LuvApp).prefs.removeLobby(lobby.id)
+                    }
+                    sessions.remove(lobby.id)
+                    PairSessionState.resetLobby(lobby.id)
+                    _lobbyStates.updateAndRemove(lobby.id)
+                    clearReconnect(lobby.id)
+                    refreshAggregateState()
+                    break
                 }
 
                 updateLobbyState(lobby.id, ConnectionState.RECONNECTING)
@@ -329,7 +347,6 @@ class PairConnectionService : Service() {
                 val waitMs = if (stable) 800L else RECONNECT_DELAY_MS
                 session.nextRetryAtMs = System.currentTimeMillis() + waitMs
                 if (!stable) {
-                    session.attempt += 1
                     publishReconnect(session, waiting = true)
                 }
 
@@ -354,8 +371,16 @@ class PairConnectionService : Service() {
         if (result.closeCode == 4401) return true
         val reason = result.closeReason.lowercase()
         if (reason.contains("unauthorized")) return true
+        if (reason.contains("wedding_ended") || result.closeCode == 4001) {
+            if (lobby.isWedding) return true
+        }
         if (result.opened) return false
         val attempt = sessions[lobby.id]?.attempt ?: 0
+        val weddingPaint = lobby.isWedding && !lobby.isWeddingCeremony
+        // Hochzeitsbild: schon nach 1 Fehlversuch prüfen (Geisterkarte „Verbinde…“)
+        if (weddingPaint && attempt >= 1) {
+            return !roomStillExists(lobby.code)
+        }
         if (attempt < 2) return false
         return !roomStillExists(lobby.code)
     }
