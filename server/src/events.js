@@ -1435,6 +1435,22 @@ function shopEventOptions(db, now = new Date()) {
     .sort((a, b) => String(a.windowStart || "").localeCompare(String(b.windowStart || "")));
 }
 
+/** Frühester Start eines anderen, noch kommenden Events (ms). */
+function nextOtherEventFromMs(cfg, now, excludeId) {
+  let best = null;
+  const t = now.getTime();
+  for (const e of cfg.events || []) {
+    if (!e || e.enabled === false) continue;
+    if (excludeId && e.id === excludeId) continue;
+    const occ = nextOccurrence(e, now);
+    if (!occ || occ.active) continue;
+    const from = Number(occ.fromMs);
+    if (!Number.isFinite(from) || from <= t) continue;
+    if (best == null || from < best) best = from;
+  }
+  return best;
+}
+
 function meEventsPayload(db, user, dayKey, now = new Date()) {
   try {
     syncEventShopPets(db, now);
@@ -1481,11 +1497,35 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
       shopPet: shopItems.find((i) => i.kind === "pets") || null,
     };
     const activeNow = isActiveAtPatched(e, now);
+    const windowEnd =
+      engine.eventWindowEndIso(e, now) ||
+      engine.eventWindowEndIsoFromOccEnd(
+        occ?.untilMs != null
+          ? new Date(Number(occ.untilMs)).toISOString()
+          : row.windowEnd
+      ) ||
+      (Number.isFinite(Number(occ?.untilMs))
+        ? new Date(Number(occ.untilMs)).toISOString()
+        : null) ||
+      row.windowEnd;
     if (user && pub.contest?.enabled) {
-      const windowEnd =
-        engine.eventWindowEndIso(e, now) ||
-        engine.eventWindowEndIsoFromOccEnd(row.windowEnd) ||
-        row.windowEnd;
+      // Nach Abstimmungsende Preise finalisieren (auch ohne Tick-Warten)
+      const { until: voteUntil } = engine.resolveVoteBounds(
+        pub.contest,
+        windowEnd,
+        now.getTime()
+      );
+      if (
+        !activeNow &&
+        voteUntil != null &&
+        now.getTime() > voteUntil
+      ) {
+        try {
+          engine.finalizeContestPrizes(db, e, db.users);
+        } catch {
+          /* ignore */
+        }
+      }
       row.contest = engine.contestPublicForUser(
         db,
         user,
@@ -1505,8 +1545,31 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
         activeNow && pub.lobby?.enabled && !ep.lobbyCreated
       );
     }
-    if (activeNow) {
-      row.canCollect = prog.lastCollectDay !== dayKey;
+    const nextFrom = nextOtherEventFromMs(cfg, now, e.id);
+    const votingOpen = Boolean(row.contest?.votingOpen);
+    const winnersPhase = Boolean(
+      pub.contest?.enabled &&
+        engine.winnersShowcaseOpen(
+          pub.contest,
+          windowEnd,
+          now.getTime(),
+          nextFrom
+        ) &&
+        (row.contest?.prizesReady ||
+          (Array.isArray(row.contest?.winners) && row.contest.winners.length > 0) ||
+          row.contest?.claimablePrize)
+    );
+    const claimPending = Boolean(
+      row.contest?.claimablePrize && !row.contest?.prizeClaimed
+    );
+    // Aktiv ODER Abstimmung (24h) ODER Gewinner bis 24h vor nächstem Event
+    if (activeNow || votingOpen || winnersPhase || claimPending) {
+      if (activeNow) {
+        row.canCollect = prog.lastCollectDay !== dayKey;
+      } else {
+        row.canCollect = false;
+        row.canCreateLobby = false;
+      }
       active.push(row);
     } else if (occ && !occ.active) {
       // Abgelaufene Absolute-Fenster nicht unter „Demnächst“

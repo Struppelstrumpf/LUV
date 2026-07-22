@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.93",
+            listOf(
+                "Events: Abstimmung und Gewinner bleiben nach Eventende sichtbar",
+                "Hochzeitsbild-Lobby: kurzer Untertitel",
+            )
+        ),
+        Entry(
             "2.2.92",
             listOf(
                 "Hochzeitsleinwand: in mehreren Farben malen (Striche behalten Farbe)",

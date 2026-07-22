@@ -11228,8 +11228,25 @@ app.get("/v1/me/events/:id/contest", (req, res) => {
   const active = seasonEvents.isActiveAtPatched(ev, now);
   const windowEnd =
     engine.eventWindowEndIso(ev, now) ||
+    (Number.isFinite(Number(occ?.untilMs))
+      ? new Date(Number(occ.untilMs)).toISOString()
+      : null) ||
     engine.eventWindowEndIsoFromOccEnd(occ?.end) ||
     null;
+  // Nach Vote-Fenster: Ranking finalisieren
+  const { until: voteUntil } = engine.resolveVoteBounds(
+    engine.enrichEvent(ev).contest,
+    windowEnd,
+    now.getTime()
+  );
+  if (!active && voteUntil != null && now.getTime() > voteUntil) {
+    try {
+      engine.finalizeContestPrizes(db, ev, db.users);
+      scheduleSave();
+    } catch {
+      /* ignore */
+    }
+  }
   const contest = engine.contestPublicForUser(
     db,
     ctx.user,
@@ -11263,6 +11280,9 @@ app.post("/v1/me/events/:id/contest/vote", (req, res) => {
   const active = seasonEvents.isActiveAtPatched(ev, now);
   const windowEnd =
     engine.eventWindowEndIso(ev, now) ||
+    (Number.isFinite(Number(occ?.untilMs))
+      ? new Date(Number(occ.untilMs)).toISOString()
+      : null) ||
     engine.eventWindowEndIsoFromOccEnd(occ?.end) ||
     null;
   const entryId = String(req.body?.entryId || "").trim();

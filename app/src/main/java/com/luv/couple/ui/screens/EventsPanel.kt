@@ -435,6 +435,12 @@ private fun EventHeroCard(
             }
         }
         if (contest?.votingOpen == true) {
+            Text(
+                "Abstimmung läuft (24h nach Eventende)",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 12.sp
+            )
             TextButton(
                 onClick = {
                     scope.launch {
@@ -453,12 +459,11 @@ private fun EventHeroCard(
                             }
                     }
                 },
-                enabled = contest.canVote,
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
                     .background(
-                        if (contest.canVote) accent.copy(0.28f) else Color.White.copy(0.06f)
+                        if (contest.canVote) accent.copy(0.28f) else Color.White.copy(0.08f)
                     )
             ) {
                 Text(
@@ -467,7 +472,7 @@ private fun EventHeroCard(
                             "Abstimmen · noch ${contest.votesRemaining}"
                         contest.votesRemaining <= 0 ->
                             "Bewertungslimit erreicht"
-                        else -> "Abstimmung — keine Beiträge mehr"
+                        else -> "Zur Abstimmung"
                     },
                     color = TextPrimary,
                     fontFamily = DisplayFont,
@@ -477,12 +482,18 @@ private fun EventHeroCard(
                 )
             }
         }
-        if (contest?.prizesReady == true && contest.winners.isNotEmpty()) {
+        if (contest != null && !contest.votingOpen && contest.winners.isNotEmpty()) {
             Text(
                 "Gewinner",
                 color = TextPrimary,
                 fontFamily = DisplayFont,
                 fontSize = 14.sp
+            )
+            Text(
+                "Tippe auf einen Platz, um das Bild zu sehen",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 12.sp
             )
             contest.winners.forEach { winner ->
                 Text(

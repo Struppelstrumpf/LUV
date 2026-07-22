@@ -1214,7 +1214,7 @@ private fun LobbyCard(
                                 }
                                 lobby.isWedding && lobby.isWeddingRetake ->
                                     "Hochzeitsbild nachholen · beide mit ✓ bestätigen"
-                                lobby.isWedding -> "Hochzeitsbild · je 10 Striche, dann Timer oder Coins"
+                                lobby.isWedding -> "Hochzeitsbild"
                                 lobby.isRandom -> "Zufalls-Lobby · max. 5"
                                 lobby.isCustomRoom -> "Raum · kein Malen · sitzen & laufen"
                                 lobby.createdByMe -> "Von dir erstellt"

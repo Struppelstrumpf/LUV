@@ -603,6 +603,24 @@ function voteWindowOpen(contest, eventActive, now = Date.now(), windowEndIso = n
   return true;
 }
 
+/**
+ * Gewinner-Phase: nach Abstimmungsende bis 24h vor dem nächsten Event
+ * (irgendein kommendes Event im Kalender). Ohne nächstes Event: weiter sichtbar.
+ */
+function winnersShowcaseOpen(contest, windowEndIso, now = Date.now(), nextEventFromMs = null) {
+  if (!contest?.enabled) return false;
+  const endIso = windowEndIso && String(windowEndIso).includes("T")
+    ? windowEndIso
+    : eventWindowEndIsoFromOccEnd(windowEndIso);
+  const { until: voteUntil } = resolveVoteBounds(contest, endIso, now);
+  if (voteUntil == null || now <= voteUntil) return false;
+  const nextFrom = Number(nextEventFromMs);
+  if (Number.isFinite(nextFrom) && nextFrom > 0) {
+    return now < nextFrom - 24 * 60 * 60 * 1000;
+  }
+  return true;
+}
+
 function canUserVote(user, eventObj, entryId) {
   const ev = enrichEvent(eventObj);
   const prog = ensureUserProgress(user, ev.id);
@@ -1043,6 +1061,7 @@ module.exports = {
   sampleEventPrompts,
   defaultContestPlaces,
   voteWindowOpen,
+  winnersShowcaseOpen,
   resolveVoteBounds,
   eventWindowEndIso,
   eventWindowEndIsoFromOccEnd,
