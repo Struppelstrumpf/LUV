@@ -54,6 +54,7 @@ import com.luv.couple.LuvApp
 import com.luv.couple.billing.PlayBilling
 import com.luv.couple.billing.PlayBillingException
 import com.luv.couple.billing.findActivity
+import com.luv.couple.data.ConnectionState
 import com.luv.couple.data.Lobby
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.data.Role
@@ -1793,6 +1794,13 @@ fun LuvAppNav() {
         }
     }
 
+    // Lobby-WS schon während Splash-Bild aufbauen — nicht erst danach warten
+    LaunchedEffect(showPublicSplash, startDestination) {
+        if (!showPublicSplash || startDestination != Routes.MAIN) return@LaunchedEffect
+        if (LuvApiClient.sessionToken.isNullOrBlank()) return@LaunchedEffect
+        PairConnectionService.startAll(context)
+    }
+
     if (pendingCeremonyGathering) {
         com.luv.couple.ui.wedding.WeddingGatheringDialog(
             onDismiss = { pendingCeremonyGathering = false },
@@ -2923,9 +2931,15 @@ fun LuvAppNav() {
                     val ids = runCatching { prefs.snapshot().lobbies.map { it.id } }
                         .getOrElse { lobbies.map { it.id } }
                     if (ids.isEmpty()) return@launch
-                    showSplashPhones = true
                     PairConnectionService.startAll(context)
-                    PairConnectionService.awaitLobbiesConnected(ids)
+                    // Max kurz „Verbinde…“ — eine Lobby reicht; Rest im Hintergrund
+                    val already = ids.any { id ->
+                        val s = lobbyStates[id]
+                        s == ConnectionState.CONNECTED || s == ConnectionState.HOSTING
+                    }
+                    if (already) return@launch
+                    showSplashPhones = true
+                    PairConnectionService.awaitLobbiesConnected(ids, timeoutMs = 2_500L)
                     showSplashPhones = false
                 }
             },

@@ -1629,21 +1629,27 @@ class PairConnectionService : Service() {
         }
 
         /**
-         * Wartet bis alle angegebenen Lobbys CONNECTED/HOSTING sind
-         * (oder Timeout — Splash darf nicht ewig hängen).
+         * Soft-Wait für Splash: standardmäßig reicht **eine** Lobby CONNECTED/HOSTING.
+         * Rest verbindet im Hintergrund — Home nicht auf alle Lobbys blockieren.
          */
         suspend fun awaitLobbiesConnected(
             lobbyIds: Collection<String>,
-            timeoutMs: Long = 12_000L,
+            timeoutMs: Long = 2_500L,
+            requireAll: Boolean = false,
         ) {
             val ids = lobbyIds.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
             if (ids.isEmpty()) return
+            fun ready(s: ConnectionState?) =
+                s == ConnectionState.CONNECTED || s == ConnectionState.HOSTING
+            if (requireAll) {
+                if (ids.all { ready(lobbyStates.value[it]) }) return
+            } else if (ids.any { ready(lobbyStates.value[it]) }) {
+                return
+            }
             withTimeoutOrNull(timeoutMs) {
                 lobbyStates.first { states ->
-                    ids.all { id ->
-                        val s = states[id]
-                        s == ConnectionState.CONNECTED || s == ConnectionState.HOSTING
-                    }
+                    if (requireAll) ids.all { ready(states[it]) }
+                    else ids.any { ready(states[it]) }
                 }
             }
         }
