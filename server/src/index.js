@@ -12848,17 +12848,27 @@ app.delete("/v1/me/templates/:id", (req, res) => {
 app.get("/v1/me/achievements", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
+  const day = todayKey();
+  const beforeDay = ctx.user.achievements?.daily?.date || null;
+  const beforeActive = ctx.user.achievements?.progress?._activeDayMarked || null;
+  const beforeUnlocked = Object.keys(ctx.user.achievements?.unlocked || {}).length;
   syncAchInventoryMetrics(ctx.user);
-  const a = ach.ensureDaily(ctx.user, todayKey());
-  if (a.progress._activeDayMarked !== todayKey()) {
-    a.progress._activeDayMarked = todayKey();
+  const a = ach.ensureDaily(ctx.user, day);
+  if (a.progress._activeDayMarked !== day) {
+    a.progress._activeDayMarked = day;
     trackAch(ctx.user, "active_days", 1);
   }
   // Nachträglich Items nachreichen (z. B. Kapelle nach Katalog-Fix)
-  if (repairAchievementItemRewards(ctx.user) > 0) {
-    syncAchInventoryMetrics(ctx.user);
-  }
-  scheduleSave();
+  const repaired = repairAchievementItemRewards(ctx.user);
+  if (repaired > 0) syncAchInventoryMetrics(ctx.user);
+  const afterUnlocked = Object.keys(ctx.user.achievements?.unlocked || {}).length;
+  const dirty =
+    repaired > 0 ||
+    beforeDay !== (ctx.user.achievements?.daily?.date || null) ||
+    beforeActive !== (ctx.user.achievements?.progress?._activeDayMarked || null) ||
+    afterUnlocked !== beforeUnlocked;
+  // Store nur bei echter Änderung — sonst blockiert jedes Tab-Öffnen mit großem JSON.stringify
+  if (dirty) scheduleSave();
   return res.json({ ok: true, ...achPublicState(ctx.user) });
 });
 

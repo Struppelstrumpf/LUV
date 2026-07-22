@@ -41,6 +41,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -163,38 +164,57 @@ fun SocialScreen(
                 }
             }
             Spacer(modifier = Modifier.height(14.dp))
-            when (tab) {
-                0 -> FriendsPanel(
-                    modifier = Modifier.weight(1f),
-                    onOpenFriendProfile = onOpenFriendProfile,
-                    onSyncWeddingLobbies = onSyncWeddingLobbies,
-                    onWeddingLobbyOpened = onWeddingLobbyOpened
-                )
-                1 -> EventsPanel(
-                    modifier = Modifier.weight(1f),
-                    onCoinsGranted = { amount ->
-                        if (amount > 0) {
-                            scope.launch {
-                                runCatching { LuvApiClient.me() }
-                                    .onSuccess { AccountSession.setAccount(it) }
+            // Erfolge einmal gemountet lassen — sonst jedes Mal „Lade…“ + Netz-Roundtrip (~Sekunden)
+            var achievementsVisited by remember { mutableStateOf(false) }
+            LaunchedEffect(tab) {
+                if (tab == 2) achievementsVisited = true
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxSize()
+            ) {
+                when (tab) {
+                    0 -> FriendsPanel(
+                        modifier = Modifier.fillMaxSize(),
+                        onOpenFriendProfile = onOpenFriendProfile,
+                        onSyncWeddingLobbies = onSyncWeddingLobbies,
+                        onWeddingLobbyOpened = onWeddingLobbyOpened
+                    )
+                    1 -> EventsPanel(
+                        modifier = Modifier.fillMaxSize(),
+                        onCoinsGranted = { amount ->
+                            if (amount > 0) {
+                                scope.launch {
+                                    runCatching { LuvApiClient.me() }
+                                        .onSuccess { AccountSession.setAccount(it) }
+                                }
+                            }
+                        },
+                        onCreateEventLobby = onCreateEventLobby
+                    )
+                }
+                if (achievementsVisited) {
+                    val showAchievements = tab == 2
+                    AchievementsPanel(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .then(
+                                if (showAchievements) Modifier
+                                else Modifier
+                                    .alpha(0f)
+                                    .zIndex(-1f)
+                            ),
+                        onCoinsGranted = { amount ->
+                            if (amount > 0) {
+                                scope.launch {
+                                    runCatching { LuvApiClient.me() }
+                                        .onSuccess { AccountSession.setAccount(it) }
+                                }
                             }
                         }
-                    },
-                    onCreateEventLobby = onCreateEventLobby
-                )
-                else -> AchievementsPanel(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxSize(),
-                    onCoinsGranted = { amount ->
-                        if (amount > 0) {
-                            scope.launch {
-                                runCatching { LuvApiClient.me() }
-                                    .onSuccess { AccountSession.setAccount(it) }
-                            }
-                        }
-                    }
-                )
+                    )
+                }
             }
         }
     }

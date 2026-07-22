@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.112",
+            listOf(
+                "Erfolge unter Sozial öffnen wieder sofort (Cache, kein erneutes Warten)",
+            )
+        ),
+        Entry(
             "2.2.111",
             listOf(
                 "App-Hinweis nennt den Grund (nicht mehr „1 neuer Hinweis“)",

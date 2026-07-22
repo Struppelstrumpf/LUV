@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.times
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.net.AchievementsBadge
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.shop.ItemLabels
@@ -75,26 +76,36 @@ fun AchievementsPanel(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var state by remember { mutableStateOf<LuvApiClient.AchievementsState?>(null) }
-    var loading by remember { mutableStateOf(true) }
+    val cached by AchievementsBadge.latest.collectAsStateWithLifecycle()
+    var state by remember { mutableStateOf(cached) }
+    var loading by remember { mutableStateOf(cached == null) }
     var expandedCategory by remember { mutableStateOf<String?>("sozial") }
     var busyId by remember { mutableStateOf<String?>(null) }
     var previewItem by remember { mutableStateOf<LuvApiClient.AchievementRewardItem?>(null) }
 
-    fun reload() {
+    LaunchedEffect(cached) {
+        if (cached != null) {
+            state = cached
+            loading = false
+        }
+    }
+
+    fun reload(forceSpinner: Boolean = false) {
         scope.launch {
-            loading = state == null
+            if (forceSpinner || state == null) loading = true
             runCatching { LuvApiClient.fetchAchievements() }
                 .onSuccess {
                     state = it
                     AchievementsBadge.updateFrom(it)
                 }
                 .onFailure {
-                    Toast.makeText(
-                        context,
-                        it.message ?: "Erfolge laden fehlgeschlagen",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    if (state == null) {
+                        Toast.makeText(
+                            context,
+                            it.message ?: "Erfolge laden fehlgeschlagen",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                 }
             loading = false
         }
@@ -106,6 +117,7 @@ fun AchievementsPanel(
             runCatching { LuvApiClient.claimAchievementReward(id) }
                 .onSuccess { result ->
                     state = result.state
+                    AchievementsBadge.updateFrom(result.state)
                     onCoinsGranted(result.coinsGranted)
                     val msg = when {
                         result.itemGranted != null -> {
@@ -130,7 +142,8 @@ fun AchievementsPanel(
         }
     }
 
-    LaunchedEffect(Unit) { reload() }
+    // Soft-Refresh: Cache sofort zeigen, Netzwerk im Hintergrund
+    LaunchedEffect(Unit) { reload(forceSpinner = state == null) }
 
     previewItem?.let { item ->
         AchievementItemPreviewDialog(
