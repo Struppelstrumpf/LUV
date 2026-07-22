@@ -41,6 +41,8 @@ object NotificationBadges {
     private var friendsBaselineReady = false
     private var achievementsBaselineReady = false
     private var inventoryBaselineReady = false
+    private var ceremonyLobbyBaselineReady = false
+    @Volatile private var lastCeremonyLobbyCode: String? = null
 
     private fun socialIncomingTotal(): Int =
         _friendOnly.value + _marriageIncoming.value + _lobbyInviteIncoming.value
@@ -196,6 +198,30 @@ object NotificationBadges {
         recompute()
     }
 
+    /**
+     * Neue Hochzeit-Lobby (ceremony_scheduled): Android-Hinweis + Sozial-Dot.
+     * Erster Sync nur Baseline — kein Spam beim App-Start.
+     */
+    fun onCeremonyLobbyScheduled(lobbyCode: String?, ceremonyAtMs: Long) {
+        val code = lobbyCode?.trim()?.uppercase()?.removePrefix("LUV-")
+            ?.takeIf { it.isNotBlank() }
+        if (code == null) {
+            lastCeremonyLobbyCode = null
+            ceremonyLobbyBaselineReady = true
+            return
+        }
+        val isNew = ceremonyLobbyBaselineReady && code != lastCeremonyLobbyCode
+        lastCeremonyLobbyCode = code
+        ceremonyLobbyBaselineReady = true
+        if (!isNew) return
+        sozialSeen = false
+        friendsTabSeen = false
+        runCatching {
+            LuvAlertNotifier.onCeremonyLobbyReady(LuvApp.instance, ceremonyAtMs)
+        }
+        recompute()
+    }
+
     fun setInventoryUnseen(count: Int) {
         val next = count.coerceAtLeast(0)
         if (inventoryBaselineReady && next > _inventoryUnseen.value) {
@@ -228,6 +254,12 @@ object NotificationBadges {
                 marriageProposals = friends.marriageProposals.size,
                 lobbyInvites = friends.lobbyInvites.size,
             )
+            val m = friends.myMarriage
+            if (m?.status == "ceremony_scheduled") {
+                onCeremonyLobbyScheduled(m.ceremonyLobbyCode, m.ceremonyAt)
+            } else {
+                onCeremonyLobbyScheduled(null, 0L)
+            }
         }
         runCatching {
             val ach = LuvApiClient.fetchAchievements()
@@ -249,6 +281,12 @@ object NotificationBadges {
                 marriageProposals = friends.marriageProposals.size,
                 lobbyInvites = friends.lobbyInvites.size,
             )
+            val m = friends.myMarriage
+            if (m?.status == "ceremony_scheduled") {
+                onCeremonyLobbyScheduled(m.ceremonyLobbyCode, m.ceremonyAt)
+            } else {
+                onCeremonyLobbyScheduled(null, 0L)
+            }
         }
         context?.let { syncAppBadge(it) }
     }

@@ -54,6 +54,7 @@ object LuvAlertNotifier {
     private const val NOTIFY_FRIEND = 998
     private const val NOTIFY_MARRIAGE = 1002
     private const val NOTIFY_LOBBY_INVITE = 1003
+    private const val NOTIFY_CEREMONY_LOBBY = 1004
     private const val NOTIFY_ACHIEVEMENT = 999
     private const val NOTIFY_INVENTORY = 1001
 
@@ -512,6 +513,31 @@ object LuvAlertNotifier {
                 notificationId = NOTIFY_LOBBY_INVITE,
                 title = "Sozial · Freunde",
                 text = text,
+                extras = {
+                    putExtra(MainActivity.EXTRA_OPEN_SOZIAL, true)
+                    putExtra(MainActivity.EXTRA_SOZIAL_TAB, 0)
+                }
+            )
+        }
+    }
+
+    /** Hochzeit-Lobby wurde terminiert — Gäste einladen bis zum Termin. */
+    fun onCeremonyLobbyReady(context: Context, ceremonyAtMs: Long) {
+        scope.launch {
+            if (QuietHoursGate.isQuietNow()) return@launch
+            if (!prefsEnabled()) return@launch
+            ensureChannel(context)
+            val whenLabel = if (ceremonyAtMs > 0L) {
+                java.text.SimpleDateFormat("dd.MM. · HH:mm", java.util.Locale.GERMANY)
+                    .format(java.util.Date(ceremonyAtMs))
+            } else {
+                "bald"
+            }
+            notifyOpenMain(
+                context = context.applicationContext,
+                notificationId = NOTIFY_CEREMONY_LOBBY,
+                title = "Hochzeit-Lobby bereit",
+                text = "Termin $whenLabel — bis dahin Gäste einladen (Lobby im Home).",
                 extras = {
                     putExtra(MainActivity.EXTRA_OPEN_SOZIAL, true)
                     putExtra(MainActivity.EXTRA_SOZIAL_TAB, 0)

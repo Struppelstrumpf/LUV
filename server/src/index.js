@@ -8422,6 +8422,7 @@ app.get("/v1/me/friends", (req, res) => {
     marriageCooldownLabel: myCd > 0 ? marriage.formatRemaining(myCd) : null,
     pendingFriendshipCoins,
     lobbyInvites: listLobbyInvitesFor(ctx.user),
+    socialNotices: listSocialNoticesFor(ctx.user),
   });
 });
 
@@ -9277,6 +9278,52 @@ function ceremonyScheduleGate(m, userId, db) {
   return { ok: true };
 }
 
+function pushCeremonyScheduledNotices(m, db) {
+  if (!m) return;
+  const at = Number(m.ceremonyAt) || 0;
+  const code = String(m.ceremonyLobbyCode || "").trim().toUpperCase();
+  if (!code) return;
+  const text =
+    "Hochzeit-Lobby erstellt — bis zum Termin Gäste einladen (Lobby im Home).";
+  for (const uid of [m.a, m.b]) {
+    const u = db.users?.[uid];
+    if (!u) continue;
+    if (!Array.isArray(u.socialNotices)) u.socialNotices = [];
+    u.socialNotices = u.socialNotices.filter(
+      (n) => !(n?.type === "ceremony_scheduled" && String(n.ceremonyLobbyCode || "").toUpperCase() === code)
+    );
+    u.socialNotices.push({
+      id: newId(),
+      type: "ceremony_scheduled",
+      ceremonyAt: at,
+      ceremonyLobbyCode: code,
+      text,
+      createdAt: Date.now(),
+    });
+    if (u.socialNotices.length > 30) {
+      u.socialNotices = u.socialNotices.slice(-30);
+    }
+  }
+}
+
+function listSocialNoticesFor(user) {
+  if (!Array.isArray(user?.socialNotices)) return [];
+  const now = Date.now();
+  const keepTypes = new Set(["ceremony_scheduled", "wedding_left", "wedding_remind"]);
+  return user.socialNotices
+    .filter((n) => n && keepTypes.has(n.type) && Number(n.createdAt) > now - 30 * 24 * 60 * 60 * 1000)
+    .slice(-20)
+    .map((n) => ({
+      id: n.id,
+      type: n.type,
+      text: String(n.text || "").slice(0, 160),
+      fromNickname: n.fromNickname || null,
+      ceremonyAt: Number(n.ceremonyAt) || 0,
+      ceremonyLobbyCode: n.ceremonyLobbyCode || null,
+      createdAt: Number(n.createdAt) || 0,
+    }));
+}
+
 function finalizeCeremonySchedule(m, userId, ceremonyAt, db) {
   const validated = weddingCeremony.validateCeremonyAt(ceremonyAt);
   if (!validated.ok) return { ok: false, status: 400, body: validated };
@@ -9288,6 +9335,7 @@ function finalizeCeremonySchedule(m, userId, ceremonyAt, db) {
   const code = createWeddingCeremonyLobby(a, b, m, validated.ceremonyAt);
   const c = weddingCeremony.ensureCeremony(m);
   c.timeProposals = {};
+  pushCeremonyScheduledNotices(m, db);
   scheduleSave();
   return {
     ok: true,
@@ -9296,6 +9344,7 @@ function finalizeCeremonySchedule(m, userId, ceremonyAt, db) {
       ceremonyLobbyCode: code,
       marriage: publicMarriageView(m, userId),
       ceremony: weddingCeremony.publicCeremony(m, userId, db.users),
+      socialNotices: listSocialNoticesFor(db.users?.[userId]),
     },
   };
 }

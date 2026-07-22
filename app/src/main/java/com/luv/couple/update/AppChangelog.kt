@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.105",
+            listOf(
+                "Nach Termin: Hinweis-Kachel + Benachrichtigung statt Popup",
+            )
+        ),
+        Entry(
             "2.2.104",
             listOf(
                 "Hochzeit: Zeiten vorschlagen & gemeinsam festlegen",

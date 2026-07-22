@@ -71,6 +71,8 @@ import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
+import com.luv.couple.ui.wedding.formatCeremonyAt
+import com.luv.couple.ui.wedding.formatCountdown
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -217,8 +219,8 @@ private fun FriendsPanel(
     var myMarriage by remember { mutableStateOf<LuvApiClient.MarriageInfo?>(null) }
     var showSkipWait by remember { mutableStateOf(false) }
     var showCeremonyPresence by remember { mutableStateOf(false) }
-    var showCeremonyGathering by remember { mutableStateOf(false) }
     var leftNoticeName by remember { mutableStateOf<String?>(null) }
+    var ceremonyTick by remember { mutableStateOf(0L) }
     var loading by remember { mutableStateOf(true) }
     var busyId by remember { mutableStateOf<String?>(null) }
     var dragId by remember { mutableStateOf<String?>(null) }
@@ -254,6 +256,13 @@ private fun FriendsPanel(
         }
     }
 
+    LaunchedEffect(Unit) {
+        while (true) {
+            ceremonyTick = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+
     var lastWeddingLobbyCode by remember { mutableStateOf<String?>(null) }
 
     fun applyFriendsSnap(it: LuvApiClient.FriendsBag) {
@@ -269,6 +278,15 @@ private fun FriendsPanel(
             marriageProposals = it.marriageProposals.size,
             lobbyInvites = it.lobbyInvites.size,
         )
+        val m = it.myMarriage
+        if (m?.status == "ceremony_scheduled") {
+            com.luv.couple.net.NotificationBadges.onCeremonyLobbyScheduled(
+                m.ceremonyLobbyCode,
+                m.ceremonyAt
+            )
+        } else {
+            com.luv.couple.net.NotificationBadges.onCeremonyLobbyScheduled(null, 0L)
+        }
         com.luv.couple.net.NotificationBadges.syncAppBadge(context)
         // Partner: Mal- oder Kapellen-Lobby syncen (ohne zwingend nach Home)
         val code = (
@@ -628,14 +646,70 @@ private fun FriendsPanel(
         }
 
         val ceremonyM = myMarriage
-        if (ceremonyM != null && (
+        val gold = Color(0xFFFFD54F)
+        if (ceremonyM != null && ceremonyM.status == "ceremony_scheduled") {
+            val nowMs = ceremonyTick.takeIf { it > 0L } ?: System.currentTimeMillis()
+            val until = (ceremonyM.ceremonyAt - nowMs).coerceAtLeast(0L)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(
+                        brush = Brush.verticalGradient(
+                            listOf(Color(0x55FFD54F), Color(0x22E94E77), BgSoft)
+                        )
+                    )
+                    .border(1.5.dp, gold.copy(0.65f), RoundedCornerShape(20.dp))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    "Hochzeit-Lobby erstellt",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 20.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    "mit ${ceremonyM.partnerNickname ?: "…"}",
+                    color = gold,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    "Termin: ${formatCeremonyAt(ceremonyM.ceremonyAt)}",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    "Noch ${formatCountdown(until)} — bis dahin Gäste über die Lobby im Home einladen.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                PrimaryButton(
+                    label = "Lobby im Home",
+                    color = AccentRose.copy(alpha = 0.85f),
+                    onClick = {
+                        onSyncWeddingLobbies()
+                        onWeddingLobbyOpened()
+                    }
+                )
+            }
+        } else if (ceremonyM != null && (
                 ceremonyM.ceremonyReady ||
-                    ceremonyM.status == "ceremony_pending" ||
-                    ceremonyM.status == "ceremony_scheduled"
+                    ceremonyM.status == "ceremony_pending"
                 )
         ) {
-            val scheduled = ceremonyM.status == "ceremony_scheduled"
-            val gold = Color(0xFFFFD54F)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -667,15 +741,10 @@ private fun FriendsPanel(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(
-                    when {
-                        scheduled && !ceremonyM.ceremonyLobbyCode.isNullOrBlank() ->
-                            "Termin steht · Kapellen-Lobby oben im Home"
-                        scheduled ->
-                            "Termin geplant · Lobby wird geladen…"
-                        ceremonyM.hasWeddingImage ->
-                            "Hochzeitsbild fertig · Zeremonie vorbereiten (beide anwesend)"
-                        else ->
-                            "Nächster Schritt: Anwesenheit & Termin"
+                    if (ceremonyM.hasWeddingImage) {
+                        "Hochzeitsbild fertig · Zeremonie vorbereiten (beide anwesend)"
+                    } else {
+                        "Nächster Schritt: Anwesenheit & Termin"
                     },
                     color = TextMuted,
                     fontFamily = BodyFont,
@@ -684,16 +753,9 @@ private fun FriendsPanel(
                     modifier = Modifier.fillMaxWidth()
                 )
                 PrimaryButton(
-                    label = if (scheduled) "Zur Hochzeit" else "Hochzeit öffnen",
+                    label = "Hochzeit öffnen",
                     color = AccentRose.copy(alpha = 0.85f),
-                    onClick = {
-                        if (scheduled) {
-                            onSyncWeddingLobbies()
-                            showCeremonyGathering = true
-                        } else {
-                            showCeremonyPresence = true
-                        }
-                    }
+                    onClick = { showCeremonyPresence = true }
                 )
             }
         }
@@ -938,30 +1000,15 @@ private fun FriendsPanel(
                 reload()
                 onSyncWeddingLobbies()
                 onWeddingLobbyOpened()
-                Toast.makeText(context, "Hochzeit-Lobby oben im Home", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    context,
+                    "Hochzeit-Lobby erstellt — Gäste bis zum Termin einladen",
+                    Toast.LENGTH_LONG
+                ).show()
             },
             onShareRemind = { text ->
                 com.luv.couple.ui.wedding.shareWeddingText(context, text)
             }
-        )
-    }
-
-    if (showCeremonyGathering) {
-        com.luv.couple.ui.wedding.WeddingGatheringDialog(
-            onDismiss = { showCeremonyGathering = false },
-            onEnterAltar = {
-                showCeremonyGathering = false
-                context.startActivity(
-                    android.content.Intent(
-                        context,
-                        com.luv.couple.ui.wedding.WeddingRoomActivity::class.java
-                    )
-                )
-            },
-            onShareRemind = { text ->
-                com.luv.couple.ui.wedding.shareWeddingText(context, text)
-            },
-            isCouple = myMarriage?.partnerId != null
         )
     }
 
