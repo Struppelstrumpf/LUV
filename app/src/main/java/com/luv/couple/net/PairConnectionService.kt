@@ -1637,6 +1637,12 @@ class PairConnectionService : Service() {
             }
         }
 
+        /** Neu laden / Splash: Schonzeit und Watch neu beginnen. */
+        fun resetConnectWatch() {
+            connectWatchStartedAtMs = 0L
+            noteConnectWatchStart()
+        }
+
         fun isConnectGraceActive(graceMs: Long = 10_000L): Boolean {
             val started = connectWatchStartedAtMs
             if (started <= 0L) return true

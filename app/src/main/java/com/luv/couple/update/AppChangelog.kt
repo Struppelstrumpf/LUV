@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.164",
+            listOf(
+                "Lobby: Verbunden/Verbinde wieder sichtbar; nach 15s Kein-Internet mit Neu laden",
+            )
+        ),
+        Entry(
             "2.2.163",
             listOf(
                 "Home zeigt Partner-Slots sofort; Sozial/Events laden gezielt beim Tippen",

@@ -306,6 +306,7 @@ fun LobbiesScreen(
     onOpenProfile: () -> Unit,
     onOpenEvents: () -> Unit = {},
     onHomeFeedAction: (com.luv.couple.net.LuvApiClient.HomeFeedItem) -> Unit = {},
+    onFullAppReload: () -> Unit = {},
     updateState: UpdateUiState = UpdateUiState.Idle,
     onUpdateApp: () -> Unit = {},
     requireGoogleLogin: Boolean = false,
@@ -334,6 +335,8 @@ fun LobbiesScreen(
     var reportBusy by remember { mutableStateOf(false) }
     var showLobbyPlusDialog by remember { mutableStateOf(false) }
     var showEventInfoDialog by remember { mutableStateOf(false) }
+    var showNoInternetDialog by remember { mutableStateOf(false) }
+    var noInternetArmed by remember { mutableStateOf(true) }
     var orderedLobbies by remember { mutableStateOf(lobbies) }
     var dragLobbyId by remember { mutableStateOf<String?>(null) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
@@ -561,6 +564,54 @@ fun LobbiesScreen(
             confirmButton = {
                 TextButton(onClick = { showEventInfoDialog = false }) {
                     Text("Schließen", color = TextMuted, fontFamily = BodyFont)
+                }
+            }
+        )
+    }
+
+    if (showNoInternetDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showNoInternetDialog = false
+                noInternetArmed = true
+            },
+            containerColor = BgSoft,
+            title = {
+                Text(
+                    "Kein Internet",
+                    fontFamily = DisplayFont,
+                    color = TextPrimary,
+                    fontSize = 22.sp
+                )
+            },
+            text = {
+                Text(
+                    "Die Lobbys lassen sich gerade nicht verbinden. Prüfe dein Netz und lade neu.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showNoInternetDialog = false
+                        noInternetArmed = true
+                        onFullAppReload()
+                    }
+                ) {
+                    Text("Neu laden", color = AccentRose, fontFamily = BodyFont, fontSize = 15.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showNoInternetDialog = false
+                        noInternetArmed = true
+                    }
+                ) {
+                    Text("Später", color = TextMuted, fontFamily = BodyFont, fontSize = 15.sp)
                 }
             }
         )
@@ -855,6 +906,12 @@ fun LobbiesScreen(
                         onLeave = { onLeaveLobby(lobby) },
                         onReconnect = { onReconnect(lobby) },
                         onToggleSpaceBell = { onToggleSpaceBell(lobby) },
+                        onStuckConnecting = {
+                            if (noInternetArmed) {
+                                noInternetArmed = false
+                                showNoInternetDialog = true
+                            }
+                        },
                         reportCoachTargets = lobby.id == firstLobbyId,
                         onCoachLobbyPositioned = { center, size ->
                             coachLobby = reportCoachHole(center, size)
@@ -966,6 +1023,7 @@ private fun LobbyCard(
     onLeave: () -> Unit,
     onReconnect: () -> Unit,
     onToggleSpaceBell: () -> Unit = {},
+    onStuckConnecting: () -> Unit = {},
     reportCoachTargets: Boolean = false,
     onCoachLobbyPositioned: (Offset, IntSize) -> Unit = { _, _ -> },
     onCoachSeatPositioned: (Offset, IntSize) -> Unit = { _, _ -> }
@@ -1246,10 +1304,14 @@ private fun LobbyCard(
                     }
                 }
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.Top
                 ) {
                     if (!lobby.isEventLobby && !lobby.isWeddingCeremony) {
+                        LobbyConnectionChip(
+                            state = state,
+                            onStuckConnecting = onStuckConnecting
+                        )
                         if (lobby.isCustomRoom) {
                             Text(
                                 text = if (lobby.spaceBell) "🔔" else "🔕",
@@ -1257,7 +1319,7 @@ private fun LobbyCard(
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier
                                     .clickable(onClick = onToggleSpaceBell)
-                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                    .padding(horizontal = 2.dp, vertical = 2.dp),
                                 color = if (lobby.spaceBell) accent else TextMuted
                             )
                         } else {
@@ -1267,12 +1329,10 @@ private fun LobbyCard(
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier
                                     .clickable { showProximityDialog = true }
-                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                    .padding(horizontal = 2.dp, vertical = 2.dp),
                                 color = if (proximityOn) accent else TextMuted
                             )
                         }
-                        // Feste Breite — Layout wackelt nicht, wenn Hinweis kommt/geht
-                        OfflineHintSlot(state = state)
                     }
                 }
             }
@@ -2496,41 +2556,40 @@ private fun rememberStickyConnectionState(state: ConnectionState): ConnectionSta
     return displayed
 }
 
-/** Neben der Glocke: nur „Nicht verbunden“ nach 10s Schonzeit — feste Slot-Breite. */
+/** Links von der Glocke: Verbunden (grün) / Verbinde… (rot). Nach 15s → Kein-Internet. */
 @Composable
-private fun OfflineHintSlot(state: ConnectionState) {
-    var graceOver by remember {
-        mutableStateOf(!PairConnectionService.isConnectGraceActive())
-    }
-    LaunchedEffect(Unit) {
-        while (!graceOver) {
-            if (!PairConnectionService.isConnectGraceActive()) {
-                graceOver = true
-                break
-            }
-            delay(400)
-        }
-    }
+private fun LobbyConnectionChip(
+    state: ConnectionState,
+    onStuckConnecting: () -> Unit
+) {
     val sticky = rememberStickyConnectionState(state)
-    val offline =
-        sticky != ConnectionState.CONNECTED && sticky != ConnectionState.HOSTING
-    val show = offline && graceOver
-    Box(
+    val online =
+        sticky == ConnectionState.CONNECTED || sticky == ConnectionState.HOSTING
+    LaunchedEffect(online) {
+        if (online) return@LaunchedEffect
+        delay(15_000L)
+        onStuckConnecting()
+    }
+    val (label, color) = if (online) {
+        "Verbunden" to Color(0xFF3DDC97)
+    } else {
+        "Verbinde…" to Color(0xFFE57373)
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
-            .width(108.dp)
-            .height(22.dp),
-        contentAlignment = Alignment.CenterEnd
+            .clip(RoundedCornerShape(999.dp))
+            .background(BgDeep)
+            .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
-        if (show) {
-            Text(
-                "Nicht verbunden",
-                color = TextMuted,
-                fontFamily = BodyFont,
-                fontSize = 11.sp,
-                maxLines = 1,
-                softWrap = false
-            )
-        }
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Text(label, color = TextPrimary, fontFamily = BodyFont, fontSize = 11.sp)
     }
 }
 
