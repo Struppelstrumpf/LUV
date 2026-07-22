@@ -229,12 +229,14 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     val zones = layout?.zones.orEmpty()
     val avatarR = layout?.avatarR?.takeIf { it > 0f } ?: DEFAULT_AVATAR_R
 
-    /** Blauer Ring nur in der Rollen-Zone (Gast=blau, Brautpaar=gelb). */
-    fun inRoleSeatZone(isCouple: Boolean, x: Float, y: Float): Boolean =
-        zones.any { z ->
+    /** Ring/Sitz schon bei leichter Überlappung (Avatar-Rand reicht). */
+    fun inRoleSeatZone(isCouple: Boolean, x: Float, y: Float): Boolean {
+        val pad = avatarR.coerceAtLeast(0.02f)
+        return zones.any { z ->
             val ok = if (isCouple) z.isCoupleSeat else z.isGuestSeat
-            ok && zoneContains(z, x, y, 0f)
+            ok && zoneContains(z, x, y, pad)
         }
+    }
 
     fun applyLayout(next: LuvApiClient.RoomLayout?) {
         if (next == null) return

@@ -524,13 +524,18 @@ function zoneArea(z) {
 
 /**
  * Gelber (Brautpaar) bzw. blauer (Gast) Bereich an Position.
- * Bei Überlappung: kleinste Fläche gewinnt.
+ * pad ≈ Avatar-Radius: schon leichte Überlappung zählt.
+ * Bei mehreren Treffern: kleinste Fläche gewinnt.
  */
-function findMatchingSeatZone(layout, x, y, forCouple) {
+function findMatchingSeatZone(layout, x, y, forCouple, pad = null) {
   const wantCouple = Boolean(forCouple);
+  const hitPad =
+    pad != null && Number.isFinite(Number(pad))
+      ? Math.max(0, Number(pad))
+      : Math.max(0.02, Number(layout?.avatarR) || DEFAULT_AVATAR_R);
   const hits = (layout?.zones || []).filter((z) => {
     if (wantCouple ? !isCoupleSeat(z) : !isGuestSeat(z)) return false;
-    return zoneContains(z, x, y, 0);
+    return zoneContains(z, x, y, hitPad);
   });
   if (!hits.length) return null;
   hits.sort((a, b) => zoneArea(a) - zoneArea(b));

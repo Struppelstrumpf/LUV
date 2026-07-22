@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.128",
+            listOf(
+                "Hochzeit: Sitzbereich zählt schon bei leichter Überlappung",
+            )
+        ),
+        Entry(
             "2.2.127",
             listOf(
                 "Hochzeit: Blaue/gelbe Bereiche statt Sitzkreise — Ring nur in der Zone, Timer am Altar",
