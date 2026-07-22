@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.88",
+            listOf(
+                "Trausaal: leise Kapellenmusik mit Lautsprecher-Steuerung",
+            )
+        ),
+        Entry(
             "2.2.87",
             listOf(
                 "Hochzeitsbild-Lobby erscheint sofort (ohne App-Neustart)",

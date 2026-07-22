@@ -31,8 +31,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -55,6 +58,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.luv.couple.LuvApp
 import com.luv.couple.R
 import com.luv.couple.net.AccountSession
@@ -69,6 +75,7 @@ import com.luv.couple.ui.space.walkAlongPath
 import com.luv.couple.ui.space.walkableAt
 import com.luv.couple.ui.space.zoneContains
 import com.luv.couple.ui.theme.AccentRose
+import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.LuvTheme
 import com.luv.couple.ui.theme.TextMuted
@@ -103,6 +110,26 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val myId = AccountSession.account.value?.id.orEmpty()
+    val chapelMusic = remember { WeddingChapelMusic(context) }
+    var musicMuted by remember { mutableStateOf(chapelMusic.muted) }
+    var musicVolume by remember { mutableFloatStateOf(chapelMusic.volume) }
+    var showMusicPanel by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        chapelMusic.start()
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> chapelMusic.pause()
+                Lifecycle.Event.ON_RESUME -> chapelMusic.resume()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            chapelMusic.release()
+        }
+    }
     var ceremony by remember { mutableStateOf<LuvApiClient.CeremonyInfo?>(null) }
     var entered by remember { mutableStateOf(false) }
     // Start nahe der Eingangstür (unten im Kapellenbild)
@@ -582,15 +609,146 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             )
         }
 
-        Text(
-            "✕",
-            color = TextMuted,
-            fontSize = 18.sp,
+        // Untere Leiste: zurück + Lautsprecher
+        Box(
             modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(16.dp)
-                .clickable(onClick = onClose)
-        )
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color(0xE61E2430))
+                .padding(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    "←",
+                    color = Color.White,
+                    fontSize = 22.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.White.copy(0.10f))
+                        .clickable(onClick = onClose)
+                        .padding(vertical = 6.dp),
+                )
+                Text(
+                    if (musicMuted) "🔇" else "🔊",
+                    fontSize = 20.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (showMusicPanel) Color(0x88AB47BC) else Color.White.copy(0.10f)
+                        )
+                        .clickable { showMusicPanel = true }
+                        .padding(vertical = 8.dp),
+                )
+            }
+        }
+
+        if (showMusicPanel) {
+            AlertDialog(
+                onDismissRequest = { showMusicPanel = false },
+                containerColor = Color(0xF21E2430),
+                title = {
+                    Text(
+                        "Musik",
+                        fontFamily = DisplayFont,
+                        color = TextPrimary,
+                        fontSize = 20.sp
+                    )
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            if (musicMuted) {
+                                "Stumm"
+                            } else {
+                                "Lautstärke ${(musicVolume * 100f).toInt().coerceIn(0, 100)} %"
+                            },
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 14.sp
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(
+                                        if (musicMuted) AccentRose.copy(0.35f)
+                                        else Color.White.copy(0.10f)
+                                    )
+                                    .clickable {
+                                        chapelMusic.setMuted(!musicMuted)
+                                        musicMuted = chapelMusic.muted
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    if (musicMuted) "Ton an" else "Stumm",
+                                    color = Color.White,
+                                    fontFamily = DisplayFont,
+                                    fontSize = 15.sp
+                                )
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color.White.copy(0.10f))
+                                    .clickable {
+                                        chapelMusic.nudgeVolume(-0.08f)
+                                        musicVolume = chapelMusic.volume
+                                        musicMuted = chapelMusic.muted
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Leiser", color = Color.White, fontFamily = DisplayFont)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color.White.copy(0.10f))
+                                    .clickable {
+                                        chapelMusic.nudgeVolume(0.08f)
+                                        musicVolume = chapelMusic.volume
+                                        musicMuted = chapelMusic.muted
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Lauter", color = Color.White, fontFamily = DisplayFont)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showMusicPanel = false }) {
+                        Text("Fertig", color = AccentRose, fontFamily = DisplayFont)
+                    }
+                }
+            )
+        }
     }
 }
 
