@@ -29,4 +29,5 @@ out/
 
 
 server/data/
+server/node_modules/
 
