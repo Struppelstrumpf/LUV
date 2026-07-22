@@ -12,6 +12,14 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.109",
+            listOf(
+                "Hochzeit: Brautmarsch, Altar-Timer, Pastor-Rede & Ja/Nein",
+                "Empfang 60 Min mit Geschenk, Gästebuch (+5 Coins) & Applaus",
+                "Live-Countdown auf dem Hochzeit-Button · Lootbox-Footer Fix",
+            )
+        ),
+        Entry(
             "2.2.108",
             listOf(
                 "Lootbox: Kauf bestätigen auf allen Displays sichtbar",

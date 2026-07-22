@@ -25,12 +25,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -93,6 +97,7 @@ import kotlinx.coroutines.withContext
 class WeddingRoomActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         enableEdgeToEdge()
         setContent {
             LuvTheme {
@@ -100,10 +105,20 @@ class WeddingRoomActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
 }
 
-private const val DEFAULT_AVATAR_R = 0.028f
+private const val DEFAULT_AVATAR_R = 0.056f
 private val SitRingBlue = Color(0xFF42A5F5)
+private val CoupleAvatarBlue = Color(0xFF1E88E5)
+/** Priester mittig auf der Blumenstraße, halb so groß wie früher */
+private const val PRIEST_X = 0.50f
+private const val PRIEST_Y = 0.42f
+private val PriestSize = 26.dp
 
 @Composable
 fun WeddingRoomScreen(onClose: () -> Unit) {
@@ -133,6 +148,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     var ceremony by remember { mutableStateOf<LuvApiClient.CeremonyInfo?>(null) }
     var marriage by remember { mutableStateOf<LuvApiClient.MarriageInfo?>(null) }
     var showGiftPicker by remember { mutableStateOf(false) }
+    var showGuestbook by remember { mutableStateOf(false) }
+    var applauseBursts by remember { mutableStateOf<List<Pair<Float, Float>>>(emptyList()) }
     var entered by remember { mutableStateOf(false) }
     // Start nahe der Eingangstür (unten im Kapellenbild)
     var myX by remember { mutableFloatStateOf(0.50f) }
@@ -202,11 +219,39 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                             }
                         }
                     }
-                    if (it.ceremony?.phase == "altar" || it.ceremony?.phase == "vows") {
+                    if (
+                        it.ceremony?.phase == "altar" ||
+                        it.ceremony?.phase == "vows" ||
+                        it.ceremony?.phase == "gifts" ||
+                        it.ceremony?.phase == "reception" ||
+                        it.ceremony?.seatingLocked == true
+                    ) {
                         entered = true
                     }
+                    if (
+                        it.ceremony?.pastorPhase == "ended" ||
+                        it.ceremony?.phase == "ended"
+                    ) {
+                        if (rejectName == null) rejectName = "Die Trauung"
+                    }
+                }.onFailure { e ->
+                    val err = (e as? com.luv.couple.net.LuvApiException)?.error
+                    if (
+                        err == "ceremony_aborted" ||
+                        e.message?.contains("abgebrochen", ignoreCase = true) == true
+                    ) {
+                        if (rejectName == null) rejectName = "Die Trauung"
+                    }
                 }
-            delay(1500)
+            val cNow = ceremony
+            val fast =
+                cNow?.altarHoldActive == true ||
+                    cNow?.pastorPhase == "dots" ||
+                    cNow?.pastorPhase == "speech" ||
+                    cNow?.pastorPhase == "vows" ||
+                    cNow?.pastorPhase == "closing_no" ||
+                    cNow?.pastorPhase == "married"
+            delay(if (fast) 400 else 1200)
         }
     }
 
@@ -215,15 +260,22 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             ?: marriage?.partnerId
             ?: myId.takeIf { it.isNotBlank() }
     }
-    val canGift = marriage?.canGift == true && !giftTargetUserId.isNullOrBlank()
+    val canGift = ceremony?.showGiftButton == true && !giftTargetUserId.isNullOrBlank()
+    val canGuestbook = ceremony?.showGuestbookButton == true && !giftTargetUserId.isNullOrBlank()
+    val canApplause = ceremony?.showApplause == true
+    val meIsCouple = ceremony?.gathering?.find { it.userId == myId }?.isCouple == true
 
-    if (rejectName != null) {
+    if (rejectName != null && ceremony?.pastorPhase != "closing_no") {
         Box(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
             Text(
-                "${rejectName} hat Nein gesagt",
+                if (rejectName == "Die Trauung") {
+                    "Die Trauung wurde abgebrochen."
+                } else {
+                    "${rejectName} hat Nein gesagt"
+                },
                 color = Color.White,
                 fontFamily = DisplayFont,
                 fontSize = 22.sp,
@@ -232,7 +284,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             )
         }
         LaunchedEffect(rejectName) {
-            delay(5000)
+            delay(5200)
             onClose()
         }
         return
@@ -317,9 +369,23 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 val c = ceremony
                 val avatarDp = (roomW * (avatarR * 2f)).let { s ->
                     when {
-                        s < 22.dp -> 22.dp
-                        s > 72.dp -> 72.dp
+                        s < 40.dp -> 40.dp
+                        s > 120.dp -> 120.dp
                         else -> s
+                    }
+                }
+                // Admin-Deko / Flammen
+                zones.filter { it.isDecor || it.isFlame }.forEach { z ->
+                    val sz = (roomW * (z.r * 2f).coerceIn(0.03f, 0.12f)).coerceIn(18.dp, 56.dp)
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(
+                                start = roomW * z.sitX - sz / 2,
+                                top = roomH * z.sitY - sz / 2
+                            )
+                    ) {
+                        if (z.isFlame) FlameDecor(size = sz) else DecorMarker(size = sz)
                     }
                 }
                 c?.gathering?.forEach { g ->
@@ -336,24 +402,20 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                             .size(avatarDp)
                             .clip(CircleShape)
                             .background(
-                                if (isImagePetId(clipItemId(g.petEmoji))) Color.White.copy(0.92f)
-                                else Color(0xFF4A3728)
+                                when {
+                                    g.isCouple -> CoupleAvatarBlue.copy(0.92f)
+                                    isImagePetId(clipItemId(g.petEmoji)) -> Color.White.copy(0.92f)
+                                    else -> Color(0xFF4A3728)
+                                }
                             )
                             .border(
-                                2.dp,
+                                2.5.dp,
                                 when {
+                                    g.isCouple -> CoupleAvatarBlue
                                     isSeatedHere -> SitRingBlue
-                                    g.isCouple -> Color(0xFFFFD54F)
                                     else -> Color.White.copy(0.55f)
                                 },
                                 CircleShape
-                            )
-                            .then(
-                                if (isSeatedHere) {
-                                    Modifier.border(1.5.dp, SitRingBlue.copy(0.85f), CircleShape)
-                                } else {
-                                    Modifier
-                                }
                             ),
                         contentAlignment = Alignment.Center
                     ) {
@@ -362,11 +424,16 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                             g.reaction != null && g.reactionUntil > System.currentTimeMillis() -> g.reaction
                             else -> null
                         }
+                        val vowThumb = when {
+                            g.isCouple && g.vowProgress > 0f && g.vow == "no" -> "👎"
+                            g.isCouple && g.vowProgress > 0f && g.vow == "yes" -> "👍"
+                            else -> null
+                        }
                         val glyphSp = (avatarDp.value * 0.52f).sp
-                        if (showReact != null) {
-                            ItemGlyph(id = clipItemId(showReact), fontSize = glyphSp)
-                        } else {
-                            ItemGlyph(
+                        when {
+                            vowThumb != null -> Text(vowThumb, fontSize = glyphSp)
+                            showReact != null -> ItemGlyph(id = clipItemId(showReact), fontSize = glyphSp)
+                            else -> ItemGlyph(
                                 id = clipItemId(g.petEmoji).ifBlank { "🐣" },
                                 fontSize = glyphSp,
                             )
@@ -378,43 +445,36 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                     startAngle = -90f,
                                     sweepAngle = 360f * g.vowProgress,
                                     useCenter = false,
-                                    style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                                    style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round)
                                 )
                             }
                         }
                     }
                 }
 
-                // Priester am Altar
-                if (c?.phase == "vows" || (c?.gathering?.all { it.seatedSeatId != null } == true)) {
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(
-                                start = roomW * 0.50f - 28.dp,
-                                top = roomH * 0.14f
-                            ),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Image(
-                            painter = painterResource(R.drawable.wedding_priest),
-                            contentDescription = "Priester",
-                            modifier = Modifier
-                                .size(52.dp)
-                                .clip(CircleShape)
-                                .border(2.dp, Color.White.copy(0.7f), CircleShape),
-                            contentScale = ContentScale.Crop
+                // Priester mittig auf der Blumenstraße — erstmal still
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(
+                            start = roomW * PRIEST_X - PriestSize / 2,
+                            top = roomH * PRIEST_Y - PriestSize / 2
                         )
-                        Text(
-                            "Möchtet ihr?",
-                            color = Color(0xFF3E2723),
-                            fontFamily = DisplayFont,
-                            fontSize = 16.sp,
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.wedding_priest),
+                        contentDescription = "Priester",
+                        modifier = Modifier
+                            .size(PriestSize)
+                            .clip(CircleShape)
+                            .border(1.5.dp, Color.White.copy(0.7f), CircleShape),
+                        contentScale = ContentScale.Crop
+                    )
+                    if (c?.pastorPhase == "dots") {
+                        PastorDotsBubble(
                             modifier = Modifier
-                                .padding(top = 4.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color.White.copy(0.85f))
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                                .align(Alignment.TopEnd)
+                                .offset(x = 18.dp, y = (-22).dp)
                         )
                     }
                 }
@@ -423,7 +483,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(zones, avatarR, sitZones, seated) {
+                        .pointerInput(zones, avatarR, sitZones, seated, ceremony?.canStand, ceremony?.seatingLocked) {
                             detectTapGestures { offset ->
                                 if (walking) return@detectTapGestures
                                 val rawX = (offset.x / size.width).coerceIn(0.01f, 0.99f)
@@ -451,10 +511,28 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                         { myY },
                                     )
                                     runCatching { LuvApiClient.ceremonyMove(myX, myY) }
+                                        .onSuccess { ceremony = it ?: ceremony }
+                                        .onFailure {
+                                            Toast.makeText(
+                                                context,
+                                                it.message ?: "Bewegung nicht möglich",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
                                     return true
                                 }
 
                                 if (seated) {
+                                    if (ceremony?.canStand == false || ceremony?.seatingLocked == true) {
+                                        scope.launch {
+                                            Toast.makeText(
+                                                context,
+                                                "Während der Zeremonie bleibt ihr sitzen.",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                        return@detectTapGestures
+                                    }
                                     scope.launch {
                                         walking = true
                                         // Aufstehen: Server-Sitz lösen, dann laufen
@@ -526,9 +604,9 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         }
                 )
 
-                // Vow buttons for couple
+                // Vow buttons for couple — erst nach Pastor-Rede
                 val meGuest = c?.gathering?.find { it.userId == myId }
-                if (c?.phase == "vows" && meGuest?.isCouple == true && seated) {
+                if (c?.vowsReady == true && meGuest?.isCouple == true && seated) {
                     VowHoldButtons(
                         onYesProgress = { p ->
                             scope.launch {
@@ -544,22 +622,50 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                             scope.launch {
                                 val r = runCatching { LuvApiClient.ceremonyVow("no", p) }.getOrNull()
                                 if (r?.rejected == true) {
-                                    rejectName = r.rejectedBy
+                                    // Pastor spricht Closing — Raum bleibt offen
+                                    ceremony = r.ceremony ?: ceremony
+                                } else {
+                                    ceremony = r?.ceremony ?: ceremony
                                 }
-                                ceremony = r?.ceremony ?: ceremony
                             }
                         }
                     )
                 }
 
-                // Reaktionsleiste (wie Custom-Raum): oben rechts, bleibt offen
+                // Timer / Pastor-Rede oben (nicht über Reaktionsleiste hinaus)
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    when {
+                        c?.altarHoldActive == true ->
+                            AltarHoldTimerBanner(
+                                remainingMs = c.altarHoldRemainingMs,
+                                totalMs = c.altarHoldTotalMs
+                            )
+                        c?.pastorPhase == "speech" ||
+                            c?.pastorPhase == "closing_no" ||
+                            c?.pastorPhase == "married" ->
+                            PastorSpeechTile(visibleText = c.pastorLineVisible)
+                        (c?.pastorPhase == "reception" || c?.phase == "reception") &&
+                            c.receptionRemainingMs > 0L ->
+                            ReceptionTimerBanner(remainingMs = c.receptionRemainingMs)
+                    }
+                }
+
+                // Reaktionsleiste: nach unten expandieren, Höhe begrenzen
                 Column(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(top = 8.dp, end = 10.dp)
+                        .heightIn(max = roomH * 0.55f)
                         .clip(RoundedCornerShape(14.dp))
                         .background(Color(0xCC1E2430))
-                        .padding(6.dp),
+                        .padding(6.dp)
+                        .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Box(
@@ -605,21 +711,61 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             ConfettiOverlay()
             LaunchedEffect(Unit) {
                 delay(4500)
-                onClose()
+                confetti = false
             }
-            Text(
-                "Glückwunsch — ihr seid verheiratet!",
-                color = Color(0xFFFFD54F),
-                fontFamily = DisplayFont,
-                fontSize = 20.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(24.dp)
-            )
+            if (meIsCouple) {
+                Text(
+                    "Glückwunsch — ihr seid verheiratet!",
+                    color = Color(0xFFFFD54F),
+                    fontFamily = DisplayFont,
+                    fontSize = 20.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(24.dp)
+                )
+            }
         }
 
-        // Untere Leiste: zurück + Lautsprecher
+        applauseBursts.forEachIndexed { idx, (px, py) ->
+            Text(
+                "👏",
+                fontSize = 28.sp,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = (maxWidth * px), y = (maxHeight * py))
+            )
+            LaunchedEffect(idx) {
+                delay(1400)
+                if (applauseBursts.size > idx) {
+                    applauseBursts = applauseBursts.filterIndexed { i, _ -> i != idx }
+                }
+            }
+        }
+
+        if (canApplause) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(Color(0xCCE91E63))
+                    .clickable {
+                        scope.launch {
+                            runCatching { LuvApiClient.ceremonyApplause() }
+                                .onSuccess { ceremony = it ?: ceremony }
+                            applauseBursts = applauseBursts + (
+                                Random.nextFloat() * 0.7f + 0.1f to
+                                    Random.nextFloat() * 0.6f + 0.15f
+                                )
+                        }
+                    }
+                    .padding(horizontal = 22.dp, vertical = 12.dp)
+            ) {
+                Text("Applaus 👏", color = Color.White, fontFamily = DisplayFont, fontSize = 16.sp)
+            }
+        }
+
+        // Untere Leiste: zurück + Geschenk/Gästebuch + Lautsprecher
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -635,9 +781,9 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
-                    "←",
+                    if (!meIsCouple) "Verlassen" else "←",
                     color = Color.White,
-                    fontSize = 22.sp,
+                    fontSize = if (!meIsCouple) 14.sp else 22.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .weight(1f)
@@ -649,16 +795,31 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 )
                 if (canGift) {
                     Text(
-                        "🎁",
-                        fontSize = 20.sp,
+                        "🎁 Geschenk",
+                        fontSize = 14.sp,
+                        color = Color.White,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
-                            .weight(1f)
+                            .weight(1.2f)
                             .height(42.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(Color(0x88E91E63))
                             .clickable { showGiftPicker = true }
-                            .padding(vertical = 8.dp),
+                            .padding(vertical = 10.dp),
+                    )
+                } else if (canGuestbook) {
+                    Text(
+                        "📖 Gästebuch",
+                        fontSize = 14.sp,
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0x887E57C2))
+                            .clickable { showGuestbook = true }
+                            .padding(vertical = 10.dp),
                     )
                 }
                 Text(
@@ -683,6 +844,21 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 targetUserId = giftTargetUserId,
                 onDismiss = { showGiftPicker = false },
                 onGifted = {
+                    scope.launch {
+                        runCatching { LuvApiClient.fetchCeremony() }
+                            .onSuccess {
+                                ceremony = it.ceremony
+                                marriage = it.marriage
+                            }
+                    }
+                }
+            )
+        }
+        if (showGuestbook && !giftTargetUserId.isNullOrBlank()) {
+            WeddingGuestbookDialog(
+                coupleUserId = giftTargetUserId,
+                onDismiss = { showGuestbook = false },
+                onWritten = {
                     scope.launch {
                         runCatching { LuvApiClient.fetchCeremony() }
                             .onSuccess {

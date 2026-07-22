@@ -9,6 +9,9 @@ const CEREMONY_MAX_AHEAD_MS = 14 * 24 * 60 * 60 * 1000;
 const CEREMONY_OPEN_BEFORE_MS = 10 * 60 * 1000;
 const PRESENCE_FRESH_MS = 45_000;
 const VOW_HOLD_MS = 15_000;
+const ALTAR_HOLD_MS = 30_000;
+const RECEPTION_MS = 60 * 60 * 1000;
+const PASTOR_LINE_HOLD_MS = 5_000;
 const MAX_TIME_PROPOSALS_PER_USER = 3;
 
 function ensureCeremony(m) {
@@ -23,9 +26,18 @@ function ensureCeremony(m) {
       vows: {},
       reactions: {},
       timeProposals: {},
-      phase: "none", // none | presence | scheduled | gathering | altar | vows | ended
+      phase: "none", // none | presence | scheduled | gathering | altar | vows | gifts | reception | ended
       leftBy: null,
       leftNotify: {},
+      seatingLocked: false,
+      altarHoldStartedAt: 0,
+      pastorPhase: "idle", // idle | dots | speech | vows | closing_no | married | reception
+      pastorLineIndex: 0,
+      pastorLineStartedAt: 0,
+      receptionEndsAt: 0,
+      giftedBy: {},
+      guestbookedBy: {},
+      applauseBursts: [],
     };
   }
   if (!m.ceremony.presence || typeof m.ceremony.presence !== "object") m.ceremony.presence = {};
@@ -45,6 +57,17 @@ function ensureCeremony(m) {
   if (!m.ceremony.timeProposals || typeof m.ceremony.timeProposals !== "object") {
     m.ceremony.timeProposals = {};
   }
+  if (!m.ceremony.giftedBy || typeof m.ceremony.giftedBy !== "object") m.ceremony.giftedBy = {};
+  if (!m.ceremony.guestbookedBy || typeof m.ceremony.guestbookedBy !== "object") {
+    m.ceremony.guestbookedBy = {};
+  }
+  if (!Array.isArray(m.ceremony.applauseBursts)) m.ceremony.applauseBursts = [];
+  if (typeof m.ceremony.seatingLocked !== "boolean") m.ceremony.seatingLocked = false;
+  if (!Number.isFinite(Number(m.ceremony.altarHoldStartedAt))) m.ceremony.altarHoldStartedAt = 0;
+  if (!m.ceremony.pastorPhase) m.ceremony.pastorPhase = "idle";
+  if (!Number.isFinite(Number(m.ceremony.pastorLineIndex))) m.ceremony.pastorLineIndex = 0;
+  if (!Number.isFinite(Number(m.ceremony.pastorLineStartedAt))) m.ceremony.pastorLineStartedAt = 0;
+  if (!Number.isFinite(Number(m.ceremony.receptionEndsAt))) m.ceremony.receptionEndsAt = 0;
   return m.ceremony;
 }
 
@@ -188,6 +211,273 @@ function ceremonyOpenForEntry(m) {
   return Date.now() >= at - CEREMONY_OPEN_BEFORE_MS;
 }
 
+function nickOf(users, uid, fallback = "Jemand") {
+  const u = users?.[uid];
+  return u ? String(u.nickname || "").trim().slice(0, 18) || fallback : fallback;
+}
+
+function formatDeDay(ms) {
+  const t = Number(ms) || 0;
+  if (!t) return "einem besonderen Tag";
+  try {
+    return new Intl.DateTimeFormat("de-DE", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }).format(new Date(t));
+  } catch {
+    return "einem besonderen Tag";
+  }
+}
+
+function buildPastorLines(m, users = {}) {
+  const nameA = nickOf(users, m.a, "Name 1");
+  const nameB = nickOf(users, m.b, "Name 2");
+  const proposerId = m.proposedBy || m.a;
+  const proposeeId = proposerId === m.a ? m.b : m.a;
+  const proposer = nickOf(users, proposerId, nameA);
+  const proposee = nickOf(users, proposeeId, nameB);
+  const day = formatDeDay(m.engagedAt || m.proposedAt || m.ceremonyAt);
+  return [
+    `Liebes Brautpaar, liebe Gäste, wir haben uns heute hier eingefunden, um ${nameA} und ${nameB} in den heiligen Bund der Ehe zu führen.`,
+    `An ${day} hat ${proposer} ${proposee} den Heiratsantrag gemacht — ein Moment, der euch bis hierher geführt hat.`,
+    `${nameA} und ${nameB}, vor euren Gästen und vor diesem Altar frage ich euch nun: Wollt ihr einander die Ehe versprechen?`,
+  ];
+}
+
+function buildPastorRejectLines(m, users, rejectedByUserId) {
+  const nameA = nickOf(users, m.a, "Name 1");
+  const nameB = nickOf(users, m.b, "Name 2");
+  const who = nickOf(users, rejectedByUserId, "Jemand");
+  return [
+    `Oh, damit habe ich nicht gerechnet. ${who} hat leider Nein gesagt.`,
+    `Nun, ${nameA} und ${nameB} — ich wünsche euch trotzdem von Herzen alles Gute auf euren Wegen.`,
+  ];
+}
+
+function buildPastorMarriedLines(m, users = {}) {
+  const nameA = nickOf(users, m.a, "Name 1");
+  const nameB = nickOf(users, m.b, "Name 2");
+  return [
+    `Dann erkläre ich euch hiermit zu Mann und Frau. ${nameA} und ${nameB} — ihr seid verheiratet!`,
+    `Liebe Gäste, feiert mit dem Brautpaar. Die Empfangszeit hat begonnen.`,
+  ];
+}
+
+/** Beide Eheleute sitzen auf gelben Altar-Plätzen? */
+function coupleAtAltar(m, isCoupleSeatFn) {
+  const c = ensureCeremony(m);
+  if (!c.seated[m.a] || !c.seated[m.b]) return false;
+  if (typeof isCoupleSeatFn !== "function") return true;
+  return isCoupleSeatFn(c.seated[m.a]) && isCoupleSeatFn(c.seated[m.b]);
+}
+
+/**
+ * Altar-Hold synchronisieren.
+ * @param {object} m marriage
+ * @param {(seatId:string)=>boolean} isCoupleSeatFn
+ */
+function syncAltarHold(m, isCoupleSeatFn) {
+  const c = ensureCeremony(m);
+  if (c.seatingLocked || c.pastorPhase === "reception" || c.phase === "reception") {
+    return { changed: false };
+  }
+  if (["closing_no", "married", "ended"].includes(c.pastorPhase)) {
+    return { changed: false };
+  }
+  const atAltar = coupleAtAltar(m, isCoupleSeatFn);
+  const now = Date.now();
+  let changed = false;
+  if (!atAltar) {
+    if (c.altarHoldStartedAt) {
+      c.altarHoldStartedAt = 0;
+      changed = true;
+    }
+    return { changed, atAltar: false };
+  }
+  if (!c.altarHoldStartedAt) {
+    c.altarHoldStartedAt = now;
+    if (c.phase === "altar" || c.phase === "gathering") c.phase = "altar";
+    changed = true;
+  }
+  if (c.altarHoldStartedAt && now - c.altarHoldStartedAt >= ALTAR_HOLD_MS) {
+    c.seatingLocked = true;
+    c.altarHoldStartedAt = c.altarHoldStartedAt; // freeze
+    c.pastorPhase = "dots";
+    c.pastorLineIndex = 0;
+    c.pastorLineStartedAt = now;
+    c.phase = "vows";
+    changed = true;
+  }
+  return { changed, atAltar: true };
+}
+
+function advancePastor(m, users = {}) {
+  const c = ensureCeremony(m);
+  const now = Date.now();
+  if (c.pastorPhase === "idle" || !c.seatingLocked) return { changed: false };
+
+  if (c.pastorPhase === "dots") {
+    // Client zeigt Punkte; nach kurzer Pause → Rede
+    if (now - (Number(c.pastorLineStartedAt) || 0) >= 2800) {
+      c.pastorPhase = "speech";
+      c.pastorLineIndex = 0;
+      c.pastorLineStartedAt = now;
+      return { changed: true };
+    }
+    return { changed: false };
+  }
+
+  if (c.pastorPhase === "speech") {
+    const lines = buildPastorLines(m, users);
+    const idx = Number(c.pastorLineIndex) || 0;
+    const started = Number(c.pastorLineStartedAt) || now;
+    // Typdauer grob + 5s Halt
+    const line = lines[idx] || "";
+    const typeMs = Math.min(12_000, Math.max(2_500, line.length * 45));
+    if (now - started >= typeMs + PASTOR_LINE_HOLD_MS) {
+      if (idx + 1 < lines.length) {
+        c.pastorLineIndex = idx + 1;
+        c.pastorLineStartedAt = now;
+      } else {
+        c.pastorPhase = "vows";
+        c.pastorLineIndex = 0;
+        c.pastorLineStartedAt = now;
+      }
+      return { changed: true };
+    }
+    return { changed: false };
+  }
+
+  if (c.pastorPhase === "closing_no") {
+    const lines = buildPastorRejectLines(m, users, c.rejectUserId);
+    const idx = Number(c.pastorLineIndex) || 0;
+    const started = Number(c.pastorLineStartedAt) || now;
+    const line = lines[idx] || "";
+    const typeMs = Math.min(10_000, Math.max(2_000, line.length * 45));
+    if (now - started >= typeMs + PASTOR_LINE_HOLD_MS) {
+      if (idx + 1 < lines.length) {
+        c.pastorLineIndex = idx + 1;
+        c.pastorLineStartedAt = now;
+        return { changed: true };
+      }
+      c.pastorPhase = "ended";
+      c.phase = "ended";
+      return { changed: true, rejectDone: true };
+    }
+    return { changed: false };
+  }
+
+  if (c.pastorPhase === "married") {
+    const lines = buildPastorMarriedLines(m, users);
+    const idx = Number(c.pastorLineIndex) || 0;
+    const started = Number(c.pastorLineStartedAt) || now;
+    const line = lines[idx] || "";
+    const typeMs = Math.min(10_000, Math.max(2_000, line.length * 45));
+    if (now - started >= typeMs + PASTOR_LINE_HOLD_MS) {
+      if (idx + 1 < lines.length) {
+        c.pastorLineIndex = idx + 1;
+        c.pastorLineStartedAt = now;
+        return { changed: true };
+      }
+      c.pastorPhase = "reception";
+      c.phase = "reception";
+      if (!c.receptionEndsAt) c.receptionEndsAt = now + RECEPTION_MS;
+      return { changed: true, receptionStarted: true };
+    }
+    return { changed: false };
+  }
+
+  return { changed: false };
+}
+
+function startRejectClosing(m, rejectedByUserId) {
+  const c = ensureCeremony(m);
+  c.pastorPhase = "closing_no";
+  c.rejectUserId = rejectedByUserId;
+  c.pastorLineIndex = 0;
+  c.pastorLineStartedAt = Date.now();
+  c.phase = "vows";
+}
+
+function startMarriedSpeech(m) {
+  const c = ensureCeremony(m);
+  c.pastorPhase = "married";
+  c.pastorLineIndex = 0;
+  c.pastorLineStartedAt = Date.now();
+  c.phase = "gifts";
+  if (!c.receptionEndsAt) {
+    // Empfang startet nach Abschluss-Rede; vorläufig setzen für Home-Timer
+    c.receptionEndsAt = Date.now() + RECEPTION_MS;
+  }
+}
+
+function canStand(m, userId) {
+  const c = ensureCeremony(m);
+  if (!c.seatingLocked) return true;
+  // Nach Lock: wer sitzt, bleibt sitzen
+  if (c.seated[userId]) return false;
+  return true;
+}
+
+function canSitAfterLock(m, userId) {
+  const c = ensureCeremony(m);
+  if (!c.seatingLocked) return true;
+  // Stehende dürfen sich noch setzen; Sitzende bleiben
+  return !c.seated[userId] || true;
+}
+
+/** Darf jemand die Kapelle betreten / rejoinen? */
+function canEnterChapel(m, userId, { isKnownMember = false } = {}) {
+  const c = ensureCeremony(m);
+  const now = Date.now();
+  if (c.pastorPhase === "reception" || c.phase === "reception") {
+    const ends = Number(c.receptionEndsAt) || 0;
+    if (ends > 0 && now > ends) {
+      return {
+        ok: false,
+        error: "reception_over",
+        message: "Die Empfangszeit ist vorbei.",
+      };
+    }
+    return { ok: true };
+  }
+  if (m.status === "married" && (c.phase === "gifts" || c.pastorPhase === "married")) {
+    return { ok: true };
+  }
+  // Während Altar-Hold (noch nicht locked): Rejoin ok
+  if (!c.seatingLocked) {
+    return { ok: true };
+  }
+  // Zeremonie läuft (nach 30s) — nicht reinplatzen
+  if (isCouple(m, userId)) {
+    // Brautpaar darf drin bleiben / reconnect
+    return { ok: true };
+  }
+  if (isKnownMember && isPresent(m, userId, "gathering")) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    error: "ceremony_in_progress",
+    message:
+      "Die Zeremonie ist im Gange — es wäre unhöflich, jetzt hereinzuplatzen. Bitte wartet bis zum Empfang.",
+  };
+}
+
+function altarHoldRemainingMs(m) {
+  const c = ensureCeremony(m);
+  if (c.seatingLocked || !c.altarHoldStartedAt) return 0;
+  return Math.max(0, ALTAR_HOLD_MS - (Date.now() - Number(c.altarHoldStartedAt)));
+}
+
+function receptionRemainingMs(m) {
+  const c = ensureCeremony(m);
+  const ends = Number(c.receptionEndsAt) || 0;
+  if (!ends) return 0;
+  return Math.max(0, ends - Date.now());
+}
+
 function publicCeremony(m, viewerId, users = {}) {
   if (!m) return null;
   const c = ensureCeremony(m);
@@ -195,7 +485,7 @@ function publicCeremony(m, viewerId, users = {}) {
   const couplePresent = countCouplePresence(m, "presence");
   const startConfirmA = Boolean(c.startConfirm[m.a]);
   const startConfirmB = Boolean(c.startConfirm[m.b]);
-  const partnerId = m.a === viewerId ? m.b : m.a === viewerId ? m.a : partnerOf(m, viewerId);
+  const partnerId = m.a === viewerId ? m.b : m.b === viewerId ? m.a : partnerOf(m, viewerId);
   const partnerNick =
     partnerId && users[partnerId]
       ? String(users[partnerId].nickname || "").trim().slice(0, 18)
@@ -223,6 +513,40 @@ function publicCeremony(m, viewerId, users = {}) {
   const timeProposals = listPublicProposals(m, viewerId, users);
   const matchingAts = matchingProposalAts(m);
 
+  let pastorLines = [];
+  if (c.pastorPhase === "speech") pastorLines = buildPastorLines(m, users);
+  else if (c.pastorPhase === "closing_no") {
+    pastorLines = buildPastorRejectLines(m, users, c.rejectUserId);
+  } else if (c.pastorPhase === "married") {
+    pastorLines = buildPastorMarriedLines(m, users);
+  }
+  const pastorLineIndex = Number(c.pastorLineIndex) || 0;
+  const pastorLineFull = pastorLines[pastorLineIndex] || "";
+  const pastorStarted = Number(c.pastorLineStartedAt) || now;
+  const typeMs = Math.min(12_000, Math.max(2_000, pastorLineFull.length * 45 || 2000));
+  const typedChars = Math.min(
+    pastorLineFull.length,
+    Math.floor(((now - pastorStarted) / typeMs) * pastorLineFull.length)
+  );
+  const pastorLineVisible =
+    c.pastorPhase === "speech" ||
+    c.pastorPhase === "closing_no" ||
+    c.pastorPhase === "married"
+      ? pastorLineFull.slice(0, typedChars)
+      : "";
+
+  const coupleNicks = {
+    a: nickOf(users, m.a, "Name 1"),
+    b: nickOf(users, m.b, "Name 2"),
+  };
+
+  const meGuest = !isCouple(m, viewerId);
+  const iGifted = Boolean(c.giftedBy[viewerId]);
+  const iGuestbooked = Boolean(c.guestbookedBy[viewerId]);
+  const inReception =
+    c.pastorPhase === "reception" ||
+    c.phase === "reception";
+
   return {
     phase: c.phase || "none",
     ceremonyAt: Number(m.ceremonyAt) || 0,
@@ -246,6 +570,27 @@ function publicCeremony(m, viewerId, users = {}) {
     capacity: CEREMONY_CAPACITY,
     timeProposals,
     matchingProposalAts: matchingAts,
+    // Ritual
+    seatingLocked: Boolean(c.seatingLocked),
+    altarHoldActive: Boolean(c.altarHoldStartedAt) && !c.seatingLocked,
+    altarHoldRemainingMs: altarHoldRemainingMs(m),
+    altarHoldTotalMs: ALTAR_HOLD_MS,
+    canStand: canStand(m, viewerId),
+    pastorPhase: c.pastorPhase || "idle",
+    pastorLineIndex,
+    pastorLineFull,
+    pastorLineVisible,
+    pastorLineCount: pastorLines.length,
+    coupleNicknames: coupleNicks,
+    receptionEndsAt: Number(c.receptionEndsAt) || 0,
+    receptionRemainingMs: receptionRemainingMs(m),
+    showGiftButton: Boolean(meGuest && inReception && !iGifted && m.status === "married"),
+    showGuestbookButton: Boolean(meGuest && inReception && (iGifted || iGuestbooked)),
+    showApplause: Boolean(meGuest && inReception && m.status === "married"),
+    iGifted,
+    iGuestbooked,
+    vowsReady: c.pastorPhase === "vows",
+    marriageStatus: m.status || null,
   };
 }
 
@@ -270,6 +615,9 @@ module.exports = {
   CEREMONY_OPEN_BEFORE_MS,
   PRESENCE_FRESH_MS,
   VOW_HOLD_MS,
+  ALTAR_HOLD_MS,
+  RECEPTION_MS,
+  PASTOR_LINE_HOLD_MS,
   MAX_TIME_PROPOSALS_PER_USER,
   ensureCeremony,
   isCouple,
@@ -286,4 +634,14 @@ module.exports = {
   canAcceptProposal,
   listPublicProposals,
   matchingProposalAts,
+  syncAltarHold,
+  advancePastor,
+  startRejectClosing,
+  startMarriedSpeech,
+  canStand,
+  canEnterChapel,
+  coupleAtAltar,
+  buildPastorLines,
+  altarHoldRemainingMs,
+  receptionRemainingMs,
 };

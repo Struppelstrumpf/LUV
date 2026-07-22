@@ -26,7 +26,7 @@ class WeddingChapelMusic(context: Context) {
             return
         }
         runCatching {
-            val p = MediaPlayer.create(appContext, R.raw.wedding_chapel_music) ?: return
+            val p = MediaPlayer.create(appContext, R.raw.wedding_bridal_march) ?: return
             p.isLooping = true
             p.setAudioAttributes(
                 AudioAttributes.Builder()

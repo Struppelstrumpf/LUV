@@ -44,14 +44,18 @@ function canGiftToMarriage(m, now = Date.now()) {
   if (m.giftPhase === "open") {
     return now < (Number(m.giftWindowEndsAt) || 0);
   }
-  // Während Zeremonie (vor Ja) ebenfalls schenken
-  if (
-    m.status === "ceremony_scheduled" &&
-    (m.ceremony?.phase === "gathering" ||
-      m.ceremony?.phase === "altar" ||
-      m.ceremony?.phase === "vows")
-  ) {
-    return true;
+  // Empfang / nach Ja in der Kapelle
+  if (m.status === "married") {
+    const receptionEnds = Number(m.ceremony?.receptionEndsAt) || 0;
+    if (receptionEnds > 0 && now < receptionEnds) return true;
+    if (
+      m.ceremony?.phase === "gifts" ||
+      m.ceremony?.phase === "reception" ||
+      m.ceremony?.pastorPhase === "married" ||
+      m.ceremony?.pastorPhase === "reception"
+    ) {
+      return true;
+    }
   }
   return false;
 }

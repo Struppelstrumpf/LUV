@@ -6,13 +6,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -26,12 +29,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luv.couple.LuvApp
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.net.LuvApiException
+import com.luv.couple.shop.ItemLabels
 import com.luv.couple.shop.ShopCatalog
 import com.luv.couple.ui.ItemGlyph
 import com.luv.couple.ui.theme.AccentRose
@@ -65,27 +71,35 @@ fun WeddingGiftPickerDialog(
     var tab by remember { mutableStateOf("stickers") }
     var busy by remember { mutableStateOf(false) }
 
+    fun labelFor(kind: String, id: String): String {
+        val labeled = ItemLabels.forKind(kind, id)
+        if (!ItemLabels.looksLikeRawId(labeled)) return labeled
+        return ItemLabels.toastSafe(id, kind)
+    }
+
     val inventory = remember(ownedEmojis, ownedStickers, ownedThemes, ownedPets, tab) {
         when (tab) {
             "emojis" -> ownedEmojis
                 .filter { it.value > 0 }
-                .map { (id, n) -> GiftPick("emojis", id, id, n) }
-                .sortedBy { it.itemId }
+                .map { (id, n) -> GiftPick("emojis", id, labelFor("emojis", id), n) }
+                .sortedBy { it.label.lowercase() }
             "stickers" -> ownedStickers
                 .filter { it.value > 0 }
-                .map { (id, n) -> GiftPick("stickers", id, id, n) }
-                .sortedBy { it.itemId }
+                .map { (id, n) -> GiftPick("stickers", id, labelFor("stickers", id), n) }
+                .sortedBy { it.label.lowercase() }
             "themes" -> ownedThemes
                 .filter { it != "meadow" }
                 .distinct()
                 .map { id ->
                     val theme = ShopCatalog.THEMES.find { it.id == id }
-                    GiftPick("themes", id, "${theme?.emoji ?: "🖼️"} ${theme?.label ?: id}", 1)
+                    val name = theme?.label?.takeIf { it.isNotBlank() }
+                        ?: labelFor("themes", id)
+                    GiftPick("themes", id, name, 1)
                 }
             "pets" -> ownedPets
                 .filter { it.key != ShopCatalog.DEFAULT_PET && it.value > 0 }
-                .map { (id, n) -> GiftPick("pets", id, id, n) }
-                .sortedBy { it.itemId }
+                .map { (id, n) -> GiftPick("pets", id, labelFor("pets", id), n) }
+                .sortedBy { it.label.lowercase() }
             else -> emptyList()
         }
     }
@@ -115,8 +129,7 @@ fun WeddingGiftPickerDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 420.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .heightIn(max = 460.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
@@ -156,56 +169,71 @@ fun WeddingGiftPickerDialog(
                         fontFamily = BodyFont
                     )
                 } else {
-                    inventory.forEach { item ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(TextPrimary.copy(0.05f))
-                                .clickable(enabled = !busy) {
-                                    busy = true
-                                    scope.launch {
-                                        runCatching {
-                                            LuvApiClient.weddingGift(
-                                                targetUserId,
-                                                item.kind,
-                                                item.itemId
-                                            )
-                                        }.onSuccess {
-                                            syncLocalInventory()
-                                            Toast.makeText(
-                                                context,
-                                                "Geschenk im Topf 🎁",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                            onGifted()
-                                            onDismiss()
-                                        }.onFailure { e ->
-                                            val msg = (e as? LuvApiException)?.message
-                                                ?: e.message
-                                                ?: "Schenken fehlgeschlagen"
-                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp),
+                        contentPadding = PaddingValues(2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(inventory, key = { "${it.kind}:${it.itemId}" }) { item ->
+                            Column(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(TextPrimary.copy(0.06f))
+                                    .clickable(enabled = !busy) {
+                                        busy = true
+                                        scope.launch {
+                                            runCatching {
+                                                LuvApiClient.weddingGift(
+                                                    targetUserId,
+                                                    item.kind,
+                                                    item.itemId
+                                                )
+                                            }.onSuccess {
+                                                syncLocalInventory()
+                                                Toast.makeText(
+                                                    context,
+                                                    "Geschenk im Topf 🎁",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                                onGifted()
+                                                onDismiss()
+                                            }.onFailure { e ->
+                                                val msg = (e as? LuvApiException)?.message
+                                                    ?: e.message
+                                                    ?: "Schenken fehlgeschlagen"
+                                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                            }
+                                            busy = false
                                         }
-                                        busy = false
                                     }
-                                }
-                                .padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            ItemGlyph(id = item.itemId, fontSize = 22.sp)
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(item.label, color = TextPrimary, fontFamily = BodyFont)
+                                    .padding(8.dp)
+                                    .aspectRatio(0.85f),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                ItemGlyph(id = item.itemId, fontSize = 28.sp)
+                                Text(
+                                    item.label,
+                                    color = TextPrimary,
+                                    fontFamily = BodyFont,
+                                    fontSize = 11.sp,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center
+                                )
                                 if (item.count > 1) {
                                     Text(
                                         "×${item.count}",
                                         color = TextMuted,
                                         fontFamily = BodyFont,
-                                        fontSize = 12.sp
+                                        fontSize = 11.sp
                                     )
                                 }
                             }
-                            Text("Schenken", color = AccentRose, fontFamily = DisplayFont, fontSize = 13.sp)
                         }
                     }
                 }

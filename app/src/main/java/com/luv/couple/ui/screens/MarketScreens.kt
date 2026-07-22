@@ -20,20 +20,15 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.mandatorySystemGestures
-import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
-import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemGestures
-import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -2178,27 +2173,28 @@ private fun LootboxTab(
             }
         )
     }
-    // Footer fest unten verankern — auf kurzen Displays Geschenk schrumpfen, nie abschneiden
+    // Footer als bottomBar — immer sichtbar, Inhalt scrollt darüber
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(bottom = 12.dp)
     ) {
         val reveal = revealedReward?.takeIf { phase == "reveal" }
         val shortScreen = maxHeight < 640.dp
         val giftSize = minOf(
-            maxWidth * if (shortScreen) 0.38f else 0.48f,
-            maxHeight * if (shortScreen) 0.28f else 0.36f,
-            if (shortScreen) 180.dp else 240.dp
+            maxWidth * if (shortScreen) 0.34f else 0.44f,
+            maxHeight * if (shortScreen) 0.22f else 0.30f,
+            if (shortScreen) 150.dp else 210.dp
         )
         val showBox = phase == "idle" || phase == "tapping" || phase == "opening" ||
             (phase == "reveal" && explodeAnim.value < 0.95f)
+        val footerVisible = reveal == null
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 18.dp)
-                .padding(top = 8.dp),
+                .padding(top = 8.dp)
+                .padding(bottom = if (footerVisible) 8.dp else 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(
@@ -2211,7 +2207,7 @@ private fun LootboxTab(
                         "Lootbox",
                         color = TextPrimary,
                         fontFamily = DisplayFont,
-                        fontSize = if (shortScreen) 24.sp else 28.sp
+                        fontSize = if (shortScreen) 22.sp else 28.sp
                     )
                     Text(
                         "$price Coins",
@@ -2233,6 +2229,7 @@ private fun LootboxTab(
                     .weight(1f, fill = true)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
+                    .padding(bottom = if (footerVisible) 8.dp else 0.dp)
             ) {
                 val waiting = maxOf(
                     displayPending,
@@ -2417,7 +2414,9 @@ private fun LootboxTab(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 6.dp, bottom = 4.dp)
+                        .background(BgDeep)
+                        .navigationBarsPadding()
+                        .padding(top = 8.dp, bottom = 10.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),

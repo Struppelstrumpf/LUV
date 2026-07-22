@@ -114,11 +114,19 @@ function sanitizeZone(raw, index) {
   if (!raw || typeof raw !== "object") return null;
   const color = String(raw.color || "").toLowerCase();
   const shape = String(raw.shape || "").toLowerCase();
-  if (!["red", "green", "yellow", "blue", "brown", "orange"].includes(color)) {
+  // gold = Deko-Objekt (Kerze/Box), pink = Flammen-Animation
+  if (
+    !["red", "green", "yellow", "blue", "brown", "orange", "gold", "pink"].includes(
+      color
+    )
+  ) {
     return null;
   }
   if (!["rect", "circle"].includes(shape)) return null;
-  if (["yellow", "blue", "brown", "orange"].includes(color) && shape !== "circle") {
+  if (
+    ["yellow", "blue", "brown", "orange", "gold", "pink"].includes(color) &&
+    shape !== "circle"
+  ) {
     return null;
   }
   if ((color === "red" || color === "green") && shape !== "rect") return null;
@@ -134,7 +142,11 @@ function sanitizeZone(raw, index) {
             ? "spawn_"
             : color === "orange"
               ? "avatar_"
-              : `${color}_`;
+              : color === "gold"
+                ? "deco_"
+                : color === "pink"
+                  ? "flame_"
+                  : `${color}_`;
     id = `${prefix}${index}_${Date.now().toString(36)}`;
   }
   if (color === "yellow" && !id.startsWith("altar_")) {

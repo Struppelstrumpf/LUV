@@ -2129,7 +2129,28 @@ object LuvApiClient {
         val leftByNickname: String? = null,
         val capacity: Int = 10,
         val timeProposals: List<CeremonyTimeProposal> = emptyList(),
-        val matchingProposalAts: List<Long> = emptyList()
+        val matchingProposalAts: List<Long> = emptyList(),
+        val seatingLocked: Boolean = false,
+        val altarHoldActive: Boolean = false,
+        val altarHoldRemainingMs: Long = 0L,
+        val altarHoldTotalMs: Long = 30_000L,
+        val canStand: Boolean = true,
+        val pastorPhase: String = "idle",
+        val pastorLineIndex: Int = 0,
+        val pastorLineFull: String = "",
+        val pastorLineVisible: String = "",
+        val pastorLineCount: Int = 0,
+        val coupleNicknameA: String = "",
+        val coupleNicknameB: String = "",
+        val receptionEndsAt: Long = 0L,
+        val receptionRemainingMs: Long = 0L,
+        val showGiftButton: Boolean = false,
+        val showGuestbookButton: Boolean = false,
+        val showApplause: Boolean = false,
+        val iGifted: Boolean = false,
+        val iGuestbooked: Boolean = false,
+        val vowsReady: Boolean = false,
+        val marriageStatus: String? = null,
     )
 
     data class WeddingImageConfirmResult(
@@ -2391,6 +2412,7 @@ object LuvApiClient {
                 if (at > 0L) matching += at
             }
         }
+        val coupleNicks = o.optJSONObject("coupleNicknames")
         return CeremonyInfo(
             phase = o.optString("phase", "none"),
             ceremonyAt = o.optLong("ceremonyAt", 0L),
@@ -2413,7 +2435,28 @@ object LuvApiClient {
             leftByNickname = o.optString("leftByNickname").takeIf { it.isNotBlank() },
             capacity = o.optInt("capacity", 10),
             timeProposals = timeProposals,
-            matchingProposalAts = matching
+            matchingProposalAts = matching,
+            seatingLocked = o.optBoolean("seatingLocked", false),
+            altarHoldActive = o.optBoolean("altarHoldActive", false),
+            altarHoldRemainingMs = o.optLong("altarHoldRemainingMs", 0L),
+            altarHoldTotalMs = o.optLong("altarHoldTotalMs", 30_000L),
+            canStand = o.optBoolean("canStand", true),
+            pastorPhase = o.optString("pastorPhase", "idle").ifBlank { "idle" },
+            pastorLineIndex = o.optInt("pastorLineIndex", 0),
+            pastorLineFull = o.optString("pastorLineFull", ""),
+            pastorLineVisible = o.optString("pastorLineVisible", ""),
+            pastorLineCount = o.optInt("pastorLineCount", 0),
+            coupleNicknameA = coupleNicks?.optString("a", "").orEmpty(),
+            coupleNicknameB = coupleNicks?.optString("b", "").orEmpty(),
+            receptionEndsAt = o.optLong("receptionEndsAt", 0L),
+            receptionRemainingMs = o.optLong("receptionRemainingMs", 0L),
+            showGiftButton = o.optBoolean("showGiftButton", false),
+            showGuestbookButton = o.optBoolean("showGuestbookButton", false),
+            showApplause = o.optBoolean("showApplause", false),
+            iGifted = o.optBoolean("iGifted", false),
+            iGuestbooked = o.optBoolean("iGuestbooked", false),
+            vowsReady = o.optBoolean("vowsReady", false),
+            marriageStatus = o.optString("marriageStatus").takeIf { it.isNotBlank() },
         )
     }
 
@@ -2673,6 +2716,8 @@ object LuvApiClient {
         val isWalk: Boolean get() = color == "green"
         val isSpawn: Boolean get() = color == "brown"
         val isAvatarSize: Boolean get() = color == "orange"
+        val isDecor: Boolean get() = color == "gold" || id.startsWith("deco_")
+        val isFlame: Boolean get() = color == "pink" || id.startsWith("flame_")
     }
 
     data class RoomViewRect(
@@ -3092,6 +3137,11 @@ object LuvApiClient {
         json.optBoolean("ok", false)
     }
 
+    suspend fun ceremonyApplause(): CeremonyInfo? = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/me/marriage/ceremony/applause", "{}")
+        parseCeremonyInfo(json.optJSONObject("ceremony"))
+    }
+
     suspend fun dismissCeremonyLeftNotice() = withContext(Dispatchers.IO) {
         authedPost("/v1/me/marriage/ceremony/dismiss-left-notice", "{}")
         Unit
@@ -3201,20 +3251,29 @@ object LuvApiClient {
         }
     }
 
-    suspend fun postGuestbook(userId: String, text: String): GuestbookEntry? =
+    data class GuestbookPostResult(
+        val entry: GuestbookEntry?,
+        val coinsGranted: Int = 0
+    )
+
+    suspend fun postGuestbook(userId: String, text: String): GuestbookPostResult =
         withContext(Dispatchers.IO) {
             val body = JSONObject().put("text", text.trim().take(280)).toString()
             val json = authedPost(
                 "/v1/users/${userId.trim().encodeURL()}/wedding/guestbook",
                 body
             )
-            val e = json.optJSONObject("entry") ?: return@withContext null
-            GuestbookEntry(
+            val e = json.optJSONObject("entry")
+            val entry = if (e == null) null else GuestbookEntry(
                 id = e.optString("id"),
                 userId = e.optString("userId"),
                 nickname = e.optString("nickname", "Jemand"),
                 text = e.optString("text"),
                 createdAt = e.optLong("createdAt", 0L)
+            )
+            GuestbookPostResult(
+                entry = entry,
+                coinsGranted = json.optInt("coinsGranted", 0)
             )
         }
 

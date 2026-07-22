@@ -2104,7 +2104,7 @@ fun LuvAppNav() {
                                                     }
                                             }
                                         } else if (giftPhase == "open") {
-                                            // Nach dem Ja: Kapelle nur noch fürs Ehepaar (Geschenkfenster)
+                                            // Empfang / Geschenkfenster — Kapelle für Gäste offen
                                             context.startActivity(
                                                 Intent(
                                                     context,
@@ -2120,7 +2120,36 @@ fun LuvAppNav() {
                                                     Toast.LENGTH_SHORT
                                                 ).show()
                                             } else {
-                                                pendingCeremonyGathering = true
+                                                // Während laufender Zeremonie: Server entscheidet (Rejoin vs. unhöflich)
+                                                scope.launch {
+                                                    val enter = runCatching {
+                                                        LuvApiClient.fetchCeremony()
+                                                    }.getOrNull()
+                                                    val locked = enter?.ceremony?.seatingLocked == true &&
+                                                        enter.ceremony.pastorPhase != "reception" &&
+                                                        enter.ceremony.phase != "reception" &&
+                                                        enter.ceremony.pastorPhase != "married" &&
+                                                        enter.ceremony.phase != "gifts"
+                                                    val mePresent = enter?.ceremony?.gathering
+                                                        ?.any {
+                                                            it.userId == AccountSession.account.value?.id &&
+                                                                it.present
+                                                        } == true
+                                                    if (locked && !mePresent) {
+                                                        Toast.makeText(
+                                                            context,
+                                                            "Die Zeremonie ist im Gange — es wäre unhöflich, jetzt hereinzuplatzen.",
+                                                            Toast.LENGTH_LONG
+                                                        ).show()
+                                                    } else {
+                                                        context.startActivity(
+                                                            Intent(
+                                                                context,
+                                                                com.luv.couple.ui.wedding.WeddingRoomActivity::class.java
+                                                            )
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
                                     } else if (lobby.isCustomRoom) {

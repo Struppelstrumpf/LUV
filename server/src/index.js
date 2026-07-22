@@ -2457,42 +2457,27 @@ function markCeremonyPending(m, { force = false } = {}) {
 }
 
 /** Nach dem Ja: Gäste raus, Kapellen-Lobby nur noch fürs Ehepaar (24h Geschenke). */
+/** Nach dem Ja: Kapelle bleibt offen für Gäste (Empfang / Geschenke), kein Kick. */
 function keepCeremonyLobbyForGifts(m) {
   const code = m?.ceremonyLobbyCode;
   if (!code) return;
   const db = getDb();
   const room = rooms.get(code) || db.rooms?.[code] || null;
   if (!room?.isWeddingCeremony && !db.rooms?.[code]?.isWeddingCeremony) return;
-  const couple = new Set([m.a, m.b].filter(Boolean));
-  const members = Array.isArray(room.memberUserIds) ? [...room.memberUserIds] : [];
-  for (const uid of members) {
-    if (couple.has(uid)) continue;
-    const u = db.users?.[uid];
-    if (u) {
-      forgetJoinedLobby(u, code);
-      if (u.hostedRooms?.[code]) delete u.hostedRooms[code];
-    }
-    if (room.sockets instanceof Map) {
-      for (const [peerId, sock] of [...room.sockets.entries()]) {
-        if (sock?.luvUserId === uid) {
-          try {
-            sock.close(4001, "ceremony_gifts");
-          } catch {
-            /* ignore */
-          }
-          room.sockets.delete(peerId);
-        }
-      }
-    }
-  }
-  room.memberUserIds = [m.a, m.b].filter(Boolean);
-  m.ceremonyMemberIds = [...room.memberUserIds];
-  room.capacity = 2;
-  room.giftWindowEndsAt = m.giftWindowEndsAt || 0;
+  const c = weddingCeremony.ensureCeremony(m);
+  const ends =
+    Number(c.receptionEndsAt) ||
+    Number(m.giftWindowEndsAt) ||
+    Date.now() + weddingCeremony.RECEPTION_MS;
+  if (!c.receptionEndsAt) c.receptionEndsAt = ends;
+  room.capacity = Math.max(room.capacity || 10, weddingCeremony.CEREMONY_CAPACITY);
+  room.giftWindowEndsAt = ends;
   room.giftPhase = m.giftPhase || "open";
+  m.ceremonyMemberIds = Array.isArray(room.memberUserIds)
+    ? [...room.memberUserIds]
+    : [m.a, m.b].filter(Boolean);
   if (db.rooms?.[code]) {
-    db.rooms[code].memberUserIds = [...room.memberUserIds];
-    db.rooms[code].capacity = 2;
+    db.rooms[code].capacity = room.capacity;
     db.rooms[code].giftWindowEndsAt = room.giftWindowEndsAt;
     db.rooms[code].giftPhase = room.giftPhase;
   }
@@ -2507,7 +2492,7 @@ function keepCeremonyLobbyForGifts(m) {
       isWedding: false,
       name: prev.name || room.name || "Hochzeit",
       token: prev.token || room.token,
-      capacity: 2,
+      capacity: room.capacity,
       giftWindowEndsAt: room.giftWindowEndsAt,
       giftPhase: room.giftPhase,
       ceremonyAt: Number(m.ceremonyAt) || Number(prev.ceremonyAt) || 0,
@@ -2518,7 +2503,6 @@ function keepCeremonyLobbyForGifts(m) {
           b: String(db.users?.[m.b]?.nickname || "").slice(0, 18),
         },
     };
-    forgetJoinedLobby(u, code);
   }
   if (!rooms.has(code) && room) rooms.set(code, room);
   persistRooms();
@@ -2566,10 +2550,16 @@ function finalizeWeddingMarriage(m, { force = false } = {}) {
   m.marriedAt = Date.now();
   m.weddingLobbyCode = null;
   const c = weddingCeremony.ensureCeremony(m);
-  c.phase = "gifts";
   if (!Array.isArray(m.guestbook)) m.guestbook = [];
   weddingGifts.openGiftWindow(m, m.marriedAt);
-  // Kapellen-Lobby behalten (24h Geschenke), nur Gäste kicken
+  // Empfang 60 Min in der Kapelle; Geschenktopf bleibt fürs Ehepaar länger offen
+  weddingCeremony.startMarriedSpeech(m);
+  c.receptionEndsAt = m.marriedAt + weddingCeremony.RECEPTION_MS;
+  m.giftWindowEndsAt = Math.max(
+    Number(m.giftWindowEndsAt) || 0,
+    c.receptionEndsAt
+  );
+  // Kapellen-Lobby behalten — Gäste bleiben für Geschenke / Gästebuch
   if (m.ceremonyLobbyCode) {
     keepCeremonyLobbyForGifts(m);
   }
@@ -2729,7 +2719,7 @@ function findMarriageForCeremonyMember(db, userId) {
   return null;
 }
 
-function abortWeddingCeremony(m, leftByUserId) {
+function abortWeddingCeremony(m, leftByUserId, { divorceCooldown = true } = {}) {
   if (!m) return;
   const db = getDb();
   const leftUser = leftByUserId ? db.users?.[leftByUserId] : null;
@@ -2744,8 +2734,10 @@ function abortWeddingCeremony(m, leftByUserId) {
   // Gäste aus Memberliste droppen (Lobby weg)
   const a = db.users?.[m.a];
   const b = db.users?.[m.b];
-  if (a) marriage.setDivorceCooldown(a);
-  if (b) marriage.setDivorceCooldown(b);
+  if (divorceCooldown) {
+    if (a) marriage.setDivorceCooldown(a);
+    if (b) marriage.setDivorceCooldown(b);
+  }
   const partner = partnerId ? db.users?.[partnerId] : null;
   if (partner) {
     if (!Array.isArray(partner.socialNotices)) partner.socialNotices = [];
@@ -2754,7 +2746,9 @@ function abortWeddingCeremony(m, leftByUserId) {
       type: "wedding_left",
       fromUserId: leftByUserId || null,
       fromNickname: leftNick,
-      text: "Deine Hochzeit… Tippe für mehr",
+      text: divorceCooldown
+        ? "Deine Hochzeit… Tippe für mehr"
+        : "Die Trauung wurde abgebrochen — ihr könnt euch erneut verloben.",
       createdAt: Date.now(),
     });
     if (partner.socialNotices.length > 30) {
@@ -2766,6 +2760,45 @@ function abortWeddingCeremony(m, leftByUserId) {
   if (a) marriage.stripSpouseFromProfile(a);
   if (b) marriage.stripSpouseFromProfile(b);
   delete all[key];
+}
+
+/** Nein am Altar: kein Scheidungs-/Antrags-Cooldown. */
+function abortWeddingCeremonyRejected(m, leftByUserId) {
+  abortWeddingCeremony(m, leftByUserId, { divorceCooldown: false });
+}
+
+function tickCeremonyRitual(m, db) {
+  if (!m) return null;
+  const isCoupleSeat = (seatId) => {
+    const z = roomLayouts.findSitZone(db, "wedding", seatId);
+    return Boolean(z && roomLayouts.isCoupleSeat(z));
+  };
+  weddingCeremony.syncAltarHold(m, isCoupleSeat);
+  const adv = weddingCeremony.advancePastor(m, db.users);
+  if (adv?.rejectDone) {
+    abortWeddingCeremonyRejected(m, m.ceremony?.rejectUserId || null);
+    return { dissolved: true };
+  }
+  if (adv?.receptionStarted) {
+    keepCeremonyLobbyForGifts(m);
+  }
+  // Empfang abgelaufen → alle raus, Lobby weg
+  const c = weddingCeremony.ensureCeremony(m);
+  const ends = Number(c.receptionEndsAt) || 0;
+  if (
+    ends > 0 &&
+    Date.now() >= ends &&
+    (c.pastorPhase === "reception" || c.phase === "reception" || m.status === "married")
+  ) {
+    if (m.ceremonyLobbyCode) {
+      dissolveWeddingCeremonyLobby(m.ceremonyLobbyCode);
+      m.ceremonyLobbyCode = null;
+    }
+    c.phase = "ended";
+    c.pastorPhase = "ended";
+    return { receptionOver: true };
+  }
+  return adv || null;
 }
 
 function startEngagement(m) {
@@ -9290,6 +9323,17 @@ app.get("/v1/me/marriage/ceremony", (req, res) => {
   if (!m) {
     return res.status(404).json({ error: "no_marriage" });
   }
+  const tick = tickCeremonyRitual(m, db);
+  if (tick?.dissolved) {
+    scheduleSave();
+    return res.status(410).json({
+      error: "ceremony_aborted",
+      message: "Die Trauung wurde abgebrochen.",
+    });
+  }
+  if (tick?.changed || tick?.receptionStarted || tick?.receptionOver) {
+    scheduleSave();
+  }
   const pubM = publicMarriageView(m, ctx.user.id);
   const cer = weddingCeremony.publicCeremony(m, ctx.user.id, db.users);
   return res.json({
@@ -9689,12 +9733,26 @@ app.post("/v1/me/marriage/ceremony/move", (req, res) => {
   if (!m && req.body?.marriageId) {
     m = marriage.ensureMarriages(db)[String(req.body.marriageId)];
   }
-  if (!m || m.status !== "ceremony_scheduled") {
+  if (!m || (m.status !== "ceremony_scheduled" && m.status !== "married")) {
     return res.status(400).json({ error: "wrong_phase" });
   }
   const c = weddingCeremony.ensureCeremony(m);
-  if (c.phase !== "altar" && c.phase !== "vows") {
+  if (
+    c.phase !== "altar" &&
+    c.phase !== "vows" &&
+    c.phase !== "gifts" &&
+    c.phase !== "reception" &&
+    c.phase !== "gathering"
+  ) {
     return res.status(400).json({ error: "not_in_room" });
+  }
+  // Nach Sitz-Lock: Sitzende dürfen nicht mehr aufstehen
+  if (c.seated[ctx.user.id] && !weddingCeremony.canStand(m, ctx.user.id)) {
+    return res.status(400).json({
+      error: "seating_locked",
+      message: "Während der Zeremonie bleibt ihr sitzen.",
+      ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+    });
   }
   // Aufstehen durch Bewegen (wie Custom-Raum)
   if (c.seated[ctx.user.id]) {
@@ -9710,6 +9768,7 @@ app.post("/v1/me/marriage/ceremony/move", (req, res) => {
     Number(req.body?.y)
   );
   c.positions[ctx.user.id] = { x: clamped.x, y: clamped.y };
+  tickCeremonyRitual(m, db);
   scheduleSave();
   return res.json({
     ok: true,
@@ -9724,11 +9783,17 @@ app.post("/v1/me/marriage/ceremony/sit", (req, res) => {
   if (!ctx) return;
   const db = getDb();
   const m = findMarriageForCeremonyMember(db, ctx.user.id);
-  if (!m || m.status !== "ceremony_scheduled") {
+  if (!m || (m.status !== "ceremony_scheduled" && m.status !== "married")) {
     return res.status(400).json({ error: "wrong_phase" });
   }
   const c = weddingCeremony.ensureCeremony(m);
-  if (c.phase !== "altar" && c.phase !== "vows") {
+  if (
+    c.phase !== "altar" &&
+    c.phase !== "vows" &&
+    c.phase !== "gifts" &&
+    c.phase !== "reception" &&
+    c.phase !== "gathering"
+  ) {
     return res.status(400).json({ error: "not_in_room" });
   }
   if (c.seated[ctx.user.id]) {
@@ -9767,9 +9832,9 @@ app.post("/v1/me/marriage/ceremony/sit", (req, res) => {
   const sx = zone.shape === "circle" ? zone.cx : zone.x + zone.w / 2;
   const sy = zone.shape === "circle" ? zone.cy : zone.y + zone.h / 2;
   c.positions[ctx.user.id] = { x: sx, y: sy };
-  const memberIds = Array.isArray(m.ceremonyMemberIds) ? m.ceremonyMemberIds : [m.a, m.b];
-  const allSeated = memberIds.every((uid) => c.seated[uid]);
-  if (allSeated) c.phase = "vows";
+  // Phase "vows" erst nach 30s Altar-Hold + Pastor-Rede — nicht sofort bei allen sitzen
+  if (c.phase === "gathering" || c.phase === "none") c.phase = "altar";
+  tickCeremonyRitual(m, db);
   scheduleSave();
   return res.json({
     ok: true,
@@ -9783,10 +9848,10 @@ app.post("/v1/me/marriage/ceremony/react", (req, res) => {
   if (!ctx) return;
   const db = getDb();
   const m = findMarriageForCeremonyMember(db, ctx.user.id);
-  if (!m || m.status !== "ceremony_scheduled") {
+  if (!m || (m.status !== "ceremony_scheduled" && m.status !== "married")) {
     return res.status(400).json({ error: "wrong_phase" });
   }
-  const emoji = String(req.body?.emoji || "").trim().slice(0, 8);
+  const emoji = String(req.body?.emoji || "").trim().slice(0, 64);
   if (!emoji) return res.status(400).json({ error: "bad_emoji" });
   const c = weddingCeremony.ensureCeremony(m);
   c.reactions[ctx.user.id] = { emoji, until: Date.now() + 2000 };
@@ -9810,21 +9875,28 @@ app.post("/v1/me/marriage/ceremony/vow", (req, res) => {
     return res.status(403).json({ error: "couple_only" });
   }
   const c = weddingCeremony.ensureCeremony(m);
-  if (c.phase !== "vows") {
+  if (c.pastorPhase !== "vows" && c.phase !== "vows") {
     return res.status(400).json({ error: "not_vows" });
+  }
+  if (c.pastorPhase !== "vows") {
+    return res.status(400).json({
+      error: "not_vows",
+      message: "Bitte wartet auf die Frage des Pastors.",
+    });
   }
   const choice = String(req.body?.choice || "").toLowerCase() === "no" ? "no" : "yes";
   const progress = Math.min(1, Math.max(0, Number(req.body?.progress) || 0));
   c.vows[ctx.user.id] = { choice, progress, at: Date.now() };
   if (choice === "no" && progress >= 1) {
     const nick = String(ctx.user.nickname || "").trim().slice(0, 18) || "Jemand";
-    abortWeddingCeremony(m, ctx.user.id);
+    weddingCeremony.startRejectClosing(m, ctx.user.id);
     scheduleSave();
     return res.json({
       ok: true,
       rejected: true,
       rejectedBy: nick,
       message: `${nick} hat Nein gesagt.`,
+      ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
     });
   }
   const vowA = c.vows[m.a];
@@ -9841,8 +9913,54 @@ app.post("/v1/me/marriage/ceremony/vow", (req, res) => {
       ok: true,
       married: true,
       marriage: publicMarriageView(m, ctx.user.id),
+      ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
     });
   }
+  scheduleSave();
+  return res.json({
+    ok: true,
+    ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+  });
+});
+
+app.post("/v1/me/marriage/ceremony/applause", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const m = findMarriageForCeremonyMember(db, ctx.user.id);
+  if (!m || m.status !== "married") {
+    return res.status(400).json({ error: "wrong_phase" });
+  }
+  if (weddingCeremony.isCouple(m, ctx.user.id)) {
+    return res.status(403).json({ error: "guests_only" });
+  }
+  const c = weddingCeremony.ensureCeremony(m);
+  c.applauseBursts.push({
+    userId: ctx.user.id,
+    at: Date.now(),
+    emoji: "👏",
+  });
+  if (c.applauseBursts.length > 40) {
+    c.applauseBursts = c.applauseBursts.slice(-40);
+  }
+  c.reactions[ctx.user.id] = { emoji: "👏", until: Date.now() + 1800 };
+  scheduleSave();
+  return res.json({
+    ok: true,
+    ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+  });
+});
+
+app.post("/v1/me/marriage/ceremony/mark-gifted", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const m = findMarriageForCeremonyMember(db, ctx.user.id);
+  if (!m || m.status !== "married") {
+    return res.status(400).json({ error: "wrong_phase" });
+  }
+  const c = weddingCeremony.ensureCeremony(m);
+  c.giftedBy[ctx.user.id] = true;
   scheduleSave();
   return res.json({
     ok: true,
@@ -10083,8 +10201,22 @@ app.post("/v1/users/:userId/wedding/guestbook", (req, res) => {
   };
   m.guestbook.push(entry);
   trackAch(ctx.user, "guestbook_writes", 1);
+  // Einmalig 5 Coins für Gästebucheintrag
+  const c = weddingCeremony.ensureCeremony(m);
+  let coinsGranted = 0;
+  if (!c.guestbookedBy[ctx.user.id]) {
+    c.guestbookedBy[ctx.user.id] = true;
+    if (applyLedger(ctx.user.id, 5, "guestbook_entry", m.id || "wedding")) {
+      coinsGranted = 5;
+    }
+  }
   scheduleSave();
-  return res.json({ ok: true, entry });
+  return res.json({
+    ok: true,
+    entry,
+    coinsGranted,
+    ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+  });
 });
 
 /** Inventar-Item in den gemeinsamen Hochzeits-Geschenktopf legen. */
@@ -10143,12 +10275,15 @@ app.post("/v1/users/:userId/wedding/gift", (req, res) => {
     itemId,
     at: Date.now(),
   });
+  const cer = weddingCeremony.ensureCeremony(m);
+  cer.giftedBy[ctx.user.id] = true;
   scheduleSave();
   return res.json({
     ok: true,
     giftPoolCount: m.giftPool.length,
     marriage: publicMarriageView(m, ctx.user.id),
     user: publicUser(ctx.user),
+    ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
   });
 });
 
@@ -16270,17 +16405,19 @@ app.post("/v1/rooms/:code/join", (req, res) => {
     const m = mid
       ? marriage.ensureMarriages(getDb())[mid]
       : null;
-    const giftPhase = String(m?.giftPhase || room.giftPhase || "none");
-    const giftsOnly =
-      giftPhase === "open" ||
-      giftPhase === "rolled" ||
-      m?.ceremony?.phase === "gifts" ||
-      (m?.status === "married" && giftPhase !== "done" && giftPhase !== "none");
-    if (giftsOnly && (!m || !weddingCeremony.isCouple(m, ctx.user.id))) {
-      return res.status(403).json({
-        error: "ceremony_gifts_couple_only",
-        message: "Nach dem Ja ist die Kapelle nur noch fürs Ehepaar.",
+    if (m) {
+      tickCeremonyRitual(m, getDb());
+      const enter = weddingCeremony.canEnterChapel(m, ctx.user.id, {
+        isKnownMember,
       });
+      if (!enter.ok) {
+        return res.status(403).json({
+          error: enter.error || "ceremony_in_progress",
+          message:
+            enter.message ||
+            "Die Zeremonie ist im Gange — bitte wartet bis zum Empfang.",
+        });
+      }
     }
     if (!isKnownMember) {
       // Gäste nur mit vorheriger Einladung (member) oder Lobby-Invite-Accept

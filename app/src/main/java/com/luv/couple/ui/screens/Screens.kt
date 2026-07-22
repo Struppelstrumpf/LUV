@@ -1267,21 +1267,11 @@ private fun LobbyCard(
                 ReconnectBanner(reconnect = reconnect, accent = accent, onReconnect = onReconnect)
             }
             if (lobby.isWeddingCeremony) {
-                val now = System.currentTimeMillis()
-                val giftPhase = lobby.giftPhase.lowercase()
-                val giftEnds = lobby.giftWindowEndsAt
-                val giftRem = (giftEnds - now).coerceAtLeast(0L)
-                val openAt = (lobby.ceremonyAt - 10 * 60 * 1000L).coerceAtLeast(0L)
-                val open = lobby.ceremonyAt > 0L && now >= openAt
-                val label = when {
-                    giftPhase == "rolled" -> "Geschenke abholen"
-                    giftPhase == "open" && giftEnds > 0L ->
-                        "Noch ${formatCountdown(giftRem)} Geschenke"
-                    lobby.ceremonyAt <= 0L -> "Hochzeit"
-                    open -> "Zur Hochzeit"
-                    else -> formatCountdown(openAt - now)
-                }
-                PrimaryButton(label, accent, onOpen)
+                WeddingCeremonyLobbyButton(
+                    lobby = lobby,
+                    accent = accent,
+                    onOpen = onOpen
+                )
             } else if (lobby.isCustomRoom) {
                 PrimaryButton("Raum betreten", accent, onOpen)
             } else {
@@ -1402,6 +1392,35 @@ private fun EventLobbyCountdownText(endsAtIso: String?) {
         softWrap = false,
         overflow = TextOverflow.Ellipsis
     )
+}
+
+@Composable
+private fun WeddingCeremonyLobbyButton(
+    lobby: Lobby,
+    accent: Color,
+    onOpen: () -> Unit
+) {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(lobby.code, lobby.ceremonyAt, lobby.giftWindowEndsAt, lobby.giftPhase) {
+        while (true) {
+            now = System.currentTimeMillis()
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+    val giftPhase = lobby.giftPhase.lowercase()
+    val giftEnds = lobby.giftWindowEndsAt
+    val giftRem = (giftEnds - now).coerceAtLeast(0L)
+    val openAt = (lobby.ceremonyAt - 10 * 60 * 1000L).coerceAtLeast(0L)
+    val open = lobby.ceremonyAt > 0L && now >= openAt
+    val label = when {
+        giftPhase == "rolled" -> "Geschenke abholen"
+        giftPhase == "open" && giftEnds > 0L ->
+            "Noch ${formatCountdown(giftRem)} · Empfang"
+        lobby.ceremonyAt <= 0L -> "Hochzeit"
+        open -> "Zur Hochzeit"
+        else -> formatCountdown(openAt - now)
+    }
+    PrimaryButton(label, accent, onOpen)
 }
 
 private fun parseEventEndsMs(iso: String?): Long? {
