@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.116",
+            listOf(
+                "Itemshop „Meistgekauft“: keine Event-/abgelaufenen Items mehr",
+            )
+        ),
+        Entry(
             "2.2.115",
             listOf(
                 "Zeichenfarbe stimmt schon während des Malens (kein Blau→Lila mehr)",

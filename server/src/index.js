@@ -6038,6 +6038,26 @@ function backfillShopStatsFromLedger(db) {
   db.shopStatsBackfilled = true;
 }
 
+/**
+ * Meistgekauft-Kachel: nur normale Shop-Artikel, die gerade kaufbar sind.
+ * Keine Event-Items, keine abgelaufenen/deaktivierten, keine Gratis-Starter.
+ */
+function isItemshopHubCandidate(db, kind, itemId) {
+  const k = String(kind || "").trim();
+  const id = String(itemId || "").trim();
+  if (!["emojis", "stickers", "pets", "themes"].includes(k) || !id) return false;
+  const item = shopCatalog.getItem(db, k, id);
+  if (!item || item.enabled === false) return false;
+  if (!shopCatalog.isWithinWindow(item)) return false;
+  if (String(item.eventId || "").trim()) return false;
+  if (seasonEvents.isEventOnlyItem(k, id)) return false;
+  if (seasonEvents.isEventShopBoundItem(db, k, id)) return false;
+  if (item.maxTotalSales != null && Number(item.soldTotal) >= Number(item.maxTotalSales)) {
+    return false;
+  }
+  return shopCatalog.effectivePrice(item) > 0;
+}
+
 function topShopPurchases(limit = 2) {
   const db = getDb();
   backfillShopStatsFromLedger(db);
@@ -6049,27 +6069,16 @@ function topShopPurchases(limit = 2) {
       if (i < 1) return null;
       const kind = key.slice(0, i);
       const itemId = key.slice(i + 1);
-      if (!["emojis", "stickers", "pets", "themes"].includes(kind)) return null;
-      if (!isKnownInventoryItem(kind, itemId)) return null;
+      if (!isItemshopHubCandidate(db, kind, itemId)) return null;
+      const item = shopCatalog.getItem(db, kind, itemId);
       const meta = marketItemMeta(kind, itemId);
-      if (!meta) return null;
-      const p = shopCatalog.priceOf(db, kind, itemId);
-      const priceCoins =
-        p != null
-          ? p
-          : kind === "emojis"
-            ? Number(EMOJI_SHOP_PRICES[itemId]) || 0
-            : kind === "stickers"
-              ? Number(STICKER_SHOP_PRICES[itemId]) || 0
-              : kind === "pets"
-                ? Number(PET_SHOP_PRICES[itemId]) || 0
-                : Number(THEME_SHOP_PRICES[itemId]) || 0;
+      if (!item || !meta) return null;
       return {
         kind,
         itemId,
         emoji: meta.emoji || itemId,
         label: meta.label || itemId,
-        priceCoins,
+        priceCoins: shopCatalog.effectivePrice(item),
         bought: Number(n) || 0,
       };
     })
@@ -6077,16 +6086,28 @@ function topShopPurchases(limit = 2) {
     .sort((a, b) => b.bought - a.bought || a.label.localeCompare(b.label, "de"));
 
   const out = ranked.slice(0, limit);
-  // Fallback wenn noch niemand gekauft hat
-  const fallbacks = [
-    { kind: "stickers", itemId: "🦋", emoji: "🦋", label: "🦋", priceCoins: 8, bought: 0 },
-    { kind: "pets", itemId: "🦊", emoji: "🦊", label: "🦊", priceCoins: 26, bought: 0 },
-    { kind: "emojis", itemId: "🥰", emoji: "🥰", label: "🥰", priceCoins: 12, bought: 0 },
-  ];
-  for (const f of fallbacks) {
-    if (out.length >= limit) break;
-    if (out.some((x) => x.kind === f.kind && x.itemId === f.itemId)) continue;
-    out.push(f);
+  // Fallback: nächste kaufbare Normal-Shop-Items (kein Event / kein Gratis)
+  if (out.length < limit) {
+    const pub = shopCatalog
+      .listPublicCatalog(db)
+      .filter((i) => isItemshopHubCandidate(db, i.kind, i.itemId))
+      .sort(
+        (a, b) =>
+          (Number(b.soldTotal) || 0) - (Number(a.soldTotal) || 0) ||
+          (Number(a.priceCoins) || 0) - (Number(b.priceCoins) || 0)
+      );
+    for (const i of pub) {
+      if (out.length >= limit) break;
+      if (out.some((x) => x.kind === i.kind && x.itemId === i.itemId)) continue;
+      out.push({
+        kind: i.kind,
+        itemId: i.itemId,
+        emoji: i.emoji || i.itemId,
+        label: i.label || i.itemId,
+        priceCoins: Number(i.priceCoins) || shopCatalog.effectivePrice(shopCatalog.getItem(db, i.kind, i.itemId)) || 0,
+        bought: Number(i.soldTotal) || 0,
+      });
+    }
   }
   return out.slice(0, limit);
 }
