@@ -2190,6 +2190,16 @@ object LuvApiClient {
         val marriageStatus: String? = null,
         /** Geldbaum-IDs, die dieser Nutzer schon geerntet hat */
         val claimedMoneyTreeIds: List<String> = emptyList(),
+        val applauseBursts: List<CeremonyBurst> = emptyList(),
+        val confettiBursts: List<CeremonyBurst> = emptyList(),
+    )
+
+    data class CeremonyBurst(
+        val userId: String? = null,
+        val at: Long = 0L,
+        val emoji: String = "👏",
+        val x: Float = 0.5f,
+        val y: Float = 0.7f,
     )
 
     data class WeddingImageConfirmResult(
@@ -2505,7 +2515,25 @@ object LuvApiClient {
             vowsReady = o.optBoolean("vowsReady", false),
             marriageStatus = o.optString("marriageStatus").takeIf { it.isNotBlank() },
             claimedMoneyTreeIds = claimedTrees,
+            applauseBursts = parseCeremonyBursts(o.optJSONArray("applauseBursts"), "👏"),
+            confettiBursts = parseCeremonyBursts(o.optJSONArray("confettiBursts"), "🎉"),
         )
+    }
+
+    private fun parseCeremonyBursts(arr: org.json.JSONArray?, defaultEmoji: String): List<CeremonyBurst> {
+        if (arr == null || arr.length() == 0) return emptyList()
+        val out = ArrayList<CeremonyBurst>(arr.length())
+        for (i in 0 until arr.length()) {
+            val b = arr.optJSONObject(i) ?: continue
+            out += CeremonyBurst(
+                userId = b.optString("userId").trim().takeIf { it.isNotBlank() },
+                at = b.optLong("at", 0L),
+                emoji = b.optString("emoji", defaultEmoji).ifBlank { defaultEmoji },
+                x = b.optDouble("x", 0.5).toFloat().coerceIn(0.05f, 0.95f),
+                y = b.optDouble("y", 0.7).toFloat().coerceIn(0.05f, 0.95f),
+            )
+        }
+        return out
     }
 
     private fun parsePartnerPublic(o: JSONObject?): PartnerPublic? {
@@ -3216,8 +3244,21 @@ object LuvApiClient {
         json.optBoolean("ok", false)
     }
 
-    suspend fun ceremonyApplause(): CeremonyInfo? = withContext(Dispatchers.IO) {
-        val json = authedPost("/v1/me/marriage/ceremony/applause", "{}")
+    suspend fun ceremonyApplause(x: Float, y: Float): CeremonyInfo? = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("x", x.toDouble())
+            .put("y", y.toDouble())
+            .toString()
+        val json = authedPost("/v1/me/marriage/ceremony/applause", body)
+        parseCeremonyInfo(json.optJSONObject("ceremony"))
+    }
+
+    suspend fun ceremonyConfetti(x: Float, y: Float): CeremonyInfo? = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("x", x.toDouble())
+            .put("y", y.toDouble())
+            .toString()
+        val json = authedPost("/v1/me/marriage/ceremony/confetti", body)
         parseCeremonyInfo(json.optJSONObject("ceremony"))
     }
 

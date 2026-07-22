@@ -45,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -203,7 +204,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     var marriage by remember { mutableStateOf<LuvApiClient.MarriageInfo?>(null) }
     var showGiftPicker by remember { mutableStateOf(false) }
     var showGuestbook by remember { mutableStateOf(false) }
-    var applauseBursts by remember { mutableStateOf<List<Pair<Float, Float>>>(emptyList()) }
+    var applauseBursts by remember { mutableStateOf<List<Triple<Float, Float, Long>>>(emptyList()) }
+    var confettiBursts by remember { mutableStateOf<List<Triple<Float, Float, Long>>>(emptyList()) }
+    var seenApplauseAts by remember { mutableStateOf(setOf<Long>()) }
+    var seenConfettiAts by remember { mutableStateOf(setOf<Long>()) }
     var entered by remember { mutableStateOf(false) }
     val cachedLayout = remember { WeddingChapelCache.layout }
     // Start nahe der Eingangstür (unten im Kapellenbild) — Cache → sofort sichtbare Position
@@ -215,6 +219,11 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     var married by remember { mutableStateOf(false) }
     var confetti by remember { mutableStateOf(false) }
     var showReceptionCongrats by remember { mutableStateOf(false) }
+    /** Einmalig — verhindert Wiederholung des Glückwunsch-Popups */
+    var congratsShownOnce by remember { mutableStateOf(false) }
+    var showGuestApplausePrompt by remember { mutableStateOf(false) }
+    var guestApplausePromptDone by remember { mutableStateOf(false) }
+    var receptionStartedAt by remember { mutableStateOf(0L) }
     var myReaction by remember { mutableStateOf<String?>(null) }
     var layout by remember { mutableStateOf(cachedLayout) }
     var spawned by remember { mutableStateOf(cachedLayout != null) }
@@ -435,8 +444,29 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                             confetti = true
                         }
                     }
-                    if (phase == "reception" && !showReceptionCongrats) {
-                        showReceptionCongrats = true
+                    if (phase == "reception") {
+                        if (receptionStartedAt == 0L) {
+                            receptionStartedAt = System.currentTimeMillis()
+                        }
+                        val iAmCouple = bundle.ceremony?.gathering
+                            ?.any { it.userId == myId && it.isCouple } == true
+                        if (iAmCouple && !congratsShownOnce) {
+                            congratsShownOnce = true
+                            showReceptionCongrats = true
+                        }
+                    }
+                    // Remote Applaus / Konfetti
+                    bundle.ceremony?.applauseBursts?.forEach { b ->
+                        if (b.at > 0L && b.at !in seenApplauseAts) {
+                            seenApplauseAts = seenApplauseAts + b.at
+                            applauseBursts = applauseBursts + Triple(b.x, b.y, b.at)
+                        }
+                    }
+                    bundle.ceremony?.confettiBursts?.forEach { b ->
+                        if (b.at > 0L && b.at !in seenConfettiAts) {
+                            seenConfettiAts = seenConfettiAts + b.at
+                            confettiBursts = confettiBursts + Triple(b.x, b.y, b.at)
+                        }
                     }
                     // Pastor-Rede + Empfang weiter pollen, nicht nach dem Ja abbrechen
                     if (
@@ -489,6 +519,33 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     val canGuestbook = ceremony?.showGuestbookButton == true && !giftTargetUserId.isNullOrBlank()
     val canApplause = ceremony?.showApplause == true
     val meIsCouple = ceremony?.gathering?.find { it.userId == myId }?.isCouple == true
+
+    // Gäste: Applaus-Prompt einmal nach Glückwunsch-Zeitfenster (~6s Empfang)
+    LaunchedEffect(receptionStartedAt, canApplause, meIsCouple, guestApplausePromptDone) {
+        if (meIsCouple || guestApplausePromptDone || !canApplause) return@LaunchedEffect
+        if (receptionStartedAt <= 0L) return@LaunchedEffect
+        val wait = (6_000L - (System.currentTimeMillis() - receptionStartedAt)).coerceAtLeast(0L)
+        delay(wait)
+        if (!guestApplausePromptDone && canApplause) {
+            showGuestApplausePrompt = true
+        }
+    }
+
+    // Auch aus laufendem Poll Applaus/Konfetti mergen
+    LaunchedEffect(ceremony?.applauseBursts, ceremony?.confettiBursts) {
+        ceremony?.applauseBursts?.forEach { b ->
+            if (b.at > 0L && b.at !in seenApplauseAts) {
+                seenApplauseAts = seenApplauseAts + b.at
+                applauseBursts = applauseBursts + Triple(b.x, b.y, b.at)
+            }
+        }
+        ceremony?.confettiBursts?.forEach { b ->
+            if (b.at > 0L && b.at !in seenConfettiAts) {
+                seenConfettiAts = seenConfettiAts + b.at
+                confettiBursts = confettiBursts + Triple(b.x, b.y, b.at)
+            }
+        }
+    }
 
     if (rejectName != null && ceremony?.pastorPhase != "closing_no") {
         Box(
@@ -1050,9 +1107,9 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 confetti = false
             }
         }
-        // Glückwunsch-Karte erst wenn Pastor fertig ist (Empfang)
+        // Glückwunsch-Karte nur einmal
         if (meIsCouple && showReceptionCongrats) {
-            LaunchedEffect(showReceptionCongrats) {
+            LaunchedEffect(Unit) {
                 delay(5500)
                 showReceptionCongrats = false
             }
@@ -1085,36 +1142,63 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             }
         }
 
-        applauseBursts.forEachIndexed { idx, (px, py) ->
-            Text(
-                "👏",
-                fontSize = 28.sp,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .offset(x = (maxWidth * px), y = (maxHeight * py))
-            )
-            LaunchedEffect(idx) {
-                delay(1400)
-                if (applauseBursts.size > idx) {
-                    applauseBursts = applauseBursts.filterIndexed { i, _ -> i != idx }
+        // Konfetti-Burst an Position
+        confettiBursts.forEach { (px, py, at) ->
+            key(at) {
+                PositionedConfettiBurst(
+                    originX = px,
+                    originY = py,
+                    onDone = {
+                        confettiBursts = confettiBursts.filterNot { it.third == at }
+                    }
+                )
+            }
+        }
+
+        applauseBursts.forEach { (px, py, at) ->
+            key(at) {
+                Text(
+                    "👏",
+                    fontSize = 32.sp,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset(
+                            x = (maxWidth * px) - 16.dp,
+                            y = (maxHeight * py) - 16.dp
+                        )
+                )
+                LaunchedEffect(at) {
+                    delay(1600)
+                    applauseBursts = applauseBursts.filterNot { it.third == at }
                 }
             }
         }
 
-        if (canApplause) {
+        // Applaus-Prompt für Gäste (einmalig, nach Glückwunsch-Fenster)
+        if (!meIsCouple && showGuestApplausePrompt && canApplause) {
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .clip(RoundedCornerShape(22.dp))
                     .background(Color(0xCCE91E63))
                     .clickable {
+                        guestApplausePromptDone = true
+                        showGuestApplausePrompt = false
                         scope.launch {
-                            runCatching { LuvApiClient.ceremonyApplause() }
-                                .onSuccess { ceremony = it ?: ceremony }
-                            applauseBursts = applauseBursts + (
-                                Random.nextFloat() * 0.7f + 0.1f to
-                                    Random.nextFloat() * 0.6f + 0.15f
+                            playApplauseSound(context)
+                            val now = System.currentTimeMillis()
+                            // Viele Applaus-Emojis über den Raum
+                            val extras = List(10) {
+                                Triple(
+                                    Random.nextFloat() * 0.7f + 0.15f,
+                                    Random.nextFloat() * 0.55f + 0.15f,
+                                    now + it
                                 )
+                            }
+                            applauseBursts = applauseBursts + Triple(myX, myY, now) + extras
+                            seenApplauseAts = seenApplauseAts + now
+                            runCatching { LuvApiClient.ceremonyApplause(myX, myY) }
+                                .onSuccess { if (it != null) ceremony = it }
                         }
                     }
                     .padding(horizontal = 22.dp, vertical = 12.dp)
@@ -1123,7 +1207,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             }
         }
 
-        // Untere Leiste: zurück + Geschenk/Gästebuch + Lautsprecher
+        // Untere Leiste: zurück + Konfetti + Geschenk/Gästebuch + Lautsprecher
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -1150,6 +1234,26 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         .background(Color.White.copy(0.10f))
                         .clickable(onClick = { showLeaveConfirm = true })
                         .padding(vertical = 6.dp),
+                )
+                Text(
+                    "🎉",
+                    fontSize = 20.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .weight(0.85f)
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0x88FFD54F))
+                        .clickable {
+                            val now = System.currentTimeMillis()
+                            confettiBursts = confettiBursts + Triple(myX, myY, now)
+                            seenConfettiAts = seenConfettiAts + now
+                            scope.launch {
+                                runCatching { LuvApiClient.ceremonyConfetti(myX, myY) }
+                                    .onSuccess { if (it != null) ceremony = it }
+                            }
+                        }
+                        .padding(vertical = 8.dp),
                 )
                 if (canGift) {
                     Text(
@@ -1600,5 +1704,57 @@ private fun ConfettiOverlay() {
                 center = Offset(size.width * x, size.height * y)
             )
         }
+    }
+}
+
+@Composable
+private fun PositionedConfettiBurst(
+    originX: Float,
+    originY: Float,
+    onDone: () -> Unit,
+) {
+    val progress = remember { Animatable(0f) }
+    val bits = remember {
+        List(28) {
+            Triple(
+                (Random.nextFloat() - 0.5f) * 0.35f,
+                -(0.12f + Random.nextFloat() * 0.45f),
+                Color(
+                    listOf(0xFFFFD54F, 0xFFFF5A6A, 0xFF7CFF6B, 0xFF3DD6FF, 0xFFFF4FC3, 0xFFFFFFFF)
+                        .random()
+                )
+            )
+        }
+    }
+    LaunchedEffect(Unit) {
+        progress.animateTo(1f, tween(1400, easing = LinearEasing))
+        onDone()
+    }
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val ox = size.width * originX.coerceIn(0.05f, 0.95f)
+        val oy = size.height * originY.coerceIn(0.05f, 0.95f)
+        val t = progress.value
+        bits.forEach { (dx, dy, col) ->
+            val x = ox + dx * size.width * t
+            val y = oy + dy * size.height * t + (t * t * size.height * 0.12f)
+            val alpha = (1f - t).coerceIn(0f, 1f)
+            drawCircle(
+                color = col.copy(alpha = alpha),
+                radius = 5f + (1f - t) * 3f,
+                center = Offset(x, y)
+            )
+        }
+    }
+}
+
+private fun playApplauseSound(context: android.content.Context) {
+    runCatching {
+        val p = android.media.MediaPlayer.create(context, com.luv.couple.R.raw.wedding_applause)
+            ?: return
+        p.setOnCompletionListener { mp ->
+            runCatching { mp.release() }
+        }
+        p.setVolume(0.45f, 0.45f)
+        p.start()
     }
 }

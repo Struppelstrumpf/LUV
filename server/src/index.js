@@ -10363,15 +10363,47 @@ app.post("/v1/me/marriage/ceremony/applause", (req, res) => {
     return res.status(403).json({ error: "guests_only" });
   }
   const c = weddingCeremony.ensureCeremony(m);
+  const x = Math.min(0.95, Math.max(0.05, Number(req.body?.x) || 0.5));
+  const y = Math.min(0.95, Math.max(0.05, Number(req.body?.y) || 0.7));
   c.applauseBursts.push({
     userId: ctx.user.id,
     at: Date.now(),
     emoji: "👏",
+    x,
+    y,
   });
   if (c.applauseBursts.length > 40) {
     c.applauseBursts = c.applauseBursts.slice(-40);
   }
   c.reactions[ctx.user.id] = { emoji: "👏", until: Date.now() + 1800 };
+  scheduleSave();
+  return res.json({
+    ok: true,
+    ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+  });
+});
+
+app.post("/v1/me/marriage/ceremony/confetti", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const m = findMarriageForCeremonyMember(db, ctx.user.id);
+  if (!m || (m.status !== "married" && m.status !== "ceremony_scheduled")) {
+    return res.status(400).json({ error: "wrong_phase" });
+  }
+  const c = weddingCeremony.ensureCeremony(m);
+  if (!Array.isArray(c.confettiBursts)) c.confettiBursts = [];
+  const x = Math.min(0.95, Math.max(0.05, Number(req.body?.x) || 0.5));
+  const y = Math.min(0.95, Math.max(0.05, Number(req.body?.y) || 0.7));
+  c.confettiBursts.push({
+    userId: ctx.user.id,
+    at: Date.now(),
+    x,
+    y,
+  });
+  if (c.confettiBursts.length > 40) {
+    c.confettiBursts = c.confettiBursts.slice(-40);
+  }
   scheduleSave();
   return res.json({
     ok: true,

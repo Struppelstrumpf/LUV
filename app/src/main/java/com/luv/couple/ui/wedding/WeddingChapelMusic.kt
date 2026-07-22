@@ -103,7 +103,7 @@ class WeddingChapelMusic(context: Context) {
         releasePlayer()
         mode = Mode.BRIDAL
         runCatching {
-            val p = MediaPlayer.create(appContext, R.raw.wedding_bridal_march) ?: run {
+            val p = MediaPlayer.create(appContext, R.raw.wedding_chapel_music) ?: run {
                 mode = Mode.SILENT
                 return
             }

@@ -39,6 +39,7 @@ function ensureCeremony(m) {
       giftedBy: {},
       guestbookedBy: {},
       applauseBursts: [],
+      confettiBursts: [],
     };
   }
   if (!m.ceremony.presence || typeof m.ceremony.presence !== "object") m.ceremony.presence = {};
@@ -66,6 +67,7 @@ function ensureCeremony(m) {
     m.ceremony.moneyTreesClaimed = {};
   }
   if (!Array.isArray(m.ceremony.applauseBursts)) m.ceremony.applauseBursts = [];
+  if (!Array.isArray(m.ceremony.confettiBursts)) m.ceremony.confettiBursts = [];
   if (typeof m.ceremony.seatingLocked !== "boolean") m.ceremony.seatingLocked = false;
   if (!Number.isFinite(Number(m.ceremony.altarHoldStartedAt))) m.ceremony.altarHoldStartedAt = 0;
   if (!m.ceremony.pastorPhase) m.ceremony.pastorPhase = "idle";
@@ -255,7 +257,7 @@ function buildPastorLines(m, users = {}) {
   const day = formatDeDay(m.engagedAt || m.proposedAt || m.ceremonyAt);
   return [
     `Liebes Brautpaar, liebe Gäste, wir haben uns heute hier eingefunden, um ${nameA} und ${nameB} in den heiligen Bund der Ehe zu führen.`,
-    `An ${day} hat ${proposer} ${proposee} den Heiratsantrag gemacht — ein Moment, der euch bis hierher geführt hat.`,
+    `Am ${day} hat ${proposer} ${proposee} den Heiratsantrag gemacht — ein Moment, der euch bis hierher geführt hat.`,
     `${nameA} und ${nameB}, vor euren Gästen und vor diesem Altar frage ich euch nun: Wollt ihr einander die Ehe versprechen?`,
   ];
 }
@@ -639,6 +641,23 @@ function publicCeremony(m, viewerId, users = {}) {
     iGuestbooked,
     vowsReady: c.pastorPhase === "vows",
     marriageStatus: m.status || null,
+    applauseBursts: (c.applauseBursts || [])
+      .slice(-12)
+      .map((b) => ({
+        userId: b.userId || null,
+        at: Number(b.at) || 0,
+        emoji: b.emoji || "👏",
+        x: Number.isFinite(Number(b.x)) ? Number(b.x) : 0.5,
+        y: Number.isFinite(Number(b.y)) ? Number(b.y) : 0.7,
+      })),
+    confettiBursts: (c.confettiBursts || [])
+      .slice(-12)
+      .map((b) => ({
+        userId: b.userId || null,
+        at: Number(b.at) || 0,
+        x: Number.isFinite(Number(b.x)) ? Number(b.x) : 0.5,
+        y: Number.isFinite(Number(b.y)) ? Number(b.y) : 0.7,
+      })),
     claimedMoneyTreeIds: Object.keys(c.moneyTreesClaimed || {})
       .filter((k) => k.startsWith(`${viewerId}:`))
       .map((k) => k.slice(String(viewerId).length + 1))
