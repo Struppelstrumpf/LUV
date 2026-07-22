@@ -1481,6 +1481,7 @@ fun LuvAppNav() {
                 accountMessage = "Bitte erneut mit Google anmelden, um Lobbys zu laden."
             }
         }
+        // Nach Lobbys: Freunde/Erfolge/Inventar einmal (Cache); Markt/Notices leicht
         launch { runCatching { MarketHubCache.warm() } }
         launch { runCatching { AppUpdater.check(context, notify = true) } }
         if (!LuvApiClient.sessionToken.isNullOrBlank()) {
@@ -1490,6 +1491,7 @@ fun LuvAppNav() {
                 }
             }
             launch { AchievementsBadge.refresh() }
+            launch { syncInventory() }
             launch {
                 runCatching {
                     LuvApiClient.fetchLiveNotice()?.let { LiveNoticeBus.offer(it) }
@@ -1768,13 +1770,6 @@ fun LuvAppNav() {
         if (startDestination != Routes.MAIN) return@LaunchedEffect
         kotlinx.coroutines.delay(1800)
         com.luv.couple.lock.CanvasMemoryKeeper.checkAndNotify(context.applicationContext)
-    }
-
-    LaunchedEffect(startDestination, account?.id) {
-        if (startDestination != Routes.MAIN) return@LaunchedEffect
-        if (account?.id.isNullOrBlank()) return@LaunchedEffect
-        runCatching { LuvApiClient.fetchEvents() }
-        AchievementsBadge.refresh()
     }
 
     // Kapellen-Layout vorwärmen, sobald eine Hochzeits-Lobby auf Home liegt
@@ -2604,7 +2599,15 @@ fun LuvAppNav() {
                                         runCatching { syncCloudAccount() }
                                     }
                                     1 -> {
+                                        // Sozial-Tipp: Anfragen/Badges frisch; Freunde-Cache bleibt
                                         com.luv.couple.net.NotificationBadges.markSozialSeen()
+                                        runCatching {
+                                            com.luv.couple.net.NotificationBadges.refreshFriends(
+                                                context,
+                                                force = true
+                                            )
+                                        }
+                                        runCatching { LuvApiClient.fetchEvents() }
                                         com.luv.couple.net.NotificationBadges.syncAppBadge(context)
                                     }
                                     2 -> syncInventory()

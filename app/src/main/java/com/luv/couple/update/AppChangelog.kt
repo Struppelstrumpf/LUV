@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.163",
+            listOf(
+                "Home zeigt Partner-Slots sofort; Sozial/Events laden gezielt beim Tippen",
+            )
+        ),
+        Entry(
             "2.2.162",
             listOf(
                 "Start: zuerst Lobbys + Home, danach Markt/Freunde — fühlt sich schneller an",

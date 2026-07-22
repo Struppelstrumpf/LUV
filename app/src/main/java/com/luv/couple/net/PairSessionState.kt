@@ -250,9 +250,21 @@ object PairSessionState {
             .map { it.nickname.trim() }
             .filter { isKnownDisplayNickname(it) && !it.equals("Du", ignoreCase = true) }
             .distinctBy { it.lowercase() }
+        val host = hostNickname?.trim().orEmpty()
+        // Vor welcome: wenigstens Host aus Prefs zeigen (kein leerer Slot-Flash)
+        if (others.isEmpty()) {
+            return buildList {
+                add("Du")
+                if (
+                    isKnownDisplayNickname(host) &&
+                    !host.equals(myNickname?.trim().orEmpty(), ignoreCase = true)
+                ) {
+                    add(host)
+                }
+            }
+        }
         return buildList {
             add("Du")
-            val host = hostNickname?.trim().orEmpty()
             if (
                 isKnownDisplayNickname(host) &&
                 others.any { it.equals(host, ignoreCase = true) }
@@ -263,6 +275,55 @@ object PairSessionState {
                 addAll(others)
             }
         }
+    }
+
+    /**
+     * Sofort Kapazität + Host vor dem WebSocket-welcome — Home wirkt nicht „leer“.
+     * welcome überschreibt gleich mit dem echten Roster.
+     */
+    fun seedHomePreview(
+        lobbyId: String,
+        hostNickname: String?,
+        myNickname: String?,
+        capacity: Int
+    ) {
+        if (capacity > 0) setCapacity(lobbyId, capacity)
+        val existing = peersByLobby[lobbyId]?.value
+        if (!existing.isNullOrEmpty()) return
+        val me = myNickname?.trim().orEmpty()
+        val host = hostNickname?.trim().orEmpty()
+        val members = buildList {
+            if (isKnownDisplayNickname(me)) {
+                add(
+                    RosterMember(
+                        userId = null,
+                        nickname = me,
+                        active = false,
+                        online = false
+                    )
+                )
+            }
+            if (
+                isKnownDisplayNickname(host) &&
+                !host.equals(me, ignoreCase = true)
+            ) {
+                add(
+                    RosterMember(
+                        userId = null,
+                        nickname = host,
+                        active = false,
+                        online = false
+                    )
+                )
+            }
+        }
+        if (members.isEmpty()) return
+        onRoster(
+            lobbyId,
+            members,
+            members.size,
+            capacity.takeIf { it > 0 }
+        )
     }
 
     fun isKnownDisplayNickname(nick: String?): Boolean {

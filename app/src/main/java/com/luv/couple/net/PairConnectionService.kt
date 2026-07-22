@@ -206,7 +206,15 @@ class PairConnectionService : Service() {
             .map { it.lobby.id }
             .forEach { stopLobby(it) }
         // Parallel — kein Staffeln; Token liegt lokal, WS kann sofort auf
+        val myNick = CanvasStore.cachedNickname
+            ?: AccountSession.account.value?.nickname
         unique.forEach { lobby ->
+            PairSessionState.seedHomePreview(
+                lobbyId = lobby.id,
+                hostNickname = lobby.hostNickname,
+                myNickname = myNick,
+                capacity = lobby.capacity
+            )
             scope.launch { ensureLobbySession(lobby) }
         }
         refreshAggregateState()

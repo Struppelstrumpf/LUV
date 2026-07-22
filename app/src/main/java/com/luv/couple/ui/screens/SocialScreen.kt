@@ -109,13 +109,12 @@ fun SocialScreen(
     LaunchedEffect(Unit) {
         runCatching { LuvApiClient.pingAchievement("social_opens") }
         com.luv.couple.net.NotificationBadges.markSozialSeen()
-        // Cache-First — force erst über Aktualisieren-Button
-        kotlinx.coroutines.coroutineScope {
-            launch { runCatching { AchievementsBadge.refresh() } }
-            launch {
-                runCatching {
-                    com.luv.couple.net.NotificationBadges.refreshFriends(force = false)
-                }
+        // Aktive Event-Kachel: beim Sozial-Betreten (auch im Freunde-Tab)
+        launch { runCatching { LuvApiClient.fetchEvents() } }
+        // Anfragen/Badges frisch; Erfolge-Cache reicht bis Erfolge-Tab
+        launch {
+            runCatching {
+                com.luv.couple.net.NotificationBadges.refreshFriends(force = true)
             }
         }
         com.luv.couple.net.NotificationBadges.markSozialSeen()
@@ -138,7 +137,10 @@ fun SocialScreen(
     LaunchedEffect(tab) {
         when (tab) {
             0 -> com.luv.couple.net.NotificationBadges.markFriendsTabSeen()
-            2 -> com.luv.couple.net.NotificationBadges.markAchievementsTabSeen()
+            2 -> {
+                com.luv.couple.net.NotificationBadges.markAchievementsTabSeen()
+                runCatching { AchievementsBadge.refresh() }
+            }
         }
     }
 
