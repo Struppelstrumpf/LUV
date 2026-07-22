@@ -214,6 +214,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     var rejectName by remember { mutableStateOf<String?>(null) }
     var married by remember { mutableStateOf(false) }
     var confetti by remember { mutableStateOf(false) }
+    var showReceptionCongrats by remember { mutableStateOf(false) }
     var myReaction by remember { mutableStateOf<String?>(null) }
     var layout by remember { mutableStateOf(cachedLayout) }
     var spawned by remember { mutableStateOf(cachedLayout != null) }
@@ -411,9 +412,31 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 layoutJob.await()?.let { WeddingChapelCache.put(it) }
             }
         }
-        while (!married && rejectName == null) {
+        while (rejectName == null) {
             runCatching { LuvApiClient.fetchCeremony() }
-                .onSuccess { applyCeremonyBundle(it) }
+                .onSuccess { bundle ->
+                    applyCeremonyBundle(bundle)
+                    val phase = bundle.ceremony?.pastorPhase
+                    if (phase == "married" || phase == "reception") {
+                        if (!married) {
+                            married = true
+                            confetti = true
+                        }
+                    }
+                    if (phase == "reception" && !showReceptionCongrats) {
+                        showReceptionCongrats = true
+                    }
+                    // Pastor-Rede + Empfang weiter pollen, nicht nach dem Ja abbrechen
+                    if (
+                        phase == "reception" ||
+                        bundle.ceremony?.phase == "reception" ||
+                        phase == "gifts_claim" ||
+                        bundle.ceremony?.phase == "gifts_claim" ||
+                        phase == "ended"
+                    ) {
+                        // Empfang läuft — langsam weiter pollen reicht
+                    }
+                }
                 .onFailure { e ->
                     val err = (e as? com.luv.couple.net.LuvApiException)?.error
                     if (err == "reception_over") {
@@ -891,7 +914,14 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 // Vow-Popup für Brautpaar — erst nach Pastor-Rede
                 val meGuest = c?.gathering?.find { it.userId == myId }
                 if (c?.vowsReady == true && meGuest?.isCouple == true && seated) {
+                    val lockedFromServer =
+                        when {
+                            (meGuest.vowProgress >= 1f && meGuest.vow == "yes") -> "yes"
+                            (meGuest.vowProgress >= 1f && meGuest.vow == "no") -> "no"
+                            else -> null
+                        }
                     VowDecisionPopup(
+                        lockedChoice = lockedFromServer,
                         onYesProgress = { p ->
                             scope.launch {
                                 val r = runCatching { LuvApiClient.ceremonyVow("yes", p) }.getOrNull()
@@ -1007,34 +1037,39 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 delay(5200)
                 confetti = false
             }
-            if (meIsCouple) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(horizontal = 28.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(Color(0xF2FFF8F0))
-                        .border(2.dp, Color(0xFFD4A017), RoundedCornerShape(24.dp))
-                        .padding(horizontal = 22.dp, vertical = 18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text("💍", fontSize = 28.sp)
-                    SpacerH()
-                    Text(
-                        "Glückwunsch",
-                        color = Color(0xFF5C2A3A),
-                        fontFamily = DisplayFont,
-                        fontSize = 26.sp,
-                        textAlign = TextAlign.Center,
-                    )
-                    Text(
-                        "Ihr seid verheiratet!",
-                        color = Color(0xFF3E2723),
-                        fontFamily = BodyFont,
-                        fontSize = 17.sp,
-                        textAlign = TextAlign.Center,
-                    )
-                }
+        }
+        // Glückwunsch-Karte erst wenn Pastor fertig ist (Empfang)
+        if (meIsCouple && showReceptionCongrats) {
+            LaunchedEffect(showReceptionCongrats) {
+                delay(5500)
+                showReceptionCongrats = false
+            }
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 28.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Color(0xF2FFF8F0))
+                    .border(2.dp, Color(0xFFD4A017), RoundedCornerShape(24.dp))
+                    .padding(horizontal = 22.dp, vertical = 18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("💍", fontSize = 28.sp)
+                SpacerH()
+                Text(
+                    "Glückwunsch",
+                    color = Color(0xFF5C2A3A),
+                    fontFamily = DisplayFont,
+                    fontSize = 26.sp,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    "Ihr seid verheiratet!",
+                    color = Color(0xFF3E2723),
+                    fontFamily = BodyFont,
+                    fontSize = 17.sp,
+                    textAlign = TextAlign.Center,
+                )
             }
         }
 
@@ -1359,9 +1394,14 @@ private const val VOW_HOLD_MS = 15_000
 
 @Composable
 private fun VowDecisionPopup(
+    lockedChoice: String? = null,
     onYesProgress: (Float) -> Unit,
     onNoProgress: (Float) -> Unit,
 ) {
+    var locked by remember { mutableStateOf(lockedChoice) }
+    LaunchedEffect(lockedChoice) {
+        if (lockedChoice != null) locked = lockedChoice
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1388,22 +1428,38 @@ private fun VowDecisionPopup(
                 textAlign = TextAlign.Center,
             )
             Text(
-                "Taste 15 Sekunden gedrückt halten",
+                when (locked) {
+                    "yes" -> "Ja eingerastet — warte auf Partner…"
+                    "no" -> "Nein eingerastet"
+                    else -> "Taste 15 Sekunden gedrückt halten"
+                },
                 color = Color(0xFF6D4C41),
                 fontFamily = BodyFont,
                 fontSize = 13.sp,
                 textAlign = TextAlign.Center,
             )
-            VowHoldSlider(
-                label = "Ja",
-                color = Color(0xFF43A047),
-                onProgress = onYesProgress,
-            )
-            VowHoldSlider(
-                label = "Nein",
-                color = Color(0xFFE53935),
-                onProgress = onNoProgress,
-            )
+            if (locked == null || locked == "yes") {
+                VowHoldSlider(
+                    label = "Ja",
+                    color = Color(0xFF43A047),
+                    locked = locked == "yes",
+                    onProgress = { p ->
+                        onYesProgress(p)
+                        if (p >= 1f) locked = "yes"
+                    },
+                )
+            }
+            if (locked == null || locked == "no") {
+                VowHoldSlider(
+                    label = "Nein",
+                    color = Color(0xFFE53935),
+                    locked = locked == "no",
+                    onProgress = { p ->
+                        onNoProgress(p)
+                        if (p >= 1f) locked = "no"
+                    },
+                )
+            }
         }
     }
 }
@@ -1412,22 +1468,34 @@ private fun VowDecisionPopup(
 private fun VowHoldSlider(
     label: String,
     color: Color,
+    locked: Boolean = false,
     onProgress: (Float) -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val progress = remember { Animatable(0f) }
-    LaunchedEffect(pressed) {
+    val progress = remember { Animatable(if (locked) 1f else 0f) }
+    LaunchedEffect(locked) {
+        if (locked) {
+            progress.snapTo(1f)
+            onProgress(1f)
+        }
+    }
+    LaunchedEffect(pressed, locked) {
+        if (locked) return@LaunchedEffect
         if (pressed) {
             progress.snapTo(0f)
             progress.animateTo(1f, tween(VOW_HOLD_MS, easing = LinearEasing))
             onProgress(1f)
         } else {
-            progress.snapTo(0f)
-            onProgress(0f)
+            // Nicht auf 0 zurücksetzen wenn schon voll (Finger los nach Einrasten)
+            if (progress.value < 0.999f) {
+                progress.snapTo(0f)
+                onProgress(0f)
+            }
         }
     }
-    LaunchedEffect(progress.value) {
+    LaunchedEffect(progress.value, locked) {
+        if (locked) return@LaunchedEffect
         if (pressed && progress.value > 0f && progress.value < 1f) {
             onProgress(progress.value)
         }
@@ -1437,9 +1505,20 @@ private fun VowHoldSlider(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
-            .background(color.copy(0.12f))
-            .border(1.5.dp, color.copy(0.75f), RoundedCornerShape(18.dp))
-            .clickable(interactionSource = interaction, indication = null, onClick = {})
+            .background(color.copy(if (locked) 0.22f else 0.12f))
+            .border(
+                if (locked) 2.5.dp else 1.5.dp,
+                color.copy(if (locked) 1f else 0.75f),
+                RoundedCornerShape(18.dp),
+            )
+            .then(
+                if (locked) Modifier
+                else Modifier.clickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = {},
+                )
+            )
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -1456,7 +1535,11 @@ private fun VowHoldSlider(
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                if (pressed) "${remainSec}s" else "15s halten",
+                when {
+                    locked -> "✓ eingerastet"
+                    pressed -> "${remainSec}s"
+                    else -> "15s halten"
+                },
                 color = Color(0xFF5D4037),
                 fontFamily = BodyFont,
                 fontSize = 13.sp,

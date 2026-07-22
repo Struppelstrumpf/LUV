@@ -1460,6 +1460,8 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
   const cfg = ensureEventsConfig(db);
   const active = [];
   const upcoming = [];
+  /** Nur während echtem Event-Fenster — nicht Abstimmung/Gewinner (Menü-Theme). */
+  const liveTheme = [];
   for (const e of cfg.events) {
     if (e.enabled === false) continue;
     const pub = publicEvent(e);
@@ -1571,6 +1573,7 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
     if (activeNow || votingOpen || winnersPhase || claimPending) {
       if (activeNow) {
         row.canCollect = prog.lastCollectDay !== dayKey;
+        liveTheme.push(row);
       } else {
         row.canCollect = false;
         row.canCreateLobby = false;
@@ -1598,9 +1601,9 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
   // Numerisch nach Start sortieren — Display-Labels („Fr 18:00“) dürfen Custom-Events
   // nicht hinter Builtins mit „2026-…“ aus dem Top-8 drängen.
   upcoming.sort((a, b) => (a._fromMs || 0) - (b._fromMs || 0));
-  // Bei Überlappung (Advent ∩ Weihnachten) Decor vom Event mit höchstem sort
+  // Menü-Decor/Emoji nur vom live laufenden Event — Abstimmung = Standard-Theme
   const primary =
-    active.slice().sort((a, b) => (b.sort || 0) - (a.sort || 0))[0] || null;
+    liveTheme.slice().sort((a, b) => (b.sort || 0) - (a.sort || 0))[0] || null;
   return {
     ok: true,
     dayKey,

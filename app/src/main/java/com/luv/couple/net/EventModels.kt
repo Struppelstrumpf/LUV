@@ -399,21 +399,22 @@ object EventSession {
     }
 
     val activeDecor: EventDecor?
-        get() = _state.value?.primaryDecor?.takeIf { it.particles != "none" || it.bannerText.isNotBlank() }
+        get() = liveMenuDecorOrNull()
 
-    /** Menü-Akzentfarbe vom aktiven Event (sonst null). */
+    /** Menü-Akzentfarbe vom live laufenden Event (nicht Abstimmung). */
     fun menuAccentOrNull(): androidx.compose.ui.graphics.Color? {
-        val hex = _state.value?.primaryDecor?.accentHex?.trim().orEmpty()
+        val live = primaryLiveThemedEvent() ?: return null
+        val hex = live.decor.accentHex.trim()
         if (hex.isBlank()) return null
         return runCatching {
             androidx.compose.ui.graphics.Color(android.graphics.Color.parseColor(hex))
         }.getOrNull()
     }
 
-    /** Kleines Schmuck-Emoji fürs Hauptmenü (neben +). */
+    /** Kleines Schmuck-Emoji fürs Hauptmenü (neben +) — nur während Event-Fenster. */
     fun menuGlyphOrNull(): String? {
-        val s = _state.value ?: return null
-        val decor = s.primaryDecor ?: return null
+        val live = primaryLiveThemedEvent() ?: return null
+        val decor = live.decor
         val fromOrnament = when (decor.ornaments) {
             "wreath" -> "🎄"
             "hearts" -> "💕"
@@ -421,21 +422,35 @@ object EventSession {
             else -> null
         }
         if (fromOrnament != null) return fromOrnament
-        val emoji = s.active.firstOrNull { it.id == s.primaryEventId }?.emoji
-            ?: s.active.firstOrNull()?.emoji
-        return emoji?.takeIf { it.isNotBlank() }
+        return live.emoji.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Live-Event für Theme: Lobby/Collect möglich = Fenster offen.
+     * Abstimmung/Gewinner ohne Live-Fenster → null (Standard-Menü).
+     */
+    fun primaryLiveThemedEvent(): SeasonEvent? {
+        val s = _state.value ?: return null
+        val live = s.active.filter { e ->
+            e.canCreateLobby || e.canOpenLobby || e.canCollect ||
+                (e.contest?.phase == "live")
+        }
+        if (live.isEmpty()) return null
+        return live.firstOrNull { it.id == s.primaryEventId } ?: live.firstOrNull()
     }
 
     /** Aktives Primär-Event (für Infos zum Glyph neben +). */
-    fun primaryActiveEvent(): SeasonEvent? {
-        val s = _state.value ?: return null
-        return s.active.firstOrNull { it.id == s.primaryEventId }
-            ?: s.active.firstOrNull()
-    }
+    fun primaryActiveEvent(): SeasonEvent? = primaryLiveThemedEvent()
 
     /** Event-Lobby im +-Menü: nur während aktives Event (neu oder bestehend öffnen). */
     fun primaryEventForLobby(): SeasonEvent? {
         val s = _state.value ?: return null
         return s.active.firstOrNull { it.canCreateLobby || it.canOpenLobby }
+    }
+
+    /** Ambient-Partikel nur bei live laufendem Event. */
+    fun liveMenuDecorOrNull(): EventDecor? {
+        val live = primaryLiveThemedEvent() ?: return null
+        return live.decor.takeIf { it.particles != "none" || it.bannerText.isNotBlank() }
     }
 }

@@ -2038,7 +2038,7 @@ fun LuvAppNav() {
 
         composable(Routes.MAIN) {
             val eventsUi by EventSession.state.collectAsStateWithLifecycle()
-            val ambientDecor = eventsUi?.primaryDecor
+            val ambientDecor = EventSession.liveMenuDecorOrNull()
             Box(
                 modifier = Modifier
                     .fillMaxSize()

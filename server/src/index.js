@@ -10315,7 +10315,21 @@ app.post("/v1/me/marriage/ceremony/vow", (req, res) => {
     });
   }
   const choice = String(req.body?.choice || "").toLowerCase() === "no" ? "no" : "yes";
-  const progress = Math.min(1, Math.max(0, Number(req.body?.progress) || 0));
+  let progress = Math.min(1, Math.max(0, Number(req.body?.progress) || 0));
+  const prev = c.vows[ctx.user.id];
+  // Einmal eingerastet (15s voll) → nicht mehr zurücksetzen oder umschalten
+  if (prev && (Number(prev.progress) || 0) >= 1) {
+    scheduleSave();
+    return res.json({
+      ok: true,
+      locked: true,
+      ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+    });
+  }
+  // Fortschritt nur nach oben (Finger-Loslassen darf nicht auf 0 zurück)
+  if (prev && prev.choice === choice) {
+    progress = Math.max(progress, Number(prev.progress) || 0);
+  }
   c.vows[ctx.user.id] = { choice, progress, at: Date.now() };
   if (choice === "no" && progress >= 1) {
     const nick = String(ctx.user.nickname || "").trim().slice(0, 18) || "Jemand";
