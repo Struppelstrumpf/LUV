@@ -194,6 +194,8 @@ fun ProfileCanvasScreen(
     var marriageCooldownSkipCost by remember { mutableIntStateOf(0) }
     var partnerCooldownLabel by remember { mutableStateOf<String?>(null) }
     var canDivorce by remember { mutableStateOf(false) }
+    var peerMarriage by remember { mutableStateOf<LuvApiClient.MarriageInfo?>(null) }
+    var marriageActionBusy by remember { mutableStateOf(false) }
     var spouseExtraName by remember { mutableStateOf<String?>(null) }
     var engagedExtraName by remember { mutableStateOf<String?>(null) }
     var dayStreak by remember { mutableIntStateOf(0) }
@@ -335,6 +337,7 @@ fun ProfileCanvasScreen(
                 marriageCooldownSkipCost = remote.marriageCooldownSkipCost
                 partnerCooldownLabel = remote.partnerMarriageCooldownLabel
                 canDivorce = remote.canDivorce
+                peerMarriage = remote.marriage
                 spouseExtraName = remote.spousePublic?.nickname
                 engagedExtraName = remote.fiancePublic?.nickname
                 dayStreak = remote.dayStreak
@@ -354,6 +357,7 @@ fun ProfileCanvasScreen(
                 marriageCooldownSkipCost = 0
                 partnerCooldownLabel = null
                 canDivorce = false
+                peerMarriage = null
                 dayStreak = 0
             }
             savedSnapshot = state.snapshotKey()
@@ -1243,7 +1247,116 @@ fun ProfileCanvasScreen(
                     // Kein Heiraten, wenn schon Verlobt/Ehe mit jemandem (auch bei API-Drift)
                     val alreadyBonded = !spouseExtraName.isNullOrBlank() ||
                         !engagedExtraName.isNullOrBlank()
-                    if (canProposeMarriage && !alreadyBonded) {
+                    val myAccountId = AccountSession.account.value?.id
+                    val incomingMarriageProposal =
+                        peerMarriage?.status == "proposed" &&
+                            !userId.isNullOrBlank() &&
+                            peerMarriage?.proposedBy == userId &&
+                            peerMarriage?.proposedBy != myAccountId
+                    val outgoingMarriageProposal =
+                        peerMarriage?.status == "proposed" &&
+                            peerMarriage?.proposedBy == myAccountId
+                    if (incomingMarriageProposal) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            "Heiratsanfrage 💍",
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = 15.sp,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(46.dp)
+                                    .clip(RoundedCornerShape(23.dp))
+                                    .background(Color(0xFFFFD54F).copy(0.35f))
+                                    .clickable(enabled = !marriageActionBusy) {
+                                        val uid = userId ?: return@clickable
+                                        marriageActionBusy = true
+                                        scope.launch {
+                                            runCatching { LuvApiClient.acceptMarriage(uid) }
+                                                .onSuccess {
+                                                    peerMarriage = it
+                                                    canProposeMarriage = false
+                                                    engagedExtraName = it?.partnerNickname
+                                                        ?: loadedNick
+                                                    Toast.makeText(
+                                                        context,
+                                                        "Verlobt 💍",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
+                                                .onFailure {
+                                                    Toast.makeText(
+                                                        context,
+                                                        it.message ?: "Annehmen fehlgeschlagen",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
+                                            marriageActionBusy = false
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "Annehmen 💍",
+                                    color = Color(0xFF5A3040),
+                                    fontFamily = DisplayFont
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(46.dp)
+                                    .clip(RoundedCornerShape(23.dp))
+                                    .background(BgSoft)
+                                    .clickable(enabled = !marriageActionBusy) {
+                                        val uid = userId ?: return@clickable
+                                        marriageActionBusy = true
+                                        scope.launch {
+                                            runCatching { LuvApiClient.declineMarriage(uid) }
+                                                .onSuccess {
+                                                    peerMarriage = null
+                                                    canProposeMarriage = true
+                                                    Toast.makeText(
+                                                        context,
+                                                        "Abgelehnt",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
+                                                .onFailure {
+                                                    Toast.makeText(
+                                                        context,
+                                                        it.message ?: "Ablehnen fehlgeschlagen",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
+                                            marriageActionBusy = false
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Ablehnen", color = TextMuted, fontFamily = BodyFont)
+                            }
+                        }
+                    } else if (outgoingMarriageProposal) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            "Heiratsanfrage gesendet — warte auf Antwort",
+                            color = TextMuted,
+                            fontFamily = BodyFont,
+                            fontSize = 13.sp,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center
+                        )
+                    } else if (canProposeMarriage && !alreadyBonded) {
                         Spacer(modifier = Modifier.height(10.dp))
                         val totalHint = proposeUnlockCost + marriageCooldownSkipCost
                         Box(
@@ -1386,11 +1499,12 @@ fun ProfileCanvasScreen(
                         runCatching {
                             LuvApiClient.proposeMarriage(uid, unlockWithCoins = unlock > 0)
                         }
-                            .onSuccess {
+                            .onSuccess { m ->
                                 canProposeMarriage = false
                                 proposeUnlockCost = 0
                                 marriageCooldownSkipCost = 0
                                 marriageCooldownLabel = null
+                                peerMarriage = m
                                 displayCoins = AccountSession.account.value?.coins ?: displayCoins
                                 Toast.makeText(
                                     context,

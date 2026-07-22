@@ -182,7 +182,7 @@ object NotificationBadges {
     suspend fun refreshAll(context: Context? = null) {
         ensureAchievementsFpLoaded()
         runCatching {
-            val friends = LuvApiClient.fetchFriends()
+            val friends = LuvApiClient.fetchFriends(force = true)
             setFriendIncoming(
                 friends.incoming.size + friends.marriageProposals.size + friends.lobbyInvites.size
             )
@@ -201,7 +201,7 @@ object NotificationBadges {
 
     suspend fun refreshFriends(context: Context? = null) {
         runCatching {
-            val friends = LuvApiClient.fetchFriends()
+            val friends = LuvApiClient.fetchFriends(force = true)
             setFriendIncoming(
                 friends.incoming.size + friends.marriageProposals.size + friends.lobbyInvites.size
             )

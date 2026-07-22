@@ -289,7 +289,8 @@ private fun FriendsPanel(
         }
     }
 
-    LaunchedEffect(Unit) { reload(force = false) }
+    // Immer frisch laden — sonst fehlen Heiratsanfragen durch Freunde-Cache (45s)
+    LaunchedEffect(Unit) { reload(force = true) }
 
     fun persistOrder(next: List<LuvApiClient.FriendCard>) {
         friends = next
@@ -666,13 +667,14 @@ private fun FriendsPanel(
                         busyId = "m-${card.userId}"
                         scope.launch {
                             runCatching { LuvApiClient.acceptMarriage(card.userId) }
-                                .onSuccess { reload() }
+                                .onSuccess { reload(force = true) }
                                 .onFailure {
                                     Toast.makeText(
                                         context,
                                         it.message ?: "Annehmen fehlgeschlagen",
                                         Toast.LENGTH_SHORT
                                     ).show()
+                                    reload(force = true)
                                 }
                             busyId = null
                         }
@@ -681,13 +683,14 @@ private fun FriendsPanel(
                         busyId = "m-${card.userId}"
                         scope.launch {
                             runCatching { LuvApiClient.declineMarriage(card.userId) }
-                                .onSuccess { reload() }
+                                .onSuccess { reload(force = true) }
                                 .onFailure {
                                     Toast.makeText(
                                         context,
                                         it.message ?: "Ablehnen fehlgeschlagen",
                                         Toast.LENGTH_SHORT
                                     ).show()
+                                    reload(force = true)
                                 }
                             busyId = null
                         }

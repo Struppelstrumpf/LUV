@@ -2491,9 +2491,11 @@ object LuvApiClient {
         userId: String,
         unlockWithCoins: Boolean = true
     ): MarriageInfo? = withContext(Dispatchers.IO) {
+        invalidateFriendsCache()
         val body = JSONObject().put("unlockWithCoins", unlockWithCoins).toString()
         val json = authedPost("/v1/users/${userId.trim().encodeURL()}/marry/propose", body)
         json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
+        invalidateFriendsCache()
         parseMarriageInfo(json.optJSONObject("marriage"))
     }
 
@@ -2504,14 +2506,18 @@ object LuvApiClient {
     }
 
     suspend fun acceptMarriage(userId: String): MarriageInfo? = withContext(Dispatchers.IO) {
+        invalidateFriendsCache()
         val body = JSONObject().put("userId", userId.trim()).toString()
         val json = authedPost("/v1/me/marriage/accept", body)
+        invalidateFriendsCache()
         parseMarriageInfo(json.optJSONObject("marriage"))
     }
 
     suspend fun declineMarriage(userId: String) = withContext(Dispatchers.IO) {
+        invalidateFriendsCache()
         val body = JSONObject().put("userId", userId.trim()).toString()
         authedPost("/v1/me/marriage/decline", body)
+        invalidateFriendsCache()
         Unit
     }
 
