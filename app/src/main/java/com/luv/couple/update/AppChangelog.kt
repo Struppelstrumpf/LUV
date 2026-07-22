@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.152",
+            listOf(
+                "Hochzeit: 60-Min-Timer fürs Ja-Wort, sonst Coins zurück",
+            )
+        ),
+        Entry(
             "2.2.151",
             listOf(
                 "Admin: Test-Raum über Plus-Kachel (alle Layouts inkl. Hochzeit)",

@@ -1439,11 +1439,17 @@ private fun WeddingCeremonyLobbyButton(
     // Kapelle öffnet 10 Min. vor Termin — Einladen ist unabhängig davon (Sitze oben).
     val openAt = (lobby.ceremonyAt - 10 * 60 * 1000L).coerceAtLeast(0L)
     val open = lobby.ceremonyAt > 0L && now >= openAt
+    // Live-Fenster: 60 Min ab Öffnung (= Termin − 10 Min + 60 Min)
+    val liveRem = if (open) {
+        (openAt + 60L * 60L * 1000L - now).coerceAtLeast(0L)
+    } else 0L
     val label = when {
         receptionOver -> "Geschenke abholen"
         giftPhase == "open" && giftEnds > 0L ->
             "Noch ${formatCountdown(giftRem)} · Empfang"
         lobby.ceremonyAt <= 0L -> "Hochzeit"
+        open && liveRem > 0L && giftPhase.isBlank() ->
+            "Ja-Wort · ${formatCountdown(liveRem)}"
         open -> "Zur Hochzeit"
         else -> "Noch ${formatCountdown(openAt - now)}"
     }

@@ -66,6 +66,36 @@ fun AltarHoldTimerBanner(remainingMs: Long, totalMs: Long) {
 }
 
 @Composable
+fun LiveVowTimerBanner(remainingMs: Long) {
+    val totalSec = (remainingMs / 1000L).coerceAtLeast(0L)
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    val label = if (h > 0) {
+        String.format("%d:%02d:%02d", h, m, s)
+    } else {
+        String.format("%02d:%02d", m, s)
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 28.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color.White.copy(0.94f))
+            .border(1.dp, Color(0xFFE57373), RoundedCornerShape(999.dp))
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            "Ja-Wort · $label",
+            color = Color(0xFFB71C1C),
+            fontFamily = DisplayFont,
+            fontSize = 15.sp
+        )
+    }
+}
+
+@Composable
 fun ReceptionTimerBanner(remainingMs: Long) {
     val totalSec = (remainingMs / 1000L).coerceAtLeast(0L)
     val h = totalSec / 3600

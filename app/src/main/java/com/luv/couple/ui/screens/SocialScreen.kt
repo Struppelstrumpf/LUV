@@ -772,11 +772,17 @@ private fun FriendsPanel(
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()
                 )
+                val liveEnd =
+                    (openAt + 60L * 60L * 1000L).takeIf { openReady } ?: 0L
+                val liveRem = (liveEnd - nowMs).coerceAtLeast(0L)
                 Text(
-                    if (openReady) {
-                        "Kapelle ist offen — Gäste über die Lobby im Home einladen."
-                    } else {
-                        "Noch ${formatCountdown(untilOpen)} bis die Kapelle öffnet — Gäste kannst du schon jetzt einladen."
+                    when {
+                        openReady && liveRem > 0L ->
+                            "Kapelle offen — noch ${formatCountdown(liveRem)} fürs Ja-Wort (sonst Coins zurück)."
+                        openReady ->
+                            "Kapelle ist offen — Gäste über die Lobby im Home einladen."
+                        else ->
+                            "Noch ${formatCountdown(untilOpen)} bis die Kapelle öffnet — Gäste kannst du schon jetzt einladen."
                     },
                     color = TextMuted,
                     fontFamily = BodyFont,

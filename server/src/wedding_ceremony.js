@@ -10,6 +10,8 @@ const CEREMONY_CAPACITY = 10; // Default-Max; konkrete Lobby nutzt marriage.cere
 const CEREMONY_MIN_AHEAD_MS = 10 * 60 * 1000;
 const CEREMONY_MAX_AHEAD_MS = 14 * 24 * 60 * 60 * 1000;
 const CEREMONY_OPEN_BEFORE_MS = 10 * 60 * 1000;
+/** Ab Kapellen-Öffnung: Zeit fürs Ja-Wort; sonst Refund + Abbruch */
+const LIVE_WINDOW_MS = 60 * 60 * 1000;
 /** Länger + Heartbeat im Client — Idle-Gäste bleiben sichtbar */
 const PRESENCE_FRESH_MS = 120_000;
 const VOW_HOLD_MS = 15_000;
@@ -39,6 +41,8 @@ function ensureCeremony(m) {
       pastorLineIndex: 0,
       pastorLineStartedAt: 0,
       receptionEndsAt: 0,
+      liveWindowEndsAt: 0,
+      liveWindowCleared: false,
       giftedBy: {},
       guestbookedBy: {},
       applauseBursts: [],
@@ -77,6 +81,8 @@ function ensureCeremony(m) {
   if (!Number.isFinite(Number(m.ceremony.pastorLineIndex))) m.ceremony.pastorLineIndex = 0;
   if (!Number.isFinite(Number(m.ceremony.pastorLineStartedAt))) m.ceremony.pastorLineStartedAt = 0;
   if (!Number.isFinite(Number(m.ceremony.receptionEndsAt))) m.ceremony.receptionEndsAt = 0;
+  if (!Number.isFinite(Number(m.ceremony.liveWindowEndsAt))) m.ceremony.liveWindowEndsAt = 0;
+  if (typeof m.ceremony.liveWindowCleared !== "boolean") m.ceremony.liveWindowCleared = false;
   weddingBooking.ensureBooking(m);
   if (typeof m.moneyTreesEnabled !== "boolean") m.moneyTreesEnabled = false;
   if (!m.ceremonyLayoutId) m.ceremonyLayoutId = null;
@@ -234,6 +240,39 @@ function ceremonyOpenForEntry(m) {
   const at = Number(m?.ceremonyAt) || 0;
   if (!at) return false;
   return Date.now() >= at - CEREMONY_OPEN_BEFORE_MS;
+}
+
+function ceremonyOpenAt(m) {
+  const at = Number(m?.ceremonyAt) || 0;
+  if (!at) return 0;
+  return at - CEREMONY_OPEN_BEFORE_MS;
+}
+
+/** Setzt/ergänzt das 60-Min-Fenster ab Kapellen-Öffnung (nur vor Ehe). */
+function ensureLiveWindow(m) {
+  const c = ensureCeremony(m);
+  if (!m || m.status !== "ceremony_scheduled" || c.liveWindowCleared) return c;
+  const openAt = ceremonyOpenAt(m);
+  if (!openAt) return c;
+  if (!Number(c.liveWindowEndsAt) || Number(c.liveWindowEndsAt) < openAt) {
+    c.liveWindowEndsAt = openAt + LIVE_WINDOW_MS;
+  }
+  return c;
+}
+
+function liveWindowRemainingMs(m) {
+  const c = ensureCeremony(m);
+  if (!m || m.status !== "ceremony_scheduled" || c.liveWindowCleared) return 0;
+  ensureLiveWindow(m);
+  const ends = Number(c.liveWindowEndsAt) || 0;
+  if (!ends) return 0;
+  return Math.max(0, ends - Date.now());
+}
+
+function clearLiveWindow(m) {
+  const c = ensureCeremony(m);
+  c.liveWindowCleared = true;
+  c.liveWindowEndsAt = 0;
 }
 
 function nickOf(users, uid, fallback = "Jemand") {
@@ -437,7 +476,8 @@ function startMarriedSpeech(m) {
   c.phase = "gifts";
   // Daumen/Vow-UI zurücksetzen
   c.vows = {};
-  // Empfangs-Timer startet erst bei pastorPhase=reception
+  // Fail-Timer stoppen — Empfangs-60-Min starten bei pastorPhase=reception
+  clearLiveWindow(m);
 }
 
 function canStand(m, userId) {
@@ -630,6 +670,17 @@ function publicCeremony(m, viewerId, users = {}) {
     openForEntry: ceremonyOpenForEntry(m),
     msUntilCeremony: Math.max(0, (Number(m.ceremonyAt) || 0) - now),
     msUntilOpen: Math.max(0, (Number(m.ceremonyAt) || 0) - CEREMONY_OPEN_BEFORE_MS - now),
+    liveWindowEndsAt:
+      m.status === "ceremony_scheduled" && !c.liveWindowCleared
+        ? Number(ensureLiveWindow(m).liveWindowEndsAt) || 0
+        : 0,
+    liveWindowRemainingMs: liveWindowRemainingMs(m),
+    liveWindowTotalMs: LIVE_WINDOW_MS,
+    liveWindowActive:
+      m.status === "ceremony_scheduled" &&
+      !c.liveWindowCleared &&
+      ceremonyOpenForEntry(m) &&
+      liveWindowRemainingMs(m) > 0,
     gathering,
     gatheringPresentCount,
     gatheringTotal: gathering.length,
@@ -714,6 +765,7 @@ module.exports = {
   CEREMONY_MIN_AHEAD_MS,
   CEREMONY_MAX_AHEAD_MS,
   CEREMONY_OPEN_BEFORE_MS,
+  LIVE_WINDOW_MS,
   PRESENCE_FRESH_MS,
   VOW_HOLD_MS,
   ALTAR_HOLD_MS,
@@ -728,6 +780,10 @@ module.exports = {
   isPresent,
   validateCeremonyAt,
   ceremonyOpenForEntry,
+  ceremonyOpenAt,
+  ensureLiveWindow,
+  liveWindowRemainingMs,
+  clearLiveWindow,
   publicCeremony,
   partnerOf,
   computeAllGathered,

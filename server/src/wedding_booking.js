@@ -89,6 +89,8 @@ function ensureBooking(m) {
   if (!b.moneyTreesVote || typeof b.moneyTreesVote !== "object") b.moneyTreesVote = {};
   if (!b.roomVotes || typeof b.roomVotes !== "object") b.roomVotes = {};
   if (!b.confirm || typeof b.confirm !== "object") b.confirm = {};
+  if (!Number.isFinite(Number(b.chargedBillPerPerson))) b.chargedBillPerPerson = 0;
+  if (typeof b.refunded !== "boolean") b.refunded = false;
   if (typeof b.charged !== "boolean") b.charged = false;
   if (typeof b.charging !== "boolean") b.charging = false;
   if (b.moneyTrees !== true && b.moneyTrees !== false) b.moneyTrees = null;

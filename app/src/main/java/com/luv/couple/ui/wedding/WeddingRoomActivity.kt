@@ -522,9 +522,16 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     }
                     if (
                         err == "ceremony_aborted" ||
-                        e.message?.contains("abgebrochen", ignoreCase = true) == true
+                        e.message?.contains("abgebrochen", ignoreCase = true) == true ||
+                        e.message?.contains("Trauungszeit", ignoreCase = true) == true
                     ) {
-                        if (rejectName == null) rejectName = "Die Trauung"
+                        Toast.makeText(
+                            context,
+                            e.message ?: "Die Trauung wurde beendet.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        onClose()
+                        return@LaunchedEffect
                     }
                 }
             val cNow = ceremony
@@ -534,7 +541,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     cNow?.pastorPhase == "speech" ||
                     cNow?.pastorPhase == "vows" ||
                     cNow?.pastorPhase == "closing_no" ||
-                    cNow?.pastorPhase == "married"
+                    cNow?.pastorPhase == "married" ||
+                    cNow?.liveWindowActive == true
             // Im Raum oft pollen = flüssigeres Laufen für andere
             delay(if (fast) 280 else if (entered) 380 else 900)
         }
@@ -1108,6 +1116,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         (c?.pastorPhase == "reception" || c?.phase == "reception") &&
                             c.receptionRemainingMs > 0L ->
                             ReceptionTimerBanner(remainingMs = c.receptionRemainingMs)
+                        c?.liveWindowActive == true &&
+                            c.liveWindowRemainingMs > 0L &&
+                            c.marriageStatus == "ceremony_scheduled" ->
+                            LiveVowTimerBanner(remainingMs = c.liveWindowRemainingMs)
                         c?.vowsReady != true &&
                             c?.pastorPhase != "dots" &&
                             c?.seatingLocked != true ->

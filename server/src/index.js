@@ -2927,6 +2927,8 @@ function createWeddingCeremonyLobby(
   marriageRec.status = "ceremony_scheduled";
   const c = weddingCeremony.ensureCeremony(marriageRec);
   c.phase = "scheduled";
+  c.liveWindowCleared = false;
+  weddingCeremony.ensureLiveWindow(marriageRec);
   persistRooms();
   return code;
 }
@@ -2982,7 +2984,11 @@ function findMarriageForCeremonyMember(db, userId) {
   return null;
 }
 
-function abortWeddingCeremony(m, leftByUserId, { divorceCooldown = true } = {}) {
+function abortWeddingCeremony(
+  m,
+  leftByUserId,
+  { divorceCooldown = true, noticeText = null, notifyBoth = false } = {}
+) {
   if (!m) return;
   const db = getDb();
   const leftUser = leftByUserId ? db.users?.[leftByUserId] : null;
@@ -3001,22 +3007,31 @@ function abortWeddingCeremony(m, leftByUserId, { divorceCooldown = true } = {}) 
     if (a) marriage.setDivorceCooldown(a);
     if (b) marriage.setDivorceCooldown(b);
   }
-  const partner = partnerId ? db.users?.[partnerId] : null;
-  if (partner) {
-    if (!Array.isArray(partner.socialNotices)) partner.socialNotices = [];
-    partner.socialNotices.push({
+  const defaultText = divorceCooldown
+    ? "Deine Hochzeit… Tippe für mehr"
+    : "Die Trauung wurde abgebrochen — ihr könnt euch erneut verloben.";
+  const text = String(noticeText || defaultText).trim().slice(0, 160) || defaultText;
+  const pushNotice = (user, fromId, fromNick) => {
+    if (!user) return;
+    if (!Array.isArray(user.socialNotices)) user.socialNotices = [];
+    user.socialNotices.push({
       id: newId(),
       type: "wedding_left",
-      fromUserId: leftByUserId || null,
-      fromNickname: leftNick,
-      text: divorceCooldown
-        ? "Deine Hochzeit… Tippe für mehr"
-        : "Die Trauung wurde abgebrochen — ihr könnt euch erneut verloben.",
+      fromUserId: fromId || null,
+      fromNickname: fromNick || "System",
+      text,
       createdAt: Date.now(),
     });
-    if (partner.socialNotices.length > 30) {
-      partner.socialNotices = partner.socialNotices.slice(-30);
+    if (user.socialNotices.length > 30) {
+      user.socialNotices = user.socialNotices.slice(-30);
     }
+  };
+  if (notifyBoth) {
+    pushNotice(a, null, "Trauung");
+    pushNotice(b, null, "Trauung");
+  } else {
+    const partner = partnerId ? db.users?.[partnerId] : null;
+    pushNotice(partner, leftByUserId || null, leftNick);
   }
   const all = marriage.ensureMarriages(db);
   const key = m.id || marriage.pairKey(m.a, m.b);
@@ -3035,6 +3050,44 @@ function abortWeddingCeremony(m, leftByUserId, { divorceCooldown = true } = {}) 
 /** Nein am Altar: kein Scheidungs-/Antrags-Cooldown. */
 function abortWeddingCeremonyRejected(m, leftByUserId) {
   abortWeddingCeremony(m, leftByUserId, { divorceCooldown: false });
+}
+
+/** Coins aus Buchung zurück (beide Partner). */
+function refundWeddingBooking(m) {
+  if (!m) return 0;
+  const b = weddingCeremony.booking.ensureBooking(m);
+  if (!b.charged || b.refunded) return 0;
+  const stored = Number(b.chargedBillPerPerson);
+  const bill = Number.isFinite(stored) && stored >= 0
+    ? stored
+    : weddingCeremony.booking.billPerPerson(b);
+  const roomId = b.chargedRoomId || b.roomId || null;
+  if (bill > 0) {
+    applyLedger(m.a, bill, "wedding_booking_refund", roomId);
+    applyLedger(m.b, bill, "wedding_booking_refund", roomId);
+  }
+  b.refunded = true;
+  return bill;
+}
+
+/**
+ * 60-Min-Fenster ohne beiderseitiges Ja: Refund, Kick, Lobby weg, neu verloben möglich.
+ */
+function expireLiveWindowWithoutVows(m) {
+  if (!m || m.status !== "ceremony_scheduled") return false;
+  const c = weddingCeremony.ensureCeremony(m);
+  if (c.liveWindowCleared) return false;
+  weddingCeremony.ensureLiveWindow(m);
+  const ends = Number(c.liveWindowEndsAt) || 0;
+  if (!ends || Date.now() < ends) return false;
+  refundWeddingBooking(m);
+  abortWeddingCeremony(m, null, {
+    divorceCooldown: false,
+    notifyBoth: true,
+    noticeText:
+      "Die Trauungszeit ist abgelaufen — Coins zurück, kein Ja-Wort. Ihr könnt euch erneut verloben.",
+  });
+  return true;
 }
 
 function ceremonyLayoutIdOf(m) {
@@ -3109,6 +3162,9 @@ function syncWeddingZoneSeating(m, db, onlyUserId = null) {
 
 function tickCeremonyRitual(m, db) {
   if (!m) return null;
+  if (m.status === "ceremony_scheduled" && expireLiveWindowWithoutVows(m)) {
+    return { dissolved: true, liveWindowExpired: true };
+  }
   // Zuerst Ghosts weg, dann Sitze, dann Altar-Hold — sonst Musik mit einer Person
   weddingCeremony.pruneStaleGathering(m);
   syncWeddingZoneSeating(m, db);
@@ -3327,6 +3383,15 @@ function tickMarriages() {
     } else if (m.status === "wedding" && now >= (Number(m.weddingEndsAt) || 0)) {
       // Timer + Striche → Zeremonie freischalten (keine Auto-Ehe)
       if (weddingStrokesReadyFor(m) && markCeremonyPending(m)) dirty = true;
+    } else if (m.status === "ceremony_scheduled") {
+      if (expireLiveWindowWithoutVows(m)) dirty = true;
+      else {
+        const tick = tickCeremonyRitual(m, db);
+        if (tick) dirty = true;
+      }
+    } else if (m.status === "married") {
+      const tick = tickCeremonyRitual(m, db);
+      if (tick) dirty = true;
     }
   }
   if (tickWeddingGifts(now)) dirty = true;
@@ -7807,6 +7872,21 @@ setInterval(() => {
     console.error("tickMarriages", e);
   }
 }, 60_000).unref();
+// Ja-Wort-Fenster: öfter prüfen (Refund/Kick nicht erst nach 60s)
+setInterval(() => {
+  try {
+    const db = getDb();
+    const all = marriage.ensureMarriages(db);
+    let dirty = false;
+    for (const m of Object.values(all)) {
+      if (!m || m.status !== "ceremony_scheduled") continue;
+      if (expireLiveWindowWithoutVows(m)) dirty = true;
+    }
+    if (dirty) scheduleSave();
+  } catch (e) {
+    console.error("tickCeremonyLiveWindow", e);
+  }
+}, 10_000).unref();
 // Shop-Rotation: nur in der Nachtwartung (≈03:00 Berlin) + Boot/Admin — kein Tagestick
 setInterval(() => {
   try {
@@ -9767,7 +9847,9 @@ app.get("/v1/me/marriage/ceremony", (req, res) => {
     scheduleSave();
     return res.status(410).json({
       error: "ceremony_aborted",
-      message: "Die Trauung wurde abgebrochen.",
+      message: tick.liveWindowExpired
+        ? "Die Trauungszeit ist abgelaufen — Coins zurück, kein Ja-Wort."
+        : "Die Trauung wurde abgebrochen.",
     });
   }
   if (tick?.changed || tick?.receptionStarted || tick?.receptionOver) {
@@ -10231,6 +10313,9 @@ app.post("/v1/me/marriage/ceremony/booking/confirm", (req, res) => {
     trackAch(a, "coins_spent", bill);
     trackAch(b, "coins_spent", bill);
   }
+  bookingState.chargedBillPerPerson = bill;
+  bookingState.chargedRoomId = result.roomId || null;
+  bookingState.refunded = false;
 
   const done = finalizeCeremonySchedule(m, ctx.user.id, result.ceremonyAt, db, {
     layoutId: result.roomId,
