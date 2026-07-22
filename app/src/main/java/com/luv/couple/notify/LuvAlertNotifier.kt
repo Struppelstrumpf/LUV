@@ -379,14 +379,19 @@ object LuvAlertNotifier {
         }
     }
 
-    /** Launcher-Badge-Zahl (Android zeigt .setNumber auf dem App-Icon). */
-    fun updateAppBadge(context: Context, count: Int) {
+    /**
+     * Launcher-Badge-Zahl (Android zeigt .setNumber auf dem App-Icon).
+     * Text nennt den konkreten Grund — nie generisch „1 neuer Hinweis“.
+     */
+    fun updateAppBadge(context: Context, count: Int, summary: String = "") {
         ensureChannel(context)
         val mgr = context.getSystemService(NotificationManager::class.java) ?: return
         if (count <= 0) {
             mgr.cancel(NOTIFY_APP_BADGE)
             return
         }
+        val text = summary.trim().ifBlank { "Etwas Neues in LUV" }
+        val title = text.substringBefore(" · ").ifBlank { "LUV" }
         val open = PendingIntent.getActivity(
             context,
             NOTIFY_APP_BADGE,
@@ -397,10 +402,9 @@ object LuvAlertNotifier {
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Hinweise")
-            .setContentText(
-                if (count == 1) "1 neuer Hinweis" else "$count neue Hinweise"
-            )
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setNumber(count)
             .setContentIntent(open)
             .setSilent(true)

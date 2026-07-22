@@ -248,8 +248,38 @@ object NotificationBadges {
         setInventoryUnseen(n)
     }
 
+    /** Kurzer Klartext fürs App-Icon / stille Badge-Benachrichtigung (nur was die Zahl zählt). */
+    fun badgeSummary(): String {
+        val parts = ArrayList<String>(4)
+        if (!sozialSeen) {
+            val friends = _friendOnly.value
+            if (friends > 0) {
+                parts += if (friends == 1) "Freundschaftsanfrage" else "$friends Freundschaftsanfragen"
+            }
+            val marriages = _marriageIncoming.value
+            if (marriages > 0) {
+                parts += if (marriages == 1) "Heiratsantrag" else "$marriages Heiratsanträge"
+            }
+            val invites = _lobbyInviteIncoming.value
+            if (invites > 0) {
+                parts += if (invites == 1) "Lobby-Einladung" else "$invites Lobby-Einladungen"
+            }
+            if (hasAchievementsNews()) {
+                parts += "Erfolg abholen"
+            }
+        }
+        val sales = _pendingSales.value
+        if (sales > 0) {
+            parts += if (sales == 1) "Marktplatz-Verkauf" else "$sales Marktplatz-Verkäufe"
+        }
+        if (_inventoryUnseen.value > 0) {
+            parts += "Neues Item"
+        }
+        return parts.joinToString(" · ").ifBlank { "Etwas Neues in LUV" }
+    }
+
     fun syncAppBadge(context: Context) {
-        LuvAlertNotifier.updateAppBadge(context, _totalCount.value)
+        LuvAlertNotifier.updateAppBadge(context, _totalCount.value, badgeSummary())
     }
 
     suspend fun refreshAll(context: Context? = null) {
