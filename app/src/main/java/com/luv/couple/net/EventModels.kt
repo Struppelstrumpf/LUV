@@ -139,12 +139,17 @@ data class EventContestPrize(
 
 data class EventContestInfo(
     val enabled: Boolean = false,
+    /** live | voting | winners | ended */
+    val phase: String = "live",
     val votingOpen: Boolean = false,
     val canVote: Boolean = false,
+    val voteUntil: String? = null,
     val feedItem: EventContestFeedItem? = null,
     val winners: List<EventContestWinner> = emptyList(),
     val claimablePrize: EventContestPrize? = null,
     val prizeClaimed: Boolean = false,
+    /** Eigene Platzierung (auch nach Claim, Plätze 1–10+). */
+    val myPlace: Int? = null,
     val promptHint: String? = null,
     val lobbyCreated: Boolean = false,
     val prizesReady: Boolean = false,
@@ -152,6 +157,11 @@ data class EventContestInfo(
     val votesRemaining: Int = 100,
     val votesMax: Int = 100,
 ) {
+    val isPostEvent: Boolean
+        get() = phase == "voting" || phase == "winners" ||
+            votingOpen || prizesReady || winners.isNotEmpty() ||
+            claimablePrize != null || prizeClaimed
+
     companion object {
         fun fromJson(o: JSONObject?): EventContestInfo? {
             if (o == null) return null
@@ -172,17 +182,31 @@ data class EventContestInfo(
             } else {
                 (votesMax - votesUsed).coerceAtLeast(0)
             }
+            val phaseRaw = o.optString("phase").trim().lowercase()
+            val votingOpen = o.optBoolean("votingOpen", false)
+            val prizesReady = o.optBoolean("prizesReady", false)
+            val phase = when {
+                phaseRaw in setOf("live", "voting", "winners", "ended") -> phaseRaw
+                votingOpen -> "voting"
+                prizesReady || winners.isNotEmpty() -> "winners"
+                else -> "live"
+            }
+            val myPlace = o.optInt("myPlace", 0).takeIf { it > 0 }
+                ?: o.optJSONObject("claimablePrize")?.optInt("place", 0)?.takeIf { it > 0 }
             return EventContestInfo(
                 enabled = o.optBoolean("enabled", true),
-                votingOpen = o.optBoolean("votingOpen", false),
+                phase = phase,
+                votingOpen = votingOpen,
                 canVote = o.optBoolean("canVote", false),
+                voteUntil = o.optCleanString("voteUntil"),
                 feedItem = EventContestFeedItem.fromJson(o.optJSONObject("feedItem")),
                 winners = winners,
                 claimablePrize = EventContestPrize.fromJson(o.optJSONObject("claimablePrize")),
                 prizeClaimed = o.optBoolean("prizeClaimed", false),
+                myPlace = myPlace,
                 promptHint = o.optCleanString("promptHint"),
                 lobbyCreated = o.optBoolean("lobbyCreated", false),
-                prizesReady = o.optBoolean("prizesReady", false),
+                prizesReady = prizesReady,
                 votesUsed = votesUsed,
                 votesRemaining = votesRemaining.coerceAtLeast(0),
                 votesMax = votesMax,

@@ -25,10 +25,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,6 +74,23 @@ import okhttp3.Request
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
 import kotlin.math.max
+
+private fun parseIsoMillis(raw: String?): Long? {
+    val t = raw?.trim().orEmpty()
+    if (t.isEmpty()) return null
+    return runCatching { java.time.Instant.parse(t).toEpochMilli() }.getOrNull()
+        ?: runCatching {
+            java.time.OffsetDateTime.parse(t).toInstant().toEpochMilli()
+        }.getOrNull()
+}
+
+private fun formatCountdown(remainingMs: Long): String {
+    val totalSec = (remainingMs / 1000L).coerceAtLeast(0L)
+    val h = totalSec / 3600L
+    val m = (totalSec % 3600L) / 60L
+    val s = totalSec % 60L
+    return "%d:%02d:%02d".format(h, m, s)
+}
 
 /** Server liefert oft YYYY-MM-DD — Anzeige als 29.07.2026 (Uhrzeit-Labels bleiben). */
 private fun formatEventWhenPart(raw: String?): String? {
@@ -276,6 +295,8 @@ private fun EventHeroCard(
         )
     }
 
+    val postEvent = contest != null && contest.enabled && contest.isPostEvent
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -303,146 +324,27 @@ private fun EventHeroCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                val win = formatEventWhenLabel(event.windowStart, event.windowEnd, blank = "")
-                if (win.isNotBlank()) {
-                    Text(win, color = TextMuted, fontFamily = BodyFont, fontSize = 11.sp)
+                if (!postEvent) {
+                    val win = formatEventWhenLabel(event.windowStart, event.windowEnd, blank = "")
+                    if (win.isNotBlank()) {
+                        Text(win, color = TextMuted, fontFamily = BodyFont, fontSize = 11.sp)
+                    }
                 }
             }
         }
-        Text(
-            event.description,
-            color = TextPrimary.copy(0.92f),
-            fontFamily = BodyFont,
-            fontSize = 13.sp
-        )
-        if (event.hint.isNotBlank()) {
-            Text(event.hint, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
-        }
-        if (drawHint != null && (event.canCreateLobby || event.contestEnabled)) {
-            Text(
-                "Zeichne den Begriff „$drawHint“",
-                color = accent,
-                fontFamily = BodyFont,
-                fontSize = 12.sp
-            )
-        }
-        val rewards = event.resolvedRewardItems
-        if (rewards.isNotEmpty()) {
-            val labels = rewards.joinToString(", ") { it.label.ifBlank { it.itemId } }
-            Text(
-                if (event.itemGranted) {
-                    "Belohnung erhalten: $labels"
-                } else {
-                    "Ziel-Belohnung: $labels (nach ${event.collectTarget}× Sammeln)"
+
+        if (postEvent && contest != null) {
+            PostEventContestSection(
+                contest = contest,
+                accent = accent,
+                claimBusy = claimBusy,
+                onTimerEnded = {
+                    scope.launch {
+                        runCatching { LuvApiClient.fetchEvents() }
+                            .onSuccess { onStateUpdated(it) }
+                    }
                 },
-                color = AccentRose,
-                fontFamily = BodyFont,
-                fontSize = 12.sp,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        val target = event.collectTarget.coerceAtLeast(1)
-        val prog = event.progress.coerceIn(0, target)
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(8.dp)
-                .clip(RoundedCornerShape(999.dp))
-                .background(Color.White.copy(0.08f))
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(prog / target.toFloat())
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(accent)
-            )
-        }
-        Text(
-            "$prog / $target gesammelt · +${event.rewardCoinsPerCollect} Coins / Tag" +
-                if (event.milestoneBonusCoins > 0) " · Ziel +${event.milestoneBonusCoins}" else "",
-            color = TextMuted,
-            fontFamily = BodyFont,
-            fontSize = 11.sp
-        )
-        if (event.quests.isNotEmpty()) {
-            Text(
-                "Aufgaben",
-                color = TextPrimary,
-                fontFamily = DisplayFont,
-                fontSize = 14.sp
-            )
-            event.quests.forEach { q ->
-                val qProg = q.progress.coerceIn(0, q.target)
-                Text(
-                    "${if (q.done) "✓" else "○"} ${q.title} ($qProg/${q.target})" +
-                        if (q.rewardCoins > 0) " · +${q.rewardCoins}" else "",
-                    color = if (q.done) accent else TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 12.sp
-                )
-                if (q.hint.isNotBlank() && !q.done) {
-                    Text(q.hint, color = TextMuted.copy(0.85f), fontFamily = BodyFont, fontSize = 11.sp)
-                }
-            }
-        }
-        if (event.lobbyEnabled || event.contestEnabled) {
-            Text(
-                buildString {
-                    if (event.lobbyEnabled) append("Event-Lobby bereit")
-                    if (event.lobbyEnabled && event.contestEnabled) append(" · ")
-                    if (event.contestEnabled) append("Wettbewerb aktiv")
-                },
-                color = TextMuted,
-                fontFamily = BodyFont,
-                fontSize = 11.sp
-            )
-        }
-        if (event.canCreateLobby) {
-            TextButton(
-                onClick = onCreateLobby,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(accent.copy(0.22f))
-            ) {
-                Text(
-                    "Event-Lobby erstellen",
-                    color = TextPrimary,
-                    fontFamily = DisplayFont,
-                    fontSize = 15.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        } else if (event.lobbyEnabled && (event.lobbyCreated || !event.eventPrompt.isNullOrBlank())) {
-            TextButton(
-                onClick = onCreateLobby,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(accent.copy(0.22f))
-            ) {
-                Text(
-                    "Event-Lobby öffnen",
-                    color = TextPrimary,
-                    fontFamily = DisplayFont,
-                    fontSize = 15.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-        if (contest?.votingOpen == true) {
-            Text(
-                "Abstimmung läuft (24h nach Eventende)",
-                color = TextMuted,
-                fontFamily = BodyFont,
-                fontSize = 12.sp
-            )
-            TextButton(
-                onClick = {
+                onOpenVote = {
                     scope.launch {
                         runCatching { LuvApiClient.fetchEventContest(event.id) }
                             .onSuccess { result ->
@@ -459,68 +361,9 @@ private fun EventHeroCard(
                             }
                     }
                 },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(
-                        if (contest.canVote) accent.copy(0.28f) else Color.White.copy(0.08f)
-                    )
-            ) {
-                Text(
-                    when {
-                        contest.canVote && contest.votesRemaining > 0 ->
-                            "Abstimmen · noch ${contest.votesRemaining}"
-                        contest.votesRemaining <= 0 ->
-                            "Bewertungslimit erreicht"
-                        else -> "Zur Abstimmung"
-                    },
-                    color = TextPrimary,
-                    fontFamily = DisplayFont,
-                    fontSize = 15.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-        if (contest != null && !contest.votingOpen && contest.winners.isNotEmpty()) {
-            Text(
-                "Gewinner",
-                color = TextPrimary,
-                fontFamily = DisplayFont,
-                fontSize = 14.sp
-            )
-            Text(
-                "Tippe auf einen Platz, um das Bild zu sehen",
-                color = TextMuted,
-                fontFamily = BodyFont,
-                fontSize = 12.sp
-            )
-            contest.winners.forEach { winner ->
-                Text(
-                    "${winner.place}. ${winner.nickname}",
-                    color = accent,
-                    fontFamily = BodyFont,
-                    fontSize = 13.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable { selectedWinner = winner }
-                        .padding(vertical = 4.dp)
-                )
-            }
-        }
-        if (contest?.claimablePrize != null && !contest.prizeClaimed) {
-            val prize = contest.claimablePrize
-            Text(
-                "Dein Platz: ${prize.place} · ${prize.coins} Coins" +
-                    if (prize.grantMedal || prize.place == 1) " · 🥇" else "",
-                color = TextMuted,
-                fontFamily = BodyFont,
-                fontSize = 12.sp
-            )
-            TextButton(
-                onClick = {
-                    if (claimBusy) return@TextButton
+                onSelectWinner = { selectedWinner = it },
+                onClaim = {
+                    if (claimBusy) return@PostEventContestSection
                     claimBusy = true
                     scope.launch {
                         runCatching { LuvApiClient.claimContestPrize(event.id) }
@@ -551,6 +394,279 @@ private fun EventHeroCard(
                         claimBusy = false
                     }
                 },
+            )
+        } else {
+            Text(
+                event.description,
+                color = TextPrimary.copy(0.92f),
+                fontFamily = BodyFont,
+                fontSize = 13.sp
+            )
+            if (event.hint.isNotBlank()) {
+                Text(event.hint, color = TextMuted, fontFamily = BodyFont, fontSize = 12.sp)
+            }
+            if (drawHint != null && (event.canCreateLobby || event.contestEnabled)) {
+                Text(
+                    "Zeichne den Begriff „$drawHint“",
+                    color = accent,
+                    fontFamily = BodyFont,
+                    fontSize = 12.sp
+                )
+            }
+            val rewards = event.resolvedRewardItems
+            if (rewards.isNotEmpty()) {
+                val labels = rewards.joinToString(", ") { it.label.ifBlank { it.itemId } }
+                Text(
+                    if (event.itemGranted) {
+                        "Belohnung erhalten: $labels"
+                    } else {
+                        "Ziel-Belohnung: $labels (nach ${event.collectTarget}× Sammeln)"
+                    },
+                    color = AccentRose,
+                    fontFamily = BodyFont,
+                    fontSize = 12.sp,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            val target = event.collectTarget.coerceAtLeast(1)
+            val prog = event.progress.coerceIn(0, target)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color.White.copy(0.08f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(prog / target.toFloat())
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(accent)
+                )
+            }
+            Text(
+                "$prog / $target gesammelt · +${event.rewardCoinsPerCollect} Coins / Tag" +
+                    if (event.milestoneBonusCoins > 0) " · Ziel +${event.milestoneBonusCoins}" else "",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 11.sp
+            )
+            if (event.quests.isNotEmpty()) {
+                Text(
+                    "Aufgaben",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 14.sp
+                )
+                event.quests.forEach { q ->
+                    val qProg = q.progress.coerceIn(0, q.target)
+                    Text(
+                        "${if (q.done) "✓" else "○"} ${q.title} ($qProg/${q.target})" +
+                            if (q.rewardCoins > 0) " · +${q.rewardCoins}" else "",
+                        color = if (q.done) accent else TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 12.sp
+                    )
+                    if (q.hint.isNotBlank() && !q.done) {
+                        Text(q.hint, color = TextMuted.copy(0.85f), fontFamily = BodyFont, fontSize = 11.sp)
+                    }
+                }
+            }
+            if (event.lobbyEnabled || event.contestEnabled) {
+                Text(
+                    buildString {
+                        if (event.lobbyEnabled) append("Event-Lobby bereit")
+                        if (event.lobbyEnabled && event.contestEnabled) append(" · ")
+                        if (event.contestEnabled) append("Wettbewerb aktiv")
+                    },
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 11.sp
+                )
+            }
+            if (event.canCreateLobby) {
+                TextButton(
+                    onClick = onCreateLobby,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(accent.copy(0.22f))
+                ) {
+                    Text(
+                        "Event-Lobby erstellen",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 15.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            } else if (event.lobbyEnabled && (event.lobbyCreated || !event.eventPrompt.isNullOrBlank())) {
+                TextButton(
+                    onClick = onCreateLobby,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(accent.copy(0.22f))
+                ) {
+                    Text(
+                        "Event-Lobby öffnen",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 15.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+            EventShopTile(
+                event = event,
+                accent = accent,
+                onCoinsGranted = onCoinsGranted,
+            )
+            TextButton(
+                onClick = onCollect,
+                enabled = event.canCollect && !busy && !event.collectedToday,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        if (event.canCollect && !event.collectedToday) accent.copy(0.35f)
+                        else Color.White.copy(0.06f)
+                    )
+            ) {
+                Text(
+                    when {
+                        busy -> "…"
+                        event.collectedToday -> "Heute schon gesammelt"
+                        event.canCollect -> "Heute sammeln"
+                        else -> "Nicht verfügbar"
+                    },
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PostEventContestSection(
+    contest: EventContestInfo,
+    accent: Color,
+    claimBusy: Boolean,
+    onTimerEnded: () -> Unit,
+    onOpenVote: () -> Unit,
+    onSelectWinner: (EventContestWinner) -> Unit,
+    onClaim: () -> Unit,
+) {
+    val voteUntilMs = remember(contest.voteUntil) { parseIsoMillis(contest.voteUntil) }
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(contest.votingOpen, voteUntilMs) {
+        if (!contest.votingOpen || voteUntilMs == null) return@LaunchedEffect
+        while (true) {
+            nowMs = System.currentTimeMillis()
+            if (nowMs >= voteUntilMs) {
+                onTimerEnded()
+                break
+            }
+            delay(1000L)
+        }
+    }
+    val remaining = voteUntilMs?.let { (it - nowMs).coerceAtLeast(0L) } ?: 0L
+    val votingPhase = contest.votingOpen || contest.phase == "voting"
+    val winnersPhase = !votingPhase && (
+        contest.phase == "winners" ||
+            contest.prizesReady ||
+            contest.winners.isNotEmpty() ||
+            contest.claimablePrize != null ||
+            contest.prizeClaimed
+        )
+
+    if (votingPhase) {
+        Text(
+            if (voteUntilMs != null && remaining > 0L) {
+                "Abstimmung noch ${formatCountdown(remaining)}"
+            } else {
+                "Abstimmung läuft"
+            },
+            color = TextMuted,
+            fontFamily = BodyFont,
+            fontSize = 13.sp
+        )
+        // Nur wenn noch Bilder + Stimmen übrig (canVote)
+        if (contest.canVote) {
+            TextButton(
+                onClick = onOpenVote,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(accent.copy(0.28f))
+            ) {
+                Text(
+                    "Abstimmen · noch ${contest.votesRemaining}",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+
+    if (winnersPhase) {
+        if (contest.winners.isNotEmpty()) {
+            Text(
+                "Gewinner",
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 14.sp
+            )
+            Text(
+                "Tippe auf einen Platz, um das Bild zu sehen",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 12.sp
+            )
+            contest.winners.forEach { winner ->
+                Text(
+                    "${winner.place}. ${winner.nickname}",
+                    color = accent,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { onSelectWinner(winner) }
+                        .padding(vertical = 4.dp)
+                )
+            }
+        }
+        val place = contest.claimablePrize?.place ?: contest.myPlace
+        if (place != null && place > 0) {
+            Text(
+                "Dein Platz: $place" +
+                    if (contest.claimablePrize != null && !contest.prizeClaimed) {
+                        val p = contest.claimablePrize
+                        " · ${p.coins} Coins" +
+                            if (p.grantMedal || p.place == 1) " · 🥇" else ""
+                    } else {
+                        ""
+                    },
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 12.sp
+            )
+        }
+        if (contest.claimablePrize != null && !contest.prizeClaimed) {
+            TextButton(
+                onClick = onClaim,
                 enabled = !claimBusy,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -566,36 +682,6 @@ private fun EventHeroCard(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-        }
-        EventShopTile(
-            event = event,
-            accent = accent,
-            onCoinsGranted = onCoinsGranted,
-        )
-        TextButton(
-            onClick = onCollect,
-            enabled = event.canCollect && !busy && !event.collectedToday,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(
-                    if (event.canCollect && !event.collectedToday) accent.copy(0.35f)
-                    else Color.White.copy(0.06f)
-                )
-        ) {
-            Text(
-                when {
-                    busy -> "…"
-                    event.collectedToday -> "Heute schon gesammelt"
-                    event.canCollect -> "Heute sammeln"
-                    else -> "Nicht verfügbar"
-                },
-                color = TextPrimary,
-                fontFamily = DisplayFont,
-                fontSize = 15.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
-            )
         }
     }
 }

@@ -1557,7 +1557,9 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
         ) &&
         (row.contest?.prizesReady ||
           (Array.isArray(row.contest?.winners) && row.contest.winners.length > 0) ||
-          row.contest?.claimablePrize)
+          row.contest?.claimablePrize ||
+          row.contest?.myPlace ||
+          row.contest?.prizeClaimed)
     );
     const claimPending = Boolean(
       row.contest?.claimablePrize && !row.contest?.prizeClaimed

@@ -402,6 +402,7 @@ function ensureUserProgress(user, eventId) {
       eventPromptChoices: null,
       claimablePrize: null,
       prizeClaimed: false,
+      claimedPlace: null,
     };
   }
   const p = user.eventProgress[id];
@@ -409,6 +410,9 @@ function ensureUserProgress(user, eventId) {
   if (!p.votedEntries || typeof p.votedEntries !== "object") p.votedEntries = {};
   p.qualifiedStrokes = Math.max(0, Math.floor(Number(p.qualifiedStrokes) || 0));
   p.lobbyCreated = Boolean(p.lobbyCreated || p.lobbyCode);
+  if (p.claimedPlace == null && p.prizeClaimed && p.claimablePrize?.place) {
+    p.claimedPlace = Math.floor(Number(p.claimablePrize.place) || 0) || null;
+  }
   return p;
 }
 
@@ -864,6 +868,7 @@ function claimContestPrize(db, user, eventObj, applyLedgerFn, giveItemFn) {
     }
   }
   prog.prizeClaimed = true;
+  prog.claimedPlace = Math.floor(Number(prize.place) || 0) || null;
   prog.claimablePrize = null;
   return { ok: true, coinsGranted: coins, place: prize.place, items };
 }
@@ -941,8 +946,26 @@ function contestPublicForUser(db, user, eventObj, windowStart, windowEnd, active
     }));
   }
   const claimable = Boolean(prog.claimablePrize) && !prog.prizeClaimed;
+  let myPlace = null;
+  if (Array.isArray(bucket.ranking)) {
+    const mine = bucket.ranking.find((r) => r && r.userId === user.id);
+    if (mine?.place) myPlace = Math.floor(Number(mine.place) || 0) || null;
+  }
+  if (myPlace == null && prog.claimablePrize?.place) {
+    myPlace = Math.floor(Number(prog.claimablePrize.place) || 0) || null;
+  }
+  if (myPlace == null && prog.claimedPlace) {
+    myPlace = Math.floor(Number(prog.claimedPlace) || 0) || null;
+  }
+  let phase = "live";
+  if (!active) {
+    if (votingOpen) phase = "voting";
+    else if (voteEnded || bucket.prizesReady || bucket.prizesGranted) phase = "winners";
+    else phase = "ended";
+  }
   return {
     enabled: true,
+    phase,
     votingOpen,
     voteFrom: from != null ? new Date(from).toISOString() : null,
     voteUntil: until != null ? new Date(until).toISOString() : null,
@@ -962,6 +985,7 @@ function contestPublicForUser(db, user, eventObj, windowStart, windowEnd, active
             : null,
         }
       : null,
+    myPlace,
     winners,
     claimablePrize: claimable ? prog.claimablePrize : null,
     prizeClaimed: Boolean(prog.prizeClaimed),

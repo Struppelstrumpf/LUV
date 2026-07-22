@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.96",
+            listOf(
+                "Nach Eventende: schlanke Ansicht mit Abstimmung, Timer und Gewinnern",
+            )
+        ),
+        Entry(
             "2.2.95",
             listOf(
                 "Event-Abstimmung: Bilder laden deutlich schneller",
