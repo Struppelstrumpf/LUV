@@ -87,6 +87,8 @@ import com.luv.couple.ui.theme.TextPrimary
 import kotlin.math.hypot
 import kotlin.random.Random
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -151,17 +153,18 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     var showGuestbook by remember { mutableStateOf(false) }
     var applauseBursts by remember { mutableStateOf<List<Pair<Float, Float>>>(emptyList()) }
     var entered by remember { mutableStateOf(false) }
-    // Start nahe der Eingangstür (unten im Kapellenbild)
-    var myX by remember { mutableFloatStateOf(0.50f) }
-    var myY by remember { mutableFloatStateOf(0.86f) }
+    val cachedLayout = remember { WeddingChapelCache.layout }
+    // Start nahe der Eingangstür (unten im Kapellenbild) — Cache → sofort sichtbare Position
+    var myX by remember { mutableFloatStateOf(cachedLayout?.spawnX ?: 0.50f) }
+    var myY by remember { mutableFloatStateOf(cachedLayout?.spawnY ?: 0.86f) }
     var seated by remember { mutableStateOf(false) }
     var walking by remember { mutableStateOf(false) }
     var rejectName by remember { mutableStateOf<String?>(null) }
     var married by remember { mutableStateOf(false) }
     var confetti by remember { mutableStateOf(false) }
     var myReaction by remember { mutableStateOf<String?>(null) }
-    var layout by remember { mutableStateOf<LuvApiClient.RoomLayout?>(null) }
-    var spawned by remember { mutableStateOf(false) }
+    var layout by remember { mutableStateOf(cachedLayout) }
+    var spawned by remember { mutableStateOf(cachedLayout != null) }
     var reactionExpanded by remember { mutableStateOf(false) }
     var emojiBar by remember { mutableStateOf(ShopCatalog.DEFAULT_BAR) }
 
@@ -178,6 +181,61 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         }
     }
 
+    fun applyLayout(next: LuvApiClient.RoomLayout?) {
+        if (next == null) return
+        layout = next
+        WeddingChapelCache.put(next)
+        if (!spawned) {
+            myX = next.spawnX
+            myY = next.spawnY
+            spawned = true
+        }
+    }
+
+    fun applyCeremonyBundle(it: LuvApiClient.CeremonyBundle) {
+        ceremony = it.ceremony
+        marriage = it.marriage
+        applyLayout(it.roomLayout)
+        val me = it.ceremony?.gathering?.find { g -> g.userId == myId }
+        if (me != null) {
+            if (me.seatedSeatId != null) seated = true
+            if (!walking && !seated && spawned) {
+                if (hypot(me.x - myX, me.y - myY) > 0.12f) {
+                    myX = me.x
+                    myY = me.y
+                }
+            }
+        }
+        if (
+            it.ceremony?.phase == "altar" ||
+            it.ceremony?.phase == "vows" ||
+            it.ceremony?.phase == "gifts" ||
+            it.ceremony?.phase == "reception" ||
+            it.ceremony?.seatingLocked == true
+        ) {
+            entered = true
+        }
+        if (
+            it.ceremony?.pastorPhase == "ended" ||
+            it.ceremony?.phase == "ended"
+        ) {
+            if (rejectName == null) rejectName = "Die Trauung"
+        }
+    }
+
+    /** Zu spät / Zeremonie läuft und man war nicht dabei → zurück. */
+    fun shouldKickLatecomer(c: LuvApiClient.CeremonyInfo?): Boolean {
+        if (c == null) return false
+        val locked = c.seatingLocked &&
+            c.pastorPhase != "reception" &&
+            c.phase != "reception" &&
+            c.pastorPhase != "married" &&
+            c.phase != "gifts"
+        if (!locked) return false
+        val mePresent = c.gathering.any { it.userId == myId && it.present }
+        return !mePresent
+    }
+
     LaunchedEffect(Unit) {
         emojiBar = withContext(Dispatchers.IO) {
             runCatching { LuvApp.instance.prefs.emojiBar() }
@@ -186,55 +244,35 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
-        runCatching { LuvApiClient.fetchRoomLayout("wedding") }
-            .onSuccess {
-                layout = it
-                if (!spawned) {
-                    myX = it.spawnX
-                    myY = it.spawnY
-                    spawned = true
-                }
+        // Ceremony zuerst (enthält oft schon roomLayout) + Layout parallel als Fallback
+        coroutineScope {
+            val layoutJob = async {
+                WeddingChapelCache.layout
+                    ?: runCatching { LuvApiClient.fetchRoomLayout("wedding") }.getOrNull()
             }
+            val first = runCatching { LuvApiClient.fetchCeremony() }.getOrNull()
+            if (first != null) {
+                if (shouldKickLatecomer(first.ceremony)) {
+                    Toast.makeText(
+                        context,
+                        "Die Zeremonie ist im Gange — es wäre unhöflich, jetzt hereinzuplatzen.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    onClose()
+                    return@coroutineScope
+                }
+                applyCeremonyBundle(first)
+            }
+            if (layout == null) {
+                applyLayout(layoutJob.await())
+            } else {
+                layoutJob.await()?.let { WeddingChapelCache.put(it) }
+            }
+        }
         while (!married && rejectName == null) {
             runCatching { LuvApiClient.fetchCeremony() }
-                .onSuccess {
-                    ceremony = it.ceremony
-                    marriage = it.marriage
-                    if (it.roomLayout != null) {
-                        layout = it.roomLayout
-                        if (!spawned) {
-                            myX = it.roomLayout.spawnX
-                            myY = it.roomLayout.spawnY
-                            spawned = true
-                        }
-                    }
-                    val me = it.ceremony?.gathering?.find { g -> g.userId == myId }
-                    if (me != null) {
-                        if (me.seatedSeatId != null) seated = true
-                        // Eigene Position lokal behalten während Laufen/Sitzen
-                        if (!walking && !seated && spawned) {
-                            if (hypot(me.x - myX, me.y - myY) > 0.12f) {
-                                myX = me.x
-                                myY = me.y
-                            }
-                        }
-                    }
-                    if (
-                        it.ceremony?.phase == "altar" ||
-                        it.ceremony?.phase == "vows" ||
-                        it.ceremony?.phase == "gifts" ||
-                        it.ceremony?.phase == "reception" ||
-                        it.ceremony?.seatingLocked == true
-                    ) {
-                        entered = true
-                    }
-                    if (
-                        it.ceremony?.pastorPhase == "ended" ||
-                        it.ceremony?.phase == "ended"
-                    ) {
-                        if (rejectName == null) rejectName = "Die Trauung"
-                    }
-                }.onFailure { e ->
+                .onSuccess { applyCeremonyBundle(it) }
+                .onFailure { e ->
                     val err = (e as? com.luv.couple.net.LuvApiException)?.error
                     if (
                         err == "ceremony_aborted" ||
@@ -251,7 +289,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     cNow?.pastorPhase == "vows" ||
                     cNow?.pastorPhase == "closing_no" ||
                     cNow?.pastorPhase == "married"
-            delay(if (fast) 400 else 1200)
+            delay(if (fast) 400 else 900)
         }
     }
 

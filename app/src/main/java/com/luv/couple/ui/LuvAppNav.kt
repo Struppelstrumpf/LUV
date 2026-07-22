@@ -1731,6 +1731,13 @@ fun LuvAppNav() {
         AchievementsBadge.refresh()
     }
 
+    // Kapellen-Layout vorwärmen, sobald eine Hochzeits-Lobby auf Home liegt
+    LaunchedEffect(startDestination, lobbies) {
+        if (startDestination != Routes.MAIN) return@LaunchedEffect
+        if (lobbies.none { it.isWeddingCeremony }) return@LaunchedEffect
+        com.luv.couple.ui.wedding.WeddingChapelCache.warm()
+    }
+
     LaunchedEffect(startDestination) {
         when (startDestination) {
             null -> Unit
@@ -2139,36 +2146,14 @@ fun LuvAppNav() {
                                                     Toast.LENGTH_SHORT
                                                 ).show()
                                             } else {
-                                                // Während laufender Zeremonie: Server entscheidet (Rejoin vs. unhöflich)
-                                                scope.launch {
-                                                    val enter = runCatching {
-                                                        LuvApiClient.fetchCeremony()
-                                                    }.getOrNull()
-                                                    val locked = enter?.ceremony?.seatingLocked == true &&
-                                                        enter.ceremony.pastorPhase != "reception" &&
-                                                        enter.ceremony.phase != "reception" &&
-                                                        enter.ceremony.pastorPhase != "married" &&
-                                                        enter.ceremony.phase != "gifts"
-                                                    val mePresent = enter?.ceremony?.gathering
-                                                        ?.any {
-                                                            it.userId == AccountSession.account.value?.id &&
-                                                                it.present
-                                                        } == true
-                                                    if (locked && !mePresent) {
-                                                        Toast.makeText(
-                                                            context,
-                                                            "Die Zeremonie ist im Gange — es wäre unhöflich, jetzt hereinzuplatzen.",
-                                                            Toast.LENGTH_LONG
-                                                        ).show()
-                                                    } else {
-                                                        context.startActivity(
-                                                            Intent(
-                                                                context,
-                                                                com.luv.couple.ui.wedding.WeddingRoomActivity::class.java
-                                                            )
-                                                        )
-                                                    }
-                                                }
+                                                // Sofort öffnen — Sperr-Check läuft in WeddingRoomActivity
+                                                // (früher: fetchCeremony vor startActivity → spürbare Wartezeit)
+                                                context.startActivity(
+                                                    Intent(
+                                                        context,
+                                                        com.luv.couple.ui.wedding.WeddingRoomActivity::class.java
+                                                    )
+                                                )
                                             }
                                         }
                                     } else if (lobby.isCustomRoom) {
