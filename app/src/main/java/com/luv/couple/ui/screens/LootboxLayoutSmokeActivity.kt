@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -48,10 +47,14 @@ class LootboxLayoutSmokeActivity : ComponentActivity() {
                     modifier = Modifier
                         .fillMaxSize()
                         .background(Color(0xF20A0D14))
-                        .systemBarsPadding()
-                        .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 48.dp)
                 ) {
-                    LootboxFooterSmokeChrome()
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(start = 12.dp, end = 12.dp, top = 40.dp, bottom = 96.dp)
+                    ) {
+                        LootboxFooterSmokeChrome()
+                    }
                 }
             }
         }
@@ -84,7 +87,7 @@ private fun LootboxFooterSmokeChrome() {
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("lootbox_footer")
-                .padding(top = 4.dp, bottom = 4.dp)
+                .padding(top = 8.dp, bottom = 12.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),

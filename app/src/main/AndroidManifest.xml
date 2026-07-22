@@ -48,7 +48,7 @@
             android:windowSoftInputMode="stateAlwaysHidden"
             tools:replace="android:screenOrientation" />
 
-        <!-- Layout-Probe Lootbox-Footer (adb am start …LootboxLayoutSmokeActivity) -->
+        <!-- Layout-Probe Lootbox-Footer — nur adb, nicht im Launcher -->
         <activity
             android:name=".ui.screens.LootboxLayoutSmokeActivity"
             android:exported="false"

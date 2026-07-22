@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -216,15 +215,24 @@ fun MarketScreen(
                         decorFitsSystemWindows = false
                     )
                 ) {
-                    // Scrim + Safe-Frame: Inhalt nie bündig mit Displaykante
+                    // Scrim vollflächig; Sheet mit festem Abstand zur Displaykante
+                    // (Compose-Dialog-Insets sind unter Edge-to-Edge unzuverlässig).
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .background(Color(0xF20A0D14))
-                            .systemBarsPadding()
-                            // Harter Extra-Rand — auch wenn Dialog-Insets 0 melden
-                            .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 48.dp)
                     ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(
+                                    start = 12.dp,
+                                    end = 12.dp,
+                                    top = 40.dp,
+                                    // ~Gestenleiste + Luft — unabhängig von WindowInsets
+                                    bottom = 96.dp
+                                )
+                        ) {
                         LootboxTab(
                             coins = hubAccount?.coins ?: 0,
                             busy = hubLootBusy != null,
@@ -234,6 +242,7 @@ fun MarketScreen(
                             onRequireGoogle = onRequireGoogle,
                             onClose = { dismissLoot() }
                         )
+                        }
                     }
                 }
             }
@@ -2411,7 +2420,7 @@ private fun LootboxTab(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 4.dp, bottom = 4.dp)
+                        .padding(top = 8.dp, bottom = 12.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
