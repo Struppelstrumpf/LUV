@@ -1511,7 +1511,9 @@ fun LuvAppNav() {
             val notify = first
             first = false
             scope.launch {
-                // Parallel — sequentiell blockiert Home/Markt oft mehrere Sekunden
+                // Parallel — sequentiell blockiert Home/Markt oft mehrere Sekunden.
+                // MarketHub nicht mit awaiten: konkurriert sonst mit Splash-Bild-Download.
+                scope.launch { runCatching { MarketHubCache.warm() } }
                 coroutineScope {
                     val updateJob = async {
                         runCatching { AppUpdater.check(context, notify = notify) }
@@ -1519,15 +1521,12 @@ fun LuvAppNav() {
                     val accountJob = async {
                         runCatching { refreshAccount() }
                     }
-                    val hubJob = async {
-                        runCatching { MarketHubCache.warm() }
-                    }
                     val cloudJob = async {
                         if (AccountSession.account.value?.googleLinked == true) {
                             runCatching { syncCloudAccount() }
                         }
                     }
-                    awaitAll(updateJob, accountJob, hubJob, cloudJob)
+                    awaitAll(updateJob, accountJob, cloudJob)
                 }
                 if (!LuvApiClient.sessionToken.isNullOrBlank()) {
                     coroutineScope {

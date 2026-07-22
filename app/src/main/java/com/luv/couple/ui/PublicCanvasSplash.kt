@@ -49,13 +49,15 @@ import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 
 /**
- * Beim Warten aufs Netz: Zwei-Handy-Animation (kein Cache-Bild).
- * Danach frisches öffentliches Bild (ungesehen wenn möglich).
+ * Start-Splash: Cache sofort zeigen (kein Netz-Warten), parallel neues Bild fürs nächste Mal.
+ * Ohne Cache: Netz mit Timeout, sonst kurze Phone-Animation.
  */
 @Composable
 fun PublicCanvasSplash(
@@ -69,45 +71,60 @@ fun PublicCanvasSplash(
     val progress = remember { Animatable(0f) }
 
     LaunchedEffect(Unit) {
-        // Cache nur im Memory/Disk für Prefetch — nicht als Wartebild anzeigen
-        withContext(Dispatchers.IO) {
-            runCatching { PublicSplashCache.loadLast(context) }
-        }
-
-        val seen = withContext(Dispatchers.IO) {
-            runCatching { prefs.seenSplashIds() }.getOrDefault(emptySet())
-        }
-        val fetched = withContext(Dispatchers.IO) {
-            LuvApiClient.fetchRandomPublicCanvas(seen)
-        }
-        if (fetched != null && fetched.cycled) {
+        suspend fun prefetchNext() {
             withContext(Dispatchers.IO) {
-                runCatching { prefs.clearSeenSplashIds() }
+                runCatching {
+                    val seen = prefs.seenSplashIds()
+                    val fetched = LuvApiClient.fetchRandomPublicCanvas(seen) ?: return@runCatching
+                    if (fetched.cycled) prefs.clearSeenSplashIds()
+                    val bmp = PublicSplashCache.downloadBitmap(fetched.imageUrl) ?: return@runCatching
+                    PublicSplashCache.save(context, fetched, bmp)
+                    prefs.markSplashSeen(fetched.id)
+                }
             }
         }
-        val bmp = if (fetched != null) {
-            withContext(Dispatchers.IO) {
-                PublicSplashCache.downloadBitmap(fetched.imageUrl)
-            }
-        } else null
 
-        if (fetched == null || bmp == null) {
-            // Kurz Phones zeigen, dann weiter — kein Endlos-Warten
-            delay(1600)
+        val cached = withContext(Dispatchers.IO) {
+            runCatching { PublicSplashCache.loadLast(context) }.getOrNull()
+        }
+
+        if (cached != null) {
+            preview = cached.preview
+            bitmap = cached.bitmap
+            ready = true
+            // Sofort 2s zeigen — Prefetch blockiert nicht
+            launch { prefetchNext() }
+            progress.snapTo(0f)
+            progress.animateTo(1f, animationSpec = tween(2_000, easing = LinearEasing))
             onFinished()
             return@LaunchedEffect
         }
 
-        PublicSplashCache.save(context, fetched, bmp)
-        withContext(Dispatchers.IO) {
-            runCatching { prefs.markSplashSeen(fetched.id) }
+        val fresh = withTimeoutOrNull(2_200L) {
+            withContext(Dispatchers.IO) {
+                val seen = runCatching { prefs.seenSplashIds() }.getOrDefault(emptySet())
+                val fetched = LuvApiClient.fetchRandomPublicCanvas(seen) ?: return@withContext null
+                if (fetched.cycled) {
+                    runCatching { prefs.clearSeenSplashIds() }
+                }
+                val bmp = PublicSplashCache.downloadBitmap(fetched.imageUrl) ?: return@withContext null
+                PublicSplashCache.save(context, fetched, bmp)
+                runCatching { prefs.markSplashSeen(fetched.id) }
+                fetched to bmp
+            }
         }
-        preview = fetched
-        bitmap = bmp
-        ready = true
-        // Genau 2 Sekunden öffentliches Bild zeigen (nach Netzwerk-Verbindung)
-        progress.snapTo(0f)
-        progress.animateTo(1f, animationSpec = tween(2000, easing = LinearEasing))
+
+        if (fresh != null) {
+            preview = fresh.first
+            bitmap = fresh.second
+            ready = true
+            progress.snapTo(0f)
+            progress.animateTo(1f, animationSpec = tween(2_000, easing = LinearEasing))
+            onFinished()
+            return@LaunchedEffect
+        }
+
+        delay(1_200)
         onFinished()
     }
 

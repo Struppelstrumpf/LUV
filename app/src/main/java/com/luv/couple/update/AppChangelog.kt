@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.126",
+            listOf(
+                "Start schneller: Splash nutzt wieder Cache, weniger Netz-Stau beim Öffnen",
+            )
+        ),
+        Entry(
             "2.2.125",
             listOf(
                 "Hochzeit: Sitzen leichter, Pastor lesbar, Laufen flüssiger, Musik am Altar",
