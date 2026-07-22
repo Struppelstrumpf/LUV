@@ -50,10 +50,28 @@ fun walkableAt(
     y: Float,
     avatarR: Float,
 ): Boolean {
-    // Nur Grün = laufen; Rot darin sperrt (Loch im Grün)
     if (!pointInGreen(zones, x, y)) return false
-    if (zones.any { it.isBlock && zoneContains(it, x, y, 0f) }) return false
+    // Pad: auch schmale Rots blockieren (Grid-Zentren sonst daneben)
+    val blockPad = (avatarR * 0.45f).coerceIn(0.008f, 0.022f)
+    if (zones.any { it.isBlock && zoneContains(it, x, y, blockPad) }) return false
     return true
+}
+
+/** Zelle trifft Rot (AABB), damit dünne Sperren nicht zwischen Zellmitten verschwinden. */
+private fun cellOverlapsRed(zones: List<LuvApiClient.RoomZone>, ix: Int, iy: Int): Boolean {
+    val x0 = ix / GRID_W.toFloat()
+    val x1 = (ix + 1) / GRID_W.toFloat()
+    val y0 = iy / GRID_H.toFloat()
+    val y1 = (iy + 1) / GRID_H.toFloat()
+    val cx = (x0 + x1) * 0.5f
+    val cy = (y0 + y1) * 0.5f
+    return zones.any { z ->
+        if (!z.isBlock) return@any false
+        when (z.shape) {
+            "rect" -> !(z.x + z.w <= x0 || z.x >= x1 || z.y + z.h <= y0 || z.y >= y1)
+            else -> zoneContains(z, cx, cy, 0.012f)
+        }
+    }
 }
 
 /** Nächster laufbarer Punkt in der Nähe von [x],[y] (für Sitze auf Rot). */
@@ -81,7 +99,8 @@ private fun buildWalkGrid(zones: List<LuvApiClient.RoomZone>, avatarR: Float): B
     for (iy in 0 until GRID_H) {
         for (ix in 0 until GRID_W) {
             val (cx, cy) = cellCenter(ix, iy)
-            walk[iy * GRID_W + ix] = walkableAt(zones, cx, cy, avatarR)
+            walk[iy * GRID_W + ix] =
+                walkableAt(zones, cx, cy, avatarR) && !cellOverlapsRed(zones, ix, iy)
         }
     }
     return walk

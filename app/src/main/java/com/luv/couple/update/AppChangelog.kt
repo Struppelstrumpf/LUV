@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.154",
+            listOf(
+                "Start: Ladebildschirm bis Lobbys verbunden; mehrere rote Sperren sichtbar und wirksam",
+            )
+        ),
+        Entry(
             "2.2.153",
             listOf(
                 "Räume: nur Grün laufen, Rot sperrt darin (keine volle rote Basis mehr)",

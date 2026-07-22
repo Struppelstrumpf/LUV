@@ -729,8 +729,28 @@ function isWalkable(layout, x, y) {
   const zones = layout?.zones || [];
   // Nur Grün = laufen; Rot darin sperrt (Loch im Grün)
   if (!pointInGreen(zones, x, y)) return false;
-  if (zones.some((z) => z.color === "red" && zoneContains(z, x, y, 0))) return false;
+  const blockPad = Math.min(0.022, Math.max(0.008, DEFAULT_AVATAR_R * 0.45));
+  if (zones.some((z) => z.color === "red" && zoneContains(z, x, y, blockPad))) {
+    return false;
+  }
   return true;
+}
+
+/** Zelle trifft Rot (AABB) — schmale Sperren zwischen Zellmitten. */
+function cellOverlapsRed(zones, ix, iy) {
+  const x0 = ix / GRID_W;
+  const x1 = (ix + 1) / GRID_W;
+  const y0 = iy / GRID_H;
+  const y1 = (iy + 1) / GRID_H;
+  const cx = (x0 + x1) * 0.5;
+  const cy = (y0 + y1) * 0.5;
+  return (zones || []).some((z) => {
+    if (!z || z.color !== "red") return false;
+    if (z.shape === "rect") {
+      return !(z.x + z.w <= x0 || z.x >= x1 || z.y + z.h <= y0 || z.y >= y1);
+    }
+    return zoneContains(z, cx, cy, 0.012);
+  });
 }
 
 function isBlocked(layout, x, y) {
@@ -750,10 +770,12 @@ function toCell(x, y) {
 
 function buildWalkGrid(layout) {
   const walk = new Array(GRID_W * GRID_H).fill(false);
+  const zones = layout?.zones || [];
   for (let iy = 0; iy < GRID_H; iy++) {
     for (let ix = 0; ix < GRID_W; ix++) {
       const { x, y } = cellCenter(ix, iy);
-      walk[iy * GRID_W + ix] = isWalkable(layout, x, y);
+      walk[iy * GRID_W + ix] =
+        isWalkable(layout, x, y) && !cellOverlapsRed(zones, ix, iy);
     }
   }
   return walk;

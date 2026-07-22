@@ -2896,7 +2896,20 @@ fun LuvAppNav() {
     } // destination != null
 
     if (showPublicSplash && !showInviteOverlay) {
-        PublicCanvasSplash(onFinished = { showPublicSplash = false })
+        PublicCanvasSplash(
+            onFinished = {
+                scope.launch {
+                    // Min-Anzeige fertig — noch warten bis Lobbys „Verbunden“ (oder Timeout)
+                    val ids = runCatching { prefs.snapshot().lobbies.map { it.id } }
+                        .getOrElse { lobbies.map { it.id } }
+                    if (ids.isNotEmpty()) {
+                        PairConnectionService.startAll(context)
+                        PairConnectionService.awaitLobbiesConnected(ids)
+                    }
+                    showPublicSplash = false
+                }
+            },
+        )
     }
 
     // Deep-Link-Einladung: immer oben — unabhängig von NavHost/Splash

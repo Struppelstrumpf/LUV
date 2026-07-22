@@ -96,8 +96,8 @@
   const FILL = {
     white: "rgba(255,255,255,0.12)",
     black: "rgba(0,0,0,0.08)",
-    red: "rgba(229,57,53,0.42)",
-    green: "rgba(67,160,71,0.45)",
+    red: "rgba(229,57,53,0.72)",
+    green: "rgba(67,160,71,0.38)",
     yellow: "rgba(255,213,79,0.45)",
     blue: "rgba(66,165,245,0.45)",
     brown: "rgba(141,110,99,0.45)",
@@ -601,8 +601,9 @@
         selectedId === "__camera__",
         "black"
       );
+      // Grün zuerst, Rot darüber (Löcher sichtbar)
       const zoneOrder = (z) =>
-        z.color === "red" ? 0 : z.color === "green" ? 1 : PLACE_PROP_COLORS.has(z.color) ? 3 : 2;
+        z.color === "green" ? 0 : z.color === "red" ? 1 : PLACE_PROP_COLORS.has(z.color) ? 3 : 2;
       [...zones]
         .sort((a, b) => zoneOrder(a) - zoneOrder(b))
         .forEach((z) => drawZoneShape(z, z.id === selectedId));
@@ -940,8 +941,9 @@
             cy: d.cy,
             r: d.r,
           });
+          selectedId = d.id;
           dirty = true;
-        } else if (d.shape === "rect" && d.w >= 0.02) {
+        } else if (d.shape === "rect" && d.w >= 0.02 && d.h >= 0.02) {
           zones.push({
             id: d.id,
             color: d.color,
@@ -951,6 +953,7 @@
             w: d.w,
             h: d.h,
           });
+          selectedId = d.id;
           dirty = true;
         }
       }

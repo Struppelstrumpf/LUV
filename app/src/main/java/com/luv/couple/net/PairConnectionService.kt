@@ -45,9 +45,11 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -1633,6 +1635,26 @@ class PairConnectionService : Service() {
             } catch (t: Throwable) {
                 Log.e(TAG, "Unable to start pair service", t)
                 false
+            }
+        }
+
+        /**
+         * Wartet bis alle angegebenen Lobbys CONNECTED/HOSTING sind
+         * (oder Timeout — Splash darf nicht ewig hängen).
+         */
+        suspend fun awaitLobbiesConnected(
+            lobbyIds: Collection<String>,
+            timeoutMs: Long = 12_000L,
+        ) {
+            val ids = lobbyIds.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+            if (ids.isEmpty()) return
+            withTimeoutOrNull(timeoutMs) {
+                lobbyStates.first { states ->
+                    ids.all { id ->
+                        val s = states[id]
+                        s == ConnectionState.CONNECTED || s == ConnectionState.HOSTING
+                    }
+                }
             }
         }
 

@@ -985,10 +985,11 @@ private fun ZoneOverlay(
     modifier: Modifier = Modifier,
 ) {
     Canvas(modifier = modifier) {
+        // Grün unten, Rot darüber (Sperren sichtbar)
         val ordered = zones.sortedBy { z ->
             when (z.color) {
-                "red" -> 0
-                "green" -> 1
+                "green" -> 0
+                "red" -> 1
                 "blue" -> 2
                 "brown" -> 3
                 "orange" -> 4
@@ -999,8 +1000,8 @@ private fun ZoneOverlay(
         }
         for (z in ordered) {
             val fill = when (z.color) {
-                "green" -> Color(0x6643A047)
-                "red" -> Color(0x66E53935)
+                "green" -> Color(0x5543A047)
+                "red" -> Color(0xAAE53935)
                 "blue" -> Color(0x8842A5F5)
                 "brown" -> Color(0x998D6E63)
                 "orange" -> Color(0x99FF9800)
