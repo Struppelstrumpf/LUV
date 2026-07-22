@@ -1440,17 +1440,33 @@ object LuvApiClient {
 
     suspend fun fetchLiveNotice(): LiveNotice? = withContext(Dispatchers.IO) {
         val json = authedGet("/v1/live-notice")
-        val o = json.optJSONObject("notice") ?: return@withContext null
-        val id = o.optString("id")
-        val message = o.optString("message")
-        if (id.isBlank() || message.isBlank()) return@withContext null
-        LiveNotice(
+        parseLiveNotice(json.optJSONObject("notice"))
+    }
+
+    private fun parseLiveNotice(o: JSONObject?): LiveNotice? {
+        if (o == null) return null
+        val id = o.optString("id").trim()
+        val message = o.optString("message").trim()
+        if (id.isBlank() || message.isBlank()) return null
+        val kind = o.optString("kind", "team").trim().ifBlank { "team" }
+        val rawAuthor = o.optString("authorNickname").trim()
+        val author = when {
+            kind.equals("wedding", ignoreCase = true) ->
+                rawAuthor.ifBlank { "LUV" }
+            rawAuthor.isNotBlank() && !rawAuthor.equals("Luv", ignoreCase = true) ->
+                rawAuthor
+            else -> "Team"
+        }
+        return LiveNotice(
             id = id,
             message = message,
-            authorNickname = o.optString("authorNickname").trim()
-                .takeIf { it.isNotBlank() && !it.equals("Luv", ignoreCase = true) }
-                ?: "Team",
-            createdAt = o.optLong("createdAt", System.currentTimeMillis())
+            authorNickname = author,
+            createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+            kind = kind,
+            subtitle = o.optString("subtitle").trim()
+                .takeIf { it.isNotBlank() && it != "null" },
+            targetUserId = o.optString("targetUserId").trim()
+                .takeIf { it.isNotBlank() && it != "null" },
         )
     }
 
@@ -1568,20 +1584,10 @@ object LuvApiClient {
     }
 
     suspend fun sendLiveNotice(message: String): LiveNotice = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("message", message.trim().take(160)).toString()
+        val body = JSONObject().put("message", message.trim().take(200)).toString()
         val json = authedPost("/v1/admin/live-notice", body)
-        val o = json.optJSONObject("notice") ?: throw LuvApiException("Senden fehlgeschlagen")
-        LiveNotice(
-            id = o.optString("id"),
-            message = o.optString("message"),
-            authorNickname = o.optString("authorNickname").trim()
-                .takeIf { it.isNotBlank() && !it.equals("Luv", ignoreCase = true) }
-                ?: AccountSession.account.value?.nickname?.trim()?.takeIf {
-                    it.isNotBlank() && !it.equals("Luv", ignoreCase = true)
-                }
-                ?: "Team",
-            createdAt = o.optLong("createdAt", System.currentTimeMillis())
-        )
+        parseLiveNotice(json.optJSONObject("notice"))
+            ?: throw LuvApiException("Senden fehlgeschlagen")
     }
 
     data class InventoryBag(

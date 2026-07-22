@@ -14,8 +14,14 @@ data class LiveNotice(
     val id: String,
     val message: String,
     val authorNickname: String,
-    val createdAt: Long
-)
+    val createdAt: Long,
+    val kind: String = "team",
+    val subtitle: String? = null,
+    /** Bei kind=wedding: Profil/Gästebuch dieses Users öffnen. */
+    val targetUserId: String? = null,
+) {
+    val isWedding: Boolean get() = kind.equals("wedding", ignoreCase = true)
+}
 
 /**
  * Team-/Admin-Hinweise: einmal pro Gerät anzeigen (auch wenn die App später geöffnet wird).

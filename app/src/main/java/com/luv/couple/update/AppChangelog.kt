@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.89",
+            listOf(
+                "Hochzeit: LUV meldet allen das Ja-Wort — Tippen öffnet Gästebuch",
+            )
+        ),
+        Entry(
             "2.2.88",
             listOf(
                 "Trausaal: leise Kapellenmusik mit Lautsprecher-Steuerung",

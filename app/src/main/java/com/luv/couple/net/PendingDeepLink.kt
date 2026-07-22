@@ -34,6 +34,32 @@ object PendingWeddingCeremony {
     }
 }
 
+/** One-shot: Gästebuch/Hochzeitsbild-Popup für User öffnen (nach LUV-Hochzeitshinweis). */
+object PendingWeddingGuestbook {
+    private val _userId = MutableStateFlow<String?>(null)
+    val userId: StateFlow<String?> = _userId.asStateFlow()
+
+    fun offer(userId: String) {
+        val id = userId.trim()
+        if (id.isNotBlank()) _userId.value = id
+    }
+
+    fun peek(): String? = _userId.value
+
+    fun consume(): String? {
+        val id = _userId.value
+        _userId.value = null
+        return id
+    }
+
+    fun consumeIf(userId: String): Boolean {
+        val want = userId.trim()
+        if (want.isBlank() || _userId.value != want) return false
+        _userId.value = null
+        return true
+    }
+}
+
 object PendingDeepLink {
     private val _target = MutableStateFlow<DeepLinkTarget?>(null)
     val target: StateFlow<DeepLinkTarget?> = _target.asStateFlow()

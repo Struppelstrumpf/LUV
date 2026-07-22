@@ -228,6 +228,16 @@ fun ProfileCanvasScreen(
         }
     }
 
+    // LUV-Hochzeitshinweis → Gästebuch/Hochzeitsbild dieses Profils
+    LaunchedEffect(userId) {
+        val uid = userId?.trim().orEmpty()
+        if (uid.isNotBlank() &&
+            com.luv.couple.net.PendingWeddingGuestbook.consumeIf(uid)
+        ) {
+            showGuestbookFor = uid
+        }
+    }
+
     LaunchedEffect(userId, editable, nickname, tutorialMode) {
         profileReady = false
         val started = SystemClock.elapsedRealtime()

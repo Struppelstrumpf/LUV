@@ -2780,7 +2780,17 @@ fun LuvAppNav() {
             delay(45_000)
         }
     }
-    LiveNoticePopup()
+    LiveNoticePopup(
+        onOpenWeddingGuestbook = { uid ->
+            com.luv.couple.net.PendingWeddingGuestbook.offer(uid)
+            navController.currentBackStackEntry
+                ?.savedStateHandle
+                ?.set("peer_nick", "Ehepaar")
+            navController.navigate(Routes.peerProfile(uid)) {
+                launchSingleTop = true
+            }
+        }
+    )
     StaffWarningPopup()
     }
 }

@@ -1505,14 +1505,17 @@ fun AdminHubScreen(
 }
 
 @Composable
-fun LiveNoticePopup() {
+fun LiveNoticePopup(
+    onOpenWeddingGuestbook: (userId: String) -> Unit = {},
+) {
     val notice by LiveNoticeBus.pending.collectAsStateWithLifecycle()
     val current = notice ?: return
     val progress = remember(current.id) { Animatable(1f) }
+    val holdMs = if (current.isWedding) 9_000 else 5_000
 
     LaunchedEffect(current.id) {
         progress.snapTo(1f)
-        progress.animateTo(0f, animationSpec = tween(5000, easing = LinearEasing))
+        progress.animateTo(0f, animationSpec = tween(holdMs, easing = LinearEasing))
         LiveNoticeBus.consumeShown(current.id)
     }
 
@@ -1529,12 +1532,28 @@ fun LiveNoticePopup() {
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(18.dp))
                 .background(Color(0xF21A2030))
-                .border(1.dp, AccentRose.copy(0.45f), RoundedCornerShape(18.dp))
+                .border(
+                    1.dp,
+                    if (current.isWedding) Color(0xFFFFD54F).copy(0.55f)
+                    else AccentRose.copy(0.45f),
+                    RoundedCornerShape(18.dp)
+                )
+                .clickable(
+                    enabled = current.isWedding && !current.targetUserId.isNullOrBlank()
+                ) {
+                    val uid = current.targetUserId ?: return@clickable
+                    LiveNoticeBus.consumeShown(current.id)
+                    onOpenWeddingGuestbook(uid)
+                }
                 .padding(14.dp)
         ) {
             Text(
-                "📣 Von ${current.authorNickname.ifBlank { "Team" }}",
-                color = AccentRose,
+                if (current.isWedding) {
+                    "💍 Von ${current.authorNickname.ifBlank { "LUV" }}"
+                } else {
+                    "📣 Von ${current.authorNickname.ifBlank { "Team" }}"
+                },
+                color = if (current.isWedding) Color(0xFFFFD54F) else AccentRose,
                 fontFamily = DisplayFont,
                 fontSize = 13.sp
             )
@@ -1545,6 +1564,16 @@ fun LiveNoticePopup() {
                 fontFamily = BodyFont,
                 fontSize = 15.sp
             )
+            val sub = current.subtitle?.trim().orEmpty()
+            if (sub.isNotBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    sub,
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp
+                )
+            }
             Spacer(modifier = Modifier.height(10.dp))
             Box(
                 modifier = Modifier
@@ -1557,7 +1586,9 @@ fun LiveNoticePopup() {
                     modifier = Modifier
                         .fillMaxWidth(progress.value.coerceIn(0f, 1f))
                         .height(3.dp)
-                        .background(AccentRose)
+                        .background(
+                            if (current.isWedding) Color(0xFFFFD54F) else AccentRose
+                        )
                 )
             }
         }

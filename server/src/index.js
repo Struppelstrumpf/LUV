@@ -2292,6 +2292,20 @@ function finalizeWeddingMarriage(m, { force = false } = {}) {
     trackAch(b, "married", 1);
     tryClaimAchievementReward(b, "fs_married");
   }
+  // Globale LUV-Ankündigung → alle Apps (Banner + Gästebuch-Tipp)
+  try {
+    const nameA = String(a?.nickname || "Jemand").trim().slice(0, 18) || "Jemand";
+    const nameB = String(b?.nickname || "Jemand").trim().slice(0, 18) || "Jemand";
+    publishLiveNotice({
+      message: `${nameA} & ${nameB} haben sich soeben das Ja!-Wort gesagt!`,
+      authorNickname: "LUV",
+      kind: "wedding",
+      subtitle: "Tippe hier, um einen Eintrag im Gästebuch zu hinterlassen!",
+      targetUserId: m.a || m.b || null,
+    });
+  } catch (e) {
+    console.error("wedding live notice failed", e);
+  }
   return true;
 }
 
@@ -5769,19 +5783,59 @@ function getLiveNotice() {
     scheduleSave();
     return null;
   }
+  const kind = String(n.kind || "team").trim() || "team";
   let authorNickname = String(n.authorNickname || "").trim().slice(0, 18);
-  if (!authorNickname || authorNickname.toLowerCase() === "luv") {
+  if (kind === "wedding") {
+    authorNickname = authorNickname || "LUV";
+  } else if (!authorNickname || authorNickname.toLowerCase() === "luv") {
     const author = n.authorId ? db.users?.[n.authorId] : null;
     authorNickname = author ? staffDisplayName(author) : "Team";
   }
   return {
     id: n.id,
-    message: String(n.message).slice(0, 160),
+    message: String(n.message).slice(0, 200),
     authorNickname,
     authorId: n.authorId || null,
+    kind,
+    subtitle: n.subtitle ? String(n.subtitle).trim().slice(0, 160) : null,
+    targetUserId: n.targetUserId ? String(n.targetUserId).trim() : null,
     createdAt: n.createdAt || Date.now(),
     expiresAt: n.expiresAt,
   };
+}
+
+function publishLiveNotice({
+  message,
+  authorNickname = "LUV",
+  authorId = null,
+  kind = "team",
+  subtitle = null,
+  targetUserId = null,
+} = {}) {
+  const text = String(message || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 200);
+  if (text.length < 2) return null;
+  const now = Date.now();
+  const notice = {
+    id: newId("ln"),
+    message: text,
+    authorNickname: String(authorNickname || "LUV").trim().slice(0, 18) || "LUV",
+    authorId: authorId || null,
+    kind: String(kind || "team").trim() || "team",
+    subtitle: subtitle
+      ? String(subtitle).trim().replace(/\s+/g, " ").slice(0, 160)
+      : null,
+    targetUserId: targetUserId ? String(targetUserId).trim() : null,
+    createdAt: now,
+    expiresAt: now + LIVE_NOTICE_TTL_MS,
+  };
+  getDb().liveNotice = notice;
+  scheduleSave();
+  const pub = getLiveNotice();
+  broadcastLiveNotice(pub);
+  return pub;
 }
 
 function broadcastLiveNotice(notice) {
@@ -5791,6 +5845,9 @@ function broadcastLiveNotice(notice) {
     id: notice.id,
     message: notice.message,
     authorNickname: notice.authorNickname,
+    kind: notice.kind || "team",
+    subtitle: notice.subtitle || null,
+    targetUserId: notice.targetUserId || null,
     createdAt: notice.createdAt,
   });
   for (const room of rooms.values()) {
@@ -11122,25 +11179,17 @@ app.post("/v1/admin/live-notice", (req, res) => {
   const message = String(req.body?.message || "")
     .trim()
     .replace(/\s+/g, " ")
-    .slice(0, 160);
+    .slice(0, 200);
   if (message.length < 2) {
     return res.status(400).json({ error: "empty", message: "Nachricht zu kurz." });
   }
-  const now = Date.now();
-  const authorNickname = staffDisplayName(ctx.user);
-  const notice = {
-    id: newId("ln"),
+  const notice = publishLiveNotice({
     message,
-    authorNickname,
+    authorNickname: staffDisplayName(ctx.user),
     authorId: ctx.user.id,
-    createdAt: now,
-    // 24h — auch wer die App später öffnet, sieht den Hinweis einmal
-    expiresAt: now + LIVE_NOTICE_TTL_MS,
-  };
-  getDb().liveNotice = notice;
-  scheduleSave();
-  broadcastLiveNotice(getLiveNotice());
-  return res.json({ ok: true, notice: getLiveNotice() });
+    kind: "team",
+  });
+  return res.json({ ok: true, notice });
 });
 
 /** Nächtlicher Wartungsmodus (02:59–03:09 Berlin) — Status für App-Overlay */
