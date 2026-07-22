@@ -13697,7 +13697,7 @@ app.get("/v1/me/inventory", (req, res) => {
       };
     })
     .filter(Boolean);
-  scheduleSave();
+  // Kein scheduleSave bei jedem Inventar-GET — Full-JSON-Write machte Tabs spürbar träge
   return res.json({
     ok: true,
     emojis: inv.emojis,
@@ -15062,7 +15062,7 @@ app.get("/v1/shop/pet-image/:itemId", (req, res) => {
   const buf = petImages.readImage(itemId);
   if (!buf) return res.status(404).json({ error: "not_found" });
   res.setHeader("Content-Type", "image/png");
-  res.setHeader("Cache-Control", "public, max-age=86400");
+  res.setHeader("Cache-Control", "public, max-age=604800, immutable");
   return res.send(buf);
 });
 

@@ -15,7 +15,8 @@ import java.util.concurrent.Executors
  */
 object ItemImageCache {
     private val main = Handler(Looper.getMainLooper())
-    private val io = Executors.newFixedThreadPool(2)
+    // Mehr parallel — sonst bleiben viele img_* lange auf 🐾
+    private val io = Executors.newFixedThreadPool(6)
     private val bitmaps = ConcurrentHashMap<String, Bitmap>()
     private val inflight = ConcurrentHashMap.newKeySet<String>()
     private val waiters = ConcurrentHashMap<String, MutableList<() -> Unit>>()

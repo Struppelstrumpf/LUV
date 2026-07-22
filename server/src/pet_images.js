@@ -9,6 +9,9 @@ const { DATA_DIR } = require("./store");
 
 const DIR = path.join(DATA_DIR, "pet-images");
 const MAX_BYTES = 1_200_000; // ~1.2 MB raw base64 payload limit after decode
+/** Kleiner RAM-Cache — Inventar lädt viele img_* parallel. */
+const memCache = new Map();
+const MEM_CACHE_MAX = 80;
 
 function ensureDir() {
   if (!fs.existsSync(DIR)) fs.mkdirSync(DIR, { recursive: true });
@@ -28,14 +31,26 @@ function filePath(itemId) {
 }
 
 function hasImage(itemId) {
-  const p = filePath(itemId);
+  const id = safeId(itemId);
+  if (!id) return false;
+  if (memCache.has(id)) return true;
+  const p = filePath(id);
   return Boolean(p && fs.existsSync(p));
 }
 
 function readImage(itemId) {
-  const p = filePath(itemId);
+  const id = safeId(itemId);
+  if (!id) return null;
+  if (memCache.has(id)) return memCache.get(id);
+  const p = filePath(id);
   if (!p || !fs.existsSync(p)) return null;
-  return fs.readFileSync(p);
+  const buf = fs.readFileSync(p);
+  if (memCache.size >= MEM_CACHE_MAX) {
+    const first = memCache.keys().next().value;
+    memCache.delete(first);
+  }
+  memCache.set(id, buf);
+  return buf;
 }
 
 /**
@@ -67,10 +82,13 @@ function saveImage(itemId, dataUrlOrBase64) {
   // PNG magic oder JPEG — wir speichern als .png; Client schickt PNG nach Chroma-Key
   const p = filePath(id);
   fs.writeFileSync(p, buf);
+  memCache.set(id, buf);
   return { ok: true, itemId: id, bytes: buf.length };
 }
 
 function deleteImage(itemId) {
+  const id = safeId(itemId);
+  if (id) memCache.delete(id);
   const p = filePath(itemId);
   if (p && fs.existsSync(p)) fs.unlinkSync(p);
 }

@@ -2429,6 +2429,7 @@ fun LuvAppNav() {
                         )
                         1 -> SocialScreen(
                             initialTab = sozialSubTab,
+                            onSubTabChange = { sozialSubTab = it },
                             onOpenFriendProfile = { userId, nick ->
                                 scope.launch {
                                     runCatching { LuvApiClient.pingAchievement("profile_views") }
@@ -2574,6 +2575,8 @@ fun LuvAppNav() {
                         inventarBadge = inventarDot,
                         onSelect = { next ->
                             if (next == 4) accountMessage = null
+                            // Manuell auf Sozial → immer Freunde (nicht klebrige Erfolge von Push)
+                            if (next == 1) sozialSubTab = 0
                             tab = next
                             scope.launch {
                                 // Update-Check bei Tab-Wechsel (Käufe/API laufen weiter)
@@ -2584,11 +2587,7 @@ fun LuvAppNav() {
                                         runCatching { syncCloudAccount(force = true) }
                                     }
                                     1 -> {
-                                        // Punkt sofort weg — Coins bleiben in Erfolge abholbar
-                                        com.luv.couple.net.NotificationBadges.markSozialSeen()
-                                        com.luv.couple.net.NotificationBadges.syncAppBadge(context)
-                                        AchievementsBadge.refresh()
-                                        com.luv.couple.net.NotificationBadges.refreshFriends(context)
+                                        // Punkt weg; Friends/Erfolge lädt SocialScreen selbst (kein Doppel-Request)
                                         com.luv.couple.net.NotificationBadges.markSozialSeen()
                                         com.luv.couple.net.NotificationBadges.syncAppBadge(context)
                                     }

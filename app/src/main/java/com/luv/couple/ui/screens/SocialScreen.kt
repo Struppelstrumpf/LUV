@@ -87,6 +87,8 @@ fun SocialScreen(
     onSyncWeddingLobbies: () -> Unit = {},
     /** Nach Öffnen der Hochzeitsbild-Lobby: Cloud-Sync + Home. */
     onWeddingLobbyOpened: () -> Unit = {},
+    /** Parent-State mitsynchronisieren (Deep-Link / Sticky-Tab). */
+    onSubTabChange: (Int) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 2)) }
@@ -102,7 +104,7 @@ fun SocialScreen(
     LaunchedEffect(Unit) {
         runCatching { LuvApiClient.pingAchievement("social_opens") }
         com.luv.couple.net.NotificationBadges.markSozialSeen()
-        // Parallel vorwärmen — nicht nacheinander warten (fühlte sich wie „langsam laden“ an)
+        // Parallel vorwärmen — Cache nutzen (kein force)
         kotlinx.coroutines.coroutineScope {
             launch { runCatching { AchievementsBadge.refresh() } }
             launch { runCatching { com.luv.couple.net.NotificationBadges.refreshFriends() } }
@@ -137,6 +139,7 @@ fun SocialScreen(
                             .background(if (active) AccentRose.copy(0.28f) else BgSoft)
                             .clickable {
                                 tab = index
+                                onSubTabChange(index)
                                 when (index) {
                                     0 -> com.luv.couple.net.NotificationBadges.markFriendsTabSeen()
                                     2 -> com.luv.couple.net.NotificationBadges.markAchievementsTabSeen()
