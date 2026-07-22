@@ -504,27 +504,13 @@ class PrefsRepository(private val context: Context) {
                 // Sonst Server-JOIN gewinnt (auch wenn lokal fälschlich HOST nach Failover)
                 upsert(r, Role.JOIN)
             }
-            // Nur Event-/Hochzeitsbild-Hosts ohne Server-Eintrag entfernen (geschlossen).
-            // Normale Freund-Hosts bleiben lokal, außer Server listet denselben Code als Join
-            // (dann hat upsert schon Role.JOIN gesetzt).
+            // Erfolgreicher Sync = Server ist Quelle der Wahrheit.
+            // Lokal behaltene Geister (aufgelöste Mal-Lobbys) entfernen.
+            // Schlägt der Sync fehl, wird replaceCloud… gar nicht mit leerer Liste aufgerufen.
+            val knownOnServer = hostedCodes + joined.map { it.code.uppercase() }.toSet()
             for (code in byCode.keys.toList()) {
-                val lobby = byCode[code] ?: continue
-                if (lobby.role != Role.HOST) continue
-                if (code in hostedCodes) continue
-                val weddingPaint =
-                    (lobby.isWedding && !lobby.isWeddingCeremony) ||
-                        lobby.name.contains("Hochzeitsbild", ignoreCase = true)
-                if (lobby.isEventLobby || weddingPaint) byCode.remove(code)
+                if (code !in knownOnServer) byCode.remove(code)
             }
-            // Joins: Event-Geister droppen. Normale Freund-Joins nie wegen Sync löschen.
-            for (code in byCode.keys.toList()) {
-                val lobby = byCode[code] ?: continue
-                if (lobby.role != Role.JOIN) continue
-                if (!lobby.isEventLobby) continue
-                if (code !in joinedCodes) byCode.remove(code)
-            }
-            // dropUnknownJoins: absichtlich kein Wipe mehr für normale Joins
-            // (früher: partielle Server-Liste löschte Familien-Joins).
             @Suppress("UNUSED_VARIABLE")
             val _dropUnknownJoins = dropUnknownJoins
             // Pro Event nur eine Lobby — Geister-/Sync-Duplikate entfernen

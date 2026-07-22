@@ -1336,14 +1336,32 @@ private fun LobbyCard(
             if (lobby.role == Role.HOST && !lobby.isRandom && !lobby.isWedding && !lobby.isWeddingCeremony && !lobby.isEventLobby) {
                 PrimaryButton("Umbenennen", Color.Transparent, onRename, bordered = true)
             }
-            val weddingPaintGhost =
-                lobby.isWedding &&
-                    !lobby.isWeddingCeremony &&
+            val paintLobbyGhost =
+                !lobby.isWeddingCeremony &&
+                    !lobby.isCustomRoom &&
                     state != ConnectionState.CONNECTED &&
-                    state != ConnectionState.HOSTING
-            if (!lobby.isWedding || lobby.isWeddingCeremony || lobby.isCustomRoom || weddingPaintGhost) {
+                    state != ConnectionState.HOSTING &&
+                    (
+                        lobby.isWedding ||
+                            lobby.isEventLobby ||
+                            lobby.isRandom ||
+                            state == ConnectionState.CONNECTING ||
+                            state == ConnectionState.RECONNECTING
+                        )
+            // Aktive Hochzeitsbild-Lobby (verbunden): kein Verlassen.
+            // Geister „Verbinde…“: Entfernen erlauben.
+            val canLeave =
+                !lobby.isWedding ||
+                    lobby.isWeddingCeremony ||
+                    lobby.isCustomRoom ||
+                    paintLobbyGhost
+            if (canLeave) {
                 Text(
-                    if (weddingPaintGhost) "Entfernen" else "Verlassen",
+                    if (paintLobbyGhost && (lobby.isWedding || state == ConnectionState.CONNECTING || state == ConnectionState.RECONNECTING)) {
+                        "Entfernen"
+                    } else {
+                        "Verlassen"
+                    },
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 13.sp,

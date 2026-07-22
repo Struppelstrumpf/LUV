@@ -325,9 +325,10 @@ class PairConnectionService : Service() {
                     session.attempt += 1
                 }
 
-                // Tote Lobby (z. B. aufgelöste Hochzeitsbild-Lobby) lokal entfernen
-                if (!stable && isLobbyGone(result, lobby)) {
-                    Log.i(TAG, "lobby gone code=${lobby.code} — drop local prefs")
+                // Tote Mal-Lobby nur löschen wenn API erreichbar und Raum weg
+                // (Offline → behalten, Sync stellt sie wieder her falls Server sie noch hat)
+                if (!stable && shouldDropDeadLobby(result, lobby)) {
+                    Log.i(TAG, "dead lobby code=${lobby.code} — drop local (API ok, room gone)")
                     session.lobbyGone = true
                     session.running.set(false)
                     runCatching {
@@ -367,22 +368,47 @@ class PairConnectionService : Service() {
         }
     }
 
-    private suspend fun isLobbyGone(result: ConnectResult, lobby: Lobby): Boolean {
-        if (result.closeCode == 4401) return true
-        val reason = result.closeReason.lowercase()
-        if (reason.contains("unauthorized")) return true
-        if (reason.contains("wedding_ended") || result.closeCode == 4001) {
-            if (lobby.isWedding) return true
-        }
+    /**
+     * Geisterkarte „Verbinde…“:
+     * - App/API offline → nicht löschen (nur Verbindungsproblem)
+     * - API erreichbar + Raum weg → lokal entfernen
+     * - API erreichbar + Raum da → behalten (Reconnect)
+     */
+    private suspend fun shouldDropDeadLobby(result: ConnectResult, lobby: Lobby): Boolean {
+        // Zeremonie / Custom-Räume: gleiches Ghost-Verhalten
         if (result.opened) return false
         val attempt = sessions[lobby.id]?.attempt ?: 0
-        val weddingPaint = lobby.isWedding && !lobby.isWeddingCeremony
-        // Hochzeitsbild: schon nach 1 Fehlversuch prüfen (Geisterkarte „Verbinde…“)
-        if (weddingPaint && attempt >= 1) {
-            return !roomStillExists(lobby.code)
-        }
         if (attempt < 2) return false
-        return !roomStillExists(lobby.code)
+
+        // Zuerst: hat die App unabhängig von dieser Lobby Server-Kontakt?
+        if (!apiReachableIndependently()) {
+            Log.i(TAG, "keep lobby ${lobby.code} — API nicht erreichbar (offline?)")
+            return false
+        }
+
+        val reason = result.closeReason.lowercase()
+        if (reason.contains("wedding_ended") && lobby.isWedding) {
+            return true
+        }
+        // room_not_found / unauthorized nach erfolgreichem API-Check
+        if (!roomStillExists(lobby.code)) return true
+        if (result.closeCode == 4401 || reason.contains("unauthorized")) {
+            // Token tot, Raum aber da → nicht droppen (Token-Heal läuft separat)
+            return false
+        }
+        return false
+    }
+
+    /** Heartbeat / Auth-Config — unabhängig vom Lobby-WebSocket. */
+    private suspend fun apiReachableIndependently(): Boolean {
+        return runCatching {
+            if (!LuvApiClient.sessionToken.isNullOrBlank()) {
+                LuvApiClient.heartbeat()
+            } else {
+                LuvApiClient.authConfig()
+                true
+            }
+        }.getOrDefault(false)
     }
 
     private suspend fun roomStillExists(code: String): Boolean {
@@ -394,6 +420,7 @@ class PairConnectionService : Service() {
                 e.message?.contains("nicht gefunden", ignoreCase = true) == true
             !missing
         } catch (_: Exception) {
+            // Netzwerkfehler beim Preview → als „existiert noch“ behandeln
             true
         }
     }
