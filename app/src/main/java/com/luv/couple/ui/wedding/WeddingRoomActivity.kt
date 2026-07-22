@@ -51,6 +51,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -170,8 +171,8 @@ private const val PRIEST_X = 0.50f
 private const val PRIEST_Y = 0.175f
 private val PriestSize = 30.dp
 private val MoneyTreeSize = 40.dp
-/** Großzügiger Sitz-Treffer (Norm-Koordinaten 0–1) */
-private const val TREE_SNAP_R = 0.22f
+/** Enger Tip-Radius — Geldbäume dürfen Sitze/Laufen nicht abfangen */
+private const val TREE_SNAP_R = 0.05f
 
 @Composable
 fun WeddingRoomScreen(onClose: () -> Unit) {
@@ -199,6 +200,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         }
     }
     var ceremony by remember { mutableStateOf<LuvApiClient.CeremonyInfo?>(null) }
+    /** Lokal geerntete Bäume — sofort, ohne auf Gesture-Restart zu warten */
+    var claimedMoneyTrees by remember { mutableStateOf(emptySet<String>()) }
+    val ceremonyLatest by rememberUpdatedState(ceremony)
+    val claimedTreesLatest by rememberUpdatedState(claimedMoneyTrees)
     val remoteX = remember { mutableStateMapOf<String, Float>() }
     val remoteY = remember { mutableStateMapOf<String, Float>() }
     var marriage by remember { mutableStateOf<LuvApiClient.MarriageInfo?>(null) }
@@ -269,6 +274,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         ceremony = it.ceremony
         marriage = it.marriage
         applyLayout(it.roomLayout)
+        val fromServer = it.ceremony?.claimedMoneyTreeIds.orEmpty()
+        if (fromServer.isNotEmpty()) {
+            claimedMoneyTrees = claimedMoneyTrees + fromServer
+        }
         val me = it.ceremony?.gathering?.find { g -> g.userId == myId }
         if (me != null && !walking) {
             // Immer vom Server — sonst bleibt blauer Ring nach Aufstehen „kleben“
@@ -719,8 +728,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         if (z.isFlame) FlameDecor(size = sz) else DecorMarker(size = sz)
                     }
                 }
-                // Geldbäume
-                val claimedTrees = c?.claimedMoneyTreeIds.orEmpty().toSet()
+                // Geldbäume (kein Hindernis — nur Tippen für 1 Coin)
+                val claimedTrees = claimedMoneyTrees + c?.claimedMoneyTreeIds.orEmpty()
                 zones.filter { it.isMoneyTree }.forEach { z ->
                     val claimed = claimedTrees.contains(z.id)
                     val sz = MoneyTreeSize
@@ -844,26 +853,52 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                 if (walking) return@detectTapGestures
                                 val rawX = (offset.x / size.width).coerceIn(0.01f, 0.99f)
                                 val rawY = (offset.y / size.height).coerceIn(0.01f, 0.99f)
-                                val sitPad = 0.12f
+                                val cNow = ceremonyLatest
+                                val claimedNow =
+                                    claimedTreesLatest + cNow?.claimedMoneyTreeIds.orEmpty()
 
-                                // Geldbaum tippen (auch leicht daneben)
-                                val hitTree = zones.firstOrNull { z ->
-                                    z.isMoneyTree &&
-                                        (
-                                            zoneContains(z, rawX, rawY, sitPad) ||
-                                                hypot(rawX - z.sitX, rawY - z.sitY) < TREE_SNAP_R
-                                            )
-                                }
-                                if (hitTree != null) {
-                                    val claimed =
-                                        ceremony?.claimedMoneyTreeIds?.contains(hitTree.id) == true
-                                    if (!claimed) {
+                                // Sitz hat Vorrang vor Geldbaum (vordere Bänke bleiben tippbar)
+                                val nearSeat = zones
+                                    .asSequence()
+                                    .filter { z ->
+                                        if (meIsCouple) z.isCoupleSeat else z.isGuestSeat
+                                    }
+                                    .minByOrNull { z -> hypot(rawX - z.sitX, rawY - z.sitY) }
+                                    ?.takeIf { z ->
+                                        zoneContains(z, rawX, rawY, 0.04f) ||
+                                            hypot(rawX - z.sitX, rawY - z.sitY) <
+                                            (avatarR * 2.2f).coerceAtLeast(0.05f)
+                                    }
+
+                                // Nur eng am Baum und nur ungeerntet — sonst Laufen/Sitzen
+                                if (nearSeat == null) {
+                                    val hitTree = zones
+                                        .asSequence()
+                                        .filter { z ->
+                                            z.isMoneyTree && z.id !in claimedNow
+                                        }
+                                        .minByOrNull { z ->
+                                            hypot(rawX - z.sitX, rawY - z.sitY)
+                                        }
+                                        ?.takeIf { z ->
+                                            val hitR = (z.r + 0.015f).coerceAtLeast(TREE_SNAP_R)
+                                            zoneContains(z, rawX, rawY, 0.01f) ||
+                                                hypot(rawX - z.sitX, rawY - z.sitY) < hitR
+                                        }
+                                    if (hitTree != null) {
                                         scope.launch {
                                             runCatching {
                                                 LuvApiClient.ceremonyClaimMoneyTree(hitTree.id)
                                             }
                                                 .onSuccess { r ->
-                                                    if (r.ceremony != null) ceremony = r.ceremony
+                                                    claimedMoneyTrees =
+                                                        claimedMoneyTrees + hitTree.id
+                                                    if (r.ceremony != null) {
+                                                        ceremony = r.ceremony
+                                                        claimedMoneyTrees =
+                                                            claimedMoneyTrees +
+                                                                r.ceremony.claimedMoneyTreeIds
+                                                    }
                                                     r.account?.let { AccountSession.setAccount(it) }
                                                     Toast.makeText(
                                                         context,
@@ -881,8 +916,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                                     ).show()
                                                 }
                                         }
+                                        return@detectTapGestures
                                     }
-                                    return@detectTapGestures
                                 }
 
                                 if (zones.none { it.isWalk }) {
