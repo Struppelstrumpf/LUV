@@ -131,13 +131,17 @@ function sanitizeZone(raw, index) {
     return null;
   }
   if (!["rect", "circle"].includes(shape)) return null;
+  // Gelb/Blau: Rechtecke (Sitzbereiche) oder alt Kreise; Spawn/Deko bleiben Kreise
   if (
-    ["yellow", "blue", "brown", "orange", "gold", "pink", "lime"].includes(color) &&
+    ["brown", "orange", "gold", "pink", "lime"].includes(color) &&
     shape !== "circle"
   ) {
     return null;
   }
   if ((color === "red" || color === "green") && shape !== "rect") return null;
+  if ((color === "yellow" || color === "blue") && shape !== "rect" && shape !== "circle") {
+    return null;
+  }
 
   let id = String(raw.id || "").trim().slice(0, 48);
   if (!id) {
@@ -161,6 +165,9 @@ function sanitizeZone(raw, index) {
   }
   if (color === "yellow" && !id.startsWith("altar_")) {
     id = `altar_${id.replace(/^altar_/, "")}`.slice(0, 48);
+  }
+  if (color === "blue" && !id.startsWith("sit_")) {
+    id = `sit_${id.replace(/^sit_/, "")}`.slice(0, 48);
   }
   if (color === "lime" && !id.startsWith("money_")) {
     id = `money_${id.replace(/^money_/, "")}`.slice(0, 48);
@@ -506,6 +513,30 @@ function findSitZone(db, roomId, seatId) {
   return z;
 }
 
+function zoneArea(z) {
+  if (!z) return Number.POSITIVE_INFINITY;
+  if (z.shape === "circle") {
+    const r = Number(z.r) || 0;
+    return Math.PI * r * r;
+  }
+  return Math.max(0.0001, (Number(z.w) || 0) * (Number(z.h) || 0));
+}
+
+/**
+ * Gelber (Brautpaar) bzw. blauer (Gast) Bereich an Position.
+ * Bei Überlappung: kleinste Fläche gewinnt.
+ */
+function findMatchingSeatZone(layout, x, y, forCouple) {
+  const wantCouple = Boolean(forCouple);
+  const hits = (layout?.zones || []).filter((z) => {
+    if (wantCouple ? !isCoupleSeat(z) : !isGuestSeat(z)) return false;
+    return zoneContains(z, x, y, 0);
+  });
+  if (!hits.length) return null;
+  hits.sort((a, b) => zoneArea(a) - zoneArea(b));
+  return hits[0];
+}
+
 function findPortalAt(layout, x, y) {
   if (!layout?.portals?.length) return null;
   return (
@@ -776,6 +807,7 @@ module.exports = {
   findImageFile,
   findZone,
   findSitZone,
+  findMatchingSeatZone,
   findPortalAt,
   findActionAt,
   separateFromOthers,

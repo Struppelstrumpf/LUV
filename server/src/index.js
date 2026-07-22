@@ -2781,8 +2781,55 @@ function abortWeddingCeremonyRejected(m, leftByUserId) {
   abortWeddingCeremony(m, leftByUserId, { divorceCooldown: false });
 }
 
+/**
+ * Sitzstatus aus Position in Admin-Rechtecken (blau=Gast, gelb=Brautpaar).
+ * Mehrere Personen dürfen dieselbe Zone teilen.
+ */
+function syncWeddingZoneSeating(m, db, onlyUserId = null) {
+  if (!m) return false;
+  const c = weddingCeremony.ensureCeremony(m);
+  const layout = roomLayouts.getLayout(db, "wedding");
+  let changed = false;
+  const ids = onlyUserId
+    ? [String(onlyUserId)]
+    : [
+        ...new Set([
+          ...Object.keys(c.positions || {}),
+          ...Object.keys(c.gatheringPresence || {}),
+          m.a,
+          m.b,
+        ]),
+      ].filter(Boolean);
+
+  for (const uid of ids) {
+    if (c.seated[uid] && !weddingCeremony.canStand(m, uid)) continue;
+    const pos = c.positions[uid];
+    if (!pos || !Number.isFinite(Number(pos.x)) || !Number.isFinite(Number(pos.y))) {
+      if (c.seated[uid] && weddingCeremony.canStand(m, uid)) {
+        delete c.seated[uid];
+        changed = true;
+      }
+      continue;
+    }
+    const couple = weddingCeremony.isCouple(m, uid);
+    const zone = roomLayouts.findMatchingSeatZone(layout, Number(pos.x), Number(pos.y), couple);
+    const next = zone ? zone.id : null;
+    const prev = c.seated[uid] || null;
+    if (prev === next) continue;
+    if (next) {
+      c.seated[uid] = next;
+      if (c.phase === "gathering" || c.phase === "none") c.phase = "altar";
+    } else if (weddingCeremony.canStand(m, uid)) {
+      delete c.seated[uid];
+    }
+    changed = true;
+  }
+  return changed;
+}
+
 function tickCeremonyRitual(m, db) {
   if (!m) return null;
+  syncWeddingZoneSeating(m, db);
   const isCoupleSeat = (seatId) => {
     const z = roomLayouts.findSitZone(db, "wedding", seatId);
     return Boolean(z && roomLayouts.isCoupleSeat(z));
@@ -9813,17 +9860,13 @@ app.post("/v1/me/marriage/ceremony/move", (req, res) => {
       message: "Bitte zuerst eintreten.",
     });
   }
-  // Nach Sitz-Lock: Sitzende dürfen nicht mehr aufstehen
+  // Nach Sitz-Lock: Sitzende dürfen nicht mehr laufen
   if (c.seated[ctx.user.id] && !weddingCeremony.canStand(m, ctx.user.id)) {
     return res.status(400).json({
       error: "seating_locked",
       message: "Während der Zeremonie bleibt ihr sitzen.",
       ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
     });
-  }
-  // Aufstehen durch Bewegen (wie Custom-Raum)
-  if (c.seated[ctx.user.id]) {
-    delete c.seated[ctx.user.id];
   }
   const layout = roomLayouts.getLayout(db, "wedding");
   const prev = c.positions[ctx.user.id] || { x: 0.5, y: 0.86 };
@@ -9835,6 +9878,8 @@ app.post("/v1/me/marriage/ceremony/move", (req, res) => {
     Number(req.body?.y)
   );
   c.positions[ctx.user.id] = { x: clamped.x, y: clamped.y };
+  // Sitzt nur, wer im passenden Rechteck steht (nicht mehr: Move = Aufstehen)
+  syncWeddingZoneSeating(m, db, ctx.user.id);
   weddingCeremony.touchPresence(m, ctx.user.id, "gathering");
   tickCeremonyRitual(m, db);
   scheduleSave();
@@ -9874,51 +9919,33 @@ app.post("/v1/me/marriage/ceremony/sit", (req, res) => {
       message: "Bitte zuerst eintreten.",
     });
   }
-  if (c.seated[ctx.user.id]) {
-    return res.json({
-      ok: true,
-      already: true,
+  // Legacy: Sitzt aus aktueller Position (Rechtecke). seatId optional / wird ignoriert.
+  const layout = roomLayouts.getLayout(db, "wedding");
+  if (!c.positions[ctx.user.id]) {
+    c.positions[ctx.user.id] = {
+      x: Number(layout?.spawn?.x) || 0.5,
+      y: Number(layout?.spawn?.y) || 0.86,
+    };
+  }
+  syncWeddingZoneSeating(m, db, ctx.user.id);
+  if (!c.seated[ctx.user.id]) {
+    return res.status(400).json({
+      error: "not_in_seat_zone",
+      message: weddingCeremony.isCouple(m, ctx.user.id)
+        ? "Bitte in den gelben Brautpaar-Bereich gehen."
+        : "Bitte in den blauen Gäste-Bereich gehen.",
       ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
-      roomLayout: roomLayouts.getLayout(db, "wedding"),
+      roomLayout: layout,
     });
   }
-  const seatId = String(req.body?.seatId || "").trim().slice(0, 48);
-  if (!seatId) return res.status(400).json({ error: "bad_seat" });
-  const taken = Object.values(c.seated).includes(seatId);
-  if (taken) return res.status(400).json({ error: "seat_taken" });
-  const isCouple = weddingCeremony.isCouple(m, ctx.user.id);
-  // Nur Sitz-Zonen aus dem Admin-Layout (gelb/blau)
-  const zone = roomLayouts.findSitZone(db, "wedding", seatId);
-  if (!zone) {
-    return res.status(400).json({
-      error: "bad_seat",
-      message: "Dieser Platz ist im Raum-Layout nicht definiert.",
-    });
-  }
-  const coupleSeat = roomLayouts.isCoupleSeat(zone);
-  const guestSeat = roomLayouts.isGuestSeat(zone);
-  if (isCouple && !coupleSeat) {
-    return res.status(400).json({
-      error: "couple_altar_only",
-      message: "Bitte auf einen gelben Platz (Eheleute) setzen.",
-    });
-  }
-  if (!isCouple && !guestSeat) {
-    return res.status(400).json({ error: "guest_bench_only" });
-  }
-  c.seated[ctx.user.id] = seatId;
-  const sx = zone.shape === "circle" ? zone.cx : zone.x + zone.w / 2;
-  const sy = zone.shape === "circle" ? zone.cy : zone.y + zone.h / 2;
-  c.positions[ctx.user.id] = { x: sx, y: sy };
   weddingCeremony.touchPresence(m, ctx.user.id, "gathering");
-  // Phase "vows" erst nach 30s Altar-Hold + Pastor-Rede — nicht sofort bei allen sitzen
   if (c.phase === "gathering" || c.phase === "none") c.phase = "altar";
   tickCeremonyRitual(m, db);
   scheduleSave();
   return res.json({
     ok: true,
     ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
-    roomLayout: roomLayouts.getLayout(db, "wedding"),
+    roomLayout: layout,
   });
 });
 

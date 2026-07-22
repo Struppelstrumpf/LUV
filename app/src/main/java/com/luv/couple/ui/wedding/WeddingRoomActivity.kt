@@ -167,10 +167,9 @@ private val IdleRing = Color(0x99FFFFFF)
 private const val PRIEST_X = 0.50f
 private const val PRIEST_Y = 0.175f
 private val PriestSize = 30.dp
-private val SeatPlusSize = 34.dp
 private val MoneyTreeSize = 40.dp
 /** Großzügiger Sitz-Treffer (Norm-Koordinaten 0–1) */
-private const val SIT_SNAP_R = 0.22f
+private const val TREE_SNAP_R = 0.22f
 
 @Composable
 fun WeddingRoomScreen(onClose: () -> Unit) {
@@ -229,16 +228,13 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
 
     val zones = layout?.zones.orEmpty()
     val avatarR = layout?.avatarR?.takeIf { it > 0f } ?: DEFAULT_AVATAR_R
-    val sitZones = remember(zones, ceremony) {
-        val meCouple = ceremony?.gathering?.find { it.userId == myId }?.isCouple == true
-        zones.filter { z ->
-            when {
-                z.isCoupleSeat -> meCouple
-                z.isGuestSeat -> !meCouple
-                else -> false
-            }
+
+    /** Blauer Ring nur in der Rollen-Zone (Gast=blau, Brautpaar=gelb). */
+    fun inRoleSeatZone(isCouple: Boolean, x: Float, y: Float): Boolean =
+        zones.any { z ->
+            val ok = if (isCouple) z.isCoupleSeat else z.isGuestSeat
+            ok && zoneContains(z, x, y, 0f)
         }
-    }
 
     fun applyLayout(next: LuvApiClient.RoomLayout?) {
         if (next == null) return
@@ -305,22 +301,20 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         }
     }
 
-    val meOnAltarSeat = remember(ceremony, seated, zones, myId) {
-        if (!seated) return@remember false
-        val seatId = ceremony?.gathering?.find { it.userId == myId }?.seatedSeatId
-            ?: return@remember false
-        val isCouple = ceremony?.gathering?.find { it.userId == myId }?.isCouple == true
-        isCouple && zones.any { it.id == seatId && it.isCoupleSeat }
-    }
-
     LaunchedEffect(
         ceremony?.altarHoldActive,
         ceremony?.pastorPhase,
         ceremony?.phase,
-        meOnAltarSeat,
+        myX,
+        myY,
         seated,
+        ceremony?.gathering,
     ) {
-        chapelMusic.sync(ceremony, coupleOnAltar = meOnAltarSeat)
+        val couple = ceremony?.gathering?.find { it.userId == myId }?.isCouple == true
+        chapelMusic.sync(
+            ceremony,
+            coupleOnAltar = couple && inRoleSeatZone(true, myX, myY),
+        )
     }
 
     // Presence-Heartbeat — sonst verschwinden Idle-Gäste nach dem TTL
@@ -547,36 +541,6 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         if (z.isFlame) FlameDecor(size = sz) else DecorMarker(size = sz)
                     }
                 }
-                // Freie Sitze: Plus im weißen Kreis (Gäste blau / Brautpaar gelb)
-                sitZones.forEach { z ->
-                    val taken = c?.gathering?.any {
-                        it.seatedSeatId == z.id && it.present
-                    } == true
-                    if (taken) return@forEach
-                    val plusCol = if (z.isCoupleSeat) Color(0xFFFFD54F) else SitRingBlue
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(
-                                start = roomW * z.sitX - SeatPlusSize / 2,
-                                top = roomH * z.sitY - SeatPlusSize / 2,
-                            )
-                            .size(SeatPlusSize)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(0.92f))
-                            .border(2.dp, plusCol, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            "+",
-                            color = plusCol,
-                            fontSize = 20.sp,
-                            fontFamily = DisplayFont,
-                            textAlign = TextAlign.Center,
-                        )
-                    }
-                }
-
                 // Geldbäume
                 val claimedTrees = c?.claimedMoneyTreeIds.orEmpty().toSet()
                 zones.filter { it.isMoneyTree }.forEach { z ->
@@ -615,9 +579,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     ?.forEach { g ->
                     val ax = if (g.userId == myId) myX else remoteX[g.userId] ?: g.x
                     val ay = if (g.userId == myId) myY else remoteY[g.userId] ?: g.y
-                    // Blauer Ring nur bei echtem Sitz (Server-seatedSeatId)
-                    val isSeatedHere = g.seatedSeatId != null &&
-                        (g.userId != myId || seated)
+                    // Ring nur in passender Zone (nicht bei Server-Sitz allein)
+                    val isSeatedHere = inRoleSeatZone(g.isCouple, ax, ay)
                     val vowsActive = c?.vowsReady == true
                     Box(
                         modifier = Modifier
@@ -703,7 +666,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(zones, avatarR, sitZones, seated, ceremony?.canStand, ceremony?.seatingLocked) {
+                        .pointerInput(zones, avatarR, meIsCouple, ceremony?.canStand, ceremony?.seatingLocked) {
                             detectTapGestures { offset ->
                                 if (walking) return@detectTapGestures
                                 val rawX = (offset.x / size.width).coerceIn(0.01f, 0.99f)
@@ -715,7 +678,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                     z.isMoneyTree &&
                                         (
                                             zoneContains(z, rawX, rawY, sitPad) ||
-                                                hypot(rawX - z.sitX, rawY - z.sitY) < SIT_SNAP_R
+                                                hypot(rawX - z.sitX, rawY - z.sitY) < TREE_SNAP_R
                                             )
                                 }
                                 if (hitTree != null) {
@@ -777,13 +740,26 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                                 scope.launch {
                                                     runCatching {
                                                         LuvApiClient.ceremonyMove(myX, myY)
+                                                    }.onSuccess { info ->
+                                                        if (info != null) {
+                                                            ceremony = info
+                                                            seated = info.gathering
+                                                                .find { it.userId == myId }
+                                                                ?.seatedSeatId != null
+                                                        }
                                                     }
                                                 }
                                             }
                                         },
                                     )
                                     runCatching { LuvApiClient.ceremonyMove(myX, myY) }
-                                        .onSuccess { ceremony = it ?: ceremony }
+                                        .onSuccess { info ->
+                                            ceremony = info ?: ceremony
+                                            seated = info?.gathering
+                                                ?.find { it.userId == myId }
+                                                ?.seatedSeatId != null
+                                                || inRoleSeatZone(meIsCouple, myX, myY)
+                                        }
                                         .onFailure {
                                             Toast.makeText(
                                                 context,
@@ -794,75 +770,14 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                     return true
                                 }
 
-                                if (seated) {
-                                    if (ceremony?.canStand == false) {
-                                        scope.launch {
-                                            Toast.makeText(
-                                                context,
-                                                "Während der Zeremonie bleibt ihr sitzen.",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        }
-                                        return@detectTapGestures
-                                    }
+                                // Während Zeremonie-Lock: nur stehen bleiben
+                                if (ceremony?.canStand == false && seated) {
                                     scope.launch {
-                                        walking = true
-                                        // Aufstehen: Server-Sitz lösen, dann laufen
-                                        seated = false
-                                        ceremony = ceremony?.copy(
-                                            gathering = ceremony?.gathering?.map { g ->
-                                                if (g.userId == myId) g.copy(seatedSeatId = null) else g
-                                            }.orEmpty()
-                                        )
-                                        walkTo(rawX, rawY)
-                                        walking = false
-                                    }
-                                    return@detectTapGestures
-                                }
-
-                                // Nächster freier Sitz in großzügigem Radius → automatisch hinsetzen
-                                fun seatFree(z: LuvApiClient.RoomZone): Boolean =
-                                    ceremony?.gathering?.none {
-                                        it.seatedSeatId == z.id &&
-                                            it.userId != myId &&
-                                            it.present
-                                    } != false
-
-                                val hitSit = sitZones
-                                    .filter { seatFree(it) }
-                                    .map { z -> z to hypot(rawX - z.sitX, rawY - z.sitY) }
-                                    .filter { (z, d) ->
-                                        d < SIT_SNAP_R || zoneContains(z, rawX, rawY, sitPad)
-                                    }
-                                    .minByOrNull { it.second }
-                                    ?.first
-                                if (hitSit != null) {
-                                    scope.launch {
-                                        walking = true
-                                        val near =
-                                            hypot(myX - hitSit.sitX, myY - hitSit.sitY) < 0.20f
-                                        if (!near) {
-                                            val approach = nearestWalkablePoint(
-                                                zones, hitSit.sitX, hitSit.sitY, avatarR
-                                            ) ?: (hitSit.sitX to hitSit.sitY)
-                                            walkTo(approach.first, approach.second)
-                                        }
-                                        // Direkt auf Sitz setzen — Server snappt Position
-                                        runCatching { LuvApiClient.ceremonySit(hitSit.id) }
-                                            .onSuccess {
-                                                ceremony = it
-                                                seated = true
-                                                myX = hitSit.sitX
-                                                myY = hitSit.sitY
-                                            }
-                                            .onFailure {
-                                                Toast.makeText(
-                                                    context,
-                                                    it.message ?: "Sitz belegt",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
-                                            }
-                                        walking = false
+                                        Toast.makeText(
+                                            context,
+                                            "Während der Zeremonie bleibt ihr sitzen.",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                     }
                                     return@detectTapGestures
                                 }
@@ -881,6 +796,11 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                             ?: (rawX to rawY)
                                     }
                                     walkTo(goal.first, goal.second)
+                                    // Sitzstatus kommt vom Server (in blau/gelb = sitzen)
+                                    seated = ceremony?.gathering
+                                        ?.find { it.userId == myId }
+                                        ?.seatedSeatId != null ||
+                                        inRoleSeatZone(meIsCouple, myX, myY)
                                     walking = false
                                 }
                             }
