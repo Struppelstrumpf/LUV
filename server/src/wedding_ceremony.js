@@ -451,6 +451,19 @@ function canSitAfterLock(m, userId) {
 function canEnterChapel(m, userId, { isKnownMember = false } = {}) {
   const c = ensureCeremony(m);
   const now = Date.now();
+  if (
+    c.receptionEnded ||
+    c.pastorPhase === "gifts_claim" ||
+    c.phase === "gifts_claim"
+  ) {
+    return {
+      ok: false,
+      error: "reception_over",
+      message: isCouple(m, userId)
+        ? "Empfang vorbei — hole deine Geschenke auf dem Home ab."
+        : "Die Empfangszeit ist vorbei.",
+    };
+  }
   if (c.pastorPhase === "reception" || c.phase === "reception") {
     const ends = Number(c.receptionEndsAt) || 0;
     if (ends > 0 && now > ends) {
@@ -493,6 +506,7 @@ function altarHoldRemainingMs(m) {
 
 function receptionRemainingMs(m) {
   const c = ensureCeremony(m);
+  if (c.receptionEnded) return 0;
   const ends = Number(c.receptionEndsAt) || 0;
   if (!ends) return 0;
   return Math.max(0, ends - Date.now());
@@ -577,8 +591,9 @@ function publicCeremony(m, viewerId, users = {}) {
   const iGifted = Boolean(c.giftedBy[viewerId]);
   const iGuestbooked = Boolean(c.guestbookedBy[viewerId]);
   const inReception =
-    c.pastorPhase === "reception" ||
-    c.phase === "reception";
+    !c.receptionEnded &&
+    receptionRemainingMs(m) > 0 &&
+    (c.pastorPhase === "reception" || c.phase === "reception");
 
   return {
     phase: c.phase || "none",

@@ -85,6 +85,8 @@ class PrefsRepository(private val context: Context) {
     private val achievementsSeenFpKey = stringPreferencesKey("achievements_seen_fingerprint")
     /** Lootbox: vor Kauf bestätigen (Standard an) */
     private val lootboxConfirmBuyKey = booleanPreferencesKey("lootbox_confirm_buy")
+    /** Schmale Home-Benachrichtigungs-Kachel (Standard an) */
+    private val homeFeedStripKey = booleanPreferencesKey("home_feed_strip_enabled")
 
     // Legacy keys — Migration
     private val genderKey = stringPreferencesKey("gender")
@@ -675,6 +677,14 @@ class PrefsRepository(private val context: Context) {
 
     suspend fun setLootboxConfirmBuy(enabled: Boolean) {
         context.dataStore.edit { it[lootboxConfirmBuyKey] = enabled }
+    }
+
+    val homeFeedStripEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[homeFeedStripKey] ?: true
+    }
+
+    suspend fun setHomeFeedStripEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[homeFeedStripKey] = enabled }
     }
 
     /** true = noch nicht gemeldet (jetzt markieren), false = schon bekannt */

@@ -282,10 +282,24 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             entered = true
         }
         if (
+            it.ceremony?.pastorPhase == "gifts_claim" ||
+            it.ceremony?.phase == "gifts_claim"
+        ) {
+            // Empfang vorbei — Claim auf dem Home, nicht als Abbruch
+            Toast.makeText(context, "Empfang vorbei — Geschenke auf dem Home abholen", Toast.LENGTH_LONG).show()
+            onClose()
+            return
+        }
+        if (
             it.ceremony?.pastorPhase == "ended" ||
             it.ceremony?.phase == "ended"
         ) {
-            if (rejectName == null) rejectName = "Die Trauung"
+            // Echtes Abbruch-Ende (Nein), nicht Empfang
+            if (rejectName == null && it.ceremony?.leftByNickname != null) {
+                rejectName = it.ceremony.leftByNickname
+            } else if (rejectName == null) {
+                rejectName = "Die Trauung"
+            }
         }
     }
 
@@ -366,7 +380,19 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 WeddingChapelCache.layout
                     ?: runCatching { LuvApiClient.fetchRoomLayout("wedding") }.getOrNull()
             }
-            val first = runCatching { LuvApiClient.fetchCeremony() }.getOrNull()
+            val firstResult = runCatching { LuvApiClient.fetchCeremony() }
+            firstResult.onFailure { e ->
+                val err = (e as? com.luv.couple.net.LuvApiException)?.error
+                if (err == "reception_over") {
+                    Toast.makeText(
+                        context,
+                        e.message ?: "Empfang vorbei",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    onClose()
+                }
+            }
+            val first = firstResult.getOrNull()
             if (first != null) {
                 if (shouldKickLatecomer(first.ceremony)) {
                     Toast.makeText(
@@ -390,6 +416,15 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 .onSuccess { applyCeremonyBundle(it) }
                 .onFailure { e ->
                     val err = (e as? com.luv.couple.net.LuvApiException)?.error
+                    if (err == "reception_over") {
+                        Toast.makeText(
+                            context,
+                            e.message ?: "Empfang vorbei",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        onClose()
+                        return@LaunchedEffect
+                    }
                     if (
                         err == "ceremony_aborted" ||
                         e.message?.contains("abgebrochen", ignoreCase = true) == true

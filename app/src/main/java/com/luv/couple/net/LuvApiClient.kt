@@ -1450,6 +1450,43 @@ object LuvApiClient {
         parseLiveNotice(json.optJSONObject("notice"))
     }
 
+    data class HomeFeedItem(
+        val id: String,
+        val kind: String,
+        val shortText: String,
+        val title: String,
+        val body: String,
+        val createdAt: Long,
+        val expiresAt: Long,
+        val actionType: String?,
+        val actionPayload: JSONObject?
+    )
+
+    suspend fun fetchHomeFeed(): List<HomeFeedItem> = withContext(Dispatchers.IO) {
+        val json = authedGet("/v1/home-feed")
+        val arr = json.optJSONArray("items") ?: return@withContext emptyList()
+        val out = ArrayList<HomeFeedItem>(arr.length())
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val id = o.optString("id").trim()
+            val short = o.optString("shortText").trim()
+            if (id.isBlank() || short.isBlank()) continue
+            out += HomeFeedItem(
+                id = id,
+                kind = o.optString("kind", "info").trim().ifBlank { "info" },
+                shortText = short.take(90),
+                title = o.optString("title").trim().ifBlank { short }.take(90),
+                body = o.optString("body").trim().take(600),
+                createdAt = o.optLong("createdAt", 0L),
+                expiresAt = o.optLong("expiresAt", 0L),
+                actionType = o.optString("actionType").trim()
+                    .takeIf { it.isNotBlank() && it != "null" },
+                actionPayload = o.optJSONObject("actionPayload")
+            )
+        }
+        out
+    }
+
     private fun parseLiveNotice(o: JSONObject?): LiveNotice? {
         if (o == null) return null
         val id = o.optString("id").trim()

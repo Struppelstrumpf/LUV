@@ -304,6 +304,7 @@ fun LobbiesScreen(
     onReconnect: (Lobby) -> Unit,
     onOpenProfile: () -> Unit,
     onOpenEvents: () -> Unit = {},
+    onHomeFeedAction: (com.luv.couple.net.LuvApiClient.HomeFeedItem) -> Unit = {},
     updateState: UpdateUiState = UpdateUiState.Idle,
     onUpdateApp: () -> Unit = {},
     requireGoogleLogin: Boolean = false,
@@ -778,6 +779,11 @@ fun LobbiesScreen(
             if (!error.isNullOrBlank()) {
                 Text(error, color = AccentRose, fontFamily = BodyFont, fontSize = 13.sp)
             }
+
+            HomeFeedStrip(
+                accent = accent,
+                onAction = onHomeFeedAction
+            )
 
             val firstLobbyId = orderedLobbies.firstOrNull()?.id
             orderedLobbies.forEach { lobby ->
@@ -1415,11 +1421,14 @@ private fun WeddingCeremonyLobbyButton(
     val giftPhase = lobby.giftPhase.lowercase()
     val giftEnds = lobby.giftWindowEndsAt
     val giftRem = (giftEnds - now).coerceAtLeast(0L)
+    val receptionOver =
+        giftPhase == "rolled" ||
+            (giftPhase == "open" && giftEnds > 0L && now >= giftEnds)
     // Kapelle öffnet 10 Min. vor Termin — Einladen ist unabhängig davon (Sitze oben).
     val openAt = (lobby.ceremonyAt - 10 * 60 * 1000L).coerceAtLeast(0L)
     val open = lobby.ceremonyAt > 0L && now >= openAt
     val label = when {
-        giftPhase == "rolled" -> "Geschenke abholen"
+        receptionOver -> "Geschenke abholen"
         giftPhase == "open" && giftEnds > 0L ->
             "Noch ${formatCountdown(giftRem)} · Empfang"
         lobby.ceremonyAt <= 0L -> "Hochzeit"

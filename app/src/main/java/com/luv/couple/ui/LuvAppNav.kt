@@ -2095,8 +2095,16 @@ fun LuvAppNav() {
                                     if (lobby.isWeddingCeremony) {
                                         val now = System.currentTimeMillis()
                                         val giftPhase = lobby.giftPhase.lowercase()
-                                        if (giftPhase == "rolled") {
+                                        val giftEnds = lobby.giftWindowEndsAt
+                                        val receptionOver =
+                                            giftPhase == "rolled" ||
+                                                (giftPhase == "open" &&
+                                                    giftEnds > 0L &&
+                                                    now >= giftEnds)
+                                        if (receptionOver) {
                                             scope.launch {
+                                                // Kurz sync — Server rollt ggf. gerade
+                                                runCatching { syncCloudAccount(force = true) }
                                                 runCatching { LuvApiClient.claimWeddingGifts() }
                                                     .onSuccess { result ->
                                                         syncInventory()
@@ -2323,6 +2331,55 @@ fun LuvAppNav() {
                             onOpenEvents = {
                                 sozialSubTab = 1
                                 tab = 1
+                            },
+                            onHomeFeedAction = { item ->
+                                when (item.actionType) {
+                                    "wedding_image" -> {
+                                        val uid = item.actionPayload
+                                            ?.optString("userIdA")
+                                            ?.trim()
+                                            ?.takeIf { it.isNotBlank() }
+                                            ?: item.actionPayload
+                                                ?.optString("userIdB")
+                                                ?.trim()
+                                                ?.takeIf { it.isNotBlank() }
+                                        if (!uid.isNullOrBlank()) {
+                                            com.luv.couple.net.PendingWeddingGuestbook.offer(uid)
+                                            navController.currentBackStackEntry
+                                                ?.savedStateHandle
+                                                ?.set("peer_nick", "Ehepaar")
+                                            navController.navigate(Routes.peerProfile(uid)) {
+                                                launchSingleTop = true
+                                            }
+                                        }
+                                    }
+                                    "contest_image" -> {
+                                        sozialSubTab = 1
+                                        tab = 1
+                                    }
+                                    "market" -> {
+                                        com.luv.couple.net.PendingMarketplace.offer()
+                                    }
+                                    "profile" -> {
+                                        val uid = item.actionPayload
+                                            ?.optString("userId")
+                                            ?.trim()
+                                            ?.takeIf { it.isNotBlank() }
+                                        val nick = item.actionPayload
+                                            ?.optString("nickname")
+                                            ?.trim()
+                                            ?.ifBlank { "Profil" }
+                                            ?: "Profil"
+                                        if (!uid.isNullOrBlank()) {
+                                            navController.currentBackStackEntry
+                                                ?.savedStateHandle
+                                                ?.set("peer_nick", nick)
+                                            navController.navigate(Routes.peerProfile(uid)) {
+                                                launchSingleTop = true
+                                            }
+                                        }
+                                    }
+                                }
                             },
                             updateState = updateState,
                             onUpdateApp = { startAppUpdate() }

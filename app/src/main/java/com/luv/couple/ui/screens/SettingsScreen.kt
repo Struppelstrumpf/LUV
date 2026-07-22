@@ -64,6 +64,7 @@ fun SettingsScreen(
     val partnerHaptic by prefs.partnerHapticFlow.collectAsStateWithLifecycle(initialValue = true)
     val liveProximityRich by prefs.liveProximityRichFlow.collectAsStateWithLifecycle(initialValue = true)
     val liveProximityWake by prefs.liveProximityWakeFlow.collectAsStateWithLifecycle(initialValue = false)
+    val homeFeedStrip by prefs.homeFeedStripEnabledFlow.collectAsStateWithLifecycle(initialValue = true)
     var showDeleteHold by remember { mutableStateOf(false) }
 
     ScreenBackdrop {
@@ -139,6 +140,19 @@ fun SettingsScreen(
                 accent = accent,
                 onCheckedChange = { enabled ->
                     scope.launch { prefs.setLiveProximityWakeEnabled(enabled) }
+                }
+            )
+            SettingsToggleRow(
+                title = "Home-Nachrichten",
+                subtitle = if (homeFeedStrip) {
+                    "Schmale Kachel oben: Hochzeiten, Events, seltene Funde"
+                } else {
+                    "Aus — keine Laufschrift auf dem Home"
+                },
+                checked = homeFeedStrip,
+                accent = accent,
+                onCheckedChange = { enabled ->
+                    scope.launch { prefs.setHomeFeedStripEnabled(enabled) }
                 }
             )
 

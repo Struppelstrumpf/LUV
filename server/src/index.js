@@ -23,6 +23,7 @@ const marriage = require("./marriage");
 const weddingCeremony = require("./wedding_ceremony");
 const weddingGifts = require("./wedding_gifts");
 const roomLayouts = require("./room_layouts");
+const homeFeed = require("./home_feed");
 const shopCatalog = require("./shop_catalog");
 const petImages = require("./pet_images");
 const playBilling = require("./play_billing");
@@ -2627,6 +2628,99 @@ function syncCeremonyGiftMeta(m) {
   }
 }
 
+/** Gäste aus der Kapelle werfen — Brautpaar bleibt für Geschenke-Claim. */
+function kickCeremonyGuests(m) {
+  const code = m?.ceremonyLobbyCode;
+  if (!code) return 0;
+  const db = getDb();
+  const room = rooms.get(code) || db.rooms?.[code];
+  if (!room) return 0;
+  const couple = new Set([m.a, m.b].filter(Boolean));
+  const members = Array.isArray(room.memberUserIds) ? [...room.memberUserIds] : [];
+  let kicked = 0;
+  for (const uid of members) {
+    if (couple.has(uid)) continue;
+    const u = db.users?.[uid];
+    if (u) {
+      forgetJoinedLobby(u, code);
+      if (u.hostedRooms?.[code]) delete u.hostedRooms[code];
+      releaseHostedRoom(code, uid);
+    }
+    kicked++;
+  }
+  room.memberUserIds = members.filter((id) => couple.has(id));
+  m.ceremonyMemberIds = [...room.memberUserIds];
+  if (room.sockets && typeof room.sockets.values === "function") {
+    for (const sock of [...room.sockets.values()]) {
+      const uid = sock?.luvUserId;
+      if (uid && !couple.has(uid)) {
+        try {
+          sock.close(4001, "reception_over");
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+  if (db.rooms?.[code]) {
+    db.rooms[code].memberUserIds = [...room.memberUserIds];
+  }
+  persistRooms();
+  return kicked;
+}
+
+/** Ein Ehepartner nach Claim aus der Kapellen-Lobby nehmen. */
+function removeCoupleMemberFromCeremonyLobby(m, userId) {
+  const code = m?.ceremonyLobbyCode;
+  if (!code || !userId) return;
+  const db = getDb();
+  const room = rooms.get(code) || db.rooms?.[code];
+  const u = db.users?.[userId];
+  if (u) {
+    forgetJoinedLobby(u, code);
+    if (u.hostedRooms?.[code]) delete u.hostedRooms[code];
+    releaseHostedRoom(code, userId);
+  }
+  if (room) {
+    room.memberUserIds = (room.memberUserIds || []).filter((id) => id !== userId);
+    m.ceremonyMemberIds = [...room.memberUserIds];
+    if (room.sockets && typeof room.sockets.values === "function") {
+      for (const sock of [...room.sockets.values()]) {
+        if (sock?.luvUserId === userId) {
+          try {
+            sock.close(4001, "gifts_claimed");
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    }
+    if (db.rooms?.[code]) {
+      db.rooms[code].memberUserIds = [...room.memberUserIds];
+    }
+  }
+  persistRooms();
+}
+
+/** Empfang vorbei: Gäste raus, Geschenke würfeln, Paar kann abholen. */
+function endCeremonyReception(m) {
+  if (!m || m.status !== "married") return { ok: false };
+  const c = weddingCeremony.ensureCeremony(m);
+  if (c.receptionEnded) return { ok: true, already: true };
+  kickCeremonyGuests(m);
+  weddingGifts.ensureGiftState(m);
+  if (m.giftPhase === "open" || m.giftPhase === "none") {
+    m.giftWindowEndsAt = Date.now();
+    weddingGifts.rollGiftPool(m);
+  }
+  c.receptionEnded = true;
+  c.phase = "gifts_claim";
+  c.pastorPhase = "gifts_claim";
+  syncCeremonyGiftMeta(m);
+  // Keine Gäste mehr → nur Paar in hostedRooms mit rolled
+  return { ok: true, giftsRolled: m.giftPhase === "rolled" };
+}
+
 function finalizeWeddingMarriage(m, { force = false } = {}) {
   // Ehepartner erst nach beiderseitigem Ja am Altar (Staff: force + bothVowsOk)
   if (
@@ -2666,14 +2760,11 @@ function finalizeWeddingMarriage(m, { force = false } = {}) {
   const c = weddingCeremony.ensureCeremony(m);
   if (!Array.isArray(m.guestbook)) m.guestbook = [];
   weddingGifts.openGiftWindow(m, m.marriedAt);
-  // Empfang 60 Min in der Kapelle; Geschenktopf bleibt fürs Ehepaar länger offen
+  // Empfang = Geschenkfenster = 60 Min (danach rollen + Claim)
   weddingCeremony.startMarriedSpeech(m);
   c.receptionEndsAt = m.marriedAt + weddingCeremony.RECEPTION_MS;
-  m.giftWindowEndsAt = Math.max(
-    Number(m.giftWindowEndsAt) || 0,
-    c.receptionEndsAt
-  );
-  // Kapellen-Lobby behalten — Gäste bleiben für Geschenke / Gästebuch
+  m.giftWindowEndsAt = c.receptionEndsAt;
+  c.receptionEnded = false;
   if (m.ceremonyLobbyCode) {
     keepCeremonyLobbyForGifts(m);
   }
@@ -2687,19 +2778,37 @@ function finalizeWeddingMarriage(m, { force = false } = {}) {
     trackAch(b, "married", 1);
     tryClaimAchievementReward(b, "fs_married");
   }
-  // Globale LUV-Ankündigung → alle Apps (Banner + Gästebuch-Tipp)
+  // Home-Feed (schmale Kachel) statt aufdringlicher Live-Banner
   try {
     const nameA = String(a?.nickname || "Jemand").trim().slice(0, 18) || "Jemand";
     const nameB = String(b?.nickname || "Jemand").trim().slice(0, 18) || "Jemand";
-    publishLiveNotice({
-      message: `${nameA} & ${nameB} haben sich soeben das Ja!-Wort gesagt!`,
-      authorNickname: "LUV",
+    const when = new Date(m.marriedAt).toLocaleString("de-DE", {
+      timeZone: "Europe/Berlin",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    homeFeed.publish(db, {
       kind: "wedding",
-      subtitle: "Tippe hier, um einen Eintrag im Gästebuch zu hinterlassen!",
-      targetUserId: m.a || m.b || null,
+      shortText: `${nameA} & ${nameB} haben geheiratet!`,
+      title: `${nameA} & ${nameB} haben geheiratet!`,
+      body:
+        `${nameA} und ${nameB} haben sich am ${when} das Ja-Wort gegeben. ` +
+        `Tippe hier, um das Hochzeitsbild zu öffnen — Gästebuch und Geschenke sind eine Stunde lang möglich.`,
+      ttlMs: weddingCeremony.RECEPTION_MS,
+      actionType: "wedding_image",
+      actionPayload: {
+        marriageId: m.id || marriage.pairKey(m.a, m.b),
+        userIdA: m.a,
+        userIdB: m.b,
+        nicknameA: nameA,
+        nicknameB: nameB,
+      },
     });
   } catch (e) {
-    console.error("wedding live notice failed", e);
+    console.error("wedding home feed failed", e);
   }
   return true;
 }
@@ -2950,21 +3059,22 @@ function tickCeremonyRitual(m, db) {
   if (adv?.receptionStarted) {
     keepCeremonyLobbyForGifts(m);
   }
-  // Empfang abgelaufen → alle raus, Lobby weg
+  // Empfang abgelaufen → Gäste raus, Geschenke würfeln, Paar Claim (Lobby bleibt)
   const c = weddingCeremony.ensureCeremony(m);
   const ends = Number(c.receptionEndsAt) || 0;
   if (
     ends > 0 &&
     Date.now() >= ends &&
-    (c.pastorPhase === "reception" || c.phase === "reception" || m.status === "married")
+    !c.receptionEnded &&
+    m.status === "married" &&
+    (c.pastorPhase === "reception" ||
+      c.phase === "reception" ||
+      c.pastorPhase === "married" ||
+      c.phase === "gifts" ||
+      m.giftPhase === "open")
   ) {
-    if (m.ceremonyLobbyCode) {
-      dissolveWeddingCeremonyLobby(m.ceremonyLobbyCode);
-      m.ceremonyLobbyCode = null;
-    }
-    c.phase = "ended";
-    c.pastorPhase = "ended";
-    return { receptionOver: true };
+    endCeremonyReception(m);
+    return { receptionOver: true, giftsRolled: true };
   }
   return adv || null;
 }
@@ -3066,9 +3176,13 @@ function claimWeddingGiftsForUser(m, user) {
     market.giveItemToUser(user, ensureInventory, g.kind, g.itemId);
   }
   m.giftClaimed[user.id] = true;
+  removeCoupleMemberFromCeremonyLobby(m, user.id);
   const both =
     Boolean(m.giftClaimed[m.a]) && Boolean(m.giftClaimed[m.b]);
-  if (both) finishWeddingGiftsAndDissolve(m);
+  const membersLeft = Array.isArray(m.ceremonyMemberIds)
+    ? m.ceremonyMemberIds.length
+    : 0;
+  if (both || membersLeft === 0) finishWeddingGiftsAndDissolve(m);
   return {
     ok: true,
     items: items.map((g) => ({
@@ -3087,14 +3201,28 @@ function tickWeddingGifts(now = Date.now()) {
   for (const m of Object.values(all)) {
     if (!m || m.status !== "married") continue;
     weddingGifts.ensureGiftState(m);
+    const c = weddingCeremony.ensureCeremony(m);
+    const receptionEnds =
+      Number(c.receptionEndsAt) || Number(m.giftWindowEndsAt) || 0;
+    // Empfang vorbei (auch ohne Ceremony-Poll): Gäste raus + würfeln + Claim
+    if (
+      !c.receptionEnded &&
+      receptionEnds > 0 &&
+      now >= receptionEnds &&
+      (m.giftPhase === "open" || m.giftPhase === "none" || m.ceremonyLobbyCode)
+    ) {
+      endCeremonyReception(m);
+      dirty = true;
+      continue;
+    }
     if (
       m.giftPhase === "open" &&
       (Number(m.giftWindowEndsAt) || 0) > 0 &&
       now >= (Number(m.giftWindowEndsAt) || 0)
     ) {
+      // Ohne Kapellen-Lobby: nur würfeln
       weddingGifts.rollGiftPool(m);
       syncCeremonyGiftMeta(m);
-      // Auch leerer Topf → Trost-Items im Split; Claim wie sonst
       dirty = true;
       continue;
     }
@@ -6521,10 +6649,14 @@ function getLiveNotice() {
     return null;
   }
   const kind = String(n.kind || "team").trim() || "team";
-  let authorNickname = String(n.authorNickname || "").trim().slice(0, 18);
+  // Hochzeits-Banner waren zu aufdringlich → nur noch schmale Home-Kachel
   if (kind === "wedding") {
-    authorNickname = authorNickname || "LUV";
-  } else if (!authorNickname || authorNickname.toLowerCase() === "luv") {
+    db.liveNotice = null;
+    scheduleSave();
+    return null;
+  }
+  let authorNickname = String(n.authorNickname || "").trim().slice(0, 18);
+  if (!authorNickname || authorNickname.toLowerCase() === "luv") {
     const author = n.authorId ? db.users?.[n.authorId] : null;
     authorNickname = author ? staffDisplayName(author) : "Team";
   }
@@ -9319,6 +9451,23 @@ app.post("/v1/me/marriage/accept", (req, res) => {
   trackAch(ctx.user, "engagements", 1);
   const proposer = db.users?.[fromId];
   if (proposer) trackAch(proposer, "engagements", 1);
+  try {
+    const nameA =
+      String(ctx.user.nickname || "Jemand").trim().slice(0, 18) || "Jemand";
+    const nameB =
+      String(proposer?.nickname || "Jemand").trim().slice(0, 18) || "Jemand";
+    homeFeed.publish(db, {
+      kind: "engagement",
+      shortText: `${nameA} & ${nameB} sind verlobt!`,
+      title: `${nameA} & ${nameB} sind verlobt`,
+      body: `${nameA} und ${nameB} haben sich verlobt — bald folgt die Hochzeit.`,
+      ttlMs: homeFeed.DEFAULT_TTL_MS,
+      actionType: "profile",
+      actionPayload: { userId: ctx.user.id, nickname: nameA },
+    });
+  } catch (e) {
+    console.error("home feed engagement failed", e);
+  }
   scheduleSave();
   return res.json({
     ok: true,
@@ -12428,6 +12577,19 @@ app.get("/v1/live-notice", (req, res) => {
   return res.json({ ok: true, notice: getLiveNotice() });
 });
 
+/** Schmale Home-Benachrichtigungen (öffentlicher Feed). */
+app.get("/v1/home-feed", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  // Alte aufdringliche Wedding-Live-Notice still entfernen
+  if (db.liveNotice?.kind === "wedding") {
+    db.liveNotice = null;
+    scheduleSave();
+  }
+  return res.json({ ok: true, items: homeFeed.listPublic(db) });
+});
+
 app.delete("/v1/admin/live-notice", (req, res) => {
   const ctx = requireStaff(req, res, "live.notify");
   if (!ctx) return;
@@ -13245,6 +13407,27 @@ app.post("/v1/me/achievements/:id/claim", (req, res) => {
   }
   if (result.itemGranted) {
     syncAchInventoryMetrics(ctx.user);
+  }
+  // Seltener Erfolg (Item-Belohnung) → Home-Feed
+  try {
+    const def = (ach.ACHIEVEMENTS || []).find((a) => a.id === req.params.id);
+    if (def?.rewardItem || result.itemGranted) {
+      const nick = String(ctx.user.nickname || "Jemand").trim().slice(0, 18) || "Jemand";
+      homeFeed.publish(getDb(), {
+        kind: "achievement",
+        shortText: `${nick}: ${String(def?.title || "Erfolg").slice(0, 40)}`,
+        title: `${nick} hat einen besonderen Erfolg`,
+        body:
+          `${nick} hat „${String(def?.title || "einen Erfolg")}“ freigeschaltet` +
+          (def?.desc ? `: ${String(def.desc).slice(0, 120)}` : ".") +
+          (result.itemGranted ? " und ein besonderes Item erhalten." : "."),
+        ttlMs: homeFeed.DEFAULT_TTL_MS,
+        actionType: "profile",
+        actionPayload: { userId: ctx.user.id, nickname: nick },
+      });
+    }
+  } catch (e) {
+    console.error("home feed achievement failed", e);
   }
   scheduleSave();
   return res.json({
@@ -14578,6 +14761,29 @@ app.post("/v1/market/list", (req, res) => {
   trackAch(ctx.user, "market_listed", 1);
   if (isPrivate) trackAch(ctx.user, "market_private", 1);
   syncAchInventoryMetrics(ctx.user);
+  // Event-Item, das nicht mehr im Shop ist → Home-Feed
+  try {
+    if (!isPrivate && seasonEvents.isEventOnlyItem(kind, itemId)) {
+      const inShop = Boolean(shopCatalog.getItem(getDb(), kind, itemId)?.active);
+      if (!inShop) {
+        const nick = String(ctx.user.nickname || "Jemand").trim().slice(0, 18) || "Jemand";
+        const label = String(meta.label || itemId).slice(0, 40);
+        homeFeed.publish(getDb(), {
+          kind: "market_event",
+          shortText: `${nick} bietet ${meta.emoji || "🎁"} ${label}`,
+          title: `Event-Item auf dem Markt`,
+          body:
+            `${nick} bietet „${label}“ auf dem Marktplatz an — ` +
+            `dieses Event-Item ist aktuell nicht mehr im Item- oder Event-Shop erhältlich.`,
+          ttlMs: homeFeed.DEFAULT_TTL_MS,
+          actionType: "market",
+          actionPayload: { listingId: id, kind, itemId },
+        });
+      }
+    }
+  } catch (e) {
+    console.error("home feed market failed", e);
+  }
   flushSave();
   return res.status(201).json({
     ok: true,
@@ -14697,6 +14903,24 @@ app.post("/v1/market/:id/buy", (req, res) => {
   trackAch(seller, "market_sold", 1);
   syncAchInventoryMetrics(ctx.user);
   syncAchInventoryMetrics(seller);
+  if (price >= 500 && !entry.private) {
+    try {
+      const buyer =
+        String(ctx.user.nickname || "Jemand").trim().slice(0, 18) || "Jemand";
+      const label = String(entry.label || entry.itemId).slice(0, 40);
+      homeFeed.publish(getDb(), {
+        kind: "market_sale",
+        shortText: `${buyer} kaufte ${entry.emoji || "🎁"} ${label}`,
+        title: `Marktplatz · ${price} Coins`,
+        body: `${buyer} hat „${label}“ für ${price} Coins auf dem Marktplatz gekauft.`,
+        ttlMs: homeFeed.DEFAULT_TTL_MS,
+        actionType: "market",
+        actionPayload: { listingId: id, kind: entry.kind, itemId: entry.itemId },
+      });
+    } catch (e) {
+      console.error("home feed market sale failed", e);
+    }
+  }
   scheduleSave();
   return res.json({
     ok: true,
@@ -15370,6 +15594,26 @@ app.post("/v1/shop/lootbox/open", (req, res) => {
   const entry = pending[idx];
   pending.splice(idx, 1);
   const grant = grantLootboxReward(ctx.user, entry);
+  const shopPrice = Math.floor(Number(entry.shopPrice) || 0);
+  if (shopPrice > 500 && !grant.duplicate) {
+    try {
+      const nick = String(ctx.user.nickname || "Jemand").trim().slice(0, 18) || "Jemand";
+      const label = String(entry.label || entry.emoji || "Item").slice(0, 40);
+      homeFeed.publish(getDb(), {
+        kind: "lootbox",
+        shortText: `${nick} zog ${entry.emoji || "🎁"} ${label}`,
+        title: `Seltene Lootbox für ${nick}`,
+        body:
+          `${nick} hat aus einer Lootbox „${label}“ gezogen` +
+          ` (Shop-Wert ca. ${shopPrice} Coins).`,
+        ttlMs: homeFeed.DEFAULT_TTL_MS,
+        actionType: "profile",
+        actionPayload: { userId: ctx.user.id, nickname: nick },
+      });
+    } catch (e) {
+      console.error("home feed lootbox failed", e);
+    }
+  }
   scheduleSave();
   return res.json({
     ok: true,

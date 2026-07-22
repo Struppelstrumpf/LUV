@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.132",
+            listOf(
+                "Hochzeit: nach Empfang Geschenke abholen statt schwarzer Abbruch-Screen",
+                "Schmale Home-Nachrichten (Hochzeiten, Events, Funde) — ausblendbar in Einstellungen",
+            )
+        ),
+        Entry(
             "2.2.131",
             listOf(
                 "Event-Lobby im + nur während aktives Event — nicht in der Abstimmung",

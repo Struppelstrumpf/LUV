@@ -828,6 +828,34 @@ function finalizeContestPrizes(db, eventObj, usersById) {
       grantMedal: place.place === 1,
     };
   }
+  // Home-Feed: Top-3
+  try {
+    const homeFeed = require("./home_feed");
+    const title = String(ev.title || ev.id || "Event").slice(0, 40);
+    for (const row of ranking.slice(0, 3)) {
+      const placeLabel =
+        row.place === 1 ? "🥇" : row.place === 2 ? "🥈" : row.place === 3 ? "🥉" : `#${row.place}`;
+      homeFeed.publish(db, {
+        kind: "event_win",
+        shortText: `${placeLabel} ${row.nickname} · ${title}`,
+        title: `${row.nickname} hat Platz ${row.place} bei ${title}`,
+        body:
+          `${row.nickname} hat beim Event „${title}“ Platz ${row.place} erreicht` +
+          (row.prompt ? ` mit „${String(row.prompt).slice(0, 60)}“.` : ".") +
+          ` Tippe, um das Bild anzusehen.`,
+        ttlMs: homeFeed.DEFAULT_TTL_MS,
+        actionType: "contest_image",
+        actionPayload: {
+          eventId: ev.id,
+          entryId: row.entryId,
+          nickname: row.nickname,
+          place: row.place,
+        },
+      });
+    }
+  } catch (e) {
+    console.error("home feed contest publish failed", e);
+  }
   return { ok: true, ranking };
 }
 

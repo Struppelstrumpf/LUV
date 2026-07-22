@@ -20,6 +20,7 @@ const DEFAULT = {
   helpMessages: {},
   bugReports: {},
   liveNotice: null,
+  homeFeed: [],
   maintenance: {
     nightKey: null,
     joke: "",
@@ -90,6 +91,7 @@ function load() {
         raw.bugReports && typeof raw.bugReports === "object" ? raw.bugReports : {},
       liveNotice:
         raw.liveNotice && typeof raw.liveNotice === "object" ? raw.liveNotice : null,
+      homeFeed: Array.isArray(raw.homeFeed) ? raw.homeFeed : [],
       maintenance:
         raw.maintenance && typeof raw.maintenance === "object"
           ? raw.maintenance
