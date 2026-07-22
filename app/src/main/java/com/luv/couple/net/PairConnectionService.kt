@@ -205,12 +205,9 @@ class PairConnectionService : Service() {
             .filter { it.lobby.code.trim().uppercase() in wantedCodes && it.lobby.id !in wanted }
             .map { it.lobby.id }
             .forEach { stopLobby(it) }
-        // Leicht gestaffelt — früher 350ms/Index war spürbar langsam bei mehreren Lobbys
-        unique.forEachIndexed { index, lobby ->
-            scope.launch {
-                if (index > 0) delay(80L * index)
-                ensureLobbySession(lobby)
-            }
+        // Parallel — kein Staffeln; Token liegt lokal, WS kann sofort auf
+        unique.forEach { lobby ->
+            scope.launch { ensureLobbySession(lobby) }
         }
         refreshAggregateState()
     }
@@ -429,8 +426,11 @@ class PairConnectionService : Service() {
 
     private suspend fun connectOnce(session: LobbySession): ConnectResult {
         if (!session.accessHealed) {
-            // refreshLobbyAccess macht bei Host bereits ensureRoom — kein zweiter HTTP-RTT
-            runCatching { refreshLobbyAccess(session) }
+            // Schnellpfad wie früher: lokaler Token → WS sofort.
+            // ensure/join nur wenn Token fehlt; bei 4401 heilt der Loop nach.
+            if (session.lobby.token.isBlank()) {
+                runCatching { refreshLobbyAccess(session) }
+            }
             session.accessHealed = true
         }
         val lobbyNow = session.lobby
