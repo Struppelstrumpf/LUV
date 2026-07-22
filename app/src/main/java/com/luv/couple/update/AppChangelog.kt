@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.129",
+            listOf(
+                "Hochzeit: Platz-Hinweis, Ja/Nein-Popup 15s, Verlassen-Dialog, Brautpaar darf zurück",
+            )
+        ),
+        Entry(
             "2.2.128",
             listOf(
                 "Hochzeit: Sitzbereich zählt schon bei leichter Überlappung",

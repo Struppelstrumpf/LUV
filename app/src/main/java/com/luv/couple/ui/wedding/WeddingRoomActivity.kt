@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.Animatable
@@ -32,6 +33,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -61,14 +64,15 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.activity.addCallback
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import kotlin.math.ceil
 import com.luv.couple.LuvApp
 import com.luv.couple.R
 import com.luv.couple.net.AccountSession
@@ -107,9 +111,6 @@ class WeddingRoomActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         enableEdgeToEdge()
-        onBackPressedDispatcher.addCallback(this) {
-            leaveRoomThenFinish()
-        }
         setContent {
             LuvTheme {
                 WeddingRoomScreen(
@@ -219,11 +220,16 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     var reactionExpanded by remember { mutableStateOf(false) }
     var emojiBar by remember { mutableStateOf(ShopCatalog.DEFAULT_BAR) }
     var leaving by remember { mutableStateOf(false) }
+    var showLeaveConfirm by remember { mutableStateOf(false) }
 
     fun leaveRoom() {
         if (leaving) return
         leaving = true
         onClose()
+    }
+
+    BackHandler(enabled = !leaving) {
+        showLeaveConfirm = true
     }
 
     val zones = layout?.zones.orEmpty()
@@ -283,9 +289,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         }
     }
 
-    /** Zu spät / Zeremonie läuft und man war nicht dabei → zurück. */
+    /** Gäste zu spät / nach Verlassen — Brautpaar darf immer wieder rein. */
     fun shouldKickLatecomer(c: LuvApiClient.CeremonyInfo?): Boolean {
         if (c == null) return false
+        if (c.gathering.any { it.userId == myId && it.isCouple }) return false
         val locked = c.seatingLocked &&
             c.pastorPhase != "reception" &&
             c.phase != "reception" &&
@@ -529,6 +536,48 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         else -> s
                     }
                 }
+                // Milchige Sitzbereiche: Gäste sehen Blau, Brautpaar Gelb
+                val guideZones = if (meIsCouple) {
+                    zones.filter { it.isCoupleSeat }
+                } else {
+                    zones.filter { it.isGuestSeat }
+                }
+                if (guideZones.isNotEmpty()) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val milk = Color(0x66FFFFFF)
+                        val edge = Color(0xAAFFFFFF)
+                        for (z in guideZones) {
+                            if (z.shape == "circle") {
+                                val cx = z.cx * size.width
+                                val cy = z.cy * size.height
+                                val rad = (z.r * size.minDimension).coerceAtLeast(8f)
+                                drawCircle(color = milk, radius = rad, center = Offset(cx, cy))
+                                drawCircle(
+                                    color = edge,
+                                    radius = rad,
+                                    center = Offset(cx, cy),
+                                    style = Stroke(width = 2.5.dp.toPx()),
+                                )
+                            } else {
+                                val left = z.x * size.width
+                                val top = z.y * size.height
+                                val w = z.w * size.width
+                                val h = z.h * size.height
+                                drawRect(
+                                    color = milk,
+                                    topLeft = Offset(left, top),
+                                    size = Size(w, h),
+                                )
+                                drawRect(
+                                    color = edge,
+                                    topLeft = Offset(left, top),
+                                    size = Size(w, h),
+                                    style = Stroke(width = 2.5.dp.toPx()),
+                                )
+                            }
+                        }
+                    }
+                }
                 // Admin-Deko / Flammen
                 zones.filter { it.isDecor || it.isFlame }.forEach { z ->
                     val sz = (roomW * (z.r * 2f).coerceIn(0.03f, 0.12f)).coerceIn(18.dp, 56.dp)
@@ -606,33 +655,28 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                             g.reaction != null && g.reactionUntil > System.currentTimeMillis() -> g.reaction
                             else -> null
                         }
-                        // Daumen nur während aktivem Ja-Sagen, nicht danach
-                        val vowThumb = when {
-                            vowsActive && g.isCouple && g.vowProgress > 0f && g.vowProgress < 1f &&
-                                g.vow == "no" -> "👎"
-                            vowsActive && g.isCouple && g.vowProgress > 0f && g.vowProgress < 1f &&
-                                g.vow == "yes" -> "👍"
-                            else -> null
-                        }
                         val glyphSp = (avatarDp.value * 0.52f).sp
+                        // Ja/Nein-Füllung über dem blauen Ring
+                        if (vowsActive && g.isCouple && g.vowProgress > 0f) {
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                drawArc(
+                                    color = if (g.vow == "no") {
+                                        Color(0xCCE53935)
+                                    } else {
+                                        Color(0xCC43A047)
+                                    },
+                                    startAngle = -90f,
+                                    sweepAngle = 360f * g.vowProgress.coerceIn(0f, 1f),
+                                    useCenter = true,
+                                )
+                            }
+                        }
                         when {
-                            vowThumb != null -> Text(vowThumb, fontSize = glyphSp)
                             showReact != null -> ItemGlyph(id = clipItemId(showReact), fontSize = glyphSp)
                             else -> ItemGlyph(
                                 id = clipItemId(g.petEmoji).ifBlank { "🐣" },
                                 fontSize = glyphSp,
                             )
-                        }
-                        if (vowsActive && g.isCouple && g.vowProgress > 0f && g.vowProgress < 1f) {
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                drawArc(
-                                    color = if (g.vow == "no") Color(0xFFE53935) else Color(0xFF43A047),
-                                    startAngle = -90f,
-                                    sweepAngle = 360f * g.vowProgress,
-                                    useCenter = false,
-                                    style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round)
-                                )
-                            }
                         }
                     }
                 }
@@ -809,10 +853,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         }
                 )
 
-                // Vow buttons for couple — erst nach Pastor-Rede
+                // Vow-Popup für Brautpaar — erst nach Pastor-Rede
                 val meGuest = c?.gathering?.find { it.userId == myId }
                 if (c?.vowsReady == true && meGuest?.isCouple == true && seated) {
-                    VowHoldButtons(
+                    VowDecisionPopup(
                         onYesProgress = { p ->
                             scope.launch {
                                 val r = runCatching { LuvApiClient.ceremonyVow("yes", p) }.getOrNull()
@@ -827,7 +871,6 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                             scope.launch {
                                 val r = runCatching { LuvApiClient.ceremonyVow("no", p) }.getOrNull()
                                 if (r?.rejected == true) {
-                                    // Pastor spricht Closing — Raum bleibt offen
                                     ceremony = r.ceremony ?: ceremony
                                 } else {
                                     ceremony = r?.ceremony ?: ceremony
@@ -837,12 +880,12 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     )
                 }
 
-                // Timer / Pastor-Rede oben im Raum
+                // Hinweis / Timer / Pastor oben
                 Column(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .fillMaxWidth()
-                        .padding(top = 4.dp),
+                        .padding(top = 4.dp, start = 10.dp, end = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     when {
@@ -858,6 +901,10 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         (c?.pastorPhase == "reception" || c?.phase == "reception") &&
                             c.receptionRemainingMs > 0L ->
                             ReceptionTimerBanner(remainingMs = c.receptionRemainingMs)
+                        c?.vowsReady != true &&
+                            c?.pastorPhase != "dots" &&
+                            c?.seatingLocked != true ->
+                            SeatGuideBanner(forCouple = meIsCouple)
                     }
                 }
             }
@@ -1019,7 +1066,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         .height(42.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color.White.copy(0.10f))
-                        .clickable(onClick = { leaveRoom() })
+                        .clickable(onClick = { showLeaveConfirm = true })
                         .padding(vertical = 6.dp),
                 )
                 if (canGift) {
@@ -1096,6 +1143,55 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                             }
                     }
                 }
+            )
+        }
+
+        if (showLeaveConfirm) {
+            val ceremonyStarted = ceremony?.seatingLocked == true &&
+                ceremony?.pastorPhase != "reception" &&
+                ceremony?.phase != "reception"
+            val leaveBody = when {
+                meIsCouple ->
+                    "Raum wirklich verlassen?\nIhr als Brautpaar könnt jederzeit wieder eintreten."
+                ceremonyStarted ->
+                    "Raum wirklich verlassen?\nDie Zeremonie hat begonnen — als Gast kommt ihr danach nicht mehr rein."
+                else ->
+                    "Raum wirklich verlassen?"
+            }
+            AlertDialog(
+                onDismissRequest = { showLeaveConfirm = false },
+                containerColor = Color(0xF2FFF8F0),
+                title = {
+                    Text(
+                        "Zeremonie verlassen?",
+                        fontFamily = DisplayFont,
+                        color = Color(0xFF5C2A3A),
+                        fontSize = 20.sp,
+                    )
+                },
+                text = {
+                    Text(
+                        leaveBody,
+                        fontFamily = BodyFont,
+                        color = Color(0xFF3E2723),
+                        fontSize = 15.sp,
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showLeaveConfirm = false
+                            leaveRoom()
+                        }
+                    ) {
+                        Text("Verlassen", color = Color(0xFFE53935), fontFamily = DisplayFont)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showLeaveConfirm = false }) {
+                        Text("Bleiben", color = AccentRose, fontFamily = DisplayFont)
+                    }
+                },
             )
         }
 
@@ -1203,27 +1299,85 @@ private fun SpacerH() {
 }
 
 @Composable
-private fun VowHoldButtons(
+private fun SeatGuideBanner(forCouple: Boolean) {
+    val text = if (forCouple) {
+        "Bitte stellt euch vor den Altar (helle Fläche)."
+    } else {
+        "Gäste: bitte auf die Bänke setzen (helle Flächen)."
+    }
+    Text(
+        text,
+        color = Color(0xFF3E2723),
+        fontFamily = BodyFont,
+        fontSize = 13.sp,
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xE6FFF8F0))
+            .border(1.dp, Color(0x66D4A017), RoundedCornerShape(14.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    )
+}
+
+private const val VOW_HOLD_MS = 15_000
+
+@Composable
+private fun VowDecisionPopup(
     onYesProgress: (Float) -> Unit,
-    onNoProgress: (Float) -> Unit
+    onNoProgress: (Float) -> Unit,
 ) {
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 48.dp),
-        verticalArrangement = Arrangement.SpaceBetween,
-        horizontalAlignment = Alignment.CenterHorizontally
+            .background(Color(0x99000000))
+            .padding(horizontal = 18.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        HoldCircleButton(label = "Ja", color = Color(0xFF43A047), onProgress = onYesProgress)
-        HoldCircleButton(label = "Nein", color = Color(0xFFE53935), onProgress = onNoProgress)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(26.dp))
+                .background(Color(0xF7FFF8F0))
+                .border(2.dp, Color(0xFFD4A017), RoundedCornerShape(26.dp))
+                .padding(horizontal = 18.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text("💍", fontSize = 28.sp)
+            Text(
+                "Wollt ihr euch heiraten?",
+                color = Color(0xFF5C2A3A),
+                fontFamily = DisplayFont,
+                fontSize = 22.sp,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                "Taste 15 Sekunden gedrückt halten",
+                color = Color(0xFF6D4C41),
+                fontFamily = BodyFont,
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center,
+            )
+            VowHoldSlider(
+                label = "Ja",
+                color = Color(0xFF43A047),
+                onProgress = onYesProgress,
+            )
+            VowHoldSlider(
+                label = "Nein",
+                color = Color(0xFFE53935),
+                onProgress = onNoProgress,
+            )
+        }
     }
 }
 
 @Composable
-private fun HoldCircleButton(
+private fun VowHoldSlider(
     label: String,
     color: Color,
-    onProgress: (Float) -> Unit
+    onProgress: (Float) -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -1231,7 +1385,7 @@ private fun HoldCircleButton(
     LaunchedEffect(pressed) {
         if (pressed) {
             progress.snapTo(0f)
-            progress.animateTo(1f, tween(15_000, easing = LinearEasing))
+            progress.animateTo(1f, tween(VOW_HOLD_MS, easing = LinearEasing))
             onProgress(1f)
         } else {
             progress.snapTo(0f)
@@ -1243,25 +1397,55 @@ private fun HoldCircleButton(
             onProgress(progress.value)
         }
     }
-    Box(
+    val remainSec = ceil((1f - progress.value) * (VOW_HOLD_MS / 1000f)).toInt().coerceAtLeast(0)
+    Column(
         modifier = Modifier
-            .size(96.dp)
-            .clip(CircleShape)
-            .background(color.copy(0.25f))
-            .border(3.dp, color, CircleShape)
-            .clickable(interactionSource = interaction, indication = null, onClick = {}),
-        contentAlignment = Alignment.Center
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(color.copy(0.12f))
+            .border(1.5.dp, color.copy(0.75f), RoundedCornerShape(18.dp))
+            .clickable(interactionSource = interaction, indication = null, onClick = {})
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            drawArc(
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                label,
                 color = color,
-                startAngle = -90f,
-                sweepAngle = 360f * progress.value,
-                useCenter = false,
-                style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round)
+                fontFamily = DisplayFont,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                if (pressed) "${remainSec}s" else "15s halten",
+                color = Color(0xFF5D4037),
+                fontFamily = BodyFont,
+                fontSize = 13.sp,
             )
         }
-        Text(label, color = TextPrimary, fontFamily = DisplayFont, fontSize = 22.sp)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(14.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.White.copy(0.55f)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(progress.value.coerceIn(0f, 1f))
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(color.copy(0.75f), color),
+                        )
+                    ),
+            )
+        }
     }
 }
 
