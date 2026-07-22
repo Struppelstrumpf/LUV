@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.166",
+            listOf(
+                "Jede Mal-Lobby merkt sich die eigene Stiftfarbe beim Wechseln",
+            )
+        ),
+        Entry(
             "2.2.165",
             listOf(
                 "Freunde-Liste aktualisiert sich sofort bei Annehmen, Trennen und Heirat",

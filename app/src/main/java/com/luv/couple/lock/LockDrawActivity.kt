@@ -3,6 +3,7 @@ package com.luv.couple.lock
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -47,6 +48,7 @@ import com.luv.couple.data.LocalMoment
 import com.luv.couple.data.LocalMoments
 import com.luv.couple.data.PeerInfo
 import com.luv.couple.data.PeerPalette
+import com.luv.couple.data.SessionSnapshot
 import com.luv.couple.data.TemplateStrokePart
 import com.luv.couple.data.asCleanJsonString
 import com.luv.couple.net.AccountSession
@@ -212,6 +214,8 @@ class LockDrawActivity : ComponentActivity() {
     private var voteButtonsRow: View? = null
     private var confirmClearOverlay: View? = null
     private var lobbyId: String? = null
+    /** Pinsel-Farbe der aktuell offenen Lobby (nicht die letzte Farbe einer anderen). */
+    private var lobbyBrushColor: Int? = null
     private var activeProposalId: String? = null
     /** "clear" oder "public" */
     private var voteKind: String = "clear"
@@ -308,16 +312,10 @@ class LockDrawActivity : ComponentActivity() {
         gameHudSubtitle = findViewById(R.id.gameHudSubtitle)
         btnGuess = findViewById(R.id.btnGuess)
 
-        lobbyId = intent.getStringExtra(EXTRA_LOBBY_ID)
-        trialDrawUntil = intent.getLongExtra(EXTRA_TRIAL_DRAW_UNTIL, 0L)
-        if (trialDrawUntil <= 0L) {
-            trialDrawUntil = AccountSession.account.value?.trialDrawUntil ?: 0L
-        }
+        bindLobbyFromIntent(intent)
         lifecycleScope.launch {
             runCatching { LuvApiClient.pingAchievement("lobby_opens") }
         }
-            ?: CanvasStore.activeLobbyId.value
-        lobbyId?.let { CanvasStore.setActiveLobby(it) }
 
         val bg = CanvasStore.backgroundFor(CanvasStore.cachedColorIndex)
         root.setBackgroundColor(bg)
@@ -415,66 +413,7 @@ class LockDrawActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             val snap = withContext(Dispatchers.IO) { LuvApp.instance.prefs.snapshot() }
-            if (lobbyId == null) {
-                lobbyId = snap.activeLobbyId ?: snap.lobbies.firstOrNull()?.id
-                lobbyId?.let { CanvasStore.setActiveLobby(it) }
-            }
-            lobbyId?.let { id ->
-                withContext(Dispatchers.IO) { LuvApp.instance.prefs.setActiveLobby(id) }
-            }
-            val brushW = withContext(Dispatchers.IO) { LuvApp.instance.prefs.brushWidth() }
-            CanvasStore.updateBrushWidth(brushW)
-            if (::drawingView.isInitialized) drawingView.myBrushWidth = brushW
-            CanvasStore.updateKnownLobbies(snap.lobbies.map { it.id })
-            val lobby = snap.lobbies.firstOrNull { it.id == lobbyId }
-            // Farbe je Lobby (Code) — nie die Farbe einer anderen Lobby übernehmen
-            val lobbyKey = lobby?.code?.takeIf { it.isNotBlank() } ?: lobbyId
-            val myColor = withContext(Dispatchers.IO) {
-                val saved = lobbyKey?.let { LuvApp.instance.prefs.colorIndexForLobby(it) }
-                when {
-                    saved != null -> saved
-                    else -> {
-                        val seed = snap.colorIndex
-                        lobbyKey?.let { LuvApp.instance.prefs.setColorIndexForLobby(it, seed) }
-                        seed
-                    }
-                }
-            }
-            CanvasStore.updateProfile(snap.nickname, myColor)
-            eventLobbyActive = lobby?.isEventLobby == true
-            weddingLobbyActive = lobby?.isWedding == true && lobby?.isWeddingCeremony != true
-            // Hochzeitsleinwand (+ Event): Mehrfarben wie Solo — Striche behalten Farbe
-            CanvasStore.setFreeMultiColorLobby(
-                lobbyId,
-                enabled = eventLobbyActive || weddingLobbyActive
-            )
-            eventEndsAtMs = lobby?.eventEndsAt.asCleanJsonString()?.let { iso ->
-                runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrNull()
-            }
-            eventPromptText = lobby?.eventPrompt.asCleanJsonString()
-            eventPromptChoices = lobby?.eventPromptChoices.orEmpty()
-            lobbyTitle.text = when {
-                eventLobbyActive -> "Event"
-                weddingLobbyActive -> lobby?.name?.ifBlank { "Hochzeitsbild" } ?: "Hochzeitsbild"
-                else -> lobby?.name.orEmpty()
-            }
-            lobbyTitle.maxLines = if (eventLobbyActive) 2 else 1
-            lobbyTitle.ellipsize = android.text.TextUtils.TruncateAt.END
-            if (eventLobbyActive) {
-                btnTemplates.visibility = View.GONE
-                setupEventLobbyUi()
-                maybeShowEventPromptPick(lobby)
-            }
-            // ✓ nur bei echtem Nachhol-Flow (Ehe ohne Bild) — nicht bei normaler Hochzeitsbild-Lobby
-            weddingRetakeActive = lobby?.isWeddingRetake == true
-            setupWeddingConfirmUi()
-            applyMyColor(myColor, persist = false, sync = false)
-            // Eigene Historie an aktuelle Farbe anpassen (sonst gemischte Farben bis zum Picker)
-            CanvasStore.recolorOwnStrokes(myColor, lobbyId, broadcast = false)
-            drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
-            refreshLegend()
-            showLastStrokeMemory(lobbyId, lobby)
-            lobby?.let { CanvasMemoryKeeper.touch(it) }
+            restoreLobbyBrushAndMeta(snap)
         }
 
         MidnightClear.checkAndClearIfNewDay(this)
@@ -574,11 +513,9 @@ class LockDrawActivity : ComponentActivity() {
                     is PairEvent.HistoryApplied -> if (event.lobbyId == id) {
                         // Nur umfärben falls nötig — kein zweites Full-Redraw
                         // (revision-Collector hat die History schon gezeichnet, wenn sie sich änderte)
-                        CanvasStore.recolorOwnStrokes(
-                            CanvasStore.cachedColorIndex,
-                            id,
-                            broadcast = false
-                        )
+                        // Immer die Farbe dieser Lobby — nie die letzte Pinsel-Farbe einer anderen
+                        val brush = lobbyBrushColor ?: CanvasStore.cachedColorIndex
+                        CanvasStore.recolorOwnStrokes(brush, id, broadcast = false)
                         refreshLegend()
                     }
                     is PairEvent.ColorAssigned -> if (event.lobbyId == id) {
@@ -1820,8 +1757,94 @@ class LockDrawActivity : ComponentActivity() {
         }
     }
 
+    private fun bindLobbyFromIntent(intent: Intent) {
+        lobbyId = intent.getStringExtra(EXTRA_LOBBY_ID) ?: lobbyId
+        trialDrawUntil = intent.getLongExtra(EXTRA_TRIAL_DRAW_UNTIL, 0L)
+        if (trialDrawUntil <= 0L) {
+            trialDrawUntil = AccountSession.account.value?.trialDrawUntil ?: 0L
+        }
+        lobbyId?.let { CanvasStore.setActiveLobby(it) }
+    }
+
+    /**
+     * Stiftfarbe dieser Lobby laden. Kein Seed aus der globalen „letzten Farbe“ —
+     * sonst bleibt Gelb aus Lobby B in Lobby A aktiv.
+     * Ohne gespeicherte Farbe wartet die UI auf ColorAssigned (Welcome).
+     */
+    private suspend fun applySavedLobbyBrushOnly(snap: SessionSnapshot) {
+        val lobby = snap.lobbies.firstOrNull { it.id == lobbyId }
+        val lobbyKey = lobby?.code?.takeIf { it.isNotBlank() } ?: lobbyId
+        val saved = withContext(Dispatchers.IO) {
+            lobbyKey?.let { LuvApp.instance.prefs.colorIndexForLobby(it) }
+        } ?: return
+        lobbyBrushColor = saved
+        applyMyColor(saved, persist = false, sync = false)
+    }
+
+    private suspend fun restoreLobbyBrushAndMeta(snap: SessionSnapshot) {
+        if (lobbyId == null) {
+            lobbyId = snap.activeLobbyId ?: snap.lobbies.firstOrNull()?.id
+            lobbyId?.let { CanvasStore.setActiveLobby(it) }
+        }
+        lobbyId?.let { id ->
+            withContext(Dispatchers.IO) { LuvApp.instance.prefs.setActiveLobby(id) }
+        }
+        val brushW = withContext(Dispatchers.IO) { LuvApp.instance.prefs.brushWidth() }
+        CanvasStore.updateBrushWidth(brushW)
+        if (::drawingView.isInitialized) drawingView.myBrushWidth = brushW
+        CanvasStore.updateKnownLobbies(snap.lobbies.map { it.id })
+        val lobby = snap.lobbies.firstOrNull { it.id == lobbyId }
+        val lobbyKey = lobby?.code?.takeIf { it.isNotBlank() } ?: lobbyId
+        val savedColor = withContext(Dispatchers.IO) {
+            lobbyKey?.let { LuvApp.instance.prefs.colorIndexForLobby(it) }
+        }
+        // Profil-Nickname immer; Farbe nur wenn für DIESE Lobby bekannt
+        CanvasStore.updateProfile(
+            snap.nickname,
+            savedColor ?: CanvasStore.cachedColorIndex
+        )
+        eventLobbyActive = lobby?.isEventLobby == true
+        weddingLobbyActive = lobby?.isWedding == true && lobby?.isWeddingCeremony != true
+        CanvasStore.setFreeMultiColorLobby(
+            lobbyId,
+            enabled = eventLobbyActive || weddingLobbyActive
+        )
+        eventEndsAtMs = lobby?.eventEndsAt.asCleanJsonString()?.let { iso ->
+            runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrNull()
+        }
+        eventPromptText = lobby?.eventPrompt.asCleanJsonString()
+        eventPromptChoices = lobby?.eventPromptChoices.orEmpty()
+        lobbyTitle.text = when {
+            eventLobbyActive -> "Event"
+            weddingLobbyActive -> lobby?.name?.ifBlank { "Hochzeitsbild" } ?: "Hochzeitsbild"
+            else -> lobby?.name.orEmpty()
+        }
+        lobbyTitle.maxLines = if (eventLobbyActive) 2 else 1
+        lobbyTitle.ellipsize = android.text.TextUtils.TruncateAt.END
+        if (eventLobbyActive) {
+            btnTemplates.visibility = View.GONE
+            setupEventLobbyUi()
+            maybeShowEventPromptPick(lobby)
+        }
+        weddingRetakeActive = lobby?.isWeddingRetake == true
+        setupWeddingConfirmUi()
+        if (savedColor != null) {
+            lobbyBrushColor = savedColor
+            applyMyColor(savedColor, persist = false, sync = false)
+            CanvasStore.recolorOwnStrokes(savedColor, lobbyId, broadcast = false)
+        } else {
+            lobbyBrushColor = null
+            // Keine fremde Lobby-Farbe übernehmen — Welcome/ColorAssigned setzt sie
+        }
+        drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
+        refreshLegend()
+        showLastStrokeMemory(lobbyId, lobby)
+        lobby?.let { CanvasMemoryKeeper.touch(it) }
+    }
+
     private fun applyMyColor(index: Int, persist: Boolean, sync: Boolean) {
         val safe = index.coerceIn(0, PeerPalette.COLOR_COUNT - 1)
+        lobbyBrushColor = safe
         CanvasStore.updateProfile(CanvasStore.cachedNickname, safe)
         drawingView.myColorIndex = safe
         val bg = CanvasStore.backgroundFor(safe)
@@ -2390,6 +2413,20 @@ class LockDrawActivity : ComponentActivity() {
             .start()
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // singleTask: Lobby-Wechsel ohne onCreate — Farbe/Leinwand neu binden
+        bindLobbyFromIntent(intent)
+        if (::drawingView.isInitialized) {
+            drawingView.setStrokes(CanvasStore.snapshot(lobbyId), animateNew = false)
+        }
+        lifecycleScope.launch {
+            val snap = withContext(Dispatchers.IO) { LuvApp.instance.prefs.snapshot() }
+            restoreLobbyBrushAndMeta(snap)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         foregroundLobbyId = lobbyId
@@ -2402,6 +2439,9 @@ class LockDrawActivity : ComponentActivity() {
                     .getOrDefault(ShopCatalog.DEFAULT_PET)
             }
             refreshLegend()
+            // Sicherheit: beim Zurückkommen immer die Lobby-Farbe, nicht die der letzten anderen Lobby
+            val snap = withContext(Dispatchers.IO) { LuvApp.instance.prefs.snapshot() }
+            applySavedLobbyBrushOnly(snap)
         }
         maybeShowPendingClearVote()
         maybeShowPendingPublicVote()
