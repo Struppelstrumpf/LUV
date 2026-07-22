@@ -4704,6 +4704,7 @@ object LuvApiClient {
         hostColorSide: String = "blue",
         eventId: String? = null,
         customRoomId: String? = null,
+        adminTest: Boolean = false,
     ): RoomSession =
         withContext(Dispatchers.IO) {
             val side = if (hostColorSide.equals("purple", ignoreCase = true)) "purple" else "blue"
@@ -4714,6 +4715,7 @@ object LuvApiClient {
             if (eid.isNotEmpty()) body.put("eventId", eid.take(64))
             val cr = customRoomId?.trim().orEmpty()
             if (cr.isNotEmpty()) body.put("customRoomId", cr.take(64))
+            if (adminTest) body.put("adminTest", true)
             val request = authedRequestBuilder("/v1/rooms")
                 .post(body.toString().toRequestBody(jsonMedia))
                 .build()
@@ -4727,13 +4729,26 @@ object LuvApiClient {
     )
 
     suspend fun listCustomRooms(): List<CustomRoomCard> = withContext(Dispatchers.IO) {
-        val json = authedGet("/v1/room-layouts")
-        val arr = json.optJSONArray("rooms") ?: return@withContext emptyList()
-        buildList {
+        parseCustomRoomCards(authedGet("/v1/room-layouts"), skipWeddingOnly = true)
+    }
+
+    /** Staff: alle Layouts inkl. Hochzeit für Test-Lobby. */
+    suspend fun listAdminTestRooms(): List<CustomRoomCard> = withContext(Dispatchers.IO) {
+        parseCustomRoomCards(authedGet("/v1/room-layouts?adminTest=1"), skipWeddingOnly = false)
+    }
+
+    private fun parseCustomRoomCards(
+        json: JSONObject,
+        skipWeddingOnly: Boolean,
+    ): List<CustomRoomCard> {
+        val arr = json.optJSONArray("rooms") ?: return emptyList()
+        return buildList {
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
                 val id = o.optString("id").trim()
-                if (id.isBlank() || id == "wedding") continue
+                if (id.isBlank()) continue
+                if (skipWeddingOnly && id == "wedding") continue
+                if (!o.optBoolean("hasImage", true) && o.optString("imageUrl").isBlank()) continue
                 var img = o.optString("imageUrl", "")
                 if (img.startsWith("/")) img = "https://reineke.pro$img"
                 add(

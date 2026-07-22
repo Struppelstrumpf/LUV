@@ -11,6 +11,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -220,7 +222,8 @@ fun LuvAppNav() {
     LaunchedEffect(showCustomRoomPicker) {
         if (!showCustomRoomPicker) return@LaunchedEffect
         customRoomPickerBusy = true
-        customRoomChoices = runCatching { LuvApiClient.listCustomRooms() }.getOrElse { emptyList() }
+        customRoomChoices = runCatching { LuvApiClient.listAdminTestRooms() }
+            .getOrElse { emptyList() }
         customRoomPickerBusy = false
     }
     var reopenProfileChest by remember { mutableStateOf(false) }
@@ -1804,18 +1807,25 @@ fun LuvAppNav() {
             onDismissRequest = { showCustomRoomPicker = false },
             containerColor = BgDeep,
             title = {
-                Text("Neuer Raum", fontFamily = BodyFont, color = Color.White, fontSize = 20.sp)
+                Text("Admin Raum", fontFamily = BodyFont, color = Color.White, fontSize = 20.sp)
             },
             text = {
                 Column {
-                    when {
+                    Text(
+                        "Test: Raum wählen, Zonen sehen, rumlaufen. Verlassen löscht die Lobby.",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                                        when {
                         customRoomPickerBusy -> Text(
                             "Lade Räume…",
                             color = TextMuted,
                             fontFamily = BodyFont
                         )
                         customRoomChoices.isEmpty() -> Text(
-                            "Noch keine Räume im Admin angelegt.",
+                            "Keine Räume gefunden.",
                             color = TextMuted,
                             fontFamily = BodyFont
                         )
@@ -1828,11 +1838,12 @@ fun LuvAppNav() {
                                         try {
                                             val room = LuvApiClient.createRoom(
                                                 name = card.name,
-                                                customRoomId = card.id
+                                                customRoomId = card.id,
+                                                adminTest = true,
                                             )
                                             val lobby = Lobby(
                                                 id = UUID.randomUUID().toString(),
-                                                name = room.name.ifBlank { card.name },
+                                                name = room.name.ifBlank { "Test · ${card.name}" },
                                                 role = Role.HOST,
                                                 code = room.code,
                                                 token = room.token,
@@ -1853,9 +1864,10 @@ fun LuvAppNav() {
                                             PairConnectionService.startAll(context)
                                             LockScreenWidgetProvider.requestUpdate(context)
                                             refreshAccount()
+                                            openLobbySpaceOrCanvas(lobby)
                                             Toast.makeText(
                                                 context,
-                                                "Raum „${lobby.name}“ bereit",
+                                                "Test-Raum „${lobby.name}“",
                                                 Toast.LENGTH_SHORT
                                             ).show()
                                         } catch (e: Exception) {
@@ -2232,7 +2244,9 @@ fun LuvAppNav() {
                             },
                             onCreateEventLobby = { event -> createEventLobby(event) },
                             onCreateCustomRoom = {
-                                // Vorerst deaktiviert — Fokus Hochzeit
+                                if (requireGoogleOrToast()) {
+                                    showCustomRoomPicker = true
+                                }
                             },
                             onToggleSpaceBell = { lobby ->
                                 scope.launch {

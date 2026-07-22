@@ -56,6 +56,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -986,13 +987,14 @@ private fun ZoneOverlay(
     Canvas(modifier = modifier) {
         val ordered = zones.sortedBy { z ->
             when (z.color) {
-                "green" -> 0
-                "red" -> 1
+                "red" -> 0
+                "green" -> 1
                 "blue" -> 2
                 "brown" -> 3
                 "orange" -> 4
                 "yellow" -> 5
-                else -> 6
+                "gold", "pink", "lime", "violet" -> 6
+                else -> 7
             }
         }
         for (z in ordered) {
@@ -1003,6 +1005,10 @@ private fun ZoneOverlay(
                 "brown" -> Color(0x998D6E63)
                 "orange" -> Color(0x99FF9800)
                 "yellow" -> Color(0x99FFD54F)
+                "gold" -> Color(0x66D4AF37)
+                "pink" -> Color(0x66FF7043)
+                "lime" -> Color(0x667CB342)
+                "violet" -> Color(0x667E57C2)
                 else -> Color(0x55FFFFFF)
             }
             val stroke = when (z.color) {
@@ -1012,25 +1018,47 @@ private fun ZoneOverlay(
                 "brown" -> Color(0xFF8D6E63)
                 "orange" -> Color(0xFFFF9800)
                 "yellow" -> Color(0xFFFFD54F)
+                "gold" -> Color(0xFFD4AF37)
+                "pink" -> Color(0xFFFF7043)
+                "lime" -> Color(0xFF7CB342)
+                "violet" -> Color(0xFF7E57C2)
                 else -> Color.White
             }
-            if (z.shape == "circle") {
-                val c = Offset(viewport.toScreenX(z.cx), viewport.toScreenY(z.cy))
-                val rad = viewport.toScreenR(z.r).coerceAtLeast(4f)
-                drawCircle(color = fill, radius = rad, center = c)
-                drawCircle(color = stroke, radius = rad, center = c, style = Stroke(width = 3f))
-            } else {
-                val left = viewport.toScreenX(z.x)
-                val top = viewport.toScreenY(z.y)
-                val w = z.w * viewport.width
-                val h = z.h * viewport.height
-                drawRect(color = fill, topLeft = Offset(left, top), size = Size(w, h))
-                drawRect(
-                    color = stroke,
-                    topLeft = Offset(left, top),
-                    size = Size(w, h),
-                    style = Stroke(width = 3f),
-                )
+            when (z.shape) {
+                "circle" -> {
+                    val c = Offset(viewport.toScreenX(z.cx), viewport.toScreenY(z.cy))
+                    val rad = viewport.toScreenR(z.r).coerceAtLeast(4f)
+                    drawCircle(color = fill, radius = rad, center = c)
+                    drawCircle(color = stroke, radius = rad, center = c, style = Stroke(width = 3f))
+                }
+                "poly" -> {
+                    if (z.points.size >= 3) {
+                        val path = Path().apply {
+                            val first = z.points.first()
+                            moveTo(viewport.toScreenX(first.first), viewport.toScreenY(first.second))
+                            for (i in 1 until z.points.size) {
+                                val p = z.points[i]
+                                lineTo(viewport.toScreenX(p.first), viewport.toScreenY(p.second))
+                            }
+                            close()
+                        }
+                        drawPath(path, color = fill)
+                        drawPath(path, color = stroke, style = Stroke(width = 3f))
+                    }
+                }
+                else -> {
+                    val left = viewport.toScreenX(z.x)
+                    val top = viewport.toScreenY(z.y)
+                    val w = z.w * viewport.width
+                    val h = z.h * viewport.height
+                    drawRect(color = fill, topLeft = Offset(left, top), size = Size(w, h))
+                    drawRect(
+                        color = stroke,
+                        topLeft = Offset(left, top),
+                        size = Size(w, h),
+                        style = Stroke(width = 3f),
+                    )
+                }
             }
         }
         for (p in portals) {

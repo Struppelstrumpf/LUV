@@ -591,7 +591,18 @@ fun LobbiesScreen(
                             onCreateLobby()
                         }
                     )
-                    // „Neuer Raum“ vorerst deaktiviert — Fokus Hochzeit
+                    val isStaff =
+                        com.luv.couple.net.AccountSession.account.value?.isStaff == true
+                    if (isStaff) {
+                        PrimaryButton(
+                            label = "Admin Raum",
+                            color = accent,
+                            onClick = {
+                                showLobbyPlusDialog = false
+                                onCreateCustomRoom()
+                            }
+                        )
+                    }
                     if (eventLobby != null) {
                         PrimaryButton(
                             label = when {

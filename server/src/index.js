@@ -11413,11 +11413,20 @@ app.post("/v1/redeem", (req, res) => {
   });
 });
 
-/** App: gespeicherte Custom-Räume (Picker) */
+/** App: gespeicherte Custom-Räume (Picker); Staff: ?adminTest=1 → alle inkl. Hochzeit */
 app.get("/v1/room-layouts", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   const db = getDb();
+  const adminTest =
+    String(req.query?.adminTest || "") === "1" ||
+    String(req.query?.adminTest || "").toLowerCase() === "true";
+  if (adminTest) {
+    if (!isStaff(ctx.user)) {
+      return res.status(403).json({ error: "forbidden", message: "Nur Staff." });
+    }
+    return res.json({ ok: true, rooms: roomLayouts.listRooms(db), adminTest: true });
+  }
   return res.json({ ok: true, rooms: roomLayouts.listRooms(db, { forApp: true }) });
 });
 
@@ -16158,6 +16167,8 @@ app.post("/v1/rooms", (req, res) => {
       eventEndsAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     }
   }
+  const adminTest =
+    Boolean(req.body?.adminTest) && isStaff(ctx.user);
   const rawCustomRoomId = String(req.body?.customRoomId || "").trim().slice(0, 64);
   let customRoomId = null;
   let customRoomImageUrl = null;
@@ -16166,7 +16177,14 @@ app.post("/v1/rooms", (req, res) => {
       return res.status(400).json({ error: "bad_combo", message: "Kein Event mit Custom-Raum." });
     }
     const lay = roomLayouts.getLayout(getDb(), rawCustomRoomId);
-    if (!lay || lay.id === "wedding" || !lay.hasImage) {
+    if (!lay || !lay.hasImage) {
+      return res.status(400).json({
+        error: "unknown_room",
+        message: "Raum nicht gefunden. Bitte zuerst im Admin anlegen.",
+      });
+    }
+    // Hochzeits-Builtins nur als Staff-Testlobby
+    if (roomLayouts.isWeddingBuiltin(lay.id) && !adminTest) {
       return res.status(400).json({
         error: "unknown_room",
         message: "Raum nicht gefunden. Bitte zuerst im Admin anlegen.",
@@ -16183,9 +16201,10 @@ app.post("/v1/rooms", (req, res) => {
     ? "Event"
     : customRoomId
       ? String(
-          roomLayouts.getLayout(getDb(), customRoomId)?.name ||
-            req.body?.name ||
-            "Raum"
+          (adminTest ? "Test · " : "") +
+            (roomLayouts.getLayout(getDb(), customRoomId)?.name ||
+              req.body?.name ||
+              "Raum")
         )
           .trim()
           .slice(0, MAX_LOBBY_NAME_LENGTH) || "Raum"
@@ -16193,11 +16212,14 @@ app.post("/v1/rooms", (req, res) => {
         "Zusammen";
   let charged = 0;
   let isFree = false;
-  if (eventId) {
+  if (adminTest) {
+    // Staff-Test: gratis, ohne Free-Slot zu verbrauchen
+    isFree = true;
+  } else if (eventId) {
     // Event-Lobby: gratis, ohne Tages-Free-Slot zu verbrauchen
     isFree = true;
   } else {
-    const eligibleFree = evaluateCanCreateFreeLobby(ctx.user);
+  const eligibleFree = evaluateCanCreateFreeLobby(ctx.user);
     if (eligibleFree) {
       isFree = true;
       ctx.user.freeLobbyCreateDay = todayKey();
@@ -16250,6 +16272,7 @@ app.post("/v1/rooms", (req, res) => {
     isCustomRoom: Boolean(customRoomId),
     customRoomId,
     customRoomImageUrl,
+    adminTestRoom: Boolean(adminTest && customRoomId),
     space: customRoomId
       ? { positions: {}, seated: {}, reactions: {}, lastMoveAt: 0, lastMoveBy: null }
       : null,
