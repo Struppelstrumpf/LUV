@@ -1544,6 +1544,9 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
       row.canCreateLobby = Boolean(
         activeNow && pub.lobby?.enabled && !ep.lobbyCreated
       );
+      row.canOpenLobby = Boolean(
+        activeNow && pub.lobby?.enabled && ep.lobbyCreated
+      );
     }
     const nextFrom = nextOtherEventFromMs(cfg, now, e.id);
     const votingOpen = Boolean(row.contest?.votingOpen);
@@ -1571,6 +1574,7 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
       } else {
         row.canCollect = false;
         row.canCreateLobby = false;
+        row.canOpenLobby = false;
       }
       active.push(row);
     } else if (occ && !occ.active) {
@@ -1583,6 +1587,7 @@ function meEventsPayload(db, user, dayKey, now = new Date()) {
           ...row,
           canCollect: false,
           canCreateLobby: false,
+          canOpenLobby: false,
           _fromMs: Number.isFinite(Number(occ.fromMs))
             ? Number(occ.fromMs)
             : Number.POSITIVE_INFINITY,

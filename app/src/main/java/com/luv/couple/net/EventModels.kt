@@ -280,6 +280,8 @@ data class SeasonEvent(
     val lobbyEnabled: Boolean = false,
     val contestEnabled: Boolean = false,
     val canCreateLobby: Boolean = false,
+    /** Bestehende Event-Lobby erneut öffnen — nur während Event-Fenster. */
+    val canOpenLobby: Boolean = false,
     val lobbyCreated: Boolean = false,
     val lobbyCode: String? = null,
     val eventPrompt: String? = null,
@@ -347,6 +349,7 @@ data class SeasonEvent(
             lobbyEnabled = o.optJSONObject("lobby")?.optBoolean("enabled", false) == true,
             contestEnabled = o.optJSONObject("contest")?.optBoolean("enabled", false) == true,
             canCreateLobby = o.optBoolean("canCreateLobby", false),
+            canOpenLobby = o.optBoolean("canOpenLobby", false),
             lobbyCreated = o.optBoolean("lobbyCreated", false),
             lobbyCode = o.optCleanString("lobbyCode")
                 ?: o.optJSONObject("contest")?.optCleanString("lobbyCode"),
@@ -430,9 +433,9 @@ object EventSession {
             ?: s.active.firstOrNull()
     }
 
+    /** Event-Lobby im +-Menü: nur während aktives Event (neu oder bestehend öffnen). */
     fun primaryEventForLobby(): SeasonEvent? {
         val s = _state.value ?: return null
-        return s.active.firstOrNull { it.canCreateLobby }
-            ?: s.active.firstOrNull { it.lobbyEnabled }
+        return s.active.firstOrNull { it.canCreateLobby || it.canOpenLobby }
     }
 }

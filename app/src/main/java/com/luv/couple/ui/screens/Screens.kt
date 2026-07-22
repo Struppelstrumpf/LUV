@@ -313,7 +313,8 @@ fun LobbiesScreen(
     val accent = EventSession.menuAccentOrNull() ?: PeerPalette.menuAccent()
     val eventGlyph = EventSession.menuGlyphOrNull()
     val primaryEvent = EventSession.primaryActiveEvent()
-    val eventLobby = EventSession.primaryEventForLobby()?.takeIf { it.lobbyEnabled }
+    val eventLobby = EventSession.primaryEventForLobby()
+        ?.takeIf { it.canCreateLobby || it.canOpenLobby }
     val hasLocalEventLobby = lobbies.any { lobby ->
         val eid = lobby.eventId.asCleanJsonString()
         eid != null && (eventLobby == null || eid == eventLobby.id)
@@ -593,7 +594,7 @@ fun LobbiesScreen(
                     if (eventLobby != null) {
                         PrimaryButton(
                             label = when {
-                                eventLobby.canCreateLobby && !hasLocalEventLobby -> "Event Lobby"
+                                eventLobby.canCreateLobby -> "Event Lobby"
                                 else -> "Event Lobby öffnen"
                             },
                             color = accent,

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.131",
+            listOf(
+                "Event-Lobby im + nur während aktives Event — nicht in der Abstimmung",
+            )
+        ),
+        Entry(
             "2.2.130",
             listOf(
                 "Ehepartner erst nach beiden Ja — kein Ehering/Bild-Recovery vorher",
