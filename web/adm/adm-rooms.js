@@ -16,8 +16,31 @@
   }
 
   const WEDDING_ROOM_IDS = ["wedding_small", "wedding", "wedding_grand"];
-  const PLACE_PROP_COLORS = new Set(["gold", "pink", "lime"]);
-  const DEFAULT_PROP_R = { gold: 0.028, pink: 0.032, lime: 0.04 };
+  const PLACE_PROP_COLORS = new Set(["gold", "pink", "lime", "violet"]);
+  const DEFAULT_PROP_R = { gold: 0.032, pink: 0.036, lime: 0.045, violet: 0.05 };
+  const PROP_ICON_URL = {
+    gold: "/luv/adm/props/candle.png",
+    pink: "/luv/adm/props/flame.png",
+    lime: "/luv/adm/props/money-tree.png",
+    violet: "/luv/adm/props/priest.png",
+  };
+  const propImages = {};
+  function ensurePropImages(onReady) {
+    let pending = 0;
+    for (const [color, url] of Object.entries(PROP_ICON_URL)) {
+      if (propImages[color]?.complete) continue;
+      pending += 1;
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = img.onerror = () => {
+        pending -= 1;
+        if (pending <= 0 && typeof onReady === "function") onReady();
+      };
+      img.src = url + "?v=20260722p";
+      propImages[color] = img;
+    }
+    if (pending <= 0 && typeof onReady === "function") onReady();
+  }
 
   const TOOLS = [
     { id: "view-rect", label: "Weiß Karte", color: "white", shape: "rect", hint: "Gesamte Lauffläche" },
@@ -28,9 +51,10 @@
     { id: "brown-circle", label: "Braun Spawn", color: "brown", shape: "circle", hint: "Spawn" },
     { id: "orange-circle", label: "Orange Größe", color: "orange", shape: "circle", hint: "Avatar" },
     { id: "yellow-rect", label: "Gelb Brautpaar", color: "yellow", shape: "rect", hint: "Altar: Lied + Timer" },
-    { id: "gold-circle", label: "+ Kerze (Gold)", color: "gold", shape: "circle", hint: "Klick setzt Prop" },
-    { id: "pink-circle", label: "+ Flamme", color: "pink", shape: "circle", hint: "Klick setzt Prop" },
-    { id: "lime-circle", label: "+ Geldbaum", color: "lime", shape: "circle", hint: "Klick setzt Prop (1 Coin)" },
+    { id: "violet-circle", label: "+ Pastor", color: "violet", shape: "circle", hint: "Klick setzt Pastor-Bild" },
+    { id: "gold-circle", label: "+ Kerze", color: "gold", shape: "circle", hint: "Klick setzt Kerze (sichtbar)" },
+    { id: "pink-circle", label: "+ Flamme", color: "pink", shape: "circle", hint: "Klick setzt Flamme (sichtbar)" },
+    { id: "lime-circle", label: "+ Geldbaum", color: "lime", shape: "circle", hint: "Klick setzt Geldbaum (sichtbar)" },
   ];
 
   function isWeddingBuiltin(id) {
@@ -48,9 +72,10 @@
       yellow: "Brautpaar",
       brown: "Spawn",
       orange: "Avatar-Größe",
-      gold: "Kerze/Deko",
+      gold: "Kerze",
       pink: "Flamme",
       lime: "Geldbaum",
+      violet: "Pastor",
     };
     const kind = map[z.color] || z.color;
     if (z.shape === "circle") {
@@ -68,9 +93,10 @@
     blue: "rgba(66,165,245,0.45)",
     brown: "rgba(141,110,99,0.45)",
     orange: "rgba(255,152,0,0.4)",
-    gold: "rgba(212,175,55,0.5)",
-    pink: "rgba(255,112,67,0.55)",
-    lime: "rgba(124,179,66,0.5)",
+    gold: "rgba(212,175,55,0.15)",
+    pink: "rgba(255,112,67,0.15)",
+    lime: "rgba(124,179,66,0.15)",
+    violet: "rgba(126,87,194,0.15)",
     purple: "rgba(156,39,176,0.4)",
     teal: "rgba(0,150,136,0.4)",
   };
@@ -86,6 +112,7 @@
     gold: "#d4af37",
     pink: "#ff7043",
     lime: "#7cb342",
+    violet: "#7e57c2",
     purple: "#9c27b0",
     teal: "#009688",
   };
@@ -325,7 +352,7 @@
         </div>
         <p class="help">${
           weddingMode
-            ? "Hochzeit: <b>Gelb</b> = Brautpaar ziehen · <b>+ Geldbaum / Flamme / Kerze</b> = einmal tippen setzt Prop. Grün = Laufen, Blau = Gäste."
+            ? "Hochzeit: <b>Gelb</b> = Brautpaar · <b>+ Pastor / Kerze / Flamme / Geldbaum</b> = tippen setzt das echte Bild (kein bloßer Kreis). Grün = Laufen, Blau = Gäste."
             : "Weiß = ganze Karte · Schwarz = Kamera · Grün/Blau = Sitze/Laufen (ziehen)."
         }</p>
         <div class="room-tools" id="roomTools"></div>
@@ -364,17 +391,29 @@
       const box = root.querySelector("#roomTools");
       const baseTools = weddingMode
         ? TOOLS
-        : TOOLS.filter((t) => !["yellow", "gold", "pink", "lime"].includes(t.color));
-      const weddingPropIds = new Set(["yellow-rect", "gold-circle", "pink-circle", "lime-circle"]);
+        : TOOLS.filter(
+            (t) => !["yellow", "gold", "pink", "lime", "violet"].includes(t.color)
+          );
+      const weddingPropIds = new Set([
+        "yellow-rect",
+        "violet-circle",
+        "gold-circle",
+        "pink-circle",
+        "lime-circle",
+      ]);
       const mainTools = baseTools.filter((t) => !weddingPropIds.has(t.id));
       const weddingTools = baseTools.filter((t) => weddingPropIds.has(t.id));
       const special = [
         { id: "link-portal", label: "Raum verknüpfen", color: "purple" },
         { id: "add-action", label: "+Aktion", color: "teal" },
       ];
+      const iconFor = (t) =>
+        PROP_ICON_URL[t.color]
+          ? `<img class="prop-icon" src="${PROP_ICON_URL[t.color]}?v=20260722p" alt="" />`
+          : `<span class="swatch" style="background:${STROKE[t.color]}"></span>`;
       const btn = (t) => `
         <button type="button" class="room-tool ${tool === t.id ? "active" : ""}" data-tool="${t.id}" title="${esc(t.hint || "")}">
-          <span class="swatch" style="background:${STROKE[t.color]}"></span>${esc(t.label)}
+          ${iconFor(t)}${esc(t.label)}
         </button>`;
       box.innerHTML =
         mainTools.map(btn).join("") +
@@ -493,6 +532,33 @@
     function drawZoneShape(z, highlight, colorKey) {
       const col = colorKey || z.color;
       ctx.save();
+      if (z.shape === "circle" && PLACE_PROP_COLORS.has(col)) {
+        const cx = z.cx * canvas.width;
+        const cy = z.cy * canvas.height;
+        const rPx = Math.max(
+          14,
+          (Number(z.r) || 0.03) * Math.min(canvas.width, canvas.height)
+        );
+        const icon = propImages[col];
+        if (icon && icon.complete && icon.naturalWidth > 0) {
+          const sz = rPx * 2.2;
+          ctx.drawImage(icon, cx - sz / 2, cy - sz / 2, sz, sz);
+        } else {
+          ctx.fillStyle = FILL[col] || "rgba(255,255,255,0.15)";
+          ctx.beginPath();
+          ctx.arc(cx, cy, rPx, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (highlight) {
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(cx, cy, rPx * 1.15, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+        return;
+      }
       ctx.fillStyle = FILL[col] || "rgba(255,255,255,0.15)";
       ctx.strokeStyle = highlight ? "#fff" : STROKE[col] || "#fff";
       ctx.lineWidth = highlight ? 3 : col === "white" || col === "black" ? 3 : 2;
@@ -587,11 +653,13 @@
                     ? "flame_"
                     : color === "lime"
                       ? "money_"
-                      : color === "purple"
-                        ? "portal_"
-                        : color === "teal"
-                          ? "action_"
-                          : `${color}_`;
+                      : color === "violet"
+                        ? "priest_"
+                        : color === "purple"
+                          ? "portal_"
+                          : color === "teal"
+                            ? "action_"
+                            : `${color}_`;
       return `${prefix}${Math.random().toString(36).slice(2, 8)}`;
     }
 
@@ -1019,6 +1087,7 @@
         : "Zonen / Portale / Aktionen einzeichnen"
     );
     window.addEventListener("resize", draw);
+    ensurePropImages(() => draw());
     img.onload = () => {
       imgReady = true;
       draw();

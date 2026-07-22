@@ -2107,6 +2107,13 @@ button.cal-inv-tile { cursor: pointer; }
   border-radius: 3px;
   display: inline-block;
 }
+.room-tool .prop-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  display: inline-block;
+  flex-shrink: 0;
+}
 .room-editor-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 260px;

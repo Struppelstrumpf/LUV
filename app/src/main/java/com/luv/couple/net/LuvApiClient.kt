@@ -2888,6 +2888,7 @@ object LuvApiClient {
         val isDecor: Boolean get() = color == "gold" || id.startsWith("deco_")
         val isFlame: Boolean get() = color == "pink" || id.startsWith("flame_")
         val isMoneyTree: Boolean get() = color == "lime" || id.startsWith("money_")
+        val isPriest: Boolean get() = color == "violet" || id.startsWith("priest_")
     }
 
     data class RoomViewRect(

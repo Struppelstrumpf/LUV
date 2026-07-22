@@ -170,32 +170,28 @@ fun PastorSpeechTile(
 fun FlameDecor(size: Dp, modifier: Modifier = Modifier) {
     val infinite = rememberInfiniteTransition(label = "flame")
     val flicker by infinite.animateFloat(
-        initialValue = 0.75f,
-        targetValue = 1.15f,
+        initialValue = 0.88f,
+        targetValue = 1.12f,
         animationSpec = infiniteRepeatable(
             animation = tween(380, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "flicker"
     )
-    Box(
-        modifier = modifier.size(size * flicker.coerceIn(0.7f, 1.25f)),
-        contentAlignment = Alignment.Center
-    ) {
-        Text("🔥", fontSize = (size.value * 0.72f).sp)
-    }
+    Image(
+        painter = painterResource(R.drawable.wedding_flame),
+        contentDescription = "Flamme",
+        modifier = modifier.size(size * flicker.coerceIn(0.85f, 1.2f)),
+        contentScale = ContentScale.Fit,
+    )
 }
 
 @Composable
 fun DecorMarker(size: Dp, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .size(size)
-            .clip(CircleShape)
-            .background(Color(0x33D4AF37))
-            .border(1.dp, Color(0x99D4AF37), CircleShape),
-        contentAlignment = Alignment.Center
-    ) {
-        Text("🕯", fontSize = (size.value * 0.55f).sp)
-    }
+    Image(
+        painter = painterResource(R.drawable.wedding_candle),
+        contentDescription = "Kerze",
+        modifier = modifier.size(size),
+        contentScale = ContentScale.Fit,
+    )
 }

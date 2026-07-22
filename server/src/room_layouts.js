@@ -134,7 +134,7 @@ function sanitizeZone(raw, index) {
   if (!raw || typeof raw !== "object") return null;
   const color = String(raw.color || "").toLowerCase();
   const shape = String(raw.shape || "").toLowerCase();
-  // gold = Deko, pink = Flamme, lime = Geldbaum (Hochzeit, 1 Coin tippen)
+  // gold = Kerze, pink = Flamme, lime = Geldbaum, violet = Pastor (Hochzeit)
   if (
     ![
       "red",
@@ -146,14 +146,15 @@ function sanitizeZone(raw, index) {
       "gold",
       "pink",
       "lime",
+      "violet",
     ].includes(color)
   ) {
     return null;
   }
   if (!["rect", "circle"].includes(shape)) return null;
-  // Gelb/Blau: Rechtecke (Sitzbereiche) oder alt Kreise; Spawn/Deko bleiben Kreise
+  // Gelb/Blau: Rechtecke (Sitzbereiche) oder alt Kreise; Spawn/Deko/Pastor bleiben Kreise
   if (
-    ["brown", "orange", "gold", "pink", "lime"].includes(color) &&
+    ["brown", "orange", "gold", "pink", "lime", "violet"].includes(color) &&
     shape !== "circle"
   ) {
     return null;
@@ -180,7 +181,9 @@ function sanitizeZone(raw, index) {
                   ? "flame_"
                   : color === "lime"
                     ? "money_"
-                    : `${color}_`;
+                    : color === "violet"
+                      ? "priest_"
+                      : `${color}_`;
     id = `${prefix}${index}_${Date.now().toString(36)}`;
   }
   if (color === "yellow" && !id.startsWith("altar_")) {
@@ -191,6 +194,9 @@ function sanitizeZone(raw, index) {
   }
   if (color === "lime" && !id.startsWith("money_")) {
     id = `money_${id.replace(/^money_/, "")}`.slice(0, 48);
+  }
+  if (color === "violet" && !id.startsWith("priest_")) {
+    id = `priest_${id.replace(/^priest_/, "")}`.slice(0, 48);
   }
 
   if (shape === "circle") {
@@ -632,6 +638,26 @@ function isMoneyTree(zoneOrId) {
   return zoneOrId.color === "lime" || String(zoneOrId.id || "").startsWith("money_");
 }
 
+function isPriest(zoneOrId) {
+  if (!zoneOrId) return false;
+  if (typeof zoneOrId === "string") return zoneOrId.startsWith("priest_");
+  return (
+    zoneOrId.color === "violet" ||
+    String(zoneOrId.id || "").startsWith("priest_")
+  );
+}
+
+/** Pastor-Position aus Layout (cx/cy), Fallback null */
+function priestPoint(zones) {
+  const z = (zones || []).find((x) => isPriest(x) && x.shape === "circle");
+  if (!z) return null;
+  return {
+    x: clamp01(z.cx, 0.5),
+    y: clamp01(z.cy, 0.18),
+    r: Math.min(0.12, Math.max(0.02, Number(z.r) || 0.045)),
+  };
+}
+
 function zoneContains(z, x, y, pad = 0) {
   if (!z) return false;
   if (z.shape === "circle") {
@@ -845,6 +871,8 @@ module.exports = {
   isCoupleSeat,
   isGuestSeat,
   isMoneyTree,
+  isPriest,
+  priestPoint,
   isBlocked,
   isWalkable,
   clampMove,

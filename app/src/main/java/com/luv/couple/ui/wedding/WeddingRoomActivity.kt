@@ -170,7 +170,6 @@ private val IdleRing = Color(0x99FFFFFF)
 private const val PRIEST_X = 0.50f
 private const val PRIEST_Y = 0.175f
 private val PriestSize = 30.dp
-private val MoneyTreeSize = 40.dp
 /** Enger Tip-Radius — Geldbäume dürfen Sitze/Laufen nicht abfangen */
 private const val TREE_SNAP_R = 0.05f
 
@@ -765,32 +764,20 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 if (treesOn) {
                     zones.filter { it.isMoneyTree }.forEach { z ->
                         val claimed = claimedTrees.contains(z.id)
-                        val sz = MoneyTreeSize
-                        Box(
+                        val sz = (roomW * (z.r * 2f).coerceIn(0.04f, 0.14f)).coerceIn(28.dp, 64.dp)
+                        Image(
+                            painter = painterResource(R.drawable.wedding_money_tree),
+                            contentDescription = "Geldbaum",
                             modifier = Modifier
                                 .align(Alignment.TopStart)
                                 .padding(
                                     start = roomW * z.sitX - sz / 2,
                                     top = roomH * z.sitY - sz / 2,
                                 )
-                                .size(sz)
-                                .clip(CircleShape)
-                                .background(
-                                    if (claimed) Color.White.copy(0.25f)
-                                    else Color.White.copy(0.55f)
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Image(
-                                painter = painterResource(R.drawable.wedding_money_tree),
-                                contentDescription = "Geldbaum",
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(4.dp),
-                                contentScale = ContentScale.Fit,
-                                alpha = if (claimed) 0.45f else 1f,
-                            )
-                        }
+                                .size(sz),
+                            contentScale = ContentScale.Fit,
+                            alpha = if (claimed) 0.4f else 1f,
+                        )
                     }
                 }
 
@@ -851,23 +838,26 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     }
                 }
 
-                // Priester am Altar
+                // Priester: Admin-Zone (violet) oder Fallback oben am Altar
+                val priestZone = zones.firstOrNull { it.isPriest && it.shape == "circle" }
+                val priestX = priestZone?.sitX ?: PRIEST_X
+                val priestY = priestZone?.sitY ?: PRIEST_Y
+                val priestSz = priestZone?.let {
+                    (roomW * (it.r * 2f).coerceIn(0.04f, 0.14f)).coerceIn(24.dp, 56.dp)
+                } ?: PriestSize
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(
-                            start = roomW * PRIEST_X - PriestSize / 2,
-                            top = roomH * PRIEST_Y - PriestSize / 2
+                            start = roomW * priestX - priestSz / 2,
+                            top = roomH * priestY - priestSz / 2
                         )
                 ) {
                     Image(
                         painter = painterResource(R.drawable.wedding_priest),
                         contentDescription = "Priester",
-                        modifier = Modifier
-                            .size(PriestSize)
-                            .clip(CircleShape)
-                            .border(1.5.dp, Color.White.copy(0.7f), CircleShape),
-                        contentScale = ContentScale.Crop
+                        modifier = Modifier.size(priestSz),
+                        contentScale = ContentScale.Fit
                     )
                     if (c?.pastorPhase == "dots") {
                         PastorDotsBubble(
