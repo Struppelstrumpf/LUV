@@ -4635,6 +4635,7 @@ object LuvApiClient {
                 else -> baseUrl().trimEnd('/') + "/" + path
             }
         }
+        val couple = json.optJSONObject("coupleNicknames")
         return RoomPreview(
             code = code,
             name = json.optString("name", "Lobby"),
@@ -4647,7 +4648,11 @@ object LuvApiClient {
             joinUrl = json.optString("joinUrl", publicJoinUrl(code)),
             hostColorSide = json.optString("hostColorSide", "blue").ifBlank { "blue" },
             inviteImageUrl = inviteImageUrl,
-            hasDrawing = json.optBoolean("hasDrawing", !inviteImageUrl.isNullOrBlank())
+            hasDrawing = json.optBoolean("hasDrawing", !inviteImageUrl.isNullOrBlank()),
+            isWeddingCeremony = json.optBoolean("isWeddingCeremony", false),
+            ceremonyAt = json.optLong("ceremonyAt", 0L),
+            coupleNameA = couple?.optString("a")?.trim()?.takeIf { it.isNotBlank() },
+            coupleNameB = couple?.optString("b")?.trim()?.takeIf { it.isNotBlank() },
         )
     }
 

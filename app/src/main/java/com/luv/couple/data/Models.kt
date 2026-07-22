@@ -260,7 +260,11 @@ data class RoomPreview(
     val hostColorSide: String = "blue",
     /** Relativer oder absoluter Pfad zum Invite-Snapshot (Leinwand). */
     val inviteImageUrl: String? = null,
-    val hasDrawing: Boolean = false
+    val hasDrawing: Boolean = false,
+    val isWeddingCeremony: Boolean = false,
+    val ceremonyAt: Long = 0L,
+    val coupleNameA: String? = null,
+    val coupleNameB: String? = null,
 )
 
 data class PeerInfo(

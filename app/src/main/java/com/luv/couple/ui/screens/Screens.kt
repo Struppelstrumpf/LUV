@@ -1289,13 +1289,23 @@ private fun LobbyCard(
                 )
             }
             if (lobby.isWeddingCeremony) {
+                // Brautpaar: immer einladen sobald Lobby im Home (10-Min-Regel nur für Betreten)
+                val coupleInvite = lobby.role == Role.HOST ||
+                    lobby.createdByMe ||
+                    (
+                        !myNickname.isNullOrBlank() &&
+                            (
+                                myNickname.equals(lobby.coupleNameA, ignoreCase = true) ||
+                                    myNickname.equals(lobby.coupleNameB, ignoreCase = true)
+                                )
+                        )
                 SeatGrid(
                     capacity = lobby.capacity.coerceIn(2, 10),
                     maxPeers = 10,
                     occupied = occupied,
                     nicknames = nicknames,
                     accent = accent,
-                    canInvite = lobby.role == Role.HOST || lobby.createdByMe,
+                    canInvite = coupleInvite,
                     canBuySlots = false,
                     onInvite = onInviteSeat,
                     onBuy = {},
@@ -1404,6 +1414,7 @@ private fun WeddingCeremonyLobbyButton(
     val giftPhase = lobby.giftPhase.lowercase()
     val giftEnds = lobby.giftWindowEndsAt
     val giftRem = (giftEnds - now).coerceAtLeast(0L)
+    // Kapelle öffnet 10 Min. vor Termin — Einladen ist unabhängig davon (Sitze oben).
     val openAt = (lobby.ceremonyAt - 10 * 60 * 1000L).coerceAtLeast(0L)
     val open = lobby.ceremonyAt > 0L && now >= openAt
     val label = when {
@@ -1412,7 +1423,7 @@ private fun WeddingCeremonyLobbyButton(
             "Noch ${formatCountdown(giftRem)} · Empfang"
         lobby.ceremonyAt <= 0L -> "Hochzeit"
         open -> "Zur Hochzeit"
-        else -> formatCountdown(openAt - now)
+        else -> "Noch ${formatCountdown(openAt - now)}"
     }
     PrimaryButton(label, accent, onOpen)
 }

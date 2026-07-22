@@ -73,6 +73,8 @@ import com.luv.couple.net.PairSessionState
 import com.luv.couple.net.InstallReferrerJoin
 import com.luv.couple.net.PendingInviteRejoin
 import com.luv.couple.net.PendingJoin
+import com.luv.couple.net.PendingLobbyInvite
+import com.luv.couple.ui.wedding.WeddingInviteOverlay
 import com.luv.couple.net.PendingOnboardingRestart
 import com.luv.couple.net.PendingTutorialKeepAuth
 import com.luv.couple.ui.screens.MarketHubCache
@@ -355,6 +357,7 @@ fun LuvAppNav() {
         joinPreviewCode = null
         joinError = null
         PendingJoin.consume()
+        PendingLobbyInvite.clear()
         // Nach toter/abgelehnter Einladung: Home wenn Google-Konto, sonst Name/Start
         scope.launch {
             val snap = prefs.snapshot()
@@ -959,7 +962,9 @@ fun LuvAppNav() {
         }
         if (already != null) {
             prefs.setActiveLobby(already.id)
-            CanvasStore.setActiveLobby(already.id)
+            if (!already.isWeddingCeremony && !already.isCustomRoom) {
+                CanvasStore.setActiveLobby(already.id)
+            }
             CanvasStore.updateKnownLobbies(snap.lobbies.map { it.id })
             PairConnectionService.startAll(context)
             return true
@@ -1005,7 +1010,7 @@ fun LuvAppNav() {
         )
         prefs.upsertLobby(lobby)
         PairSessionState.setCapacity(lobby.id, room.capacity)
-        if (!lobby.isCustomRoom) {
+        if (!lobby.isCustomRoom && !lobby.isWeddingCeremony) {
             CanvasStore.setActiveLobby(lobby.id)
         }
         PairConnectionService.startAll(context)
@@ -1275,15 +1280,27 @@ fun LuvAppNav() {
         val code = joinPreviewCode ?: joinPreview?.code ?: return
         val linked = AccountSession.account.value?.googleLinked == true
         val hasSession = !LuvApiClient.sessionToken.isNullOrBlank()
+        val weddingInvite = joinPreview?.isWeddingCeremony == true ||
+            PendingLobbyInvite.peekId() != null
+        // Freund-Hochzeit: erst hier annehmen (Ablehnen = kein Mitglied)
+        PendingLobbyInvite.consumeId()?.let { inviteId ->
+            val accepted = runCatching { LuvApiClient.acceptLobbyInvite(inviteId) }.getOrNull()
+            if (accepted == null) {
+                joinError = "Einladung nicht mehr gültig."
+                return
+            }
+        }
         val ok = if (linked && hasSession) {
             joinWithCode(code)
         } else {
             trialJoinWithCode(code)
         }
         if (!ok) return
-        val lobbyId = prefs.snapshot().lobbies.firstOrNull {
+        val lobby = prefs.snapshot().lobbies.firstOrNull {
             it.code.equals(code, ignoreCase = true)
-        }?.id
+        }
+        val lobbyId = lobby?.id
+        val isCeremony = weddingInvite || lobby?.isWeddingCeremony == true
         dismissInviteConfirm()
         tab = 0
         if (startDestination != Routes.MAIN) startDestination = Routes.MAIN
@@ -1291,6 +1308,11 @@ fun LuvAppNav() {
             navController.navigate(Routes.MAIN) {
                 popUpTo(Routes.MAIN) { inclusive = true }
             }
+        }
+        // Hochzeit: nur Home (Lobby-Karte + Timer) — nie Mal-Leinwand
+        if (isCeremony) {
+            Toast.makeText(context, "Du bist zur Hochzeit dabei", Toast.LENGTH_SHORT).show()
+            return
         }
         // trialJoin öffnet LockDraw selbst; Google-Join hier öffnen
         if (linked && hasSession && lobbyId != null) {
@@ -2729,19 +2751,29 @@ fun LuvAppNav() {
         }
 
         composable(Routes.JOIN_PREVIEW) {
-            JoinPreviewScreen(
-                preview = joinPreview,
-                loading = joinPreviewLoading,
-                error = joinError,
-                busy = busy,
-                onJoin = {
-                    scope.launch { confirmInviteJoin() }
-                },
-                onDecline = {
-                    // dismiss navigiert selbst (Home oder Name/Start)
-                    dismissInviteConfirm()
-                }
-            )
+            if (joinPreview?.isWeddingCeremony == true || PendingLobbyInvite.peekId() != null) {
+                WeddingInviteOverlay(
+                    preview = joinPreview,
+                    loading = joinPreviewLoading,
+                    error = joinError,
+                    busy = busy,
+                    onAccept = { scope.launch { confirmInviteJoin() } },
+                    onDecline = { dismissInviteConfirm() }
+                )
+            } else {
+                JoinPreviewScreen(
+                    preview = joinPreview,
+                    loading = joinPreviewLoading,
+                    error = joinError,
+                    busy = busy,
+                    onJoin = {
+                        scope.launch { confirmInviteJoin() }
+                    },
+                    onDecline = {
+                        dismissInviteConfirm()
+                    }
+                )
+            }
         }
 
         composable(Routes.REDEEM) {
@@ -2798,14 +2830,25 @@ fun LuvAppNav() {
     // Deep-Link-Einladung: immer oben — unabhängig von NavHost/Splash
     if (showInviteOverlay && !joinPreviewCode.isNullOrBlank()) {
         Box(modifier = Modifier.fillMaxSize().zIndex(80f)) {
-            JoinPreviewScreen(
-                preview = joinPreview,
-                loading = joinPreviewLoading,
-                error = joinError,
-                busy = busy,
-                onJoin = { scope.launch { confirmInviteJoin() } },
-                onDecline = { dismissInviteConfirm() }
-            )
+            if (joinPreview?.isWeddingCeremony == true || PendingLobbyInvite.peekId() != null) {
+                WeddingInviteOverlay(
+                    preview = joinPreview,
+                    loading = joinPreviewLoading,
+                    error = joinError,
+                    busy = busy,
+                    onAccept = { scope.launch { confirmInviteJoin() } },
+                    onDecline = { dismissInviteConfirm() }
+                )
+            } else {
+                JoinPreviewScreen(
+                    preview = joinPreview,
+                    loading = joinPreviewLoading,
+                    error = joinError,
+                    busy = busy,
+                    onJoin = { scope.launch { confirmInviteJoin() } },
+                    onDecline = { dismissInviteConfirm() }
+                )
+            }
         }
     }
 

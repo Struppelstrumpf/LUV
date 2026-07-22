@@ -838,11 +838,17 @@ private fun FriendsPanel(
                     onAccept = {
                         busyId = "l-${inv.id}"
                         scope.launch {
-                            val code = runCatching { LuvApiClient.acceptLobbyInvite(inv.id) }
-                                .getOrNull()
-                            if (code != null) {
-                                // Sofort joinen — kein reload/Toast (Composition verlässt Sozial)
-                                com.luv.couple.net.PendingJoin.offer(code)
+                            val isWedding = inv.isWeddingCeremony ||
+                                inv.lobbyName.equals("Hochzeit", ignoreCase = true)
+                            if (isWedding) {
+                                // Erst im Vollbild-Popup annehmen — Ablehnen = kein Beitritt
+                                com.luv.couple.net.PendingLobbyInvite.offer(inv.id, inv.roomCode)
+                            } else {
+                                val code = runCatching { LuvApiClient.acceptLobbyInvite(inv.id) }
+                                    .getOrNull()
+                                if (code != null) {
+                                    com.luv.couple.net.PendingJoin.offer(code)
+                                }
                             }
                             // busyId ggf. schon unmounted — absichtlich nicht setzen
                         }

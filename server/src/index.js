@@ -4587,6 +4587,14 @@ function publicRoom(room, code) {
     hasDrawing: Boolean(hasDrawing),
     inviteImageUrl,
     inviteBlurb: invitePublicBlurb(room, room.hostNickname || "Host"),
+    ceremonyAt: Number(room.ceremonyAt) || 0,
+    coupleNicknames:
+      room.coupleNicknames && typeof room.coupleNicknames === "object"
+        ? {
+            a: String(room.coupleNicknames.a || "").trim().slice(0, 18) || null,
+            b: String(room.coupleNicknames.b || "").trim().slice(0, 18) || null,
+          }
+        : null,
     ...inviteFor(code),
   };
 }
