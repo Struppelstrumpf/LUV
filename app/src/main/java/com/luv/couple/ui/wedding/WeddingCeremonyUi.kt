@@ -96,6 +96,7 @@ fun WeddingPresenceDialog(
     var marriage by remember { mutableStateOf<LuvApiClient.MarriageInfo?>(null) }
     var busy by remember { mutableStateOf(false) }
     var showSchedule by remember { mutableStateOf(false) }
+    var showBooking by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -105,9 +106,32 @@ fun WeddingPresenceDialog(
             }.onSuccess {
                 ceremony = it.ceremony
                 marriage = it.marriage
+                if (it.ceremony?.booking?.active == true) {
+                    showBooking = true
+                }
+                if (
+                    it.marriage?.status == "ceremony_scheduled" ||
+                    !it.ceremony?.ceremonyLobbyCode.isNullOrBlank()
+                ) {
+                    onScheduled(
+                        it.ceremony?.ceremonyLobbyCode ?: it.marriage?.ceremonyLobbyCode
+                    )
+                    return@LaunchedEffect
+                }
             }
             delay(2500)
         }
+    }
+
+    if (showBooking) {
+        WeddingBookingDialog(
+            onDismiss = onDismiss,
+            onBooked = { code ->
+                showBooking = false
+                onScheduled(code)
+            }
+        )
+        return
     }
 
     if (showSchedule) {
@@ -250,15 +274,21 @@ fun WeddingScheduleDialog(
         mutableStateOf(formatCeremonyAt(cal.timeInMillis))
     }
 
+    var showBooking by remember { mutableStateOf(false) }
+
     fun refreshFrom(bundle: LuvApiClient.CeremonyBundle) {
         ceremony = bundle.ceremony
         val scheduled = bundle.marriage?.status == "ceremony_scheduled" ||
             !bundle.ceremony?.ceremonyLobbyCode.isNullOrBlank()
         if (scheduled) {
-            Toast.makeText(context, "Hochzeit geplant", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Hochzeit gebucht", Toast.LENGTH_SHORT).show()
             onScheduled(
                 bundle.ceremony?.ceremonyLobbyCode ?: bundle.marriage?.ceremonyLobbyCode
             )
+            return
+        }
+        if (bundle.ceremony?.booking?.active == true) {
+            showBooking = true
         }
     }
 
@@ -271,10 +301,7 @@ fun WeddingScheduleDialog(
                 ceremony = bundle.ceremony
                 val scheduled =
                     bundle.marriage?.status == "ceremony_scheduled" ||
-                        (
-                            (bundle.ceremony?.ceremonyAt ?: 0L) > 0L &&
-                                !bundle.ceremony?.ceremonyLobbyCode.isNullOrBlank()
-                            )
+                        !bundle.ceremony?.ceremonyLobbyCode.isNullOrBlank()
                 if (scheduled) {
                     onScheduled(
                         bundle.ceremony?.ceremonyLobbyCode
@@ -282,9 +309,23 @@ fun WeddingScheduleDialog(
                     )
                     return@LaunchedEffect
                 }
+                if (bundle.ceremony?.booking?.active == true) {
+                    showBooking = true
+                }
             }
             delay(2500)
         }
+    }
+
+    if (showBooking) {
+        WeddingBookingDialog(
+            onDismiss = onDismiss,
+            onBooked = { code ->
+                showBooking = false
+                onScheduled(code)
+            }
+        )
+        return
     }
 
     val proposals = ceremony?.timeProposals.orEmpty()
@@ -835,6 +876,382 @@ fun WeddingLeftNoticeDialog(
             }
         }
     }
+}
+
+@Composable
+fun WeddingBookingDialog(
+    onDismiss: () -> Unit,
+    onBooked: (lobbyCode: String?) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var ceremony by remember { mutableStateOf<LuvApiClient.CeremonyInfo?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var showCoinGap by remember { mutableStateOf(false) }
+    var needCoins by remember { mutableStateOf(0) }
+    var packs by remember { mutableStateOf<List<com.luv.couple.net.ShopPack>>(emptyList()) }
+
+    fun applyCer(c: LuvApiClient.CeremonyInfo?) {
+        ceremony = c
+        if (c?.ceremonyLobbyCode != null || c?.phase == "scheduled") {
+            onBooked(c.ceremonyLobbyCode)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            runCatching { LuvApiClient.fetchCeremony() }
+                .onSuccess { applyCer(it.ceremony) }
+            delay(2000)
+        }
+    }
+
+    val b = ceremony?.booking
+    val bill = b?.billPerPerson ?: 0
+
+    Dialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(BgSoft)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Hochzeit buchen",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 20.sp,
+                )
+                Text(
+                    "Rechnung: $bill Coins je",
+                    color = Gold,
+                    fontFamily = DisplayFont,
+                    fontSize = 13.sp,
+                )
+            }
+            if ((b?.ceremonyAt ?: 0L) > 0L) {
+                Text(
+                    "Termin: ${formatCeremonyAt(b!!.ceremonyAt)}",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                )
+            }
+
+            when (b?.step) {
+                "trees" -> {
+                    Text(
+                        "Geldbäume",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 17.sp,
+                    )
+                    Text(
+                        "Für je ${b.moneyTreesPerPerson} Coins (50 gesamt) stehen in der Kapelle " +
+                            "Geldbäume. Gäste können jeden Baum einmal tippen und erhalten 1 Coin. " +
+                            "Das Brautpaar erntet nicht.",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        BookingVoteButton(
+                            label = "Ablehnen ${b.moneyTreesDeclineCount}/2",
+                            selected = b.moneyTreesMine == "decline",
+                            enabled = !busy,
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                busy = true
+                                scope.launch {
+                                    runCatching {
+                                        LuvApiClient.ceremonyBookingMoneyTrees("decline")
+                                    }.onSuccess { applyCer(it.ceremony) }
+                                        .onFailure {
+                                            Toast.makeText(
+                                                context,
+                                                it.message ?: "Fehler",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    busy = false
+                                }
+                            },
+                        )
+                        BookingVoteButton(
+                            label = "Buchen ${b.moneyTreesBookCount}/2",
+                            selected = b.moneyTreesMine == "book",
+                            enabled = !busy,
+                            accent = true,
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                busy = true
+                                scope.launch {
+                                    runCatching {
+                                        LuvApiClient.ceremonyBookingMoneyTrees("book")
+                                    }.onSuccess { applyCer(it.ceremony) }
+                                        .onFailure {
+                                            Toast.makeText(
+                                                context,
+                                                it.message ?: "Fehler",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    busy = false
+                                }
+                            },
+                        )
+                    }
+                }
+
+                "room" -> {
+                    Text(
+                        "Raum wählen",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 17.sp,
+                    )
+                    Text(
+                        "Beide tippen denselben Raum — Anzeige „gewählt n/2“ bis Match.",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 12.sp,
+                    )
+                    b.rooms.forEach { room ->
+                        val votes = b.roomVoteCounts[room.id] ?: 0
+                        val mine = b.roomMine == room.id
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (mine) Color(0x33FFD54F) else Color(0x22000000))
+                                .border(
+                                    1.dp,
+                                    if (mine) Gold else Color.White.copy(0.12f),
+                                    RoundedCornerShape(14.dp)
+                                )
+                                .clickable(enabled = !busy) {
+                                    busy = true
+                                    scope.launch {
+                                        runCatching {
+                                            LuvApiClient.ceremonyBookingRoom(room.id)
+                                        }.onSuccess { applyCer(it.ceremony) }
+                                            .onFailure {
+                                                Toast.makeText(
+                                                    context,
+                                                    it.message ?: "Fehler",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        busy = false
+                                    }
+                                }
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(
+                                "${room.shortLabel.ifBlank { room.name }} · gewählt $votes/2",
+                                color = TextPrimary,
+                                fontFamily = DisplayFont,
+                                fontSize = 15.sp,
+                            )
+                            Text(
+                                "${room.guestSlots} Gäste-Slots (Cap ${room.capacity}) · " +
+                                    if (room.perPerson <= 0) "kostenlos"
+                                    else "${room.totalCost} Coins (${room.perPerson} je Person)",
+                                color = TextMuted,
+                                fontFamily = BodyFont,
+                                fontSize = 12.sp,
+                            )
+                            if (room.blurb.isNotBlank()) {
+                                Text(
+                                    room.blurb,
+                                    color = TextMuted,
+                                    fontFamily = BodyFont,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                "confirm" -> {
+                    val room = b.rooms.firstOrNull { it.id == b.roomId }
+                    Text(
+                        "Bestätigen",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 17.sp,
+                    )
+                    Text(
+                        "• Termin: ${formatCeremonyAt(b.ceremonyAt)}\n" +
+                            "• Geldbäume: ${if (b.moneyTrees == true) "ja (+${b.moneyTreesPerPerson} je)" else "nein"}\n" +
+                            "• Raum: ${room?.name ?: b.roomId} " +
+                            "(${room?.guestSlots ?: "?"} Gäste)\n" +
+                            "• Summe je Person: $bill Coins",
+                        color = TextPrimary,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp,
+                    )
+                    Text(
+                        "Beide müssen buchen — erst dann wird abgebucht und die Lobby erstellt.",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 12.sp,
+                    )
+                    BookingVoteButton(
+                        label = if (b.confirmMine) {
+                            "Wartest auf Partner… ${b.confirmCount}/2"
+                        } else {
+                            "Hochzeit buchen · $bill Coins (${b.confirmCount}/2)"
+                        },
+                        selected = b.confirmMine,
+                        enabled = !busy && !b.confirmMine,
+                        accent = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            busy = true
+                            scope.launch {
+                                runCatching { LuvApiClient.ceremonyBookingConfirm(true) }
+                                    .onSuccess { r ->
+                                        if (r.noCoins) {
+                                            needCoins = r.needCoins.coerceAtLeast(bill)
+                                            runCatching { LuvApiClient.shopPacks() }
+                                                .onSuccess { packs = it.second }
+                                            showCoinGap = true
+                                            applyCer(r.ceremony)
+                                        } else if (!r.ceremonyLobbyCode.isNullOrBlank()) {
+                                            Toast.makeText(
+                                                context,
+                                                "Hochzeit gebucht!",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                            onBooked(r.ceremonyLobbyCode)
+                                        } else {
+                                            applyCer(r.ceremony)
+                                        }
+                                    }
+                                    .onFailure {
+                                        Toast.makeText(
+                                            context,
+                                            it.message ?: "Buchung fehlgeschlagen",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                busy = false
+                            }
+                        },
+                    )
+                }
+
+                else -> {
+                    Text(
+                        "Buchung wird geladen…",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp,
+                    )
+                }
+            }
+
+            TextButton(onClick = onDismiss, enabled = !busy) {
+                Text("Schließen", color = TextMuted, fontFamily = BodyFont)
+            }
+        }
+    }
+
+    if (showCoinGap) {
+        val pack = packs
+            .filter { it.coins > 0 }
+            .sortedBy { it.coins }
+            .firstOrNull { it.coins >= needCoins }
+            ?: packs.maxByOrNull { it.coins }
+        Dialog(onDismissRequest = { showCoinGap = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(BgSoft)
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "Nicht genug Coins",
+                    color = TextPrimary,
+                    fontFamily = DisplayFont,
+                    fontSize = 18.sp,
+                )
+                Text(
+                    "Ihr braucht je $needCoins Coins für die Buchung.",
+                    color = TextMuted,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                )
+                if (pack != null) {
+                    Text(
+                        "Empfohlen: ${pack.label.ifBlank { "${pack.coins} Coins" }} " +
+                            "(${pack.displayPrice ?: pack.amountEur})",
+                        color = Gold,
+                        fontFamily = DisplayFont,
+                        fontSize = 14.sp,
+                    )
+                    Text(
+                        "Öffne den Markt → Coins-Tab, kaufe das Paket, und tippe danach erneut auf „Hochzeit buchen“.",
+                        color = TextMuted,
+                        fontFamily = BodyFont,
+                        fontSize = 12.sp,
+                    )
+                }
+                TextButton(onClick = { showCoinGap = false }) {
+                    Text("Verstanden", color = AccentRose, fontFamily = DisplayFont)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BookingVoteButton(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    accent: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Text(
+        label,
+        color = if (accent || selected) Color.White else TextPrimary,
+        fontFamily = DisplayFont,
+        fontSize = 14.sp,
+        textAlign = TextAlign.Center,
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                when {
+                    selected && accent -> AccentRose
+                    selected -> Color(0xFF5C6BC0)
+                    accent -> AccentRose.copy(0.75f)
+                    else -> Color.White.copy(0.10f)
+                }
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 12.dp, horizontal = 8.dp),
+    )
 }
 
 fun shareWeddingText(context: android.content.Context, text: String) {

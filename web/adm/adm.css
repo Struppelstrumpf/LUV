@@ -2037,6 +2037,27 @@ button.cal-inv-tile { cursor: pointer; }
   margin-bottom: 0.5rem;
 }
 .room-editor-bar h3 { flex: 1; font-family: var(--display); }
+.room-wedding-switch {
+  min-width: 7.5rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  color: inherit;
+  font: inherit;
+}
+.room-radius-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0.5rem 0 0.75rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.room-radius-wrap input[type="range"] {
+  flex: 1;
+  min-width: 8rem;
+}
 .room-tools {
   display: flex;
   flex-wrap: wrap;

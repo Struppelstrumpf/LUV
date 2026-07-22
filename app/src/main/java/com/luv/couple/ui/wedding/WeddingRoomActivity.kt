@@ -410,12 +410,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
-        // Ceremony zuerst (enthält oft schon roomLayout) + Layout parallel als Fallback
+        // Ceremony zuerst (enthält oft schon roomLayout) + Layout per layoutId als Fallback
         coroutineScope {
-            val layoutJob = async {
-                WeddingChapelCache.layout
-                    ?: runCatching { LuvApiClient.fetchRoomLayout("wedding") }.getOrNull()
-            }
             val firstResult = runCatching { LuvApiClient.fetchCeremony() }
             firstResult.onFailure { e ->
                 val err = (e as? com.luv.couple.net.LuvApiException)?.error
@@ -442,9 +438,14 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 applyCeremonyBundle(first)
             }
             if (layout == null) {
-                applyLayout(layoutJob.await())
-            } else {
-                layoutJob.await()?.let { WeddingChapelCache.put(it) }
+                val lid = first?.ceremony?.ceremonyLayoutId?.ifBlank { null }
+                    ?: first?.roomLayout?.id?.ifBlank { null }
+                    ?: "wedding"
+                val cached = WeddingChapelCache.layout?.takeIf { it.id == lid }
+                applyLayout(
+                    cached
+                        ?: runCatching { LuvApiClient.fetchRoomLayout(lid) }.getOrNull()
+                )
             }
         }
         while (rejectName == null) {
@@ -602,23 +603,32 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
-        val chapelPainter = painterResource(R.drawable.wedding_chapel_room)
+        val layoutId = layout?.id?.ifBlank { null }
+            ?: ceremony?.ceremonyLayoutId?.ifBlank { null }
+            ?: "wedding"
+        val roomPainter = painterResource(
+            when (layoutId) {
+                "wedding_small" -> R.drawable.wedding_small_room
+                "wedding_grand" -> R.drawable.wedding_grand_room
+                else -> R.drawable.wedding_chapel_room
+            }
+        )
         val aspect = run {
-            val s = chapelPainter.intrinsicSize
+            val s = roomPainter.intrinsicSize
             if (s.height > 0f) (s.width / s.height) else 0.72f
         }
         val roomH = if (maxWidth / maxHeight > aspect) maxHeight else maxWidth / aspect
         val roomW = roomH * aspect
 
-        // Kapellenbild + Spiel-Layer in exakter Bildgröße (Sitze liegen auf den Bänken)
+        // Raumbild + Spiel-Layer in exakter Bildgröße (Sitze liegen auf den Bänken)
         Box(
             modifier = Modifier
                 .size(roomW, roomH)
                 .align(Alignment.Center)
         ) {
             Image(
-                painter = chapelPainter,
-                contentDescription = "Hochzeitskapelle",
+                painter = roomPainter,
+                contentDescription = "Trausaal",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.FillBounds
             )
@@ -742,35 +752,38 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         if (z.isFlame) FlameDecor(size = sz) else DecorMarker(size = sz)
                     }
                 }
-                // Geldbäume (kein Hindernis — nur Tippen für 1 Coin)
+                // Geldbäume nur wenn gebucht (kein Hindernis — Tippen für 1 Coin, nur Gäste)
+                val treesOn = c?.moneyTreesEnabled == true
                 val claimedTrees = claimedMoneyTrees + c?.claimedMoneyTreeIds.orEmpty()
-                zones.filter { it.isMoneyTree }.forEach { z ->
-                    val claimed = claimedTrees.contains(z.id)
-                    val sz = MoneyTreeSize
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(
-                                start = roomW * z.sitX - sz / 2,
-                                top = roomH * z.sitY - sz / 2,
-                            )
-                            .size(sz)
-                            .clip(CircleShape)
-                            .background(
-                                if (claimed) Color.White.copy(0.25f)
-                                else Color.White.copy(0.55f)
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Image(
-                            painter = painterResource(R.drawable.wedding_money_tree),
-                            contentDescription = "Geldbaum",
+                if (treesOn) {
+                    zones.filter { it.isMoneyTree }.forEach { z ->
+                        val claimed = claimedTrees.contains(z.id)
+                        val sz = MoneyTreeSize
+                        Box(
                             modifier = Modifier
-                                .fillMaxSize()
-                                .padding(4.dp),
-                            contentScale = ContentScale.Fit,
-                            alpha = if (claimed) 0.45f else 1f,
-                        )
+                                .align(Alignment.TopStart)
+                                .padding(
+                                    start = roomW * z.sitX - sz / 2,
+                                    top = roomH * z.sitY - sz / 2,
+                                )
+                                .size(sz)
+                                .clip(CircleShape)
+                                .background(
+                                    if (claimed) Color.White.copy(0.25f)
+                                    else Color.White.copy(0.55f)
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Image(
+                                painter = painterResource(R.drawable.wedding_money_tree),
+                                contentDescription = "Geldbaum",
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(4.dp),
+                                contentScale = ContentScale.Fit,
+                                alpha = if (claimed) 0.45f else 1f,
+                            )
+                        }
                     }
                 }
 
@@ -862,7 +875,14 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(zones, avatarR, meIsCouple, ceremony?.canStand, ceremony?.seatingLocked) {
+                        .pointerInput(
+                            zones,
+                            avatarR,
+                            meIsCouple,
+                            ceremony?.canStand,
+                            ceremony?.seatingLocked,
+                            ceremony?.moneyTreesEnabled,
+                        ) {
                             detectTapGestures { offset ->
                                 if (walking) return@detectTapGestures
                                 val rawX = (offset.x / size.width).coerceIn(0.01f, 0.99f)
@@ -884,8 +904,12 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                             (avatarR * 2.2f).coerceAtLeast(0.05f)
                                     }
 
-                                // Nur eng am Baum und nur ungeerntet — sonst Laufen/Sitzen
-                                if (nearSeat == null) {
+                                // Nur Gäste, nur wenn Geldbäume gebucht, eng am ungeernteten Baum
+                                if (
+                                    nearSeat == null &&
+                                    !meIsCouple &&
+                                    cNow?.moneyTreesEnabled == true
+                                ) {
                                     val hitTree = zones
                                         .asSequence()
                                         .filter { z ->

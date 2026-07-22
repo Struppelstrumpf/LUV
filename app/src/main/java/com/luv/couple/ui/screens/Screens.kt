@@ -1313,9 +1313,10 @@ private fun LobbyCard(
                     nicknames = nicknames,
                     accent = accent,
                     canInvite = coupleInvite,
-                    canBuySlots = false,
+                    canBuySlots = coupleInvite && lobby.capacity < 10,
+                    slotCost = 25,
                     onInvite = onInviteSeat,
-                    onBuy = {},
+                    onBuy = onBuySeat,
                     onFirstInviteSeatPositioned = null
                 )
             } else if (!lobby.isRandom && !lobby.isWedding && !lobby.isEventLobby) {
@@ -1542,6 +1543,7 @@ private fun SeatGrid(
     accent: Color,
     canInvite: Boolean,
     canBuySlots: Boolean = canInvite,
+    slotCost: Int = PeerPalette.SLOT_COST,
     onInvite: () -> Unit,
     onBuy: () -> Unit,
     onFirstInviteSeatPositioned: ((Offset, IntSize) -> Unit)? = null
@@ -1561,7 +1563,7 @@ private fun SeatGrid(
             },
             text = {
                 Text(
-                    "Kostet ${PeerPalette.SLOT_COST} Coins. Danach kannst du eine weitere Person einladen.",
+                    "Kostet $slotCost Coins. Danach kannst du eine weitere Person einladen.",
                     color = TextMuted,
                     fontFamily = BodyFont,
                     fontSize = 14.sp,
@@ -1574,7 +1576,7 @@ private fun SeatGrid(
                     onBuy()
                 }) {
                     Text(
-                        "Für ${PeerPalette.SLOT_COST} Coins kaufen",
+                        "Für $slotCost Coins kaufen",
                         color = AccentRose,
                         fontFamily = DisplayFont,
                         fontSize = 15.sp
@@ -1604,7 +1606,7 @@ private fun SeatGrid(
                     val filled = !isBuyTile && i < occupied
                     val unlocked = !isBuyTile && i < openSeats
                     val label = when {
-                        isBuyTile -> "+${PeerPalette.SLOT_COST}"
+                        isBuyTile -> "+$slotCost"
                         filled -> nicknames.getOrNull(i)?.takeIf { it.isNotBlank() } ?: "…"
                         else -> "+"
                     }

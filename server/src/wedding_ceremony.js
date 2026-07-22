@@ -4,8 +4,9 @@
  */
 
 const weddingGifts = require("./wedding_gifts");
+const weddingBooking = require("./wedding_booking");
 
-const CEREMONY_CAPACITY = 10; // 2 Brautpaar + 8 Gäste
+const CEREMONY_CAPACITY = 10; // Default-Max; konkrete Lobby nutzt marriage.ceremonyCapacity
 const CEREMONY_MIN_AHEAD_MS = 10 * 60 * 1000;
 const CEREMONY_MAX_AHEAD_MS = 14 * 24 * 60 * 60 * 1000;
 const CEREMONY_OPEN_BEFORE_MS = 10 * 60 * 1000;
@@ -76,6 +77,10 @@ function ensureCeremony(m) {
   if (!Number.isFinite(Number(m.ceremony.pastorLineIndex))) m.ceremony.pastorLineIndex = 0;
   if (!Number.isFinite(Number(m.ceremony.pastorLineStartedAt))) m.ceremony.pastorLineStartedAt = 0;
   if (!Number.isFinite(Number(m.ceremony.receptionEndsAt))) m.ceremony.receptionEndsAt = 0;
+  weddingBooking.ensureBooking(m);
+  if (typeof m.moneyTreesEnabled !== "boolean") m.moneyTreesEnabled = false;
+  if (!m.ceremonyLayoutId) m.ceremonyLayoutId = null;
+  if (!Number.isFinite(Number(m.ceremonyCapacity))) m.ceremonyCapacity = 0;
   return m.ceremony;
 }
 
@@ -619,7 +624,13 @@ function publicCeremony(m, viewerId, users = {}) {
     allGathered: computeAllGathered(m),
     leftNotify: Boolean(c.leftNotify[viewerId]),
     leftByNickname: c.leftByNickname || null,
-    capacity: CEREMONY_CAPACITY,
+    capacity:
+      Number(m.ceremonyCapacity) > 0
+        ? Number(m.ceremonyCapacity)
+        : CEREMONY_CAPACITY,
+    ceremonyLayoutId: m.ceremonyLayoutId || "wedding",
+    moneyTreesEnabled: m.moneyTreesEnabled === true,
+    booking: weddingBooking.publicBooking(m, viewerId),
     timeProposals,
     matchingProposalAts: matchingAts,
     // Ritual
@@ -723,4 +734,5 @@ module.exports = {
   buildPastorLines,
   altarHoldRemainingMs,
   receptionRemainingMs,
+  booking: weddingBooking,
 };

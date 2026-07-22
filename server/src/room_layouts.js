@@ -11,10 +11,30 @@ const IMAGE_DIR = path.join(DATA_DIR, "room-images");
 
 const WEDDING = {
   id: "wedding",
-  name: "Hochzeit",
+  name: "Kapelle",
   imageUrl: "/luv/wedding-chapel-room.png",
   builtin: true,
 };
+
+const WEDDING_BUILTINS = {
+  wedding_small: {
+    id: "wedding_small",
+    name: "Kleine Trauung",
+    imageUrl: "/luv/wedding-small-room.png",
+    builtin: true,
+  },
+  wedding: WEDDING,
+  wedding_grand: {
+    id: "wedding_grand",
+    name: "Prunksaal",
+    imageUrl: "/luv/wedding-grand-room.png",
+    builtin: true,
+  },
+};
+
+function isWeddingBuiltin(id) {
+  return Boolean(WEDDING_BUILTINS[String(id || "").trim()]);
+}
 
 const DEFAULT_AVATAR_R = 0.028;
 const GRID_W = 48;
@@ -307,18 +327,20 @@ function saveImageBase64(roomId, dataUrlOrB64, mimeHint) {
 function listRooms(db, { forApp = false } = {}) {
   ensureStore(db);
   const out = [];
-  // Hochzeit immer (Admin); App-Picker nur Custom
+  // Hochzeits-Builtins immer (Admin); App-Picker nur Custom
   if (!forApp) {
-    out.push(summarize(db, "wedding"));
+    for (const id of Object.keys(WEDDING_BUILTINS)) {
+      out.push(summarize(db, id));
+    }
   }
   for (const id of Object.keys(db.roomLayouts)) {
-    if (id === "wedding") continue;
+    if (isWeddingBuiltin(id)) continue;
     out.push(summarize(db, id));
   }
   if (forApp) {
     // Plus-Kachel: nur pickable Räume mit Bild
     return out.filter(
-      (r) => r && r.id !== "wedding" && r.hasImage && r.pickable !== false
+      (r) => r && !isWeddingBuiltin(r.id) && r.hasImage && r.pickable !== false
     );
   }
   return out.filter(Boolean);
@@ -362,7 +384,8 @@ function getLayout(db, roomId) {
   if (!id) return null;
   ensureStore(db);
   const saved = db.roomLayouts[id];
-  const builtin = id === "wedding";
+  const builtinMeta = WEDDING_BUILTINS[id] || null;
+  const builtin = Boolean(builtinMeta);
   if (!saved && !builtin) return null;
 
   const zones = Array.isArray(saved?.zones)
@@ -373,14 +396,14 @@ function getLayout(db, roomId) {
   const img = findImageFile(id);
   const hasImage = Boolean(img) || builtin;
   const updatedAt = saved?.updatedAt || null;
-  let imageUrl = WEDDING.imageUrl;
-  if (builtin && !img) imageUrl = WEDDING.imageUrl;
+  let imageUrl = builtinMeta?.imageUrl || WEDDING.imageUrl;
+  if (builtin && !img) imageUrl = builtinMeta.imageUrl;
   else if (img || (saved && saved.imageExt)) {
     imageUrl = imagePublicUrl(id, updatedAt || Date.now());
   }
   const name =
     (saved && String(saved.name || "").trim().slice(0, 40)) ||
-    (builtin ? WEDDING.name : id);
+    (builtin ? builtinMeta.name : id);
   const portals = Array.isArray(saved?.portals)
     ? saved.portals.map((p, i) => sanitizePortal(p, i)).filter(Boolean).slice(0, 40)
     : [];
@@ -432,13 +455,14 @@ function saveLayout(db, roomId, body = {}) {
   const id = String(roomId || "").trim().slice(0, 64);
   if (!id) return { error: "unknown_room" };
   ensureStore(db);
-  const builtin = id === "wedding";
+  const builtinMeta = WEDDING_BUILTINS[id] || null;
+  const builtin = Boolean(builtinMeta);
   if (!builtin && !db.roomLayouts[id] && !body.imageBase64) {
     return { error: "unknown_room" };
   }
   const prev = db.roomLayouts[id] || {
     id,
-    name: builtin ? WEDDING.name : id,
+    name: builtin ? builtinMeta.name : id,
     viewRect: { x: 0, y: 0, w: 1, h: 1 },
     zones: [],
   };
@@ -490,7 +514,7 @@ function saveLayout(db, roomId, body = {}) {
 
 function deleteRoom(db, roomId) {
   const id = String(roomId || "").trim();
-  if (!id || id === "wedding") return { error: "cannot_delete" };
+  if (!id || isWeddingBuiltin(id)) return { error: "cannot_delete" };
   ensureStore(db);
   if (!db.roomLayouts[id]) return { error: "unknown_room" };
   delete db.roomLayouts[id];
@@ -800,6 +824,8 @@ function clampMove(layout, fromX, fromY, toX, toY) {
 
 module.exports = {
   WEDDING,
+  WEDDING_BUILTINS,
+  isWeddingBuiltin,
   IMAGE_DIR,
   ACTION_TYPES,
   listRooms,

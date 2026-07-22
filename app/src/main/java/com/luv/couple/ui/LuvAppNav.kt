@@ -1346,7 +1346,8 @@ fun LuvAppNav() {
 
     fun buySeat(lobby: Lobby) {
         if (busy) return
-        if ((account?.coins ?: 0) < PeerPalette.SLOT_COST) {
+        val cost = if (lobby.isWeddingCeremony) 25 else PeerPalette.SLOT_COST
+        if ((account?.coins ?: 0) < cost) {
             showNoCoins = true
             return
         }
@@ -1354,23 +1355,39 @@ fun LuvAppNav() {
             busy = true
             joinError = null
             try {
-                val room = LuvApiClient.buySlot(lobby.code)
-                AccountSession.account.value?.let { prefs.updateAccount(it) }
-                val updated = lobby.copy(
-                    capacity = room.capacity,
-                    isFree = room.isFree,
-                    invite = room.invite.ifBlank { lobby.invite }
-                )
-                prefs.upsertLobby(updated)
-                if (shareLobby?.id == lobby.id) shareLobby = updated
-                PairSessionState.setCapacity(lobby.id, room.capacity)
-                refreshAccount()
-                Toast.makeText(
-                    context,
-                    "Platz freigeschaltet (−${PeerPalette.SLOT_COST} Coins)",
-                    Toast.LENGTH_SHORT
-                ).show()
-                inviteSeat(updated)
+                if (lobby.isWeddingCeremony) {
+                    val (capacity, _) = LuvApiClient.ceremonyBuySlot()
+                    AccountSession.account.value?.let { prefs.updateAccount(it) }
+                    val updated = lobby.copy(capacity = capacity.coerceAtLeast(lobby.capacity))
+                    prefs.upsertLobby(updated)
+                    if (shareLobby?.id == lobby.id) shareLobby = updated
+                    PairSessionState.setCapacity(lobby.id, updated.capacity)
+                    refreshAccount()
+                    Toast.makeText(
+                        context,
+                        "Hochzeits-Platz freigeschaltet (−$cost Coins)",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    inviteSeat(updated)
+                } else {
+                    val room = LuvApiClient.buySlot(lobby.code)
+                    AccountSession.account.value?.let { prefs.updateAccount(it) }
+                    val updated = lobby.copy(
+                        capacity = room.capacity,
+                        isFree = room.isFree,
+                        invite = room.invite.ifBlank { lobby.invite }
+                    )
+                    prefs.upsertLobby(updated)
+                    if (shareLobby?.id == lobby.id) shareLobby = updated
+                    PairSessionState.setCapacity(lobby.id, room.capacity)
+                    refreshAccount()
+                    Toast.makeText(
+                        context,
+                        "Platz freigeschaltet (−$cost Coins)",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    inviteSeat(updated)
+                }
             } catch (e: Exception) {
                 if (e is LuvApiException && e.isNoCoins) {
                     showNoCoins = true

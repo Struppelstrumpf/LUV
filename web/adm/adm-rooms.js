@@ -15,6 +15,10 @@
     return host().content;
   }
 
+  const WEDDING_ROOM_IDS = ["wedding_small", "wedding", "wedding_grand"];
+  const PLACE_PROP_COLORS = new Set(["gold", "pink", "lime"]);
+  const DEFAULT_PROP_R = { gold: 0.028, pink: 0.032, lime: 0.04 };
+
   const TOOLS = [
     { id: "view-rect", label: "Weiß Karte", color: "white", shape: "rect", hint: "Gesamte Lauffläche" },
     { id: "camera-rect", label: "Schwarz Kamera", color: "black", shape: "rect", hint: "Was auf dem Handy sichtbar ist" },
@@ -24,10 +28,36 @@
     { id: "brown-circle", label: "Braun Spawn", color: "brown", shape: "circle", hint: "Spawn" },
     { id: "orange-circle", label: "Orange Größe", color: "orange", shape: "circle", hint: "Avatar" },
     { id: "yellow-rect", label: "Gelb Brautpaar", color: "yellow", shape: "rect", hint: "Altar: Lied + Timer" },
-    { id: "gold-circle", label: "Gold Deko", color: "gold", shape: "circle", hint: "Kerze/Box platzieren" },
-    { id: "pink-circle", label: "Rosa Flamme", color: "pink", shape: "circle", hint: "Flammen-Animation" },
-    { id: "lime-circle", label: "Geldbaum", color: "lime", shape: "circle", hint: "1 Coin tippen (einmalig)" },
+    { id: "gold-circle", label: "+ Kerze (Gold)", color: "gold", shape: "circle", hint: "Klick setzt Prop" },
+    { id: "pink-circle", label: "+ Flamme", color: "pink", shape: "circle", hint: "Klick setzt Prop" },
+    { id: "lime-circle", label: "+ Geldbaum", color: "lime", shape: "circle", hint: "Klick setzt Prop (1 Coin)" },
   ];
+
+  function isWeddingBuiltin(id) {
+    return WEDDING_ROOM_IDS.includes(String(id || "").trim());
+  }
+
+  function zoneLabel(z) {
+    if (!z) return "?";
+    const map = {
+      white: "Karte",
+      black: "Kamera",
+      red: "Hindernis",
+      green: "Laufen",
+      blue: "Gast-Sitz",
+      yellow: "Brautpaar",
+      brown: "Spawn",
+      orange: "Avatar-Größe",
+      gold: "Kerze/Deko",
+      pink: "Flamme",
+      lime: "Geldbaum",
+    };
+    const kind = map[z.color] || z.color;
+    if (z.shape === "circle") {
+      return `${kind} · r=${Math.round((z.r || 0) * 100)}%`;
+    }
+    return `${kind} · ${Math.round((z.w || 0) * 100)}×${Math.round((z.h || 0) * 100)}%`;
+  }
 
   const FILL = {
     white: "rgba(255,255,255,0.12)",
@@ -255,10 +285,26 @@
     let dirty = false;
     let pendingImage = null;
 
+    const weddingSwitch = isWeddingBuiltin(roomId)
+      ? `<select id="roomWeddingSwitch" class="room-wedding-switch" title="Hochzeits-Raum">
+          ${WEDDING_ROOM_IDS.map(
+            (id) =>
+              `<option value="${id}" ${id === roomId ? "selected" : ""}>${
+                id === "wedding_small"
+                  ? "Klein"
+                  : id === "wedding_grand"
+                    ? "Prunk"
+                    : "Kapelle"
+              }</option>`
+          ).join("")}
+        </select>`
+      : "";
+
     root.innerHTML = `
       <div class="room-editor">
         <div class="room-editor-bar">
           <button type="button" class="btn ghost" id="roomBack">← Räume</button>
+          ${weddingSwitch}
           <input id="roomName" value="${esc(layout.name)}" style="flex:1;min-width:8rem" />
           ${
             layout.builtin
@@ -274,13 +320,19 @@
               : `<button type="button" class="btn ghost danger" id="roomDel">Löschen</button>`
           }
         </div>
-        <p class="help">Weiß = ganze Karte · Schwarz = Kamera-Fenster (Handy zeigt nur das; am Rand scrollt die Karte) · Grün/Rot/Blau = Logik (unsichtbar).</p>
+        <p class="help">Weiß = ganze Karte · Schwarz = Kamera · Grün/Blau/Gelb = Sitze/Laufen (ziehen). Gold/Flamme/Geldbaum: Werkzeug wählen, dann <b>klicken</b> zum Setzen. Auswahl ziehen oder Größe unten.</p>
         <div class="room-tools" id="roomTools"></div>
+        <p class="hint" id="roomToolHint" style="margin:0.35rem 0 0"></p>
         <div class="room-fit-wrap" id="roomFit">
           <canvas id="roomCanvas"></canvas>
         </div>
         <div class="room-side" style="margin-top:0.75rem">
           <p class="muted" id="roomStatus"></p>
+          <label id="roomRadiusWrap" class="room-radius-wrap" style="display:none">
+            Prop-Größe
+            <input type="range" id="roomRadius" min="8" max="120" value="28" />
+            <span id="roomRadiusVal">2.8%</span>
+          </label>
           <ul class="room-zone-list" id="roomZoneList"></ul>
           <button type="button" class="btn ghost danger" id="roomDelete" disabled>Auswahl löschen</button>
           <button type="button" class="btn ghost danger" id="roomClearAll" style="margin-top:0.4rem">Alles löschen</button>
@@ -303,10 +355,9 @@
 
     function paintTools() {
       const box = root.querySelector("#roomTools");
-      const tools =
-        roomId === "wedding"
-          ? TOOLS
-          : TOOLS.filter((t) => !["yellow", "gold", "pink", "lime"].includes(t.color));
+      const tools = isWeddingBuiltin(roomId)
+        ? TOOLS
+        : TOOLS.filter((t) => !["yellow", "gold", "pink", "lime"].includes(t.color));
       const special = [
         { id: "link-portal", label: "Raum verknüpfen", color: "purple" },
         { id: "add-action", label: "+Aktion", color: "teal" },
@@ -315,7 +366,7 @@
         tools
           .map(
             (t) => `
-        <button type="button" class="room-tool ${tool === t.id ? "active" : ""}" data-tool="${t.id}">
+        <button type="button" class="room-tool ${tool === t.id ? "active" : ""}" data-tool="${t.id}" title="${esc(t.hint || "")}">
           <span class="swatch" style="background:${STROKE[t.color]}"></span>${esc(t.label)}
         </button>`
           )
@@ -334,9 +385,38 @@
           selectedId = null;
           paintTools();
           paintList();
+          updateHint();
+          updateRadiusUi();
           draw();
         });
       });
+      updateHint();
+    }
+
+    function updateHint() {
+      const el = root.querySelector("#roomToolHint");
+      if (!el) return;
+      const t = currentTool();
+      if (PLACE_PROP_COLORS.has(t.color)) {
+        el.textContent = `${t.label}: einmal tippen setzt das Prop. Danach auswählen und ziehen / Größe ändern.`;
+      } else {
+        el.textContent = t.hint || "Ziehen zum Zeichnen.";
+      }
+    }
+
+    function updateRadiusUi() {
+      const wrap = root.querySelector("#roomRadiusWrap");
+      const range = root.querySelector("#roomRadius");
+      const val = root.querySelector("#roomRadiusVal");
+      if (!wrap || !range || !val) return;
+      const z = zones.find((x) => x.id === selectedId && x.shape === "circle");
+      if (!z || !PLACE_PROP_COLORS.has(z.color)) {
+        wrap.style.display = "none";
+        return;
+      }
+      wrap.style.display = "flex";
+      range.value = String(Math.round((z.r || 0.03) * 1000));
+      val.textContent = `${((z.r || 0) * 100).toFixed(1)}%`;
     }
 
     function paintList() {
@@ -354,7 +434,7 @@
         },
         ...zones.map((z, i) => ({
           id: z.id,
-          label: `${i + 1}. ${z.color} ${z.shape}`,
+          label: `${i + 1}. ${zoneLabel(z)}`,
           color: z.color,
         })),
         ...portals.map((p, i) => ({
@@ -379,6 +459,7 @@
         li.addEventListener("click", () => {
           selectedId = li.getAttribute("data-zid");
           paintList();
+          updateRadiusUi();
           draw();
           root.querySelector("#roomDelete").disabled =
             selectedId === "__view__" ||
@@ -386,6 +467,7 @@
             !selectedId;
         });
       });
+      updateRadiusUi();
     }
 
     function layoutCanvas() {
@@ -599,10 +681,60 @@
 
     let drawing = false;
     let start = null;
+    let draggingProp = null;
+    let dragOff = null;
+
+    function hitPropAt(p) {
+      for (let i = zones.length - 1; i >= 0; i--) {
+        const z = zones[i];
+        if (z.shape !== "circle" || !PLACE_PROP_COLORS.has(z.color)) continue;
+        if (Math.hypot(p.x - z.cx, p.y - z.cy) <= (z.r || 0.02) + 0.01) return z;
+      }
+      return null;
+    }
 
     canvas.addEventListener("mousedown", (ev) => {
+      const p = norm(ev);
+      const t = currentTool();
+      const hit = hitPropAt(p);
+
+      // Bestehendes Prop: auswählen + ziehen (Place-Tool: Klick auf Prop = drag, leer = place)
+      if (hit) {
+        selectedId = hit.id;
+        draggingProp = hit;
+        dragOff = { x: p.x - hit.cx, y: p.y - hit.cy };
+        drawing = false;
+        draft = null;
+        paintList();
+        updateRadiusUi();
+        draw();
+        return;
+      }
+
+      // Click-to-place für Gold / Flamme / Geldbaum
+      if (PLACE_PROP_COLORS.has(t.color)) {
+        const z = {
+          id: newId(t.color),
+          color: t.color,
+          shape: "circle",
+          cx: p.x,
+          cy: p.y,
+          r: DEFAULT_PROP_R[t.color] || 0.03,
+        };
+        zones.push(z);
+        selectedId = z.id;
+        dirty = true;
+        paintList();
+        updateRadiusUi();
+        setStatus(
+          `${zones.length} Zonen · ${portals.length} Portale · ${actions.length} Aktionen`
+        );
+        draw();
+        return;
+      }
+
       drawing = true;
-      start = norm(ev);
+      start = p;
       if (tool === "link-portal") {
         draft = {
           id: newId("purple"),
@@ -626,7 +758,6 @@
           label: "",
         };
       } else {
-        const t = currentTool();
         draft = {
           id:
             t.id === "view-rect"
@@ -648,8 +779,15 @@
       draw();
     });
     canvas.addEventListener("mousemove", (ev) => {
-      if (!drawing || !draft || !start) return;
       const p = norm(ev);
+      if (draggingProp) {
+        draggingProp.cx = Math.min(1, Math.max(0, p.x - (dragOff?.x || 0)));
+        draggingProp.cy = Math.min(1, Math.max(0, p.y - (dragOff?.y || 0)));
+        dirty = true;
+        draw();
+        return;
+      }
+      if (!drawing || !draft || !start) return;
       if (draft.shape === "circle") {
         draft.cx = start.x;
         draft.cy = start.y;
@@ -663,6 +801,17 @@
       draw();
     });
     async function finish() {
+      if (draggingProp) {
+        draggingProp = null;
+        dragOff = null;
+        paintList();
+        updateRadiusUi();
+        setStatus(
+          `${zones.length} Zonen · ${portals.length} Portale · ${actions.length} Aktionen`
+        );
+        draw();
+        return;
+      }
       if (!drawing) return;
       drawing = false;
       const d = draft;
@@ -711,6 +860,7 @@
         }
       }
       paintList();
+      updateRadiusUi();
       setStatus(
         `${zones.length} Zonen · ${portals.length} Portale · ${actions.length} Aktionen`
       );
@@ -728,6 +878,31 @@
       editor = null;
       renderRooms();
     });
+    const weddingSel = root.querySelector("#roomWeddingSwitch");
+    if (weddingSel) {
+      weddingSel.addEventListener("change", () => {
+        const next = weddingSel.value;
+        if (!next || next === roomId) return;
+        if (dirty && !confirm("Ungespeicherte Änderungen verwerfen und Raum wechseln?")) {
+          weddingSel.value = roomId;
+          return;
+        }
+        editor = { roomId: next };
+        renderRooms();
+      });
+    }
+    const radiusRange = root.querySelector("#roomRadius");
+    if (radiusRange) {
+      radiusRange.addEventListener("input", () => {
+        const z = zones.find((x) => x.id === selectedId && x.shape === "circle");
+        if (!z) return;
+        z.r = Math.min(0.12, Math.max(0.008, Number(radiusRange.value) / 1000));
+        dirty = true;
+        updateRadiusUi();
+        paintList();
+        draw();
+      });
+    }
     root.querySelector("#roomDelete").addEventListener("click", () => {
       if (!selectedId || selectedId === "__view__" || selectedId === "__camera__") return;
       const beforeZ = zones.length;

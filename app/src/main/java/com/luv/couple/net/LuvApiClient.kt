@@ -2192,6 +2192,40 @@ object LuvApiClient {
         val claimedMoneyTreeIds: List<String> = emptyList(),
         val applauseBursts: List<CeremonyBurst> = emptyList(),
         val confettiBursts: List<CeremonyBurst> = emptyList(),
+        val ceremonyLayoutId: String = "wedding",
+        val moneyTreesEnabled: Boolean = false,
+        val booking: CeremonyBookingInfo? = null,
+    )
+
+    data class CeremonyBookingRoom(
+        val id: String,
+        val name: String,
+        val shortLabel: String = "",
+        val guestSlots: Int = 0,
+        val capacity: Int = 0,
+        val totalCost: Int = 0,
+        val perPerson: Int = 0,
+        val imageUrl: String = "",
+        val blurb: String = "",
+    )
+
+    data class CeremonyBookingInfo(
+        val active: Boolean = false,
+        val step: String = "none",
+        val ceremonyAt: Long = 0L,
+        val moneyTrees: Boolean? = null,
+        val moneyTreesMine: String? = null,
+        val moneyTreesDeclineCount: Int = 0,
+        val moneyTreesBookCount: Int = 0,
+        val roomId: String? = null,
+        val roomMine: String? = null,
+        val roomVoteCounts: Map<String, Int> = emptyMap(),
+        val confirmMine: Boolean = false,
+        val confirmCount: Int = 0,
+        val billPerPerson: Int = 0,
+        val moneyTreesPerPerson: Int = 25,
+        val rooms: List<CeremonyBookingRoom> = emptyList(),
+        val charged: Boolean = false,
     )
 
     data class CeremonyBurst(
@@ -2517,6 +2551,62 @@ object LuvApiClient {
             claimedMoneyTreeIds = claimedTrees,
             applauseBursts = parseCeremonyBursts(o.optJSONArray("applauseBursts"), "👏"),
             confettiBursts = parseCeremonyBursts(o.optJSONArray("confettiBursts"), "🎉"),
+            ceremonyLayoutId = o.optString("ceremonyLayoutId", "wedding").ifBlank { "wedding" },
+            moneyTreesEnabled = o.optBoolean("moneyTreesEnabled", false),
+            booking = parseCeremonyBooking(o.optJSONObject("booking")),
+        )
+    }
+
+    private fun parseCeremonyBooking(o: JSONObject?): CeremonyBookingInfo? {
+        if (o == null) return null
+        val rooms = ArrayList<CeremonyBookingRoom>()
+        val roomsArr = o.optJSONArray("rooms")
+        if (roomsArr != null) {
+            for (i in 0 until roomsArr.length()) {
+                val r = roomsArr.optJSONObject(i) ?: continue
+                rooms += CeremonyBookingRoom(
+                    id = r.optString("id"),
+                    name = r.optString("name"),
+                    shortLabel = r.optString("shortLabel", r.optString("name")),
+                    guestSlots = r.optInt("guestSlots", 0),
+                    capacity = r.optInt("capacity", 0),
+                    totalCost = r.optInt("totalCost", 0),
+                    perPerson = r.optInt("perPerson", 0),
+                    imageUrl = r.optString("imageUrl", ""),
+                    blurb = r.optString("blurb", ""),
+                )
+            }
+        }
+        val voteMap = HashMap<String, Int>()
+        val votes = o.optJSONObject("roomVoteCounts")
+        if (votes != null) {
+            val keys = votes.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                voteMap[k] = votes.optInt(k, 0)
+            }
+        }
+        val treesVal = when {
+            !o.has("moneyTrees") || o.isNull("moneyTrees") -> null
+            else -> o.optBoolean("moneyTrees")
+        }
+        return CeremonyBookingInfo(
+            active = o.optBoolean("active", false),
+            step = o.optString("step", "none"),
+            ceremonyAt = o.optLong("ceremonyAt", 0L),
+            moneyTrees = treesVal,
+            moneyTreesMine = o.optString("moneyTreesMine").takeIf { it.isNotBlank() },
+            moneyTreesDeclineCount = o.optInt("moneyTreesDeclineCount", 0),
+            moneyTreesBookCount = o.optInt("moneyTreesBookCount", 0),
+            roomId = o.optString("roomId").takeIf { it.isNotBlank() },
+            roomMine = o.optString("roomMine").takeIf { it.isNotBlank() },
+            roomVoteCounts = voteMap,
+            confirmMine = o.optBoolean("confirmMine", false),
+            confirmCount = o.optInt("confirmCount", 0),
+            billPerPerson = o.optInt("billPerPerson", 0),
+            moneyTreesPerPerson = o.optInt("moneyTreesPerPerson", 25),
+            rooms = rooms,
+            charged = o.optBoolean("charged", false),
         )
     }
 
@@ -3147,6 +3237,87 @@ object LuvApiClient {
                 ceremony = parseCeremonyInfo(json.optJSONObject("ceremony"))
             )
         }
+
+    suspend fun ceremonyBookingMoneyTrees(choice: String): CeremonyBundle =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("choice", choice).toString()
+            val json = authedPost("/v1/me/marriage/ceremony/booking/money-trees", body)
+            CeremonyBundle(
+                marriage = parseMarriageInfo(json.optJSONObject("marriage")),
+                ceremony = parseCeremonyInfo(json.optJSONObject("ceremony"))
+            )
+        }
+
+    suspend fun ceremonyBookingRoom(roomId: String): CeremonyBundle =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("roomId", roomId).toString()
+            val json = authedPost("/v1/me/marriage/ceremony/booking/room", body)
+            CeremonyBundle(
+                marriage = parseMarriageInfo(json.optJSONObject("marriage")),
+                ceremony = parseCeremonyInfo(json.optJSONObject("ceremony"))
+            )
+        }
+
+    data class CeremonyBookingConfirmResult(
+        val ok: Boolean,
+        val ready: Boolean = false,
+        val billPerPerson: Int = 0,
+        val needCoins: Int = 0,
+        val noCoins: Boolean = false,
+        val ceremonyLobbyCode: String? = null,
+        val ceremony: CeremonyInfo? = null,
+        val marriage: MarriageInfo? = null,
+        val message: String? = null,
+    )
+
+    suspend fun ceremonyBookingConfirm(confirm: Boolean = true): CeremonyBookingConfirmResult =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("confirm", confirm).toString()
+            val request = authedRequestBuilder("/v1/me/marriage/ceremony/booking/confirm")
+                .post(body.toRequestBody(jsonMedia))
+                .build()
+            http.newCall(request).execute().use { response ->
+                val text = response.body?.string().orEmpty()
+                val json = runCatching { JSONObject(text) }.getOrNull() ?: JSONObject()
+                val user = json.optJSONObject("user")
+                if (user != null) {
+                    AccountSession.setAccount(AccountInfo.fromApi(user))
+                }
+                if (response.code == 402 || json.optString("error") == "no_coins") {
+                    return@use CeremonyBookingConfirmResult(
+                        ok = false,
+                        noCoins = true,
+                        needCoins = json.optInt("needCoins", json.optInt("billPerPerson", 0)),
+                        billPerPerson = json.optInt("billPerPerson", 0),
+                        message = json.optString("message").takeIf { it.isNotBlank() },
+                        ceremony = parseCeremonyInfo(json.optJSONObject("ceremony")),
+                        marriage = parseMarriageInfo(json.optJSONObject("marriage")),
+                    )
+                }
+                if (!response.isSuccessful) {
+                    throwApiFailure(text, response.code)
+                }
+                CeremonyBookingConfirmResult(
+                    ok = true,
+                    ready = json.optBoolean(
+                        "ready",
+                        json.optString("ceremonyLobbyCode").isNotBlank()
+                    ),
+                    billPerPerson = json.optInt("billPerPerson", 0),
+                    ceremonyLobbyCode =
+                        json.optString("ceremonyLobbyCode").takeIf { it.isNotBlank() },
+                    ceremony = parseCeremonyInfo(json.optJSONObject("ceremony")),
+                    marriage = parseMarriageInfo(json.optJSONObject("marriage")),
+                )
+            }
+        }
+
+    suspend fun ceremonyBuySlot(): Pair<Int, CeremonyInfo?> = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/me/marriage/ceremony/buy-slot", "{}")
+        val user = json.optJSONObject("user")
+        if (user != null) AccountSession.setAccount(AccountInfo.fromApi(user))
+        json.optInt("capacity", 0) to parseCeremonyInfo(json.optJSONObject("ceremony"))
+    }
 
     data class CeremonyRemindResult(
         val shareText: String,
