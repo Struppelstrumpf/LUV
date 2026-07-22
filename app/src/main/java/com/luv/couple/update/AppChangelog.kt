@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.137",
+            listOf(
+                "Ohne Event: weiße Partikel langsam im Menü-Hintergrund",
+            )
+        ),
+        Entry(
             "2.2.136",
             listOf(
                 "Home-Nachrichten: Info-Hinweis zum Ausblenden in den Einstellungen",

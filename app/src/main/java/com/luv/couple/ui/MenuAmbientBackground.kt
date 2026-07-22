@@ -13,7 +13,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import com.luv.couple.net.EventDecor
@@ -54,10 +53,20 @@ fun MenuAmbientBackground(
         0.35f
     }
     val seeds = remember(eventDecor?.particles, useEvent) {
-        List(if (useEvent) 36 else 18) {
+        List(if (useEvent) 36 else 28) {
             Random(it * 41 + (eventDecor?.particles?.hashCode() ?: 7)).nextFloat()
         }
     }
+    // Idle: längsamer Drift als Event-Partikel
+    val idlePhase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 28_000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "idleAmbientPhase"
+    )
     Canvas(modifier = modifier.fillMaxSize()) {
         if (useEvent) {
             drawSoftEventParticles(
@@ -68,36 +77,29 @@ fun MenuAmbientBackground(
                 intensity = intensity
             )
         } else {
-            drawSoftIdleAmbient(phase = phase, seeds = seeds)
+            drawSoftIdleAmbient(phase = idlePhase, seeds = seeds)
         }
     }
 }
 
+/** Langsam driftende weiße Partikel — Standard-Menü ohne Event. */
 private fun DrawScope.drawSoftIdleAmbient(phase: Float, seeds: List<Float>) {
     val w = size.width
     val h = size.height
-    seeds.take(6).forEachIndexed { i, s ->
-        val cx = ((s + phase * (0.08f + i * 0.01f)) % 1f) * w
-        val cy = ((0.2f + s * 0.55f + sin(phase * 6.28f + i) * 0.04f) % 1f) * h
-        val r = w * (0.12f + s * 0.1f)
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    AccentRose.copy(alpha = 0.045f + s * 0.03f),
-                    Color.Transparent
-                ),
-                center = Offset(cx, cy),
-                radius = r
-            ),
-            radius = r,
-            center = Offset(cx, cy)
-        )
-    }
-    seeds.drop(6).take(10).forEachIndexed { i, s ->
-        val x = ((s * 1.7f + phase * 0.06f * ((i % 3) + 1)) % 1f) * w
-        val y = ((s * 0.9f + phase * 0.05f) % 1f) * h
-        val alpha = 0.04f + s * 0.06f
-        drawCircle(Color.White.copy(alpha), 1.4f + s, Offset(x, y))
+    seeds.forEachIndexed { i, s ->
+        val speedX = 0.04f + (i % 5) * 0.012f
+        val speedY = 0.03f + ((i + 2) % 4) * 0.01f
+        val dir = if (i % 2 == 0) 1f else -1f
+        val x = ((s * 1.61f + phase * speedX * dir + i * 0.03f) % 1f + 1f) % 1f * w
+        val yBase = ((s * 0.87f + phase * speedY) % 1f)
+        val sway = sin(phase * 6.28f * 0.7f + i * 0.9f) * (8f + s * 10f)
+        val y = yBase * h + sway * 0.15f
+        val r = 1.6f + s * 2.4f
+        val twinkle = (0.55f + 0.45f * cos(phase * 6.28f * 1.2f + i * 1.3f)).coerceIn(0.4f, 1f)
+        val alpha = (0.14f + s * 0.22f) * twinkle
+        drawCircle(Color.White.copy(alpha = alpha), r, Offset(x, y))
+        // ganz leichter Kern
+        drawCircle(Color.White.copy(alpha = alpha * 0.55f), r * 0.45f, Offset(x, y))
     }
 }
 
