@@ -111,6 +111,7 @@ import com.luv.couple.lock.CanvasStore
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.EventSession
 import com.luv.couple.net.LobbyReconnectUi
+import com.luv.couple.net.PairConnectionService
 import com.luv.couple.net.PairSessionState
 import com.luv.couple.net.SeasonEvent
 import com.luv.couple.update.UpdateUiState
@@ -1270,16 +1271,10 @@ private fun LobbyCard(
                                 color = if (proximityOn) accent else TextMuted
                             )
                         }
-                        StatusChip(rememberStickyConnectionState(state))
+                        // Feste Breite — Layout wackelt nicht, wenn Hinweis kommt/geht
+                        OfflineHintSlot(state = state)
                     }
                 }
-            }
-            if (
-                (state == ConnectionState.RECONNECTING && (reconnect?.attempt ?: 0) >= 2) ||
-                (state == ConnectionState.CONNECTING && (reconnect?.attempt ?: 0) >= 2) ||
-                (reconnect?.waiting == true && (reconnect.attempt >= 2))
-            ) {
-                ReconnectBanner(reconnect = reconnect, accent = accent, onReconnect = onReconnect)
             }
             if (lobby.isWeddingCeremony) {
                 WeddingCeremonyLobbyButton(
@@ -1721,39 +1716,6 @@ private fun SeatTile(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
-    }
-}
-
-@Composable
-private fun ReconnectBanner(
-    reconnect: LobbyReconnectUi?,
-    accent: Color,
-    onReconnect: () -> Unit
-) {
-    val pulse = remember { Animatable(0.55f) }
-    LaunchedEffect(reconnect?.waiting, reconnect?.attempt) {
-        while (true) {
-            pulse.animateTo(1f, tween(700, easing = FastOutSlowInEasing))
-            pulse.animateTo(0.55f, tween(700, easing = FastOutSlowInEasing))
-        }
-    }
-    val statusText = when {
-        reconnect == null -> "Verbindung zum Server wird aufgebaut…"
-        reconnect.waiting && reconnect.nextRetryInSec > 0 ->
-            "Kurz offline · neuer Versuch in ${reconnect.nextRetryInSec}s"
-        else -> "Verbinde mit dem Server…"
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(accent.copy(alpha = 0.08f * pulse.value))
-            .border(1.dp, accent.copy(alpha = 0.35f * pulse.value), RoundedCornerShape(16.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Text(statusText, color = TextPrimary, fontFamily = BodyFont, fontSize = 13.sp, lineHeight = 18.sp)
-        PrimaryButton("Jetzt verbinden", accent, onReconnect)
     }
 }
 
@@ -2504,8 +2466,7 @@ internal fun SettingsToggleRow(
 }
 
 /**
- * Kurze Verbindungs-Blips (Mobilfunk/Doze) nicht sofort als Offline zeigen —
- * sonst verschwindet „Verbunden“ im Takt weg/da/weg/da.
+ * Kurze Blips nicht sofort als Offline — sonst flackert „Nicht verbunden“.
  */
 @Composable
 private fun rememberStickyConnectionState(state: ConnectionState): ConnectionState {
@@ -2521,8 +2482,6 @@ private fun rememberStickyConnectionState(state: ConnectionState): ConnectionSta
                         displayed == ConnectionState.HOSTING
                 if (keep) {
                     delay(2_800)
-                    // Nur wechseln, wenn wir noch immer nicht verbunden sind
-                    // (LaunchedEffect cancel’t bei neuem CONNECTED vorher)
                     displayed = state
                 } else {
                     displayed = state
@@ -2537,31 +2496,41 @@ private fun rememberStickyConnectionState(state: ConnectionState): ConnectionSta
     return displayed
 }
 
+/** Neben der Glocke: nur „Nicht verbunden“ nach 10s Schonzeit — feste Slot-Breite. */
 @Composable
-private fun StatusChip(state: ConnectionState) {
-    val (label, color) = when (state) {
-        // Allein in der Lobby = trotzdem verbunden (Server-WS offen)
-        ConnectionState.CONNECTED -> "Verbunden" to Color(0xFF3DDC97)
-        ConnectionState.HOSTING -> "Verbunden" to Color(0xFF3DDC97)
-        ConnectionState.CONNECTING -> "Verbinde…" to AccentRose
-        ConnectionState.RECONNECTING -> "Verbinde…" to AccentRose
-        ConnectionState.IDLE -> "Offline" to TextMuted
+private fun OfflineHintSlot(state: ConnectionState) {
+    var graceOver by remember {
+        mutableStateOf(!PairConnectionService.isConnectGraceActive())
     }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    LaunchedEffect(Unit) {
+        while (!graceOver) {
+            if (!PairConnectionService.isConnectGraceActive()) {
+                graceOver = true
+                break
+            }
+            delay(400)
+        }
+    }
+    val sticky = rememberStickyConnectionState(state)
+    val offline =
+        sticky != ConnectionState.CONNECTED && sticky != ConnectionState.HOSTING
+    val show = offline && graceOver
+    Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(BgDeep)
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .width(108.dp)
+            .height(22.dp),
+        contentAlignment = Alignment.CenterEnd
     ) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(color)
-        )
-        Text(label, color = TextPrimary, fontFamily = BodyFont, fontSize = 12.sp)
+        if (show) {
+            Text(
+                "Nicht verbunden",
+                color = TextMuted,
+                fontFamily = BodyFont,
+                fontSize = 11.sp,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
     }
 }
 

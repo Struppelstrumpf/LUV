@@ -1532,7 +1532,8 @@ fun LuvAppNav() {
             val isCold = first
             first = false
             scope.launch {
-                // Fire-and-forget — UI nicht warten lassen
+                // Beim Kaltstart zuerst Lobby-WS — schweres Sync-Zeug etwas später
+                if (isCold) delay(2_800L)
                 launch { runCatching { AppUpdater.check(context, notify = isCold) } }
                 launch { runCatching { MarketHubCache.warm() } }
                 if (isCold) {
@@ -1542,7 +1543,6 @@ fun LuvAppNav() {
                     }
                 }
                 if (!LuvApiClient.sessionToken.isNullOrBlank()) {
-                    // Neuigkeiten (Anfragen/Hochzeit) — Cache ok beim Resume
                     launch {
                         com.luv.couple.net.NotificationBadges.refreshFriends(
                             context,

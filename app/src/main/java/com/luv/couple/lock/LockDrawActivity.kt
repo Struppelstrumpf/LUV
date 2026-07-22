@@ -41,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.luv.couple.data.ConnectionState
 import com.luv.couple.data.DrawTemplate
 import com.luv.couple.data.LocalMoment
 import com.luv.couple.data.LocalMoments
@@ -90,6 +91,7 @@ import kotlin.random.Random
 class LockDrawActivity : ComponentActivity() {
     private lateinit var drawingView: DrawingView
     private lateinit var statusView: TextView
+    private lateinit var offlineHint: TextView
     private lateinit var missedBanner: TextView
     private lateinit var reactionBurst: TextView
     private lateinit var legendRow: LinearLayout
@@ -271,6 +273,7 @@ class LockDrawActivity : ComponentActivity() {
         rootView = root
         drawingView = findViewById(R.id.drawingView)
         statusView = findViewById(R.id.statusDot)
+        offlineHint = findViewById(R.id.offlineHint)
         missedBanner = findViewById(R.id.missedBanner)
         reactionBurst = findViewById(R.id.reactionBurst)
         legendRow = findViewById(R.id.legendRow)
@@ -716,6 +719,25 @@ class LockDrawActivity : ComponentActivity() {
             val readyId = id ?: return@launch
             PairSessionState.peers(readyId).collectLatest {
                 refreshLegend()
+            }
+        }
+        // Sofort Hinweis wenn Leinwand ohne WS — kein manueller Verbinden-Button
+        lifecycleScope.launch {
+            var id = lobbyId
+            var tries = 0
+            while (id == null && tries < 20) {
+                kotlinx.coroutines.delay(50)
+                id = lobbyId
+                tries++
+            }
+            val readyId = id ?: return@launch
+            PairConnectionService.startAll(this@LockDrawActivity)
+            PairConnectionService.lobbyStates.collectLatest { states ->
+                if (!::offlineHint.isInitialized) return@collectLatest
+                val s = states[readyId]
+                val online =
+                    s == ConnectionState.CONNECTED || s == ConnectionState.HOSTING
+                offlineHint.visibility = if (online) View.GONE else View.VISIBLE
             }
         }
         // Begleiter-Wechsel aus Profil/Inventar sofort in der Legende

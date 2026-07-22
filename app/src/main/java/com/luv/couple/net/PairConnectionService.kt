@@ -1616,8 +1616,28 @@ class PairConnectionService : Service() {
             }
         }
 
+        /**
+         * Ab erstem startAll: 10s Schonzeit, bevor Home „Nicht verbunden“ zeigt.
+         */
+        @Volatile
+        var connectWatchStartedAtMs: Long = 0L
+            private set
+
+        fun noteConnectWatchStart() {
+            if (connectWatchStartedAtMs == 0L) {
+                connectWatchStartedAtMs = System.currentTimeMillis()
+            }
+        }
+
+        fun isConnectGraceActive(graceMs: Long = 10_000L): Boolean {
+            val started = connectWatchStartedAtMs
+            if (started <= 0L) return true
+            return System.currentTimeMillis() - started < graceMs
+        }
+
         fun startAll(context: Context): Boolean {
             return try {
+                noteConnectWatchStart()
                 val intent = Intent(context, PairConnectionService::class.java)
                     .setAction(ACTION_START_ALL)
                 context.startForegroundService(intent)

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.161",
+            listOf(
+                "Kein „Verbunden“-Chip mehr; nur bei Problemen „Nicht verbunden“ neben der Glocke",
+            )
+        ),
+        Entry(
             "2.2.160",
             listOf(
                 "Start: Vorschau mit Rand-Balken bis alle Lobbys verbunden; ohne Handy-Animation",

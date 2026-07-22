@@ -43,6 +43,22 @@
         android:textSize="18sp"
         android:textStyle="bold" />
 
+    <!-- Overlay — Layout verschiebt sich nicht (absolute Position) -->
+    <TextView
+        android:id="@+id/offlineHint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="52dp"
+        android:background="@drawable/vote_card_bg"
+        android:elevation="8dp"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="6dp"
+        android:text="Nicht verbunden"
+        android:textColor="#B39AA3B2"
+        android:textSize="12sp"
+        android:visibility="gone" />
+
     <!-- Nachträgliches Hochzeitsbild: Bestätigen links neben 🙂 -->
     <TextView
         android:id="@+id/btnWeddingConfirm"
