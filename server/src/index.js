@@ -10165,12 +10165,18 @@ app.post("/v1/me/marriage/ceremony/presence", (req, res) => {
   scheduleSave();
   if (bucket === "presence") {
     const n = weddingCeremony.countCouplePresence(m, "presence");
-    emitMarriageLiveUpdate(
-      m,
-      m.status,
-      n >= 2 ? "Beide Brautleute sind da" : "Anwesenheit aktualisiert",
-      ctx.user.id
-    );
+    const cEmit = weddingCeremony.ensureCeremony(m);
+    const prev = Number(cEmit.lastEmittedCouplePresent);
+    // Nur bei Wechsel 0↔1↔2 pushen — sonst Cancel-Loop im Client-Dialog
+    if (!Number.isFinite(prev) || prev !== n) {
+      cEmit.lastEmittedCouplePresent = n;
+      emitMarriageLiveUpdate(
+        m,
+        m.status,
+        n >= 2 ? "Beide Brautleute sind da" : "Anwesenheit aktualisiert",
+        ctx.user.id
+      );
+    }
   }
   return res.json({
     ok: true,

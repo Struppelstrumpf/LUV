@@ -62,10 +62,24 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val Gold = Color(0xFFFFD54F)
+
+/**
+ * API-Calls in Ceremony-Dialogen: Cancellation nicht schlucken
+ * (sonst hängt „wird geladen…“, wenn CeremonyRefreshBus den Effect neu startet).
+ */
+private inline fun <T> ceremonyApi(block: () -> T): Result<T> =
+    try {
+        Result.success(block())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
 
 fun formatCeremonyAt(ms: Long): String {
     if (ms <= 0L) return "—"
@@ -100,6 +114,8 @@ fun WeddingPresenceDialog(
     var showSchedule by remember { mutableStateOf(false) }
     var showBooking by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var loadNonce by remember { mutableStateOf(0) }
     var leftPresence by remember { mutableStateOf(false) }
 
     fun lobbyCodeOf(
@@ -108,6 +124,19 @@ fun WeddingPresenceDialog(
     ): String? =
         c?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
             ?: m?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
+
+    fun applyPresenceBundle(bundle: LuvApiClient.CeremonyBundle) {
+        ceremony = bundle.ceremony
+        marriage = bundle.marriage
+        val code = lobbyCodeOf(bundle.marriage, bundle.ceremony)
+        if (!code.isNullOrBlank() && bundle.marriage?.status == "ceremony_scheduled") {
+            onScheduled(code)
+            return
+        }
+        if (bundle.ceremony?.booking?.active == true) {
+            showBooking = true
+        }
+    }
 
     fun closePresence() {
         if (!leftPresence) {
@@ -118,30 +147,37 @@ fun WeddingPresenceDialog(
     }
 
     val ceremonyRev by com.luv.couple.net.CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit, ceremonyRev) {
-        runCatching {
+    // Einmal laden — NICHT an ceremonyRev hängen: presence() pusht marriage_update
+    // → Bus.bump → Effect-Cancel → ewig „Hochzeit wird geladen…“
+    LaunchedEffect(loadNonce) {
+        loaded = false
+        loadError = null
+        val result = ceremonyApi {
             LuvApiClient.ceremonyPresence("presence")
             LuvApiClient.fetchCeremony()
-        }.onSuccess {
-            ceremony = it.ceremony
-            marriage = it.marriage
-            loaded = true
-            val code = lobbyCodeOf(it.marriage, it.ceremony)
-            if (!code.isNullOrBlank() && it.marriage?.status == "ceremony_scheduled") {
-                onScheduled(code)
-                return@LaunchedEffect
-            }
-            if (it.ceremony?.booking?.active == true) {
-                showBooking = true
-            }
         }
+        result
+            .onSuccess {
+                applyPresenceBundle(it)
+                loaded = true
+            }
+            .onFailure {
+                loadError = it.message ?: "Laden fehlgeschlagen"
+                loaded = true
+            }
+    }
+    // Partner-Updates nach dem ersten Load (nur GET, kein presence-Spam)
+    LaunchedEffect(loaded, ceremonyRev, showSchedule, showBooking) {
+        if (!loaded || showSchedule || showBooking) return@LaunchedEffect
+        ceremonyApi { LuvApiClient.fetchCeremony() }
+            .onSuccess { applyPresenceBundle(it) }
     }
     // Keepalive: Anwesenheit frisch halten, Partner sieht 2/2 live
     LaunchedEffect(loaded, showSchedule, showBooking) {
         if (!loaded || showSchedule || showBooking) return@LaunchedEffect
         while (true) {
             delay(12_000)
-            runCatching { LuvApiClient.ceremonyPresence("presence") }
+            ceremonyApi { LuvApiClient.ceremonyPresence("presence") }
                 .onSuccess { ceremony = it }
         }
     }
@@ -190,6 +226,43 @@ fun WeddingPresenceDialog(
                     fontFamily = BodyFont,
                     fontSize = 14.sp,
                 )
+            }
+        }
+        return
+    }
+
+    if (loadError != null && ceremony == null) {
+        Dialog(
+            onDismissRequest = { if (!busy) closePresence() },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(BgSoft)
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    loadError ?: "Laden fehlgeschlagen",
+                    color = AccentRose,
+                    fontFamily = BodyFont,
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center,
+                )
+                TextButton(
+                    onClick = {
+                        loadNonce += 1
+                    }
+                ) {
+                    Text("Nochmal", color = Gold, fontFamily = DisplayFont)
+                }
+                TextButton(onClick = { closePresence() }) {
+                    Text("Schließen", color = TextMuted, fontFamily = BodyFont)
+                }
             }
         }
         return
@@ -275,8 +348,15 @@ fun WeddingPresenceDialog(
                     onClick = {
                         busy = true
                         scope.launch {
-                            runCatching { LuvApiClient.ceremonyStartConfirm() }
+                            ceremonyApi { LuvApiClient.ceremonyStartConfirm() }
                                 .onSuccess { ceremony = it }
+                                .onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        it.message ?: "Start fehlgeschlagen",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
                             busy = false
                         }
                     },
@@ -341,22 +421,15 @@ fun WeddingScheduleDialog(
     }
 
     val scheduleRev by CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit, scheduleRev) {
-        runCatching {
+    LaunchedEffect(Unit) {
+        ceremonyApi {
             LuvApiClient.ceremonyPresence("presence")
             LuvApiClient.fetchCeremony()
-        }.onSuccess { bundle ->
-            ceremony = bundle.ceremony
-            val code = bundle.ceremony?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
-                ?: bundle.marriage?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
-            if (!code.isNullOrBlank() && bundle.marriage?.status == "ceremony_scheduled") {
-                onScheduled(code)
-                return@LaunchedEffect
-            }
-            if (bundle.ceremony?.booking?.active == true) {
-                showBooking = true
-            }
-        }
+        }.onSuccess { bundle -> refreshFrom(bundle) }
+    }
+    LaunchedEffect(scheduleRev) {
+        ceremonyApi { LuvApiClient.fetchCeremony() }
+            .onSuccess { bundle -> refreshFrom(bundle) }
     }
 
     if (showBooking) {
@@ -607,15 +680,19 @@ fun WeddingGatheringDialog(
     var floatEmojiToken by remember { mutableLongStateOf(0L) }
 
     val gatherRev by CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit, gatherRev) {
-        runCatching { LuvApiClient.ceremonyPresence("gathering") }
+    LaunchedEffect(Unit) {
+        ceremonyApi { LuvApiClient.ceremonyPresence("gathering") }
             .onSuccess { ceremony = it }
+    }
+    LaunchedEffect(gatherRev) {
+        ceremonyApi { LuvApiClient.fetchCeremony() }
+            .onSuccess { ceremony = it.ceremony }
     }
     // Presence-TTL: seltenes Keepalive, kein 2s-Spam
     LaunchedEffect(Unit) {
         while (true) {
             delay(30_000)
-            runCatching { LuvApiClient.ceremonyPresence("gathering") }
+            ceremonyApi { LuvApiClient.ceremonyPresence("gathering") }
                 .onSuccess { ceremony = it }
         }
     }
@@ -955,8 +1032,18 @@ fun WeddingBookingDialog(
     }
 
     val bookRev by CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit, bookRev) {
-        runCatching { LuvApiClient.fetchCeremony() }
+    LaunchedEffect(Unit) {
+        ceremonyApi { LuvApiClient.fetchCeremony() }
+            .onSuccess {
+                applyCer(
+                    it.ceremony,
+                    marriageStatus = it.marriage?.status,
+                    marriageLobby = it.marriage?.ceremonyLobbyCode,
+                )
+            }
+    }
+    LaunchedEffect(bookRev) {
+        ceremonyApi { LuvApiClient.fetchCeremony() }
             .onSuccess {
                 applyCer(
                     it.ceremony,

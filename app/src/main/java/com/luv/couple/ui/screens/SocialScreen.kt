@@ -1204,6 +1204,9 @@ private fun FriendsPanel(
                 reload(force = true)
                 // Mal-Lobby sofort aus Home entfernen (nicht erst nach App-Neustart)
                 onSyncWeddingLobbies()
+                if (it?.status == "ceremony_pending" || it?.ceremonyReady == true) {
+                    showCeremonyPresence = true
+                }
             }
         )
     }

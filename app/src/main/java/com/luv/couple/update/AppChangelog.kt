@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.184",
+            listOf(
+                "Hochzeit öffnen: Anwesenheit lädt wieder (kein Hängen bei „wird geladen…“)",
+            )
+        ),
+        Entry(
             "2.2.183",
             listOf(
                 "Verlobung → Hochzeitsbild: kein falscher API-Fehler mehr, wenn die Lobby schon offen ist",
