@@ -391,17 +391,24 @@ fun ProfileCanvasScreen(
         val uid = userId ?: return
         if (editable || tipBusy || !canTipGlass) return
         tipBusy = true
+        val prevRemaining = glassTipsRemaining
+        val prevCoins = displayCoins
+        // Sofort Feedback — Server bestätigt im Hintergrund
+        glassTipsRemaining = (glassTipsRemaining - 1).coerceAtLeast(0)
+        canTipGlass = glassTipsRemaining > 0
+        displayCoins = displayCoins + 1
+        val popId = SystemClock.elapsedRealtimeNanos()
+        tipPopIds = tipPopIds + popId
         scope.launch {
             try {
                 val result = LuvApiClient.tipGlass(uid)
                 displayCoins = result.toCoins
                 glassTipsRemaining = result.remaining
                 canTipGlass = result.remaining > 0
-                val id = SystemClock.elapsedRealtimeNanos()
-                tipPopIds = tipPopIds + id
-                delay(900)
-                tipPopIds = tipPopIds.filter { it != id }
             } catch (e: Exception) {
+                glassTipsRemaining = prevRemaining
+                displayCoins = prevCoins
+                canTipGlass = prevRemaining > 0
                 Toast.makeText(
                     context,
                     e.message ?: "Spenden fehlgeschlagen",
@@ -413,6 +420,8 @@ fun ProfileCanvasScreen(
                 }
             } finally {
                 tipBusy = false
+                delay(900)
+                tipPopIds = tipPopIds.filter { it != popId }
             }
         }
     }

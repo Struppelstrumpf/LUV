@@ -2528,18 +2528,23 @@ class LockDrawActivity : ComponentActivity() {
     private fun observeMaintenance() {
         lifecycleScope.launch {
             while (true) {
-                val st = runCatching { LuvApiClient.fetchMaintenanceStatus() }.getOrNull()
-                if (st != null) {
-                    if (st.active) {
-                        maintenanceHold = true
-                        showMaintenanceOverlay(st)
-                    } else if (maintenanceHold) {
-                        showMaintenanceOverlay(st)
-                    } else {
-                        dismissMaintenanceOverlay()
+                if (
+                    maintenanceHold ||
+                    com.luv.couple.net.InteractivePriority.allowBackground()
+                ) {
+                    val st = runCatching { LuvApiClient.fetchMaintenanceStatus() }.getOrNull()
+                    if (st != null) {
+                        if (st.active) {
+                            maintenanceHold = true
+                            showMaintenanceOverlay(st)
+                        } else if (maintenanceHold) {
+                            showMaintenanceOverlay(st)
+                        } else {
+                            dismissMaintenanceOverlay()
+                        }
                     }
                 }
-                delay(if (maintenanceHold) 4_000 else 12_000)
+                delay(if (maintenanceHold) 8_000 else 30_000)
             }
         }
     }

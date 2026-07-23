@@ -4638,40 +4638,42 @@ object LuvApiClient {
 
     /** 1 Coin ins Münzglas — max. 10 Coins pro Profil/Tag (0:00 MEZ), alle Spender zusammen. */
     suspend fun tipGlass(userId: String): GlassTipResult = withContext(Dispatchers.IO) {
-        val uid = userId.trim()
-        val request = authedRequestBuilder("/v1/users/${uid.encodeURL()}/tip-glass")
-            .post("{}".toRequestBody(jsonMedia))
-            .build()
-        http.newCall(request).execute().use { response ->
-            val raw = response.body?.string().orEmpty()
-            val json = runCatching { JSONObject(raw) }.getOrNull()
-            if (!response.isSuccessful) {
-                val err = json?.optString("error").orEmpty()
-                throw LuvApiException(
-                    when (err) {
-                        "daily_tip_limit" ->
-                            json?.optString("message")?.takeIf { it.isNotBlank() }
-                                ?: "Münzglas heute voll (10 Coins). Ab 0 Uhr MEZ wieder."
-                        "insufficient_coins" -> "Nicht genug Coins"
-                        "no_glass" -> "Kein Münzglas auf dem Profil"
-                        "self_tip" -> "Eigenes Glas"
-                        "rate_limited" -> "Zu schnell — kurz warten"
-                        else -> json?.optString("message")?.takeIf { it.isNotBlank() }
-                            ?: "Spenden fehlgeschlagen"
-                    },
-                    error = err.ifBlank { null }
+        asUserAction {
+            val uid = userId.trim()
+            val request = authedRequestBuilder("/v1/users/${uid.encodeURL()}/tip-glass")
+                .post("{}".toRequestBody(jsonMedia))
+                .build()
+            http.newCall(request).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                if (!response.isSuccessful) {
+                    val err = json?.optString("error").orEmpty()
+                    throw LuvApiException(
+                        when (err) {
+                            "daily_tip_limit" ->
+                                json?.optString("message")?.takeIf { it.isNotBlank() }
+                                    ?: "Münzglas heute voll (10 Coins). Ab 0 Uhr MEZ wieder."
+                            "insufficient_coins" -> "Nicht genug Coins"
+                            "no_glass" -> "Kein Münzglas auf dem Profil"
+                            "self_tip" -> "Eigenes Glas"
+                            "rate_limited" -> "Zu schnell — kurz warten"
+                            else -> json?.optString("message")?.takeIf { it.isNotBlank() }
+                                ?: "Spenden fehlgeschlagen"
+                        },
+                        error = err.ifBlank { null }
+                    )
+                }
+                val body = json ?: throw LuvApiException("Ungültige Server-Antwort")
+                val fromJson = body.optJSONObject("from")
+                val from = fromJson?.let { AccountInfo.fromApi(it) }
+                if (from != null) AccountSession.setAccount(from)
+                GlassTipResult(
+                    remaining = body.optInt("remaining", 0),
+                    toCoins = body.optInt("toCoins", 0),
+                    from = from,
+                    received = body.optInt("received", 0)
                 )
             }
-            val body = json ?: throw LuvApiException("Ungültige Server-Antwort")
-            val fromJson = body.optJSONObject("from")
-            val from = fromJson?.let { AccountInfo.fromApi(it) }
-            if (from != null) AccountSession.setAccount(from)
-            GlassTipResult(
-                remaining = body.optInt("remaining", 0),
-                toCoins = body.optInt("toCoins", 0),
-                from = from,
-                received = body.optInt("received", 0)
-            )
         }
     }
 
@@ -5066,6 +5068,16 @@ object LuvApiClient {
         )
     }
 
+    /** Mutierende Calls = User-Aktion → Hintergrund-Polls kurz pausieren. */
+    private inline fun <T> asUserAction(block: () -> T): T {
+        InteractivePriority.begin()
+        return try {
+            block()
+        } finally {
+            InteractivePriority.end()
+        }
+    }
+
     private fun authedGet(path: String): JSONObject {
         val request = authedRequestBuilder(path).get().build()
         http.newCall(request).execute().use { response ->
@@ -5075,47 +5087,47 @@ object LuvApiClient {
         }
     }
 
-    private fun authedPost(path: String, jsonBody: String): JSONObject {
+    private fun authedPost(path: String, jsonBody: String): JSONObject = asUserAction {
         val request = authedRequestBuilder(path)
             .post(jsonBody.toRequestBody(jsonMedia))
             .build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
             if (!response.isSuccessful) throwApiFailure(raw, response.code)
-            return JSONObject(raw)
+            return@asUserAction JSONObject(raw)
         }
     }
 
-    private fun authedPatch(path: String, jsonBody: String): JSONObject {
+    private fun authedPatch(path: String, jsonBody: String): JSONObject = asUserAction {
         val request = authedRequestBuilder(path)
             .patch(jsonBody.toRequestBody(jsonMedia))
             .build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
             if (!response.isSuccessful) throwApiFailure(raw, response.code)
-            return JSONObject(raw)
+            return@asUserAction JSONObject(raw)
         }
     }
 
-    private fun authedPut(path: String, jsonBody: String): JSONObject {
+    private fun authedPut(path: String, jsonBody: String): JSONObject = asUserAction {
         val request = authedRequestBuilder(path)
             .put(jsonBody.toRequestBody(jsonMedia))
             .build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
             if (!response.isSuccessful) throwApiFailure(raw, response.code)
-            return JSONObject(raw)
+            return@asUserAction JSONObject(raw)
         }
     }
 
-    private fun authedDelete(path: String): JSONObject {
+    private fun authedDelete(path: String): JSONObject = asUserAction {
         val request = authedRequestBuilder(path)
             .delete()
             .build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
             if (!response.isSuccessful) throwApiFailure(raw, response.code)
-            return if (raw.isBlank()) JSONObject() else JSONObject(raw)
+            return@asUserAction if (raw.isBlank()) JSONObject() else JSONObject(raw)
         }
     }
 

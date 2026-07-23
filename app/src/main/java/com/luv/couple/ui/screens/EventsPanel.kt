@@ -187,7 +187,7 @@ fun EventsPanel(
                             event = ev,
                             busy = busyId == ev.id,
                             onCollect = {
-                                if (busyId != null) return@EventHeroCard
+                                if (busyId == ev.id) return@EventHeroCard
                                 busyId = ev.id
                                 scope.launch {
                                     runCatching { LuvApiClient.collectEvent(ev.id) }
@@ -195,8 +195,6 @@ fun EventsPanel(
                                             state = result.state
                                             if (result.coinsGranted > 0) {
                                                 onCoinsGranted(result.coinsGranted)
-                                                runCatching { LuvApiClient.me() }
-                                                    .onSuccess { AccountSession.setAccount(it) }
                                             }
                                             val msg = buildString {
                                                 if (result.coinsGranted > 0) {

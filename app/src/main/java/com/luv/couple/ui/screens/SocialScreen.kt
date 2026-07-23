@@ -254,14 +254,8 @@ fun SocialScreen(
                     SocialKeepAliveTab(visible = tab == 1) {
                         EventsPanel(
                             modifier = Modifier.fillMaxSize(),
-                            onCoinsGranted = { amount ->
-                                if (amount > 0) {
-                                    scope.launch {
-                                        runCatching { LuvApiClient.me() }
-                                            .onSuccess { AccountSession.setAccount(it) }
-                                    }
-                                }
-                            },
+                            // collectEvent setzt AccountSession bereits aus der Response
+                            onCoinsGranted = {},
                             onCreateEventLobby = onCreateEventLobby
                         )
                     }
@@ -1009,35 +1003,35 @@ private fun FriendsPanel(
                     busy = busyId == "m-${card.userId}",
                     acceptLabel = "Annehmen 💍",
                     onAccept = {
-                        busyId = "m-${card.userId}"
+                        val prev = marriageProposals
+                        marriageProposals = marriageProposals.filter { it.userId != card.userId }
                         scope.launch {
                             runCatching { LuvApiClient.acceptMarriage(card.userId) }
                                 .onSuccess { reload(force = true) }
                                 .onFailure {
+                                    marriageProposals = prev
                                     Toast.makeText(
                                         context,
                                         it.message ?: "Annehmen fehlgeschlagen",
                                         Toast.LENGTH_SHORT
                                     ).show()
-                                    reload(force = true)
                                 }
-                            busyId = null
                         }
                     },
                     onDecline = {
-                        busyId = "m-${card.userId}"
+                        val prev = marriageProposals
+                        marriageProposals = marriageProposals.filter { it.userId != card.userId }
                         scope.launch {
                             runCatching { LuvApiClient.declineMarriage(card.userId) }
                                 .onSuccess { reload(force = true) }
                                 .onFailure {
+                                    marriageProposals = prev
                                     Toast.makeText(
                                         context,
                                         it.message ?: "Ablehnen fehlgeschlagen",
                                         Toast.LENGTH_SHORT
                                     ).show()
-                                    reload(force = true)
                                 }
-                            busyId = null
                         }
                     },
                     onOpen = { onOpenFriendProfile(card.userId, card.nickname) }
@@ -1051,46 +1045,45 @@ private fun FriendsPanel(
                     card = card,
                     busy = busyId == card.userId,
                     onAccept = {
-                        busyId = card.userId
+                        val prevIncoming = incoming
+                        val prevFriends = friends
+                        incoming = incoming.filter { it.userId != card.userId }
+                        friends = listOf(card) + friends.filter { it.userId != card.userId }
                         scope.launch {
                             runCatching { LuvApiClient.acceptFriend(card.userId) }
                                 .onSuccess { accepted ->
-                                    // Sofort in der Liste, nicht auf Cache warten
-                                    incoming = incoming.filter { it.userId != card.userId }
                                     if (accepted != null) {
                                         friends = listOf(accepted) +
                                             friends.filter { it.userId != accepted.userId }
                                     }
+                                    // Frischer Stand im Hintergrund — UI ist schon aktuell
                                     reload(force = true)
                                 }
                                 .onFailure {
+                                    incoming = prevIncoming
+                                    friends = prevFriends
                                     Toast.makeText(
                                         context,
                                         it.message ?: "Annehmen fehlgeschlagen",
                                         Toast.LENGTH_SHORT
                                     ).show()
-                                    reload(force = true)
                                 }
-                            busyId = null
                         }
                     },
                     onDecline = {
-                        busyId = card.userId
+                        val prevIncoming = incoming
+                        incoming = incoming.filter { it.userId != card.userId }
                         scope.launch {
                             runCatching { LuvApiClient.declineFriend(card.userId) }
-                                .onSuccess {
-                                    incoming = incoming.filter { it.userId != card.userId }
-                                    reload(force = true)
-                                }
+                                .onSuccess { /* schon aus der Liste */ }
                                 .onFailure {
+                                    incoming = prevIncoming
                                     Toast.makeText(
                                         context,
                                         it.message ?: "Ablehnen fehlgeschlagen",
                                         Toast.LENGTH_SHORT
                                     ).show()
-                                    reload(force = true)
                                 }
-                            busyId = null
                         }
                     },
                     onOpen = { onOpenFriendProfile(card.userId, card.nickname) }

@@ -432,7 +432,10 @@ fun LuvAppNav() {
         PairConnectionService.startAll(context)
     }
 
-    suspend fun refreshAccount() {
+    /**
+     * @param includeShop false nach Lobby-Join/Create — nur Coins/Account, kein Katalog/Billing.
+     */
+    suspend fun refreshAccount(includeShop: Boolean = true) {
         runCatching {
             val user = LuvApiClient.me()
             prefs.updateAccount(user)
@@ -448,6 +451,7 @@ fun LuvAppNav() {
                     dayKey = day
                 )
             }
+            if (!includeShop) return@runCatching
             // Katalog + Admin-Namen syncen (sonst bleiben lokale Hardcodes wie „Tiger“)
             runCatching { LuvApiClient.fetchShopCatalog() }
             val (enabled, list) = LuvApiClient.shopPacks()
@@ -588,7 +592,7 @@ fun LuvAppNav() {
                 PairSessionState.setCapacity(lobby.id, room.capacity)
                 CanvasStore.setActiveLobby(lobby.id)
                 PairConnectionService.startAll(context)
-                refreshAccount()
+                refreshAccount(includeShop = false)
                 runCatching { LuvApiClient.fetchEvents() }
                 CanvasStore.updateKnownLobbies(prefs.snapshot().lobbies.map { it.id })
                 context.startActivity(
@@ -1020,7 +1024,7 @@ fun LuvAppNav() {
         }
         PairConnectionService.startAll(context)
         LockScreenWidgetProvider.requestUpdate(context)
-        refreshAccount()
+        refreshAccount(includeShop = false)
         return true
     }
 
@@ -1121,7 +1125,7 @@ fun LuvAppNav() {
                 CanvasStore.setActiveLobby(lobby.id)
                 CanvasStore.updateKnownLobbies(prefs.snapshot().lobbies.map { it.id })
                 PairConnectionService.startAll(context)
-                refreshAccount()
+                refreshAccount(includeShop = false)
                 inviteRejoinDialog = null
                 openLobbyCanvas(lobby.id)
                 Toast.makeText(
@@ -1613,6 +1617,7 @@ fun LuvAppNav() {
         while (true) {
             delay(180_000L)
             if (LuvApiClient.sessionToken.isNullOrBlank()) continue
+            if (!com.luv.couple.net.InteractivePriority.allowBackground()) continue
             runCatching {
                 com.luv.couple.net.NotificationBadges.refreshFriends(context, force = true)
             }
@@ -1641,19 +1646,25 @@ fun LuvAppNav() {
     var maintenanceHold by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         while (true) {
-            val st = runCatching { LuvApiClient.fetchMaintenanceStatus() }.getOrNull()
-            if (st != null) {
-                if (st.active) {
-                    maintenanceHold = true
-                    maintenanceStatus = st
-                } else if (maintenanceHold) {
-                    // Bis Dialog dismiss (Claim/Weiter/Failsafe) — Status weiter aktualisieren
-                    maintenanceStatus = st
-                } else {
-                    maintenanceStatus = null
+            val activeNow = maintenanceStatus?.active == true || maintenanceHold
+            if (
+                activeNow ||
+                com.luv.couple.net.InteractivePriority.allowBackground()
+            ) {
+                val st = runCatching { LuvApiClient.fetchMaintenanceStatus() }.getOrNull()
+                if (st != null) {
+                    if (st.active) {
+                        maintenanceHold = true
+                        maintenanceStatus = st
+                    } else if (maintenanceHold) {
+                        // Bis Dialog dismiss (Claim/Weiter/Failsafe) — Status weiter aktualisieren
+                        maintenanceStatus = st
+                    } else {
+                        maintenanceStatus = null
+                    }
                 }
             }
-            delay(if (maintenanceStatus?.active == true) 4_000 else 12_000)
+            delay(if (maintenanceStatus?.active == true) 8_000 else 20_000)
         }
     }
     maintenanceStatus?.let { st ->
@@ -2255,7 +2266,7 @@ fun LuvAppNav() {
                                             prefs.markLobbyCanvasSeen(lobby.code)
                                             prefs.snoozeLobbyGlow(lobby.code)
                                             runCatching { LuvApiClient.pingAchievement("lobby_opens") }
-                                            refreshAccount()
+                                            refreshAccount(includeShop = false)
                                         }
                                     }
                                 }
@@ -3008,10 +3019,13 @@ fun LuvAppNav() {
         )
     }
 
-    // Live-Hinweise / Verwarnungen vom Team (WS + Poll)
+    // Live-Hinweise / Verwarnungen vom Team (WS + Poll) — nicht während User-Taps
     LaunchedEffect(Unit) {
         while (true) {
-            if (!LuvApiClient.sessionToken.isNullOrBlank()) {
+            if (
+                !LuvApiClient.sessionToken.isNullOrBlank() &&
+                com.luv.couple.net.InteractivePriority.allowBackground()
+            ) {
                 runCatching {
                     LuvApiClient.fetchLiveNotice()?.let { LiveNoticeBus.offer(it) }
                 }
@@ -3020,7 +3034,7 @@ fun LuvAppNav() {
                     StaffWarningBus.offer(sn.pending, sn.warnings)
                 }
             }
-            delay(4000)
+            delay(20_000)
         }
     }
 
