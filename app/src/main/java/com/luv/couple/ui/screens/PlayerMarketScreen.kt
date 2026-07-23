@@ -325,6 +325,14 @@ fun PlayerMarketScreen(
         reloadMarket()
     }
 
+    val pendingOpenMine by com.luv.couple.net.PendingMarketplace.openMine
+        .collectAsStateWithLifecycle()
+    LaunchedEffect(pendingOpenMine) {
+        if (!com.luv.couple.net.PendingMarketplace.consumeOpenMine()) return@LaunchedEffect
+        showMine = true
+        reloadMine()
+    }
+
     LaunchedEffect(Unit) {
         syncInventory()
         reloadMine()

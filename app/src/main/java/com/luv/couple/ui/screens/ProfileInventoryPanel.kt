@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -200,10 +201,12 @@ fun ProfileInventoryPanel(
     var searchQuery by remember { mutableStateOf("") }
     /** Nicht persistiert — beim Verlassen des Composables zurück auf Off. */
     var priceSort by remember { mutableStateOf(InvPriceSortMode.Off) }
+    var showPriceLegend by remember { mutableStateOf(false) }
     var priceHints by remember {
         mutableStateOf<Map<String, LuvApiClient.MarketPriceHint>>(emptyMap())
     }
     val scope = rememberCoroutineScope()
+    val gridState = rememberLazyGridState()
     var labelsEpoch by remember { mutableIntStateOf(LiveShopCatalog.displayLabelsEpoch) }
 
     fun fetchPriceHintsIfNeeded() {
@@ -263,6 +266,9 @@ fun ProfileInventoryPanel(
     }
     LaunchedEffect(tab, tabs) {
         tabs.getOrNull(tab)?.kindPrefix?.let(onKindVisited)
+    }
+    LaunchedEffect(priceSort, tab) {
+        gridState.scrollToItem(0)
     }
     fun toastTutorialLocked() {
         Toast.makeText(
@@ -353,6 +359,25 @@ fun ProfileInventoryPanel(
                     fontSize = ts(22.sp),
                     modifier = Modifier.weight(1f)
                 )
+                if (priceSort != InvPriceSortMode.Off) {
+                    Box(
+                        modifier = Modifier
+                            .size(s(36.dp))
+                            .clip(CircleShape)
+                            .background(BgSoft)
+                            .border(1.dp, Color.White.copy(0.12f), CircleShape)
+                            .clickable { showPriceLegend = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "i",
+                            color = TextPrimary,
+                            fontFamily = DisplayFont,
+                            fontSize = ts(16.sp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(s(8.dp)))
+                }
                 Box(
                     modifier = Modifier
                         .size(s(40.dp))
@@ -534,6 +559,7 @@ fun ProfileInventoryPanel(
                     } else {
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(5),
+                            state = gridState,
                             modifier = gridMod,
                             contentPadding = PaddingValues(s(4.dp)),
                             horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
@@ -612,6 +638,7 @@ fun ProfileInventoryPanel(
                     else themeItems.filter { it.id == currentThemeId }
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(3),
+                        state = gridState,
                         modifier = gridMod,
                         horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
                         verticalArrangement = Arrangement.spacedBy(s(8.dp)),
@@ -719,6 +746,7 @@ fun ProfileInventoryPanel(
                     } else {
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(5),
+                            state = gridState,
                             modifier = gridMod,
                             contentPadding = PaddingValues(s(4.dp)),
                             horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
@@ -835,6 +863,7 @@ fun ProfileInventoryPanel(
                     else petItems.filter { it == currentCompanion }
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(4),
+                        state = gridState,
                         modifier = gridMod,
                         horizontalArrangement = Arrangement.spacedBy(s(8.dp)),
                         verticalArrangement = Arrangement.spacedBy(s(8.dp))
@@ -1076,6 +1105,9 @@ fun ProfileInventoryPanel(
                 null -> Unit
             }
         }
+    }
+    if (showPriceLegend) {
+        InventoryPriceLegendDialog(onDismiss = { showPriceLegend = false })
     }
 }
 

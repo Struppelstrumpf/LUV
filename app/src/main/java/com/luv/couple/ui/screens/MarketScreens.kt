@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.widthIn
@@ -1192,6 +1193,10 @@ private fun ItemShopContent(
     val searchQuery = if (searchManagedExternally) externalSearchQuery else localSearchQuery
     var catalogTick by remember { mutableIntStateOf(0) }
     var sortMode by remember { mutableStateOf(ShopItemSortMode.PriceAsc) }
+    val shopGridState = rememberLazyGridState()
+    LaunchedEffect(sortMode, tab) {
+        shopGridState.scrollToItem(0)
+    }
     fun openBuy(pending: ShopPendingBuy) {
         if (!economyUnlocked) {
             onRequireGoogle()
@@ -1821,6 +1826,7 @@ private fun ItemShopContent(
             when (tab) {
                 0 -> LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
+                    state = shopGridState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(s(10.dp)),
@@ -1843,6 +1849,7 @@ private fun ItemShopContent(
                 }
                 1 -> LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
+                    state = shopGridState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(s(10.dp)),
@@ -1865,6 +1872,7 @@ private fun ItemShopContent(
                 }
                 2 -> LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
+                    state = shopGridState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(s(10.dp)),
@@ -1887,6 +1895,7 @@ private fun ItemShopContent(
                 }
                 3 -> LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
+                    state = shopGridState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(s(10.dp)),
@@ -3084,6 +3093,8 @@ fun InventoryScreen(
     var replacePickFor by remember { mutableStateOf<String?>(null) }
     var showBarEditor by remember { mutableStateOf(false) }
     var showGallery by remember { mutableStateOf(false) }
+    var detailTarget by remember { mutableStateOf<InvDetailTarget?>(null) }
+    var listTarget by remember { mutableStateOf<InvDetailTarget?>(null) }
     LaunchedEffect(unseenKeys) {
         if (unseenKeys.isNotEmpty()) {
             sessionGlowKeys = sessionGlowKeys + unseenKeys
@@ -3211,6 +3222,34 @@ fun InventoryScreen(
         }
         pendingAction = action
     }
+    fun equipCompanion(emoji: String) {
+        scope.launch {
+            runCatching {
+                val eq = LuvApiClient.equipPet(emoji)
+                prefs.setEquippedPet(eq)
+                profile = activeProfile.copy(companionEmoji = eq)
+                Toast.makeText(context, "Begleiter ausgerüstet", Toast.LENGTH_SHORT).show()
+            }.onFailure {
+                Toast.makeText(
+                    context,
+                    it.message ?: "Ausrüsten fehlgeschlagen",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+    fun equipEmojiFromDetail(emoji: String) {
+        val bar = emojiBar
+        when {
+            emoji in bar -> Toast.makeText(
+                context,
+                "Schon in der Reaktionsleiste",
+                Toast.LENGTH_SHORT
+            ).show()
+            bar.size >= ShopCatalog.MAX_BAR -> barFullEmoji = emoji
+            else -> pendingBarEmoji = emoji
+        }
+    }
     MenuBackdrop(includeNavigationBars = false) {
         Column(
             modifier = Modifier
@@ -3239,39 +3278,41 @@ fun InventoryScreen(
                 currentCompanion = equippedPet.ifBlank { activeProfile.companionEmoji },
                 hasGlass = false,
                 hasBio = false,
-                onTheme = { confirmPlace(ProfilePlaceAction.Theme(it.id)) },
-                onSticker = { confirmPlace(ProfilePlaceAction.Sticker(it)) },
+                onTheme = { theme ->
+                    detailTarget = InvDetailTarget(
+                        kind = "themes",
+                        itemId = theme.id,
+                        emoji = theme.emoji,
+                        label = ItemLabels.themeLabel(theme.id),
+                        count = 1
+                    )
+                },
+                onSticker = { emoji ->
+                    detailTarget = InvDetailTarget(
+                        kind = "stickers",
+                        itemId = emoji,
+                        emoji = emoji,
+                        label = ItemLabels.stickerLabel(emoji),
+                        count = ownedStickersMap[emoji] ?: 1
+                    )
+                },
                 onCompanion = { emoji ->
-                    scope.launch {
-                        runCatching {
-                            val eq = LuvApiClient.equipPet(emoji)
-                            prefs.setEquippedPet(eq)
-                            profile = activeProfile.copy(companionEmoji = eq)
-                            Toast.makeText(
-                                context,
-                                "Begleiter ausgerüstet",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }.onFailure {
-                            Toast.makeText(
-                                context,
-                                it.message ?: "Ausrüsten fehlgeschlagen",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    }
+                    detailTarget = InvDetailTarget(
+                        kind = "pets",
+                        itemId = emoji,
+                        emoji = emoji,
+                        label = ItemLabels.petLabel(emoji),
+                        count = ownedPets[emoji] ?: 1
+                    )
                 },
                 onEmoji = { emoji ->
-                    val bar = emojiBar
-                    when {
-                        emoji in bar -> Toast.makeText(
-                            context,
-                            "Schon in der Reaktionsleiste",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        bar.size >= ShopCatalog.MAX_BAR -> barFullEmoji = emoji
-                        else -> pendingBarEmoji = emoji
-                    }
+                    detailTarget = InvDetailTarget(
+                        kind = "emojis",
+                        itemId = emoji,
+                        emoji = emoji,
+                        label = ItemLabels.emojiLabel(emoji),
+                        count = owned[emoji] ?: 1
+                    )
                 },
                 onOpenMarketplace = onOpenMarketplace,
                 onOpenItemShop = onOpenItemShop,
@@ -3305,6 +3346,39 @@ fun InventoryScreen(
                 GalleryScreen(onClose = { showGallery = false })
             }
         }
+    }
+    detailTarget?.let { target ->
+        InventoryItemDetailDialog(
+            target = target,
+            onDismiss = { detailTarget = null },
+            onPrimaryAction = {
+                detailTarget = null
+                when (target.kind) {
+                    "stickers" -> confirmPlace(ProfilePlaceAction.Sticker(target.itemId))
+                    "themes" -> confirmPlace(ProfilePlaceAction.Theme(target.itemId))
+                    "pets" -> equipCompanion(target.itemId)
+                    "emojis" -> equipEmojiFromDetail(target.itemId)
+                }
+            },
+            onOfferMarket = {
+                detailTarget = null
+                listTarget = target
+            }
+        )
+    }
+    listTarget?.let { target ->
+        InventoryListOnMarketDialog(
+            target = target,
+            onDismiss = { listTarget = null },
+            onListed = {
+                listTarget = null
+                scope.launch {
+                    refreshInventoryAndProfile()
+                    com.luv.couple.net.PendingMarketplace.offer(showMine = true)
+                }
+                onOpenMarketplace()
+            }
+        )
     }
     pendingBarEmoji?.let { emoji ->
         AlertDialog(

@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.179",
+            listOf(
+                "Inventar: Item-Details mit Shop-/Marktpreisen und schönem Marktplatz-Anbieten",
+                "Inventar & Itemshop: Preis-/Uhr-Sortierung startet wieder oben in der Liste",
+            )
+        ),
+        Entry(
             "2.2.178",
             listOf(
                 "Nach der Trauung zeigt die Home-Lobby den Empfangs-Timer statt „Zur Hochzeit“",

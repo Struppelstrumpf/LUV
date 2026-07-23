@@ -27,8 +27,8 @@ android {
         applicationId = "com.luv.couple"
         minSdk = 28
         targetSdk = 36
-        versionCode = 501
-        versionName = "2.2.178"
+        versionCode = 502
+        versionName = "2.2.179"
 
         // Hetzner/API-URL hier oder in gradle.properties setzen:
         // luv.api.baseUrl=https://luv.deinedomain.de
