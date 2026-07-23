@@ -148,6 +148,23 @@ object Routes {
     const val HELP = "help"
 }
 
+/** Schlaf bis kurz vor Wartungsfenster (Server liefert startsAt/endsAt). */
+private fun maintenanceSleepMs(
+    st: LuvApiClient.MaintenanceStatus?,
+    hold: Boolean,
+): Long {
+    if (hold || st?.active == true || st?.canClaim == true) return 15_000L
+    if (st == null) return 120_000L
+    val skew = System.currentTimeMillis() - st.serverNow
+    val localStart = st.startsAt + skew
+    val until = localStart - System.currentTimeMillis()
+    return when {
+        until <= 60_000L -> 20_000L
+        until <= 10 * 60_000L -> 60_000L
+        else -> (until - 60_000L).coerceIn(120_000L, 6 * 60 * 60_000L)
+    }
+}
+
 @Composable
 fun LuvAppNav() {
     val context = LocalContext.current
@@ -1604,8 +1621,7 @@ fun LuvAppNav() {
         if (needsGoogleGate) tab = 0
     }
 
-    // App-Start / Zurück: leicht halten — schwere Syncs nicht alle gleichzeitig blockieren.
-    // Freunde/Heirat: Hintergrund-Poll alle paar Minuten (+ manueller Refresh unter Sozial).
+    // Resume: einmal nachziehen (kein Dauer-Poll) — Live kommt über Account-WS
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         var first = true
@@ -1613,8 +1629,6 @@ fun LuvAppNav() {
             if (event != Lifecycle.Event.ON_START) return@LifecycleEventObserver
             val isCold = first
             first = false
-            // Kaltstart: Markt/Freunde laufen erst nach Splash (siehe LaunchedEffect oben).
-            // Resume: leicht nachziehen, ohne Cloud-Force.
             if (isCold) return@LifecycleEventObserver
             scope.launch {
                 launch { runCatching { AppUpdater.check(context, notify = false) } }
@@ -1625,6 +1639,17 @@ fun LuvAppNav() {
                             context,
                             force = false,
                         )
+                    }
+                    launch {
+                        runCatching {
+                            val sn = LuvApiClient.fetchStaffNotices()
+                            StaffWarningBus.offer(sn.pending, sn.warnings)
+                        }
+                    }
+                    launch {
+                        runCatching {
+                            LuvApiClient.fetchLiveNotice()?.let { LiveNoticeBus.offer(it) }
+                        }
                     }
                     com.luv.couple.net.NotificationBadges.syncAppBadge(context)
                 }
@@ -1652,27 +1677,27 @@ fun LuvAppNav() {
         mutableStateOf<LuvApiClient.MaintenanceStatus?>(null)
     }
     var maintenanceHold by remember { mutableStateOf(false) }
+    // Wartung nur nachts ~03:00 — schlafen bis kurz vorher, kein 20s-Poll
     LaunchedEffect(Unit) {
         while (true) {
-            val activeNow = maintenanceStatus?.active == true || maintenanceHold
-            if (
-                activeNow ||
-                com.luv.couple.net.InteractivePriority.allowBackground()
-            ) {
-                val st = runCatching { LuvApiClient.fetchMaintenanceStatus() }.getOrNull()
+            val allow =
+                maintenanceHold ||
+                    com.luv.couple.net.InteractivePriority.allowBackground()
+            var st: LuvApiClient.MaintenanceStatus? = null
+            if (allow) {
+                st = runCatching { LuvApiClient.fetchMaintenanceStatus() }.getOrNull()
                 if (st != null) {
-                    if (st.active) {
+                    if (st.active || st.canClaim) {
                         maintenanceHold = true
                         maintenanceStatus = st
                     } else if (maintenanceHold) {
-                        // Bis Dialog dismiss (Claim/Weiter/Failsafe) — Status weiter aktualisieren
                         maintenanceStatus = st
                     } else {
                         maintenanceStatus = null
                     }
                 }
             }
-            delay(if (maintenanceStatus?.active == true) 8_000 else 20_000)
+            delay(maintenanceSleepMs(st, maintenanceHold))
         }
     }
     maintenanceStatus?.let { st ->
@@ -3027,36 +3052,7 @@ fun LuvAppNav() {
         )
     }
 
-    // Live-Hinweise / Verwarnungen vom Team (WS + Poll) — nicht während User-Taps
-    LaunchedEffect(Unit) {
-        while (true) {
-            if (
-                !LuvApiClient.sessionToken.isNullOrBlank() &&
-                com.luv.couple.net.InteractivePriority.allowBackground()
-            ) {
-                runCatching {
-                    LuvApiClient.fetchLiveNotice()?.let { LiveNoticeBus.offer(it) }
-                }
-                runCatching {
-                    val sn = LuvApiClient.fetchStaffNotices()
-                    StaffWarningBus.offer(sn.pending, sn.warnings)
-                }
-            }
-            delay(20_000)
-        }
-    }
-
-    // Heartbeat: zählt für die Website, wie viele die App gerade offen haben
-    val appLifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(Unit) {
-        while (true) {
-            val foreground = appLifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
-            if (foreground && !LuvApiClient.sessionToken.isNullOrBlank()) {
-                runCatching { LuvApiClient.heartbeat() }
-            }
-            delay(45_000)
-        }
-    }
+    // Live-Hinweise: Account-WS; Staff-Warnungen einmal beim Start (siehe Splash-Boot)
     LiveNoticePopup(
         onOpenWeddingGuestbook = { uid ->
             com.luv.couple.net.PendingWeddingGuestbook.offer(uid)

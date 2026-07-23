@@ -264,6 +264,21 @@ function emitUserEvent(db, userId, type, data = {}, opts = {}) {
   return { ws, fcm: forceFcm || ws === 0 ? "async" : "skipped_ws_online" };
 }
 
+/** An alle verbundenen Account-Sockets (kein FCM-Spam). */
+function broadcastEvent(type, data = {}) {
+  if (!enabled() || !type) return 0;
+  let n = 0;
+  for (const uid of [...socketsByUser.keys()]) {
+    n += sendWs(uid, {
+      type: "account_event",
+      event: String(type),
+      at: Date.now(),
+      data: data && typeof data === "object" ? data : {},
+    });
+  }
+  return n;
+}
+
 function registerDeviceToken(user, token, platform = "android") {
   if (!user || typeof user !== "object") return false;
   const t = String(token || "").trim();
@@ -361,6 +376,7 @@ module.exports = {
   enabled,
   attachAccountWss,
   emitUserEvent,
+  broadcastEvent,
   registerDeviceToken,
   unregisterDeviceToken,
   onlineCount,

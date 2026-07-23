@@ -332,9 +332,9 @@ fun CustomRoomScreen(
                 }
                 lastBellMoveAt = s.lastMoveAt
             }
-        // Fallback-Poll (selten) — Live kommt über WS space_pos
+        // Fallback — Live kommt über WS space_pos
         while (true) {
-            delay(4000)
+            delay(20_000)
             runCatching { LuvApiClient.fetchRoomSpace(code) }
                 .onSuccess { s ->
                     if (spaceBell &&

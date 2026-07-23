@@ -171,9 +171,9 @@ object AccountEventRouter {
         val app = context.applicationContext
         when (event) {
             "friend_request", "friend_accepted", "friend_removed",
-            "marriage_proposal", "marriage_update" -> {
-                // Cache-Invalidierung → SocialScreen lädt myMarriage-Kacheln neu
+            "marriage_proposal", "marriage_update", "lobby_invite" -> {
                 LuvApiClient.invalidateFriendsCache()
+                CeremonyRefreshBus.bump()
                 ioScope.launch {
                     runCatching { NotificationBadges.refreshFriends(app, force = true) }
                     NotificationBadges.syncAppBadge(app)
@@ -195,6 +195,24 @@ object AccountEventRouter {
                 }
                 NotificationBadges.onAchievementsClaimable(true, fp)
                 NotificationBadges.syncAppBadge(app)
+            }
+            "home_feed" -> HomeFeedRefreshBus.bump()
+            "live_notice" -> {
+                val id = data.optString("id").trim()
+                val msg = data.optString("message").trim()
+                if (id.isNotBlank() && msg.isNotBlank()) {
+                    LiveNoticeBus.offer(
+                        LiveNotice(
+                            id = id,
+                            message = msg,
+                            authorNickname = data.optString("authorNickname").ifBlank { "LUV" },
+                            createdAt = data.optLong("createdAt", System.currentTimeMillis()),
+                            kind = data.optString("kind").ifBlank { "team" },
+                            subtitle = data.optString("subtitle").takeIf { it.isNotBlank() },
+                            targetUserId = data.optString("targetUserId").takeIf { it.isNotBlank() },
+                        )
+                    )
+                }
             }
             else -> Unit
         }

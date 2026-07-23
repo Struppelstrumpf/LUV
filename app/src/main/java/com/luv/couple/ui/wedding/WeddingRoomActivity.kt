@@ -73,6 +73,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import kotlin.math.ceil
 import com.luv.couple.LuvApp
@@ -384,14 +385,20 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         chapelMusic.sync(ceremony, bothCoupleOnAltar = bothOnAltar)
     }
 
-    // Presence-Heartbeat — sonst verschwinden Idle-Gäste nach dem TTL
+    // Presence — Server-TTL; seltener reicht (Bewegung läuft per WS)
     LaunchedEffect(entered, leaving) {
         if (!entered || leaving) return@LaunchedEffect
         while (true) {
             runCatching { LuvApiClient.ceremonyPresence("gathering") }
                 .onSuccess { c -> if (c != null) ceremony = c }
-            delay(18_000)
+            delay(35_000)
         }
+    }
+
+    val ceremonyPushRev by com.luv.couple.net.CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
+    LaunchedEffect(ceremonyPushRev) {
+        if (ceremonyPushRev <= 0) return@LaunchedEffect
+        runCatching { LuvApiClient.fetchCeremony() }.onSuccess { applyCeremonyBundle(it) }
     }
 
     // Remote-Avatare weich zur Server-Position (schnell genug für flüssiges Laufen)
@@ -557,8 +564,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     cNow?.pastorPhase == "closing_no" ||
                     cNow?.pastorPhase == "married" ||
                     cNow?.liveWindowActive == true
-            // Phasen/Ritual weiter pollen; Avatar-Live kommt über WS ceremony_pos
-            delay(if (fast) 450 else if (entered) 900 else 1600)
+            // Phasen per Account-Push; Fallback nur noch selten
+            delay(if (fast) 4_000 else if (entered) 8_000 else 12_000)
         }
     }
 

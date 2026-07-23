@@ -328,38 +328,30 @@ private fun FriendsPanel(
     var pendingBugCoins by remember { mutableIntStateOf(0) }
     var claimingBug by remember { mutableStateOf(false) }
     var claimingCoins by remember { mutableStateOf(false) }
-    var liveCount by remember { mutableIntStateOf(-1) }
-
-    LaunchedEffect(active) {
-        if (!active) return@LaunchedEffect
-        while (true) {
-            runCatching { LuvApiClient.fetchLiveCount() }.onSuccess { liveCount = it }
-            delay(60_000)
-        }
-    }
-
     LaunchedEffect(Unit) {
         if (com.luv.couple.net.PendingWeddingCeremony.consume()) {
             showCeremonyPresence = true
         }
     }
 
-    // Kapelle nur pollen, wenn Tab sichtbar und wirklich was läuft
-    LaunchedEffect(active, myMarriage?.status) {
+    // leftNotify / Zeremonie: Account-WS → einmal fetch, kein Dauer-Poll
+    val ceremonyRev by com.luv.couple.net.CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
+    LaunchedEffect(active, ceremonyRev, myMarriage?.status) {
         if (!active) return@LaunchedEffect
         val st = myMarriage?.status
-        val ceremonyHot =
-            st == "ceremony_scheduled" ||
-                st == "ceremony_pending" ||
-                st == "wedding" ||
-                st == "engaged"
-        while (true) {
-            runCatching { LuvApiClient.fetchCeremony() }.onSuccess { bundle ->
-                if (bundle.ceremony?.leftNotify == true) {
-                    leftNoticeName = bundle.ceremony.leftByNickname
-                }
+        if (
+            st != "ceremony_scheduled" &&
+            st != "ceremony_pending" &&
+            st != "wedding" &&
+            st != "engaged" &&
+            st != "married"
+        ) {
+            return@LaunchedEffect
+        }
+        runCatching { LuvApiClient.fetchCeremony() }.onSuccess { bundle ->
+            if (bundle.ceremony?.leftNotify == true) {
+                leftNoticeName = bundle.ceremony.leftByNickname
             }
-            delay(if (ceremonyHot) 12_000L else 180_000L)
         }
     }
 
@@ -621,10 +613,10 @@ private fun FriendsPanel(
                 }
             }
         }
-        // Plus links · Coins optional · Live-Zähler rechts (gleiche Höhe)
+        // Plus · optional Coins abholen
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -637,53 +629,47 @@ private fun FriendsPanel(
             ) {
                 Text("+", color = Color.White, fontFamily = DisplayFont, fontSize = 28.sp)
             }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (pendingFriendshipCoins > 0) {
-                    val gold = Color(0xFFFFD54F)
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(gold.copy(0.22f))
-                            .border(1.dp, gold.copy(0.7f), RoundedCornerShape(20.dp))
-                            .clickable(enabled = !claimingCoins) {
-                                claimingCoins = true
-                                scope.launch {
-                                    runCatching { LuvApiClient.claimFriendshipLevelCoins() }
-                                        .onSuccess { claimed ->
-                                            pendingFriendshipCoins = 0
-                                            Toast.makeText(
-                                                context,
-                                                if (claimed > 0) "+$claimed Coins abgeholt"
-                                                else "Bereits abgeholt",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                            reload()
-                                        }
-                                        .onFailure {
-                                            Toast.makeText(
-                                                context,
-                                                it.message ?: "Abholen fehlgeschlagen",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        }
-                                    claimingCoins = false
-                                }
+            if (pendingFriendshipCoins > 0) {
+                val gold = Color(0xFFFFD54F)
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(gold.copy(0.22f))
+                        .border(1.dp, gold.copy(0.7f), RoundedCornerShape(20.dp))
+                        .clickable(enabled = !claimingCoins) {
+                            claimingCoins = true
+                            scope.launch {
+                                runCatching { LuvApiClient.claimFriendshipLevelCoins() }
+                                    .onSuccess { claimed ->
+                                        pendingFriendshipCoins = 0
+                                        Toast.makeText(
+                                            context,
+                                            if (claimed > 0) "+$claimed Coins abgeholt"
+                                            else "Bereits abgeholt",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                        reload()
+                                    }
+                                    .onFailure {
+                                        Toast.makeText(
+                                            context,
+                                            it.message ?: "Abholen fehlgeschlagen",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                claimingCoins = false
                             }
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
-                    ) {
-                        Text(
-                            if (claimingCoins) "…" else "🪙 $pendingFriendshipCoins abholen",
-                            color = gold,
-                            fontFamily = DisplayFont,
-                            fontSize = 14.sp,
-                            softWrap = false
-                        )
-                    }
+                        }
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        if (claimingCoins) "…" else "🪙 $pendingFriendshipCoins abholen",
+                        color = gold,
+                        fontFamily = DisplayFont,
+                        fontSize = 14.sp,
+                        softWrap = false
+                    )
                 }
-                LiveAppCounter(count = liveCount)
             }
         }
 
@@ -1208,67 +1194,6 @@ private fun FriendsPanel(
         com.luv.couple.ui.wedding.WeddingLeftNoticeDialog(
             partnerName = name,
             onDismiss = { leftNoticeName = null }
-        )
-    }
-}
-
-@Composable
-private fun LiveAppCounter(count: Int) {
-    val liveGreen = Color(0xFF3DDC84)
-    val pulse = rememberInfiniteTransition(label = "liveDot")
-    val scale by pulse.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.55f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1100),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "liveScale"
-    )
-    val haloAlpha by pulse.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 0.08f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1100),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "liveHalo"
-    )
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier
-            .height(56.dp)
-            .padding(horizontal = 4.dp)
-    ) {
-        Box(
-            modifier = Modifier.size(18.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(14.dp)
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        alpha = haloAlpha
-                    }
-                    .clip(CircleShape)
-                    .background(liveGreen)
-            )
-            Box(
-                modifier = Modifier
-                    .size(9.dp)
-                    .clip(CircleShape)
-                    .background(liveGreen)
-            )
-        }
-        Text(
-            text = if (count < 0) "…" else count.toString(),
-            color = TextPrimary,
-            fontFamily = DisplayFont,
-            fontSize = 18.sp,
-            softWrap = false
         )
     }
 }

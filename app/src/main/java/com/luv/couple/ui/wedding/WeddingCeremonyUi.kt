@@ -46,6 +46,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.luv.couple.net.CeremonyRefreshBus
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.ui.ItemGlyph
 import com.luv.couple.ui.theme.AccentRose
@@ -106,26 +108,23 @@ fun WeddingPresenceDialog(
         c?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
             ?: m?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            runCatching {
-                LuvApiClient.ceremonyPresence("presence")
-                LuvApiClient.fetchCeremony()
-            }.onSuccess {
-                ceremony = it.ceremony
-                marriage = it.marriage
-                loaded = true
-                val code = lobbyCodeOf(it.marriage, it.ceremony)
-                // Nur mit echter Lobby abschließen — nie bei bloßem Booking/Pending
-                if (!code.isNullOrBlank() && it.marriage?.status == "ceremony_scheduled") {
-                    onScheduled(code)
-                    return@LaunchedEffect
-                }
-                if (it.ceremony?.booking?.active == true) {
-                    showBooking = true
-                }
+    val ceremonyRev by com.luv.couple.net.CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit, ceremonyRev) {
+        runCatching {
+            LuvApiClient.ceremonyPresence("presence")
+            LuvApiClient.fetchCeremony()
+        }.onSuccess {
+            ceremony = it.ceremony
+            marriage = it.marriage
+            loaded = true
+            val code = lobbyCodeOf(it.marriage, it.ceremony)
+            if (!code.isNullOrBlank() && it.marriage?.status == "ceremony_scheduled") {
+                onScheduled(code)
+                return@LaunchedEffect
             }
-            delay(2500)
+            if (it.ceremony?.booking?.active == true) {
+                showBooking = true
+            }
         }
     }
 
@@ -321,24 +320,22 @@ fun WeddingScheduleDialog(
         }
     }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            runCatching {
-                LuvApiClient.ceremonyPresence("presence")
-                LuvApiClient.fetchCeremony()
-            }.onSuccess { bundle ->
-                ceremony = bundle.ceremony
-                val code = bundle.ceremony?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
-                    ?: bundle.marriage?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
-                if (!code.isNullOrBlank() && bundle.marriage?.status == "ceremony_scheduled") {
-                    onScheduled(code)
-                    return@LaunchedEffect
-                }
-                if (bundle.ceremony?.booking?.active == true) {
-                    showBooking = true
-                }
+    val scheduleRev by CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit, scheduleRev) {
+        runCatching {
+            LuvApiClient.ceremonyPresence("presence")
+            LuvApiClient.fetchCeremony()
+        }.onSuccess { bundle ->
+            ceremony = bundle.ceremony
+            val code = bundle.ceremony?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
+                ?: bundle.marriage?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
+            if (!code.isNullOrBlank() && bundle.marriage?.status == "ceremony_scheduled") {
+                onScheduled(code)
+                return@LaunchedEffect
             }
-            delay(2500)
+            if (bundle.ceremony?.booking?.active == true) {
+                showBooking = true
+            }
         }
     }
 
@@ -588,12 +585,17 @@ fun WeddingGatheringDialog(
     var busy by remember { mutableStateOf(false) }
     var floatEmoji by remember { mutableStateOf<String?>(null) }
 
+    val gatherRev by CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit, gatherRev) {
+        runCatching { LuvApiClient.ceremonyPresence("gathering") }
+            .onSuccess { ceremony = it }
+    }
+    // Presence-TTL: seltenes Keepalive, kein 2s-Spam
     LaunchedEffect(Unit) {
         while (true) {
-            runCatching {
-                LuvApiClient.ceremonyPresence("gathering")
-            }.onSuccess { ceremony = it }
-            delay(2000)
+            delay(30_000)
+            runCatching { LuvApiClient.ceremonyPresence("gathering") }
+                .onSuccess { ceremony = it }
         }
     }
 
@@ -931,18 +933,16 @@ fun WeddingBookingDialog(
         }
     }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            runCatching { LuvApiClient.fetchCeremony() }
-                .onSuccess {
-                    applyCer(
-                        it.ceremony,
-                        marriageStatus = it.marriage?.status,
-                        marriageLobby = it.marriage?.ceremonyLobbyCode,
-                    )
-                }
-            delay(2000)
-        }
+    val bookRev by CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit, bookRev) {
+        runCatching { LuvApiClient.fetchCeremony() }
+            .onSuccess {
+                applyCer(
+                    it.ceremony,
+                    marriageStatus = it.marriage?.status,
+                    marriageLobby = it.marriage?.ceremonyLobbyCode,
+                )
+            }
     }
 
     val b = ceremony?.booking

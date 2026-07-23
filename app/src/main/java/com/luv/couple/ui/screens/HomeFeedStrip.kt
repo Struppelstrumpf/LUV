@@ -27,6 +27,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,16 +77,14 @@ fun HomeFeedStrip(
     var showEmptyInfo by remember { mutableStateOf(false) }
     var showHideHint by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            val now = System.currentTimeMillis()
-            val next = runCatching { LuvApiClient.fetchHomeFeed() }
-                .getOrDefault(emptyList())
-                .filter { it.expiresAt <= 0L || it.expiresAt > now }
-            items = next
-            if (index >= next.size) index = 0
-            delay(45_000)
-        }
+    val feedRev by com.luv.couple.net.HomeFeedRefreshBus.revision.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit, feedRev) {
+        val now = System.currentTimeMillis()
+        val next = runCatching { LuvApiClient.fetchHomeFeed() }
+            .getOrDefault(emptyList())
+            .filter { it.expiresAt <= 0L || it.expiresAt > now }
+        items = next
+        if (index >= next.size) index = 0
     }
 
     LaunchedEffect(items) {

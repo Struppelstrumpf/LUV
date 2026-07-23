@@ -57,6 +57,16 @@ function publish(db, item) {
   if (!row.shortText) return null;
   ensureFeed(db).push(row);
   if (db.homeFeed.length > FEED_MAX) db.homeFeed = db.homeFeed.slice(-FEED_MAX);
+  try {
+    const accountPush = require("./account_push");
+    accountPush.broadcastEvent("home_feed", {
+      id: row.id,
+      shortText: row.shortText,
+      kind: row.kind,
+    });
+  } catch {
+    /* optional */
+  }
   return row;
 }
 

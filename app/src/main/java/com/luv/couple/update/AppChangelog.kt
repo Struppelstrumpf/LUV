@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.175",
+            listOf(
+                "Weniger Hintergrund-Anfragen: Live-Hinweise, Home-Feed und Hochzeit per Sofort-Update",
+                "Online-Zähler entfernt — App und Website brauchen ihn nicht",
+            )
+        ),
+        Entry(
             "2.2.174",
             listOf(
                 "Freunde/Hochzeit: kein Dauer-HTTP-Poll mehr — Live-Verbindung reicht",

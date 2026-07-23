@@ -3,32 +3,6 @@
   const impressumDialog = document.getElementById("impressumDialog");
   openImpressum?.addEventListener("click", () => impressumDialog?.showModal());
 
-  // Echter Live-Zähler: Nutzer mit offener App (API)
-  (function liveUsersHook() {
-    const el = document.getElementById("liveCount");
-    if (!el) return;
-    const URL = "/luv/v1/public/live-count";
-
-    function render(n) {
-      const v = Math.max(0, Math.floor(Number(n) || 0));
-      el.textContent = v.toLocaleString("de-DE");
-    }
-
-    async function poll() {
-      try {
-        const res = await fetch(URL, { cache: "no-store" });
-        if (!res.ok) throw new Error("bad status");
-        const json = await res.json();
-        render(json.count);
-      } catch {
-        /* stiller Retry */
-      }
-      setTimeout(poll, 15000);
-    }
-
-    poll();
-  })();
-
   document.getElementById("scrollCue")?.addEventListener("click", (e) => {
     const target = document.getElementById("entdecken");
     if (!target) return;

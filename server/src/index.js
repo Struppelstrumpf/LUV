@@ -3195,6 +3195,8 @@ function tickCeremonyRitual(m, db) {
   if (m.status === "ceremony_scheduled" && expireLiveWindowWithoutVows(m)) {
     return { dissolved: true, liveWindowExpired: true };
   }
+  const cBefore = weddingCeremony.ensureCeremony(m);
+  const phaseBefore = `${cBefore.phase || ""}|${cBefore.pastorPhase || ""}`;
   // Zuerst Ghosts weg, dann Sitze, dann Altar-Hold — sonst Musik mit einer Person
   weddingCeremony.pruneStaleGathering(m);
   syncWeddingZoneSeating(m, db);
@@ -3228,7 +3230,17 @@ function tickCeremonyRitual(m, db) {
     (c.pastorPhase === "reception" || c.phase === "reception")
   ) {
     endCeremonyReception(m);
+    emitMarriageLiveUpdate(m, m.status || "married", "Empfang beendet");
     return { receptionOver: true, giftsRolled: true };
+  }
+  // Nur echte Phasenwechsel pushen (nicht bei jedem Sitz-/Move-Tick)
+  const phaseAfter = `${c.phase || ""}|${c.pastorPhase || ""}`;
+  if (phaseBefore !== phaseAfter) {
+    emitMarriageLiveUpdate(
+      m,
+      m.status || "ceremony_scheduled",
+      "Zeremonie aktualisiert"
+    );
   }
   return adv || null;
 }
@@ -6931,6 +6943,16 @@ function publishLiveNotice({
 
 function broadcastLiveNotice(notice) {
   if (!notice) return;
+  // Auch ohne Lobby-WS: Account-Kanal (Home/Sozial)
+  accountPush.broadcastEvent("live_notice", {
+    id: notice.id,
+    message: notice.message,
+    authorNickname: notice.authorNickname,
+    kind: notice.kind || "team",
+    subtitle: notice.subtitle || null,
+    targetUserId: notice.targetUserId || null,
+    createdAt: notice.createdAt,
+  });
   const payload = JSON.stringify({
     type: "live_notice",
     id: notice.id,
@@ -9312,6 +9334,15 @@ app.post("/v1/me/lobby-invites", (req, res) => {
   };
   invites.push(invite);
   scheduleSave();
+  accountPush.emitUserEvent(db, friendUserId, "lobby_invite", {
+    fromUserId: ctx.user.id,
+    nickname: String(ctx.user.nickname || "Jemand").slice(0, 18),
+    roomCode,
+    isWeddingCeremony: Boolean(isCeremony),
+    message: isCeremony
+      ? "Hochzeitseinladung"
+      : `${String(ctx.user.nickname || "Jemand").slice(0, 18)} lädt dich ein`,
+  });
   return res.json({ ok: true, inviteId: invite.id });
 });
 

@@ -2530,13 +2530,14 @@ class LockDrawActivity : ComponentActivity() {
     private fun observeMaintenance() {
         lifecycleScope.launch {
             while (true) {
+                var st: com.luv.couple.net.LuvApiClient.MaintenanceStatus? = null
                 if (
                     maintenanceHold ||
                     com.luv.couple.net.InteractivePriority.allowBackground()
                 ) {
-                    val st = runCatching { LuvApiClient.fetchMaintenanceStatus() }.getOrNull()
+                    st = runCatching { LuvApiClient.fetchMaintenanceStatus() }.getOrNull()
                     if (st != null) {
-                        if (st.active) {
+                        if (st.active || st.canClaim) {
                             maintenanceHold = true
                             showMaintenanceOverlay(st)
                         } else if (maintenanceHold) {
@@ -2546,8 +2547,23 @@ class LockDrawActivity : ComponentActivity() {
                         }
                     }
                 }
-                delay(if (maintenanceHold) 8_000 else 30_000)
+                delay(canvasMaintenanceSleepMs(st, maintenanceHold))
             }
+        }
+    }
+
+    private fun canvasMaintenanceSleepMs(
+        st: com.luv.couple.net.LuvApiClient.MaintenanceStatus?,
+        hold: Boolean,
+    ): Long {
+        if (hold || st?.active == true || st?.canClaim == true) return 15_000L
+        if (st == null) return 180_000L
+        val skew = System.currentTimeMillis() - st.serverNow
+        val until = (st.startsAt + skew) - System.currentTimeMillis()
+        return when {
+            until <= 60_000L -> 20_000L
+            until <= 10 * 60_000L -> 60_000L
+            else -> (until - 60_000L).coerceIn(180_000L, 6 * 60 * 60_000L)
         }
     }
 

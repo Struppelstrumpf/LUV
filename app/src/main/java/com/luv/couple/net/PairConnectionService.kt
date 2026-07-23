@@ -419,15 +419,11 @@ class PairConnectionService : Service() {
         return false
     }
 
-    /** Heartbeat / Auth-Config — unabhängig vom Lobby-WebSocket. */
+    /** Leichter Reachability-Check — unabhängig vom Lobby-WebSocket. */
     private suspend fun apiReachableIndependently(): Boolean {
         return runCatching {
-            if (!LuvApiClient.sessionToken.isNullOrBlank()) {
-                LuvApiClient.heartbeat()
-            } else {
-                LuvApiClient.authConfig()
-                true
-            }
+            LuvApiClient.authConfig()
+            true
         }.getOrDefault(false)
     }
 
