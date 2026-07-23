@@ -102,6 +102,7 @@ import com.luv.couple.LuvApp
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
+import com.luv.couple.net.PeerProfileCache
 import com.luv.couple.net.PendingProfilePlace
 import com.luv.couple.net.PendingShop
 import com.luv.couple.net.ProfilePlaceAction
@@ -238,7 +239,9 @@ fun ProfileCanvasScreen(
         }
     }
 
-    LaunchedEffect(userId, editable, nickname, tutorialMode) {
+    // nickname nur bei eigenem Profil als Key — sonst flackert Peer-Profil beim Schließen
+    // (Nav liefert kurz Fallback-Nick → Effect neu → leerer Platzhalter).
+    LaunchedEffect(userId, editable, tutorialMode, nickname.takeIf { editable || tutorialMode }) {
         if (editable) {
             profileReady = false
             if (tutorialMode) {
@@ -344,13 +347,7 @@ fun ProfileCanvasScreen(
             }
             profileReady = true
         } else if (!userId.isNullOrBlank()) {
-            // Sofort Placeholder mit Nickname — Remote danach nachladen
-            loadedNick = nickname
-            state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname)).normalized(nickname)
-            savedSnapshot = state.snapshotKey()
-            profileReady = true
-            val remote = LuvApiClient.fetchUserProfileCanvas(userId)
-            if (remote != null) {
+            fun applyPeer(remote: LuvApiClient.PeerProfile) {
                 loadedNick = remote.nickname
                 state = remote.state.normalized(remote.nickname)
                 displayCoins = remote.coins
@@ -358,7 +355,9 @@ fun ProfileCanvasScreen(
                 canPetKraul = remote.canPetKraul
                 canTipGlass = remote.canTipGlass
                 glassTipsRemaining = remote.glassTipsRemaining
-                peerPetEmoji = remote.petEmoji.ifBlank { remote.state.companionEmoji.ifBlank { "🐣" } }
+                peerPetEmoji = remote.petEmoji.ifBlank {
+                    remote.state.companionEmoji.ifBlank { "🐣" }
+                }
                 friendshipLevel = remote.friendshipLevel
                 canProposeMarriage = remote.canProposeMarriage
                 proposeUnlockCost = remote.proposeUnlockCost
@@ -370,7 +369,27 @@ fun ProfileCanvasScreen(
                 spouseExtraName = remote.spousePublic?.nickname
                 engagedExtraName = remote.fiancePublic?.nickname
                 dayStreak = remote.dayStreak
+                savedSnapshot = state.snapshotKey()
+            }
+
+            // Cache zuerst → echtes Profil sofort, kein leerer Default-Flash
+            val cached = PeerProfileCache.get(userId)
+            if (cached != null) {
+                applyPeer(cached)
+                profileReady = true
             } else {
+                profileReady = false
+            }
+
+            val remote = LuvApiClient.fetchUserProfileCanvas(userId)
+            if (remote != null) {
+                PeerProfileCache.put(userId, remote)
+                applyPeer(remote)
+                profileReady = true
+            } else if (cached == null) {
+                loadedNick = nickname
+                state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname))
+                    .normalized(nickname)
                 displayCoins = 0
                 friendStatus = "none"
                 canPetKraul = false
@@ -386,8 +405,9 @@ fun ProfileCanvasScreen(
                 canDivorce = false
                 peerMarriage = null
                 dayStreak = 0
+                savedSnapshot = state.snapshotKey()
+                profileReady = true
             }
-            savedSnapshot = state.snapshotKey()
             // img_*-Stickers/Pets parallel vorladen (sonst bleiben lange 🐾)
             val imgIds = buildList {
                 state.companionEmoji.trim().takeIf { it.startsWith("img_", true) }?.let { add(it) }

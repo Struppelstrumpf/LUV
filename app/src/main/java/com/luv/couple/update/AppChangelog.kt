@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.180",
+            listOf(
+                "Fremde Profile öffnen ohne leeren Platzhalter-Flash",
+            )
+        ),
+        Entry(
             "2.2.179",
             listOf(
                 "Inventar: Item-Details mit Shop-/Marktpreisen und schönem Marktplatz-Anbieten",

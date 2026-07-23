@@ -2761,10 +2761,14 @@ fun LuvAppNav() {
             arguments = listOf(navArgument("userId") { type = NavType.StringType })
         ) { entry ->
             val peerId = entry.arguments?.getString("userId").orEmpty()
-            val peerNick = navController.previousBackStackEntry
-                ?.savedStateHandle
-                ?.get<String>("peer_nick")
-                ?: "Jemand"
+            // Einmalig merken — beim popBackStack wechselt previousBackStackEntry kurz
+            // und würde sonst "Jemand" + leeres Profil flashen.
+            val peerNick = remember(peerId) {
+                navController.previousBackStackEntry
+                    ?.savedStateHandle
+                    ?.get<String>("peer_nick")
+                    ?: "Jemand"
+            }
             ProfileCanvasScreen(
                 nickname = peerNick,
                 colorIndex = PeerPalette.indexFor(peerNick),
