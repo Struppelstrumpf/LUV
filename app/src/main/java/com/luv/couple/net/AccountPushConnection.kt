@@ -98,6 +98,8 @@ object AccountPushConnection {
             val listener = object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     socketRef.set(webSocket)
+                    // Nach Connect/Reconnect einmal synchronisieren (Events in der Lücke)
+                    AccountEventRouter.syncAfterReconnect(app)
                     scope.launch {
                         while (running.get() && socketRef.get() === webSocket) {
                             delay(PING_MS)
@@ -155,6 +157,15 @@ object AccountPushConnection {
 /** Shared by Account-WS and FCM data payloads. */
 object AccountEventRouter {
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Einmal nach WS-Open — ersetzt periodischen HTTP-Poll. */
+    fun syncAfterReconnect(context: Context) {
+        val app = context.applicationContext
+        ioScope.launch {
+            runCatching { NotificationBadges.refreshFriends(app, force = true) }
+            NotificationBadges.syncAppBadge(app)
+        }
+    }
 
     fun onEvent(context: Context, event: String, data: JSONObject) {
         val app = context.applicationContext

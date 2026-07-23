@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.174",
+            listOf(
+                "Freunde/Hochzeit: kein Dauer-HTTP-Poll mehr — Live-Verbindung reicht",
+            )
+        ),
+        Entry(
             "2.2.173",
             listOf(
                 "Hochzeit-Kacheln im Freunde-Tab aktualisieren sich live (Antrag bis verheiratet)",

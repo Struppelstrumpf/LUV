@@ -1634,22 +1634,6 @@ fun LuvAppNav() {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Fallback-Poll (Account-WS/FCM ist Hauptweg): Freunde / Erfolge / Badge
-    LaunchedEffect(startDestination, account?.googleLinked) {
-        if (startDestination != Routes.MAIN) return@LaunchedEffect
-        if (account?.googleLinked != true) return@LaunchedEffect
-        while (true) {
-            delay(600_000L)
-            if (LuvApiClient.sessionToken.isNullOrBlank()) continue
-            if (!com.luv.couple.net.InteractivePriority.allowBackground()) continue
-            runCatching {
-                com.luv.couple.net.NotificationBadges.refreshFriends(context, force = true)
-            }
-            runCatching { AchievementsBadge.refresh() }
-            com.luv.couple.net.NotificationBadges.syncAppBadge(context)
-        }
-    }
-
     LaunchedEffect(focusUpdate) {
         if (!AppUpdater.consumeFocus()) return@LaunchedEffect
         if (updateState is UpdateUiState.Available || updateState is UpdateUiState.Ready) {

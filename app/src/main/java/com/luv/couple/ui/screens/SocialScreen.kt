@@ -467,16 +467,10 @@ private fun FriendsPanel(
         reload(force = true)
     }
 
-    // Tab sichtbar: sofort; Hochzeit-Kacheln laufen über Account-WS — Poll nur Fallback
+    // Tab sichtbar: einmal laden. Danach Account-WS (Events + Reconnect-Sync), kein Dauer-Poll.
     LaunchedEffect(active) {
         if (!active) return@LaunchedEffect
         reload(force = true)
-        while (true) {
-            delay(300_000L)
-            if (!active) continue
-            runCatching { LuvApiClient.fetchFriends(force = true) }
-                .onSuccess { applyFriendsSnap(it) }
-        }
     }
 
     fun persistOrder(next: List<LuvApiClient.FriendCard>) {
