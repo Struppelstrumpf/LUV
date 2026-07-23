@@ -1,5 +1,6 @@
 # Isolierter Stack — API nur über Private IP (Caddy auf reineke.pro proxyt).
-# STORE_BACKEND=json (Default) | später postgres.
+# STORE_BACKEND=json (Default) | postgres (store_live primary, JSON hot mirror).
+# Flip only via server .env after migrate_json_to_pg + verify_store_pg.
 
 services:
   luv-api:

@@ -2,14 +2,9 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-// Live path: JSON file. Postgres is prepared (see sql/ + migrate_json_to_pg.js).
-// Flip only after dual-read validation: STORE_BACKEND=postgres
+// json = file primary | postgres = store_live primary + JSON hot mirror
 const STORE_BACKEND = String(process.env.STORE_BACKEND || "json").toLowerCase();
-if (STORE_BACKEND !== "json") {
-  console.warn(
-    `[store] STORE_BACKEND=${STORE_BACKEND} not fully implemented — using JSON file`
-  );
-}
+const USE_PG = STORE_BACKEND === "postgres" || STORE_BACKEND === "pg";
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 const DATA_FILE = path.join(DATA_DIR, "luv-store.json");
@@ -56,10 +51,102 @@ function ensureDir() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-function load() {
+function normalize(raw) {
+  if (!raw || typeof raw !== "object") return structuredClone(DEFAULT);
+  return {
+    ...raw,
+    users: raw.users || {},
+    sessions: raw.sessions || {},
+    vouchers: raw.vouchers || {},
+    redeems: raw.redeems || {},
+    payments: raw.payments || {},
+    ledger: Array.isArray(raw.ledger) ? raw.ledger : [],
+    rooms: raw.rooms && typeof raw.rooms === "object" ? raw.rooms : {},
+    canvasMemories:
+      raw.canvasMemories && typeof raw.canvasMemories === "object"
+        ? raw.canvasMemories
+        : {},
+    publicCanvases:
+      raw.publicCanvases && typeof raw.publicCanvases === "object"
+        ? raw.publicCanvases
+        : {},
+    publicReports:
+      raw.publicReports && typeof raw.publicReports === "object"
+        ? raw.publicReports
+        : {},
+    peerReports:
+      raw.peerReports && typeof raw.peerReports === "object" ? raw.peerReports : {},
+    helpMessages:
+      raw.helpMessages && typeof raw.helpMessages === "object"
+        ? raw.helpMessages
+        : {},
+    bugReports:
+      raw.bugReports && typeof raw.bugReports === "object" ? raw.bugReports : {},
+    liveNotice:
+      raw.liveNotice && typeof raw.liveNotice === "object" ? raw.liveNotice : null,
+    homeFeed: Array.isArray(raw.homeFeed) ? raw.homeFeed : [],
+    maintenance:
+      raw.maintenance && typeof raw.maintenance === "object"
+        ? raw.maintenance
+        : {
+            nightKey: null,
+            joke: "",
+            jobDone: false,
+            jobStartedAt: null,
+            jobFinishedAt: null,
+            lastReportId: null,
+          },
+    maintenanceReports:
+      raw.maintenanceReports && typeof raw.maintenanceReports === "object"
+        ? raw.maintenanceReports
+        : {},
+    marketListings:
+      raw.marketListings && typeof raw.marketListings === "object"
+        ? raw.marketListings
+        : {},
+    marketMeta:
+      raw.marketMeta && typeof raw.marketMeta === "object"
+        ? raw.marketMeta
+        : { priceHistory: {} },
+    economySettings:
+      raw.economySettings && typeof raw.economySettings === "object"
+        ? raw.economySettings
+        : { achievementDailyCap: 12 },
+    itemTradeFlags:
+      raw.itemTradeFlags && typeof raw.itemTradeFlags === "object"
+        ? raw.itemTradeFlags
+        : {},
+    itemDisplayLabels:
+      raw.itemDisplayLabels && typeof raw.itemDisplayLabels === "object"
+        ? raw.itemDisplayLabels
+        : {},
+    achievementDefs:
+      raw.achievementDefs && typeof raw.achievementDefs === "object"
+        ? raw.achievementDefs
+        : {},
+    notifyPhrases:
+      raw.notifyPhrases && typeof raw.notifyPhrases === "object"
+        ? raw.notifyPhrases
+        : { phrases: [], version: 1 },
+    marriages:
+      raw.marriages && typeof raw.marriages === "object" ? raw.marriages : {},
+    guestbookReports: Array.isArray(raw.guestbookReports)
+      ? raw.guestbookReports
+      : [],
+    shopCatalog:
+      raw.shopCatalog && typeof raw.shopCatalog === "object"
+        ? raw.shopCatalog
+        : { items: {}, version: 1 },
+    roomLayouts:
+      raw.roomLayouts && typeof raw.roomLayouts === "object"
+        ? raw.roomLayouts
+        : {},
+  };
+}
+
+function loadFromFile() {
   ensureDir();
   if (!fs.existsSync(DATA_FILE)) {
-    // Sync-Bootstrap wie zuvor — leere DB anlegen
     const empty = structuredClone(DEFAULT);
     const tmp = DATA_FILE + ".tmp";
     fs.writeFileSync(tmp, JSON.stringify(empty, null, 0), "utf8");
@@ -67,99 +154,49 @@ function load() {
     return empty;
   }
   try {
-    const raw = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-    // WICHTIG: ...raw behalten (shopStats, staffAudit, …) + kritische Keys normalisieren
-    return {
-      ...raw,
-      users: raw.users || {},
-      sessions: raw.sessions || {},
-      vouchers: raw.vouchers || {},
-      redeems: raw.redeems || {},
-      payments: raw.payments || {},
-      ledger: Array.isArray(raw.ledger) ? raw.ledger : [],
-      rooms: raw.rooms && typeof raw.rooms === "object" ? raw.rooms : {},
-      canvasMemories:
-        raw.canvasMemories && typeof raw.canvasMemories === "object"
-          ? raw.canvasMemories
-          : {},
-      publicCanvases:
-        raw.publicCanvases && typeof raw.publicCanvases === "object"
-          ? raw.publicCanvases
-          : {},
-      publicReports:
-        raw.publicReports && typeof raw.publicReports === "object"
-          ? raw.publicReports
-          : {},
-      peerReports:
-        raw.peerReports && typeof raw.peerReports === "object" ? raw.peerReports : {},
-      helpMessages:
-        raw.helpMessages && typeof raw.helpMessages === "object"
-          ? raw.helpMessages
-          : {},
-      bugReports:
-        raw.bugReports && typeof raw.bugReports === "object" ? raw.bugReports : {},
-      liveNotice:
-        raw.liveNotice && typeof raw.liveNotice === "object" ? raw.liveNotice : null,
-      homeFeed: Array.isArray(raw.homeFeed) ? raw.homeFeed : [],
-      maintenance:
-        raw.maintenance && typeof raw.maintenance === "object"
-          ? raw.maintenance
-          : {
-              nightKey: null,
-              joke: "",
-              jobDone: false,
-              jobStartedAt: null,
-              jobFinishedAt: null,
-              lastReportId: null,
-            },
-      maintenanceReports:
-        raw.maintenanceReports && typeof raw.maintenanceReports === "object"
-          ? raw.maintenanceReports
-          : {},
-      marketListings:
-        raw.marketListings && typeof raw.marketListings === "object"
-          ? raw.marketListings
-          : {},
-      marketMeta:
-        raw.marketMeta && typeof raw.marketMeta === "object"
-          ? raw.marketMeta
-          : { priceHistory: {} },
-      economySettings:
-        raw.economySettings && typeof raw.economySettings === "object"
-          ? raw.economySettings
-          : { achievementDailyCap: 12 },
-      itemTradeFlags:
-        raw.itemTradeFlags && typeof raw.itemTradeFlags === "object"
-          ? raw.itemTradeFlags
-          : {},
-      itemDisplayLabels:
-        raw.itemDisplayLabels && typeof raw.itemDisplayLabels === "object"
-          ? raw.itemDisplayLabels
-          : {},
-      achievementDefs:
-        raw.achievementDefs && typeof raw.achievementDefs === "object"
-          ? raw.achievementDefs
-          : {},
-      notifyPhrases:
-        raw.notifyPhrases && typeof raw.notifyPhrases === "object"
-          ? raw.notifyPhrases
-          : { phrases: [], version: 1 },
-      marriages:
-        raw.marriages && typeof raw.marriages === "object" ? raw.marriages : {},
-      guestbookReports: Array.isArray(raw.guestbookReports)
-        ? raw.guestbookReports
-        : [],
-      shopCatalog:
-        raw.shopCatalog && typeof raw.shopCatalog === "object"
-          ? raw.shopCatalog
-          : { items: {}, version: 1 },
-      roomLayouts:
-        raw.roomLayouts && typeof raw.roomLayouts === "object"
-          ? raw.roomLayouts
-          : {},
-    };
+    return normalize(JSON.parse(fs.readFileSync(DATA_FILE, "utf8")));
   } catch {
     return structuredClone(DEFAULT);
+  }
+}
+
+function load() {
+  if (!USE_PG) {
+    return loadFromFile();
+  }
+  if (!process.env.DATABASE_URL) {
+    console.error(
+      "[store] STORE_BACKEND=postgres but DATABASE_URL missing — falling back to JSON file"
+    );
+    return loadFromFile();
+  }
+  try {
+    const { loadLiveSync, saveLiveSync, writeJsonMirror } = require("./pg_store");
+    let payload = loadLiveSync();
+    if (payload == null) {
+      console.warn(
+        "[store] store_live empty — bootstrapping from JSON file into Postgres"
+      );
+      const fromFile = loadFromFile();
+      saveLiveSync(fromFile, { source: "bootstrap_from_json", alsoSnapshot: true });
+      writeJsonMirror(DATA_FILE, fromFile);
+      console.log("[store] primary=postgres (bootstrapped from JSON)");
+      return normalize(fromFile);
+    }
+    const db = normalize(payload);
+    try {
+      writeJsonMirror(DATA_FILE, db);
+    } catch (e) {
+      console.warn("[store] json mirror on boot failed", e?.message || e);
+    }
+    console.log("[store] primary=postgres (loaded store_live)");
+    return db;
+  } catch (err) {
+    console.error(
+      "[store] postgres load failed — falling back to JSON file:",
+      err?.message || err
+    );
+    return loadFromFile();
   }
 }
 
@@ -168,18 +205,40 @@ let writeTimer = null;
 /** Serialize async writes so HTTP handlers don't block on full-DB sync I/O. */
 let writeChain = Promise.resolve();
 let writeQueued = false;
+let pgSaveFailures = 0;
 
 function ensureDirExists() {
   ensureDir();
 }
 
-/** Sync write — nur Shutdown / Migration. */
-function save(next = db) {
+function saveJsonFileSync() {
   ensureDirExists();
-  if (next !== db) db = next;
   const tmp = DATA_FILE + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(db, null, 0), "utf8");
   fs.renameSync(tmp, DATA_FILE);
+}
+
+/** Sync write — Shutdown / Migration. */
+function save(next = db) {
+  if (next !== db) db = next;
+  if (USE_PG && process.env.DATABASE_URL) {
+    try {
+      const { saveLiveSync, writeJsonMirror } = require("./pg_store");
+      saveLiveSync(db, { source: "flush_sync" });
+      writeJsonMirror(DATA_FILE, db);
+      return;
+    } catch (err) {
+      console.error("[store] pg sync save failed", err?.message || err);
+      // Still mirror JSON so rollback data exists
+      try {
+        saveJsonFileSync();
+      } catch (e2) {
+        console.error("[store] json fallback save failed", e2?.message || e2);
+      }
+      throw err;
+    }
+  }
+  saveJsonFileSync();
 }
 
 function enqueueSave() {
@@ -189,7 +248,7 @@ function enqueueSave() {
     .then(
       () =>
         new Promise((resolve) => {
-          setImmediate(() => {
+          setImmediate(async () => {
             writeQueued = false;
             let payload;
             try {
@@ -199,6 +258,42 @@ function enqueueSave() {
               resolve();
               return;
             }
+
+            if (USE_PG && process.env.DATABASE_URL) {
+              try {
+                const { saveLive, writeJsonMirrorAsync } = require("./pg_store");
+                const parsed = JSON.parse(payload);
+                await saveLive(parsed, { source: "enqueue_save", alsoSnapshot: false });
+                pgSaveFailures = 0;
+                await writeJsonMirrorAsync(DATA_FILE, payload);
+                // Periodic history snapshot via pg_dual throttle
+                try {
+                  const { maybeDualWrite } = require("./pg_dual");
+                  setImmediate(() => {
+                    maybeDualWrite(DATA_FILE, { fromPrimary: true }).catch(() => {});
+                  });
+                } catch {
+                  /* optional */
+                }
+              } catch (err) {
+                pgSaveFailures += 1;
+                console.error(
+                  "[store] postgres save failed (#" + pgSaveFailures + ")",
+                  err?.message || err
+                );
+                // Always keep JSON mirror current for emergency rollback
+                try {
+                  const { writeJsonMirrorAsync } = require("./pg_store");
+                  await writeJsonMirrorAsync(DATA_FILE, payload);
+                } catch {
+                  /* ignore */
+                }
+              }
+              resolve();
+              return;
+            }
+
+            // JSON primary
             const tmp = DATA_FILE + ".tmp";
             ensureDirExists();
             fs.writeFile(tmp, payload, "utf8", (err) => {
@@ -326,4 +421,5 @@ module.exports = {
   newId,
   DATA_DIR,
   DATA_FILE,
+  STORE_BACKEND: USE_PG ? "postgres" : "json",
 };
