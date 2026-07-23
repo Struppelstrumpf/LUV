@@ -5,6 +5,8 @@ const crypto = require("crypto");
 // json = file primary | postgres = store_live primary + JSON hot mirror
 const STORE_BACKEND = String(process.env.STORE_BACKEND || "json").toLowerCase();
 const USE_PG = STORE_BACKEND === "postgres" || STORE_BACKEND === "pg";
+const USERS_BACKEND = String(process.env.USERS_BACKEND || "blob").toLowerCase();
+const USE_USERS_TABLE = USERS_BACKEND === "table" || USERS_BACKEND === "pg";
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 const DATA_FILE = path.join(DATA_DIR, "luv-store.json");
@@ -160,9 +162,33 @@ function loadFromFile() {
   }
 }
 
+function hydrateUsersFromTable(dbObj) {
+  if (!USE_USERS_TABLE || !process.env.DATABASE_URL) return dbObj;
+  try {
+    const { loadAllUsersSync } = require("./users_pg");
+    const fromTable = loadAllUsersSync();
+    const n = Object.keys(fromTable || {}).length;
+    if (n === 0) {
+      console.warn(
+        "[store] USERS_BACKEND=table but users table empty — keeping blob users"
+      );
+      return dbObj;
+    }
+    dbObj.users = fromTable;
+    console.log(`[store] users SoT=table (loaded ${n} users)`);
+  } catch (err) {
+    console.error(
+      "[store] users table load failed — keeping blob users:",
+      err?.message || err
+    );
+  }
+  return dbObj;
+}
+
 function load() {
   if (!USE_PG) {
-    return loadFromFile();
+    const fromFile = loadFromFile();
+    return hydrateUsersFromTable(fromFile);
   }
   if (!process.env.DATABASE_URL) {
     console.error(
@@ -181,22 +207,22 @@ function load() {
       saveLiveSync(fromFile, { source: "bootstrap_from_json", alsoSnapshot: true });
       writeJsonMirror(DATA_FILE, fromFile);
       console.log("[store] primary=postgres (bootstrapped from JSON)");
-      return normalize(fromFile);
+      return hydrateUsersFromTable(normalize(fromFile));
     }
-    const db = normalize(payload);
+    const dbObj = hydrateUsersFromTable(normalize(payload));
     try {
-      writeJsonMirror(DATA_FILE, db);
+      writeJsonMirror(DATA_FILE, dbObj);
     } catch (e) {
       console.warn("[store] json mirror on boot failed", e?.message || e);
     }
     console.log("[store] primary=postgres (loaded store_live)");
-    return db;
+    return dbObj;
   } catch (err) {
     console.error(
       "[store] postgres load failed — falling back to JSON file:",
       err?.message || err
     );
-    return loadFromFile();
+    return hydrateUsersFromTable(loadFromFile());
   }
 }
 
@@ -422,4 +448,5 @@ module.exports = {
   DATA_DIR,
   DATA_FILE,
   STORE_BACKEND: USE_PG ? "postgres" : "json",
+  USERS_BACKEND: USE_USERS_TABLE ? "table" : "blob",
 };

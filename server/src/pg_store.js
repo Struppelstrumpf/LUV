@@ -130,25 +130,31 @@ async function saveLive(db, { source = "save", alsoSnapshot = false } = {}) {
         );
       }
 
-      for (const [id, u] of Object.entries(users)) {
-        if (!u || typeof u !== "object") continue;
-        await client.query(
-          `INSERT INTO users(id, email, nickname, coins, raw, updated_at)
-           VALUES ($1,$2,$3,$4,$5::jsonb, NOW())
-           ON CONFLICT (id) DO UPDATE SET
-             email = EXCLUDED.email,
-             nickname = EXCLUDED.nickname,
-             coins = EXCLUDED.coins,
-             raw = EXCLUDED.raw,
-             updated_at = NOW()`,
-          [
-            String(id),
-            userEmail(u),
-            u.nickname ? String(u.nickname) : null,
-            Number(u.coins) || 0,
-            JSON.stringify(u),
-          ]
-        );
+      // Prefer SoT upsert (extra columns); fall back to legacy columns
+      try {
+        const { upsertUsersInClient } = require("./users_pg");
+        await upsertUsersInClient(client, users);
+      } catch {
+        for (const [id, u] of Object.entries(users)) {
+          if (!u || typeof u !== "object") continue;
+          await client.query(
+            `INSERT INTO users(id, email, nickname, coins, raw, updated_at)
+             VALUES ($1,$2,$3,$4,$5::jsonb, NOW())
+             ON CONFLICT (id) DO UPDATE SET
+               email = EXCLUDED.email,
+               nickname = EXCLUDED.nickname,
+               coins = EXCLUDED.coins,
+               raw = EXCLUDED.raw,
+               updated_at = NOW()`,
+            [
+              String(id),
+              userEmail(u),
+              u.nickname ? String(u.nickname) : null,
+              Number(u.coins) || 0,
+              JSON.stringify(u),
+            ]
+          );
+        }
       }
 
       await client.query(
