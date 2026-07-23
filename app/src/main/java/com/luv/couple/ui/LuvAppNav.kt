@@ -818,6 +818,8 @@ fun LuvAppNav() {
             Toast.makeText(context, "Angemeldet", Toast.LENGTH_SHORT).show()
         } else {
             applyAuthResult(result, fromGoogle = true)
+            PairConnectionService.ensureAccountPush(context)
+            runCatching { com.luv.couple.notify.LuvFcm.registerIfAvailable(context) }
             accountMessage = if (result.linked) {
                 "Mit Google angemeldet — Konto wiederhergestellt."
             } else {
@@ -1473,6 +1475,8 @@ fun LuvAppNav() {
             if (snapshot.hasLobbies) {
                 CanvasStore.setActiveLobby(snapshot.activeLobbyId)
                 PairConnectionService.startAll(context)
+            } else if (!snapshot.sessionToken.isNullOrBlank()) {
+                PairConnectionService.ensureAccountPush(context)
             }
             Routes.MAIN
         }
@@ -1490,6 +1494,8 @@ fun LuvAppNav() {
         // Kurze Pause, damit WS die erste Netz-Sekunde behält
         delay(400)
         if (startDestination == Routes.MAIN && !LuvApiClient.sessionToken.isNullOrBlank()) {
+            PairConnectionService.ensureAccountPush(context)
+            runCatching { com.luv.couple.notify.LuvFcm.registerIfAvailable(context) }
             runCatching { LuvApiClient.claimDaily(); refreshAccount() }
             val sessionOk = runCatching {
                 val user = LuvApiClient.me()
@@ -1628,12 +1634,12 @@ fun LuvAppNav() {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Alle 3 Min: Freunde / Heirat / Einladungen (Badge), ohne UI zu blockieren
+    // Fallback-Poll (Account-WS/FCM ist Hauptweg): Freunde / Erfolge / Badge
     LaunchedEffect(startDestination, account?.googleLinked) {
         if (startDestination != Routes.MAIN) return@LaunchedEffect
         if (account?.googleLinked != true) return@LaunchedEffect
         while (true) {
-            delay(180_000L)
+            delay(600_000L)
             if (LuvApiClient.sessionToken.isNullOrBlank()) continue
             if (!com.luv.couple.net.InteractivePriority.allowBackground()) continue
             runCatching {

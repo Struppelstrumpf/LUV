@@ -120,8 +120,13 @@ class PairConnectionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureForeground()
+        AccountPushConnection.ensureStarted(applicationContext)
 
         when (intent?.action) {
+            ACTION_ACCOUNT_PUSH -> {
+                // Nur Account-WS / FGS — ohne Lobby-Sync
+                return START_STICKY
+            }
             ACTION_STOP -> {
                 val lobbyId = intent.getStringExtra(EXTRA_LOBBY_ID)
                 if (lobbyId != null) stopLobby(lobbyId)
@@ -181,8 +186,16 @@ class PairConnectionService : Service() {
 
     private suspend fun syncSessionsFromPrefs() {
         val lobbies = runCatching { LuvApp.instance.prefs.snapshot().lobbies }.getOrDefault(emptyList())
+        AccountPushConnection.ensureStarted(applicationContext)
         if (lobbies.isEmpty()) {
-            stopAll()
+            // Keine Lobbys: Lobby-Sessions weg, FGS + Account-WS behalten wenn eingeloggt
+            sessions.keys.toList().forEach { stopLobbyKeepService(it) }
+            if (LuvApiClient.sessionToken.isNullOrBlank()) {
+                stopAll()
+            } else {
+                updateAggregate(ConnectionState.IDLE)
+                ensureForeground()
+            }
             return
         }
         // Ein Session pro Lobby-Code — Doppel-Einträge erzeugen sonst 4002-Flapping
@@ -1329,6 +1342,21 @@ class PairConnectionService : Service() {
     }
 
     private fun stopLobby(lobbyId: String) {
+        stopLobbyKeepService(lobbyId)
+        refreshAggregateState()
+        if (sessions.isEmpty()) {
+            if (LuvApiClient.sessionToken.isNullOrBlank()) {
+                stopSelfSafely()
+            } else {
+                AccountPushConnection.ensureStarted(applicationContext)
+                ensureForeground()
+            }
+        } else {
+            ensureForeground()
+        }
+    }
+
+    private fun stopLobbyKeepService(lobbyId: String) {
         sessions.remove(lobbyId)?.let { session ->
             session.intentionalLeave = true
             session.running.set(false)
@@ -1337,16 +1365,11 @@ class PairConnectionService : Service() {
             PairSessionState.resetLobby(lobbyId)
             _lobbyStates.updateAndRemove(lobbyId)
         }
-        refreshAggregateState()
-        if (sessions.isEmpty()) {
-            stopSelfSafely()
-        } else {
-            ensureForeground()
-        }
     }
 
     private fun stopAll() {
-        sessions.keys.toList().forEach { stopLobby(it) }
+        AccountPushConnection.stop()
+        sessions.keys.toList().forEach { stopLobbyKeepService(it) }
         PairSessionState.reset()
         updateAggregate(ConnectionState.IDLE)
         runCatching {
@@ -1357,6 +1380,12 @@ class PairConnectionService : Service() {
     }
 
     private fun stopSelfSafely() {
+        if (!LuvApiClient.sessionToken.isNullOrBlank()) {
+            AccountPushConnection.ensureStarted(applicationContext)
+            ensureForeground()
+            return
+        }
+        AccountPushConnection.stop()
         updateAggregate(ConnectionState.IDLE)
         runCatching {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -1573,6 +1602,7 @@ class PairConnectionService : Service() {
 
     override fun onDestroy() {
         if (instanceRef === this) instanceRef = null
+        // Account-WS läuft eigenständig weiter, solange Prozess/Session lebt
         sessions.values.forEach {
             it.running.set(false)
             it.job?.cancel()
@@ -1589,6 +1619,8 @@ class PairConnectionService : Service() {
         private const val TAG = "LuvPairService"
         const val ACTION_START = "com.luv.couple.ACTION_START"
         const val ACTION_START_ALL = "com.luv.couple.ACTION_START_ALL"
+        /** FGS + Account-WS ohne Lobby-Pflicht (nach Login). */
+        const val ACTION_ACCOUNT_PUSH = "com.luv.couple.ACTION_ACCOUNT_PUSH"
         const val ACTION_STOP = "com.luv.couple.ACTION_STOP"
         const val ACTION_SEND_STROKE = "com.luv.couple.ACTION_SEND_STROKE"
         const val ACTION_SEND_CLEAR = "com.luv.couple.ACTION_SEND_CLEAR"
@@ -1683,6 +1715,24 @@ class PairConnectionService : Service() {
                 true
             } catch (t: Throwable) {
                 Log.e(TAG, "Unable to start pair service", t)
+                false
+            }
+        }
+
+        /** Account-Events-WS im FGS — auch ohne Lobbys, solange Session da ist. */
+        fun ensureAccountPush(context: Context): Boolean {
+            if (LuvApiClient.sessionToken.isNullOrBlank()) {
+                AccountPushConnection.stop()
+                return false
+            }
+            AccountPushConnection.ensureStarted(context)
+            return try {
+                val intent = Intent(context, PairConnectionService::class.java)
+                    .setAction(ACTION_ACCOUNT_PUSH)
+                context.startForegroundService(intent)
+                true
+            } catch (t: Throwable) {
+                Log.e(TAG, "Unable to start account push service", t)
                 false
             }
         }

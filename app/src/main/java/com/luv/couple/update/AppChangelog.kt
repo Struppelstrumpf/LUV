@@ -12,6 +12,13 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.172",
+            listOf(
+                "Freunde, Heirat, Markt und Erfolge: Sofort-Hinweise per Live-Verbindung",
+                "Push auch wenn die App komplett geschlossen wurde (sobald Firebase eingerichtet ist)",
+            )
+        ),
+        Entry(
             "2.2.171",
             listOf(
                 "Schnelleres Tippen: Käufe und Belohnungen ohne Extra-Warten",

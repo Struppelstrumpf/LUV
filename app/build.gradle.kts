@@ -13,6 +13,12 @@ val keystoreProperties = Properties().apply {
     }
 }
 
+/** Ohne google-services.json baut die App ohne Firebase; Account-WS bleibt aktiv. */
+val hasGoogleServices = file("google-services.json").exists()
+if (hasGoogleServices) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 android {
     namespace = "com.luv.couple"
     compileSdk = 36
@@ -21,14 +27,21 @@ android {
         applicationId = "com.luv.couple"
         minSdk = 28
         targetSdk = 36
-        versionCode = 494
-        versionName = "2.2.171"
+        versionCode = 495
+        versionName = "2.2.172"
 
         // Hetzner/API-URL hier oder in gradle.properties setzen:
         // luv.api.baseUrl=https://luv.deinedomain.de
         val apiBase = (project.findProperty("luv.api.baseUrl") as String?)
             ?: "http://127.0.0.1:18780"
         buildConfigField("String", "LUV_API_BASE_URL", "\"$apiBase\"")
+        buildConfigField("boolean", "FCM_ENABLED", hasGoogleServices.toString())
+    }
+
+    sourceSets {
+        getByName("main") {
+            java.srcDir(if (hasGoogleServices) "src/fcm/java" else "src/nofcm/java")
+        }
     }
 
     signingConfigs {
@@ -103,4 +116,8 @@ dependencies {
     implementation("com.google.android.play:integrity:1.4.0")
     implementation("com.android.installreferrer:installreferrer:2.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    if (hasGoogleServices) {
+        implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+        implementation("com.google.firebase:firebase-messaging")
+    }
 }

@@ -416,6 +416,42 @@ object LuvApiClient {
         return "$wsBase/v1/ws?code=${code.encodeURL()}&token=${token.encodeURL()}&role=${role.encodeURL()}$sessionQ"
     }
 
+    /** Account-Events (Freunde/Hochzeit/Markt/Erfolge), getrennt vom Lobby-Stroke-WS. */
+    fun accountWsUrl(session: String? = sessionToken): String {
+        val httpBase = baseUrl()
+        val wsBase = when {
+            httpBase.startsWith("https://") -> "wss://" + httpBase.removePrefix("https://")
+            httpBase.startsWith("http://") -> "ws://" + httpBase.removePrefix("http://")
+            else -> "ws://$httpBase"
+        }
+        val token = session?.takeIf { it.isNotBlank() } ?: ""
+        return "$wsBase/v1/ws/account?session=${token.encodeURL()}"
+    }
+
+    suspend fun registerDeviceToken(token: String, platform: String = "android"): Boolean =
+        withContext(Dispatchers.IO) {
+            val t = token.trim()
+            if (t.length < 20) return@withContext false
+            val body = JSONObject()
+                .put("token", t)
+                .put("platform", platform)
+                .toString()
+            runCatching { authedPost("/v1/me/device-token", body) }.isSuccess
+        }
+
+    suspend fun unregisterDeviceToken(token: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val t = token.trim()
+            if (t.isBlank()) return@withContext false
+            val body = JSONObject().put("token", t).toString()
+            val request = authedRequestBuilder("/v1/me/device-token")
+                .delete(body.toRequestBody(jsonMedia))
+                .build()
+            runCatching {
+                http.newCall(request).execute().use { it.isSuccessful }
+            }.getOrDefault(false)
+        }
+
     suspend fun authConfig(): AuthConfig = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url("${baseUrl()}/v1/auth/config")

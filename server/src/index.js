@@ -39,6 +39,7 @@ const seasonEvents = require("./events");
 const adminWebAuth = require("./admin_web_auth");
 const maintenance = require("./maintenance");
 const iapLedger = require("./iap_ledger");
+const accountPush = require("./account_push");
 const shopChangeQueue = require("./shop_change_queue");
 const bugReports = require("./bug_reports");
 const redisUtil = require("./redis_util");
@@ -5779,12 +5780,34 @@ try {
 function trackAch(user, metric, amount = 1) {
   if (!user || !metric) return null;
   try {
-    return ach.bumpMetric(user, metric, amount, todayKey(), (uid, delta, reason, ref) => {
+    const result = ach.bumpMetric(user, metric, amount, todayKey(), (uid, delta, reason, ref) => {
       applyLedger(uid, delta, reason, ref);
     });
+    notifyAchievementUnlocks(user, result);
+    return result;
   } catch (err) {
     console.warn("trackAch", err?.message || err);
     return null;
+  }
+}
+
+function notifyAchievementUnlocks(user, result) {
+  if (!user?.id || !result) return;
+  const unlocked = Array.isArray(result.unlocked) ? result.unlocked : [];
+  for (const u of unlocked) {
+    const title = String(u?.title || u?.id || "Erfolg").trim();
+    accountPush.emitUserEvent(getDb(), user.id, "achievement_unlocked", {
+      achievementId: u?.id || "",
+      title,
+      message: `${title} — Belohnung abholen`,
+      claimable: true,
+    });
+  }
+  if (result.dailyJustCompleted) {
+    accountPush.emitUserEvent(getDb(), user.id, "achievement_claimable", {
+      message: "Tagesaufgabe fertig — Belohnung abholen",
+      daily: true,
+    });
   }
 }
 
@@ -8041,6 +8064,28 @@ app.post("/v1/me/heartbeat", (req, res) => {
   return res.json({ ok: true, liveAppUsers: countActiveAppUsers() });
 });
 
+app.post("/v1/me/device-token", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const token = String(req.body?.token || "").trim();
+  const platform = String(req.body?.platform || "android").trim() || "android";
+  if (!accountPush.registerDeviceToken(ctx.user, token, platform)) {
+    return res.status(400).json({ error: "invalid_token" });
+  }
+  scheduleSave();
+  return res.json({ ok: true });
+});
+
+app.delete("/v1/me/device-token", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const token = String(req.body?.token || req.query?.token || "").trim();
+  if (!token) return res.status(400).json({ error: "invalid_token" });
+  accountPush.unregisterDeviceToken(ctx.user, token);
+  scheduleSave();
+  return res.json({ ok: true });
+});
+
 app.get("/v1/auth/config", (_req, res) => {
   return res.json({
     googleEnabled: Boolean(GOOGLE_CLIENT_ID),
@@ -9326,6 +9371,10 @@ app.post("/v1/users/:userId/friend-request", (req, res) => {
     if (!mine.list.includes(toId)) mine.list.push(toId);
     if (!theirs.list.includes(ctx.user.id)) theirs.list.push(ctx.user.id);
     scheduleSave();
+    accountPush.emitUserEvent(db, toId, "friend_accepted", {
+      fromUserId: ctx.user.id,
+      nickname: String(ctx.user.nickname || "Jemand").slice(0, 18),
+    });
     return res.json({ ok: true, friendStatus: "friends" });
   }
   if (mine.outgoing.includes(toId)) {
@@ -9335,6 +9384,10 @@ app.post("/v1/users/:userId/friend-request", (req, res) => {
   if (!theirs.incoming.includes(ctx.user.id)) theirs.incoming.push(ctx.user.id);
   trackAch(ctx.user, "friend_requests_sent", 1);
   scheduleSave();
+  accountPush.emitUserEvent(db, toId, "friend_request", {
+    fromUserId: ctx.user.id,
+    nickname: String(ctx.user.nickname || "Jemand").slice(0, 18),
+  });
   return res.json({ ok: true, friendStatus: "outgoing" });
 });
 
@@ -9385,6 +9438,10 @@ app.post("/v1/me/friends/accept", (req, res) => {
     applyLedger(uid, d, r, ref)
   );
   scheduleSave();
+  accountPush.emitUserEvent(db, fromId, "friend_accepted", {
+    fromUserId: ctx.user.id,
+    nickname: String(ctx.user.nickname || "Jemand").slice(0, 18),
+  });
   return res.json({ ok: true, friend: friendPublicCard(other, ctx.user) });
 });
 
@@ -9437,6 +9494,12 @@ app.post("/v1/me/friends/remove", (req, res) => {
     marriage.resetLevelBoth(ctx.user, other);
   }
   scheduleSave();
+  if (otherId) {
+    accountPush.emitUserEvent(db, otherId, "friend_removed", {
+      fromUserId: ctx.user.id,
+      nickname: String(ctx.user.nickname || "Jemand").slice(0, 18),
+    });
+  }
   return res.json({ ok: true });
 });
 
@@ -9615,6 +9678,11 @@ app.post("/v1/users/:userId/marry/propose", (req, res) => {
   };
   trackAch(ctx.user, "marriage_proposals", 1);
   scheduleSave();
+  accountPush.emitUserEvent(db, toId, "marriage_proposal", {
+    fromUserId: ctx.user.id,
+    nickname: String(ctx.user.nickname || "Jemand").slice(0, 18),
+    status: "proposed",
+  });
   return res.json({
     ok: true,
     charged,
@@ -9640,6 +9708,12 @@ app.post("/v1/me/marriage/accept", (req, res) => {
   const proposer = db.users?.[fromId];
   if (proposer) trackAch(proposer, "engagements", 1);
   scheduleSave();
+  accountPush.emitUserEvent(db, fromId, "marriage_update", {
+    fromUserId: ctx.user.id,
+    nickname: String(ctx.user.nickname || "Jemand").slice(0, 18),
+    status: m.status || "engaged",
+    message: `${String(ctx.user.nickname || "Jemand").slice(0, 18)} hat den Antrag angenommen`,
+  });
   return res.json({
     ok: true,
     marriage: publicMarriageView(m, ctx.user.id),
@@ -9659,8 +9733,22 @@ app.post("/v1/me/marriage/decline", (req, res) => {
   if (m.proposedBy !== fromId && m.proposedBy !== ctx.user.id) {
     return res.status(403).json({ error: "forbidden" });
   }
+  const notifyId =
+    m.proposedBy === ctx.user.id ? fromId : m.proposedBy || fromId;
+  const withdrew = m.proposedBy === ctx.user.id;
   endMarriageRecord(m, "cancel");
   scheduleSave();
+  if (notifyId && notifyId !== ctx.user.id) {
+    const nick = String(ctx.user.nickname || "Jemand").slice(0, 18);
+    accountPush.emitUserEvent(db, notifyId, "marriage_update", {
+      fromUserId: ctx.user.id,
+      nickname: nick,
+      status: withdrew ? "cancelled" : "declined",
+      message: withdrew
+        ? `${nick} hat den Antrag zurückgezogen`
+        : `${nick} hat den Antrag abgelehnt`,
+    });
+  }
   return res.json({ ok: true });
 });
 
@@ -9682,8 +9770,17 @@ app.post("/v1/me/marriage/divorce", (req, res) => {
       message: "Du bist nicht verheiratet.",
     });
   }
+  const partnerId = marriage.partnerIdOf(m, ctx.user.id);
   endMarriageRecord(m, "divorce");
   scheduleSave();
+  if (partnerId) {
+    accountPush.emitUserEvent(db, partnerId, "marriage_update", {
+      fromUserId: ctx.user.id,
+      nickname: String(ctx.user.nickname || "Jemand").slice(0, 18),
+      status: "divorced",
+      message: `${String(ctx.user.nickname || "Jemand").slice(0, 18)} hat die Ehe beendet`,
+    });
+  }
   return res.json({ ok: true });
 });
 
@@ -15464,6 +15561,16 @@ app.post("/v1/market/:id/buy", (req, res) => {
   syncAchInventoryMetrics(ctx.user);
   syncAchInventoryMetrics(seller);
   scheduleSave();
+  accountPush.emitUserEvent(getDb(), seller.id, "market_sold", {
+    listingId: entry.id,
+    kind: entry.kind,
+    itemId: entry.itemId,
+    emoji: entry.emoji || "📦",
+    label: entry.label || entry.itemId,
+    priceCoins: price,
+    buyerNickname: String(ctx.user.nickname || "Jemand").slice(0, 18),
+    message: `${entry.label || entry.itemId} verkauft · ${price} Coins`,
+  });
   return res.json({
     ok: true,
     user: publicUser(ctx.user),
@@ -18706,6 +18813,7 @@ app.get("/v1/me/memories", (req, res) => {
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/v1/ws" });
+accountPush.attachAccountWss(server, userFromSessionToken);
 
 // Ohne Listener crasht ein einzelner MASK-/Proxy-Fehler den ganzen API-Prozess —
 // dann sehen alle nur noch sich selbst und Strokes kommen nicht an.
