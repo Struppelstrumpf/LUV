@@ -241,7 +241,7 @@ fun MarriageSkipWaitDialog(
                         .clickable(enabled = canPay && !busy) {
                             busy = true
                             scope.launch {
-                                runCatching { LuvApiClient.skipMarriageWait() }
+                                    runCatching { LuvApiClient.skipMarriageWait() }
                                     .onSuccess {
                                         Toast.makeText(
                                             context,
@@ -255,13 +255,31 @@ fun MarriageSkipWaitDialog(
                                         onSkipped(it.marriage)
                                         onDismiss()
                                     }
-                                    .onFailure {
-                                        Toast.makeText(
-                                            context,
-                                            it.message ?: "Überspringen fehlgeschlagen",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                        busy = false
+                                    .onFailure { err ->
+                                        // Partner/Timeout kann schon weiter sein
+                                        val refreshed = runCatching {
+                                            LuvApiClient.fetchFriends(force = true)
+                                        }.getOrNull()?.myMarriage
+                                        val advanced =
+                                            refreshed != null &&
+                                                refreshed.status != "wedding" &&
+                                                refreshed.status != "engaged"
+                                        if (advanced) {
+                                            Toast.makeText(
+                                                context,
+                                                "Weiter zum nächsten Schritt",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                            onSkipped(refreshed)
+                                            onDismiss()
+                                        } else {
+                                            Toast.makeText(
+                                                context,
+                                                err.message ?: "Überspringen fehlgeschlagen",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                            busy = false
+                                        }
                                     }
                             }
                         },

@@ -9930,30 +9930,36 @@ app.post("/v1/me/marriage/skip-cooldown", (req, res) => {
 /**
  * Einmal gratis: Verlobungs-Wartezeit überspringen → Hochzeitsbild-Lobby öffnen.
  * Kein Coin-Skip in der Verlobungsphase.
+ * Idempotent: schon offen / Partner zuerst → immer 200 mit aktuellem Stand
+ * (kein falscher Client-Toast „API-Fehler“, obwohl Lobby schon da ist).
  */
 app.post("/v1/me/marriage/open-wedding-lobby", (req, res) => {
   const ctx = requireAuth(req, res);
   if (!ctx) return;
   const db = getDb();
   const m = marriage.findMarriageForUser(db, ctx.user.id);
+
+  const alreadyPastEngage = (rec) =>
+    rec &&
+    (rec.status === "wedding" ||
+      rec.status === "ceremony_pending" ||
+      rec.status === "ceremony_scheduled" ||
+      rec.status === "married");
+
+  const okOpenPayload = (rec, { alreadyOpen = false, advanced = false } = {}) => ({
+    ok: true,
+    free: true,
+    alreadyOpen,
+    phase: rec?.status || null,
+    marriage: rec ? publicMarriageView(rec, ctx.user.id) : null,
+    user: publicUser(ctx.user),
+    weddingLobbyCode: rec?.weddingLobbyCode || rec?.ceremonyLobbyCode || null,
+    advanced,
+  });
+
   // Partner hat schon geöffnet → kein Fehler, aktuelle Phase zurückgeben
-  if (
-    m &&
-    (m.status === "wedding" ||
-      m.status === "ceremony_pending" ||
-      m.status === "ceremony_scheduled" ||
-      m.status === "married")
-  ) {
-    return res.json({
-      ok: true,
-      free: true,
-      alreadyOpen: true,
-      phase: m.status,
-      marriage: publicMarriageView(m, ctx.user.id),
-      user: publicUser(ctx.user),
-      weddingLobbyCode: m.weddingLobbyCode || m.ceremonyLobbyCode || null,
-      advanced: false,
-    });
+  if (alreadyPastEngage(m)) {
+    return res.json(okOpenPayload(m, { alreadyOpen: true }));
   }
   if (!m || m.status !== "engaged") {
     return res.status(400).json({
@@ -9964,35 +9970,41 @@ app.post("/v1/me/marriage/open-wedding-lobby", (req, res) => {
   }
   if (m.engageFreeSkipUsed === true) {
     // Skip markiert, aber Phase noch engaged (Randfall) → aktuellen Stand liefern
-    return res.json({
-      ok: true,
-      free: true,
-      alreadyOpen: true,
-      phase: m.status,
+    return res.json(okOpenPayload(m, { alreadyOpen: true }));
+  }
+  try {
+    const advanced = advanceMarriageNextStep(m, { freeEngageSkip: true });
+    if (!advanced.ok) {
+      // Zwischenzeitlich schon weiter (z. B. Partner / Timer) → Erfolg statt Fehler
+      if (alreadyPastEngage(m) || m.weddingLobbyCode) {
+        scheduleSave();
+        return res.json(okOpenPayload(m, { alreadyOpen: true }));
+      }
+      return res.status(400).json({
+        error: advanced.error || "failed",
+        message: advanced.message || "Öffnen fehlgeschlagen.",
+        marriage: publicMarriageView(m, ctx.user.id),
+      });
+    }
+    scheduleSave();
+    return res.json(okOpenPayload(m, { advanced: true }));
+  } catch (err) {
+    console.error("open-wedding-lobby", err?.message || err);
+    // Lobby oft schon in RAM (createWeddingLobby vor throw) → Client nicht verwirren
+    if (alreadyPastEngage(m) || m.weddingLobbyCode) {
+      try {
+        scheduleSave();
+      } catch {
+        /* ignore */
+      }
+      return res.json(okOpenPayload(m, { alreadyOpen: true, advanced: true }));
+    }
+    return res.status(500).json({
+      error: "open_failed",
+      message: "Hochzeitsbild-Lobby öffnen fehlgeschlagen — bitte nochmal tippen.",
       marriage: publicMarriageView(m, ctx.user.id),
-      user: publicUser(ctx.user),
-      weddingLobbyCode: m.weddingLobbyCode || null,
-      advanced: false,
     });
   }
-  const advanced = advanceMarriageNextStep(m, { freeEngageSkip: true });
-  if (!advanced.ok) {
-    return res.status(400).json({
-      error: advanced.error || "failed",
-      message: advanced.message || "Öffnen fehlgeschlagen.",
-      marriage: publicMarriageView(m, ctx.user.id),
-    });
-  }
-  scheduleSave();
-  return res.json({
-    ok: true,
-    free: true,
-    phase: "engage",
-    marriage: publicMarriageView(m, ctx.user.id),
-    user: publicUser(ctx.user),
-    weddingLobbyCode: m.weddingLobbyCode || null,
-    advanced: true,
-  });
 });
 
 /** Wartezeit der Hochzeitsbild-Phase mit Coins überspringen (erst nach je 10 Strichen). */

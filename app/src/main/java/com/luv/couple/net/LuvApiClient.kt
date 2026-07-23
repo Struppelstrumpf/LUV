@@ -5170,6 +5170,15 @@ object LuvApiClient {
             "nickname_locked" -> "Spitzname kann nicht geändert werden."
             "not_in_room" -> serverMsg ?: "Bitte zuerst eintreten."
             "wrong_phase" -> serverMsg ?: "Gerade nicht möglich."
+            "use_free_open" -> serverMsg
+                ?: "Bitte „Hochzeits-Lobby öffnen“ tippen — kein Coin-Skip in der Verlobung."
+            "free_skip_used" -> serverMsg
+                ?: "Hochzeitsbild-Lobby wurde schon geöffnet."
+            "open_failed" -> serverMsg ?: "Öffnen fehlgeschlagen — bitte nochmal tippen."
+            "no_marriage" -> serverMsg ?: "Keine Verlobung/Hochzeit."
+            "partner_missing" -> serverMsg ?: "Partner-Konto fehlt gerade."
+            "wedding_strokes" -> serverMsg
+                ?: "Beide brauchen erst genug Striche auf der Hochzeitsleinwand."
             "seat_taken" -> "Sitz schon belegt."
             "couple_altar_only" -> serverMsg ?: "Bitte auf einen gelben Platz setzen."
             "guest_bench_only" -> "Bitte auf eine Gästebank setzen."

@@ -1538,9 +1538,9 @@ fun ProfileCanvasScreen(
                 if (cool > 0) append("Offene Scheidungs-Wartezeit: +$cool Coins. ")
                 if (total > 0) append("Jetzt $total Coins · du hast $coins. ")
                 append(
-                    "Nach Annahme: 7 Tage verlobt, bis die Hochzeitsleinwand öffnet. " +
-                        "Dann 7 Tage gemeinsam malen — erst danach seid ihr verheiratet. " +
-                        "Beide Wartezeiten könnt ihr mit Coins überspringen."
+                    "Nach Annahme: 7 Tage verlobt — einmal gratis „Hochzeits-Lobby öffnen“. " +
+                        "Dann gemeinsam malen; Coin-Skip erst nach genug Strichen. " +
+                        "Danach folgt die Zeremonie — erst dann seid ihr verheiratet."
                 )
             }
             HoldSlideConfirmDialog(

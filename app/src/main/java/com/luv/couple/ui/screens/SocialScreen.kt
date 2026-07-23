@@ -737,42 +737,56 @@ private fun FriendsPanel(
                 )
                 if (waitM.status == "engaged" && waitM.engageFreeSkipAvailable) {
                     Text(
-                        "Hochzeits-Lobby öffnen",
+                        if (busyId == "open-wedding") "Öffne …" else "Hochzeits-Lobby öffnen",
                         color = AccentRose,
                         fontFamily = DisplayFont,
                         fontSize = 15.sp,
                         modifier = Modifier
-                            .clickable {
+                            .clickable(enabled = busyId != "open-wedding") {
                                 busyId = "open-wedding"
                                 scope.launch {
-                                    runCatching { LuvApiClient.openWeddingLobbyFree() }
-                                        .onSuccess {
-                                            myMarriage = it.marriage
-                                            lastWeddingLobbyCode =
-                                                it.marriage?.weddingLobbyCode
-                                                    ?.trim()
-                                                    ?.uppercase()
-                                            LuvApiClient.invalidateFriendsCache()
-                                            reload(force = true)
-                                            val toast = when {
-                                                it.marriage?.status == "wedding" ||
-                                                    !it.marriage?.weddingLobbyCode.isNullOrBlank() ->
-                                                    "Hochzeitsbild-Lobby ist bereit"
-                                                else -> "Hochzeit aktualisiert"
-                                            }
-                                            Toast.makeText(context, toast, Toast.LENGTH_SHORT).show()
-                                            onSyncWeddingLobbies()
-                                            onWeddingLobbyOpened()
+                                    fun applyOpened(m: LuvApiClient.MarriageInfo?) {
+                                        myMarriage = m
+                                        lastWeddingLobbyCode =
+                                            m?.weddingLobbyCode?.trim()?.uppercase()
+                                        LuvApiClient.invalidateFriendsCache()
+                                        reload(force = true)
+                                        val toast = when {
+                                            m?.status == "wedding" ||
+                                                !m?.weddingLobbyCode.isNullOrBlank() ->
+                                                "Hochzeitsbild-Lobby ist bereit"
+                                            else -> "Hochzeit aktualisiert"
                                         }
+                                        Toast.makeText(context, toast, Toast.LENGTH_SHORT).show()
+                                        onSyncWeddingLobbies()
+                                        onWeddingLobbyOpened()
+                                    }
+                                    runCatching { LuvApiClient.openWeddingLobbyFree() }
+                                        .onSuccess { applyOpened(it.marriage) }
                                         .onFailure { e ->
-                                            // Partner hat evtl. schon geöffnet — frischen Stand holen
+                                            // Server oft schon durch (Partner/Timeout) —
+                                            // nicht „API-Fehler“ zeigen, wenn Lobby da ist
                                             LuvApiClient.invalidateFriendsCache()
-                                            reload(force = true)
-                                            Toast.makeText(
-                                                context,
-                                                e.message ?: "Öffnen fehlgeschlagen",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
+                                            val snap = runCatching {
+                                                LuvApiClient.fetchFriends(force = true)
+                                            }.getOrNull()
+                                            if (snap != null) applyFriendsSnap(snap)
+                                            val m = snap?.myMarriage ?: myMarriage
+                                            val opened =
+                                                m?.status == "wedding" ||
+                                                    m?.status == "ceremony_pending" ||
+                                                    m?.status == "ceremony_scheduled" ||
+                                                    !m?.weddingLobbyCode.isNullOrBlank()
+                                            if (opened) {
+                                                applyOpened(m)
+                                            } else {
+                                                reload(force = true)
+                                                Toast.makeText(
+                                                    context,
+                                                    e.message ?: "Öffnen fehlgeschlagen",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
                                         }
                                     busyId = null
                                 }

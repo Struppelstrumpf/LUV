@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.183",
+            listOf(
+                "Verlobung → Hochzeitsbild: kein falscher API-Fehler mehr, wenn die Lobby schon offen ist",
+            )
+        ),
+        Entry(
             "2.2.182",
             listOf(
                 "Start-Vorschau: LUV-Schriftzug oben mit kurzem Licht-Glanz",
