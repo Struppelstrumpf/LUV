@@ -12,6 +12,9 @@ const USE_SESSIONS_TABLE =
   SESSIONS_BACKEND === "table" || SESSIONS_BACKEND === "pg";
 const MARKET_BACKEND = String(process.env.MARKET_BACKEND || "blob").toLowerCase();
 const USE_MARKET_TABLE = MARKET_BACKEND === "table" || MARKET_BACKEND === "pg";
+const FRIENDS_BACKEND = String(process.env.FRIENDS_BACKEND || "blob").toLowerCase();
+const USE_FRIENDS_TABLE =
+  FRIENDS_BACKEND === "table" || FRIENDS_BACKEND === "pg";
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 const DATA_FILE = path.join(DATA_DIR, "luv-store.json");
@@ -228,9 +231,43 @@ function hydrateMarketFromTable(dbObj) {
   return dbObj;
 }
 
+function hydrateFriendsFromTable(dbObj) {
+  if (!USE_FRIENDS_TABLE || !process.env.DATABASE_URL) return dbObj;
+  try {
+    const { hydrateUsersFriends, loadAllFriendsDataSync, extractFromUsers } =
+      require("./friends_pg");
+    const data = loadAllFriendsDataSync();
+    const embedded = extractFromUsers(dbObj.users || {});
+    const tableEmpty =
+      (data.friendships || []).length === 0 &&
+      (data.requests || []).length === 0;
+    if (
+      tableEmpty &&
+      (embedded.friendships.length > 0 || embedded.requests.length > 0)
+    ) {
+      console.warn(
+        "[store] FRIENDS_BACKEND=table but tables empty — keeping blob friends"
+      );
+      return dbObj;
+    }
+    const counts = hydrateUsersFriends(dbObj.users || {});
+    console.log(
+      `[store] friends SoT=table (friendships=${counts.friendships}, requests=${counts.requests})`
+    );
+  } catch (err) {
+    console.error(
+      "[store] friends table load failed — keeping blob friends:",
+      err?.message || err
+    );
+  }
+  return dbObj;
+}
+
 function hydrateDomainTables(dbObj) {
-  return hydrateMarketFromTable(
-    hydrateSessionsFromTable(hydrateUsersFromTable(dbObj))
+  return hydrateFriendsFromTable(
+    hydrateMarketFromTable(
+      hydrateSessionsFromTable(hydrateUsersFromTable(dbObj))
+    )
   );
 }
 
@@ -500,4 +537,5 @@ module.exports = {
   USERS_BACKEND: USE_USERS_TABLE ? "table" : "blob",
   SESSIONS_BACKEND: USE_SESSIONS_TABLE ? "table" : "blob",
   MARKET_BACKEND: USE_MARKET_TABLE ? "table" : "blob",
+  FRIENDS_BACKEND: USE_FRIENDS_TABLE ? "table" : "blob",
 };

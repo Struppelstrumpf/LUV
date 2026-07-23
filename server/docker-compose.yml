@@ -33,6 +33,7 @@ services:
       USERS_BACKEND: "${USERS_BACKEND:-blob}"
       SESSIONS_BACKEND: "${SESSIONS_BACKEND:-blob}"
       MARKET_BACKEND: "${MARKET_BACKEND:-blob}"
+      FRIENDS_BACKEND: "${FRIENDS_BACKEND:-blob}"
       DATABASE_URL: "${DATABASE_URL:-}"
       REDIS_URL: "${REDIS_URL:-}"
     volumes:
