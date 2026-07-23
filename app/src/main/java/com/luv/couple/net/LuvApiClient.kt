@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import android.content.Context
+import okhttp3.Cache
 import okhttp3.Dispatcher
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -18,6 +20,7 @@ import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 data class RoomSession(
@@ -363,19 +366,33 @@ object LuvApiClient {
         .writeTimeout(12, TimeUnit.SECONDS)
         .build()
 
-    /** Media (img_*, Event-Bilder, Room-Assets) — gedrosselt, eigener Pool. */
-    private val mediaHttp = OkHttpClient.Builder()
-        .dispatcher(
-            Dispatcher().apply {
-                maxRequests = 10
-                maxRequestsPerHost = 6
-            }
-        )
-        .protocols(listOf(Protocol.HTTP_1_1))
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .writeTimeout(20, TimeUnit.SECONDS)
-        .build()
+    /** Media (img_*, Event-Bilder, Room-Assets) — gedrosselt, eigener Pool + Disk-Cache. */
+    @Volatile
+    private var mediaHttp: OkHttpClient = buildMediaHttp(cache = null)
+
+    private fun buildMediaHttp(cache: Cache?): OkHttpClient =
+        OkHttpClient.Builder()
+            .dispatcher(
+                Dispatcher().apply {
+                    maxRequests = 10
+                    maxRequestsPerHost = 6
+                }
+            )
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .connectTimeout(12, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(20, TimeUnit.SECONDS)
+            .apply { if (cache != null) cache(cache) }
+            .build()
+
+    /** Einmal aus Application — OkHttp respektiert dann Cache-Control vom Server. */
+    fun initMediaCache(context: Context) {
+        if (mediaHttp.cache != null) return
+        val dir = File(context.applicationContext.cacheDir, "okhttp-media")
+        runCatching { dir.mkdirs() }
+        val cache = Cache(dir, 64L * 1024L * 1024L)
+        mediaHttp = buildMediaHttp(cache)
+    }
 
     @Volatile
     var sessionToken: String? = null
@@ -4061,6 +4078,7 @@ object LuvApiClient {
             val coins = json.optInt("coinsGranted", 0)
             val item = parseAchievementRewardItem(json.optJSONObject("itemGranted"))
             val state = json.optJSONObject("state")?.let { parseAchievementsState(it) }
+                ?: AchievementsBadge.latest.value
                 ?: fetchAchievements()
             AchievementsBadge.updateFrom(state)
             json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
@@ -4072,6 +4090,7 @@ object LuvApiClient {
             val json = authedPost("/v1/me/achievements/daily/claim", "{}")
             val coins = json.optInt("coinsGranted", 0)
             val state = json.optJSONObject("state")?.let { parseAchievementsState(it) }
+                ?: AchievementsBadge.latest.value
                 ?: fetchAchievements()
             AchievementsBadge.updateFrom(state)
             json.optJSONObject("user")?.let { AccountSession.setAccount(AccountInfo.fromApi(it)) }
@@ -5069,13 +5088,13 @@ object LuvApiClient {
         )
     }
 
-    /** Mutierende Calls = User-Aktion → Hintergrund-Polls kurz pausieren. */
+    /** Mutierende Calls = User-Aktion → Hintergrund-Polls kurz pausieren (+ Follow-up-Fenster). */
     private inline fun <T> asUserAction(block: () -> T): T {
         InteractivePriority.begin()
         return try {
             block()
         } finally {
-            InteractivePriority.end()
+            InteractivePriority.endDeferred(450L)
         }
     }
 

@@ -1,5 +1,7 @@
 package com.luv.couple.net
 
+import android.os.Handler
+import android.os.Looper
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -9,6 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 object InteractivePriority {
     private val inFlight = AtomicInteger(0)
+    private val main = Handler(Looper.getMainLooper())
 
     /** true = Hintergrund darf netzwerken. */
     fun allowBackground(): Boolean = inFlight.get() <= 0
@@ -19,6 +22,11 @@ object InteractivePriority {
 
     fun end() {
         inFlight.updateAndGet { (it - 1).coerceAtLeast(0) }
+    }
+
+    /** Nach Mutation kurz halten — Follow-up-GETs gewinnen gegen Polls. */
+    fun endDeferred(delayMs: Long = 450L) {
+        main.postDelayed({ end() }, delayMs.coerceAtLeast(0L))
     }
 
     suspend fun <T> run(block: suspend () -> T): T {

@@ -154,6 +154,8 @@ object NotificationBadges {
             if (anyNew) {
                 sozialSeen = false
                 friendsTabSeen = false
+                // Freunde-Liste sofort neu (auch wenn Tab schon offen ist)
+                LuvApiClient.invalidateFriendsCache()
             }
         } else if (friends + marriages + invites > 0) {
             sozialSeen = false

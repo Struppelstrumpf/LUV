@@ -111,6 +111,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.luv.couple.shop.ShopRotation
 import androidx.compose.ui.text.style.TextDecoration
 import com.luv.couple.ui.ItemGlyph
+import com.luv.couple.ui.ItemImageCache
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
@@ -1023,6 +1024,25 @@ private fun ItemShopContent(
         }
         pendingBuy = pending
     }
+    fun prefetchShopImages() {
+        val ids = buildList {
+            LiveShopCatalog.remotePets?.forEach { p ->
+                if (p.emoji.startsWith("img_", true)) add(p.emoji)
+            }
+            LiveShopCatalog.remoteStickers?.forEach { s ->
+                if (s.emoji.startsWith("img_", true)) add(s.emoji)
+            }
+            LiveShopCatalog.remoteEmojis?.forEach { e ->
+                if (e.emoji.startsWith("img_", true)) add(e.emoji)
+            }
+            ownedPets.keys.filter { it.startsWith("img_", true) }.forEach { add(it) }
+            ownedStickers.keys.filter { it.startsWith("img_", true) }.forEach { add(it) }
+            ownedEmojis.keys.filter { it.startsWith("img_", true) }.forEach { add(it) }
+            equippedPet.takeIf { it.startsWith("img_", true) }?.let { add(it) }
+        }.distinct()
+        ItemImageCache.preloadAll(ids)
+    }
+
     suspend fun reloadShopAndInventory(includeCatalog: Boolean = true) {
         if (includeCatalog) {
             runCatching { LuvApiClient.fetchShopCatalog() }
@@ -1038,6 +1058,7 @@ private fun ItemShopContent(
                 equippedPet = remote.equippedPet
             )
         }
+        prefetchShopImages()
         // Kein zweites onRefreshInventory — Inventar ist schon gepatcht
     }
 
@@ -1224,13 +1245,43 @@ private fun ItemShopContent(
                         scope.launch {
                             runCatching {
                                 when (pending) {
-                                    is ShopPendingBuy.Emoji -> LuvApiClient.buyEmoji(pending.item.emoji)
-                                    is ShopPendingBuy.Theme -> LuvApiClient.buyTheme(pending.item.id)
-                                    is ShopPendingBuy.Sticker -> LuvApiClient.buySticker(pending.item.emoji)
-                                    is ShopPendingBuy.Pet -> LuvApiClient.buyPet(pending.item.emoji)
+                                    is ShopPendingBuy.Emoji -> {
+                                        val (_, owned) = LuvApiClient.buyEmoji(pending.item.emoji)
+                                        val next = prevEmojis.toMutableMap()
+                                        next[pending.item.emoji] = owned.coerceAtLeast(1)
+                                        prefs.setOwnedEmojis(next)
+                                    }
+                                    is ShopPendingBuy.Theme -> {
+                                        LuvApiClient.buyTheme(pending.item.id)
+                                        // Coins schon in AccountSession; Besitz lokal optimistic
+                                    }
+                                    is ShopPendingBuy.Sticker -> {
+                                        val (_, owned) = LuvApiClient.buySticker(pending.item.emoji)
+                                        val next = prevStickers.toMutableMap()
+                                        next[pending.item.emoji] = owned.coerceAtLeast(1)
+                                        prefs.applyInventorySnap(
+                                            emojis = prevEmojis,
+                                            themes = prevThemes,
+                                            stickers = next,
+                                            pets = prevPets,
+                                            equippedPet = equippedPet
+                                        )
+                                    }
+                                    is ShopPendingBuy.Pet -> {
+                                        val (_, owned) = LuvApiClient.buyPet(pending.item.emoji)
+                                        val next = prevPets.toMutableMap()
+                                        next[pending.item.emoji] = owned.coerceAtLeast(1)
+                                        prefs.applyInventorySnap(
+                                            emojis = prevEmojis,
+                                            themes = prevThemes,
+                                            stickers = prevStickers,
+                                            pets = next,
+                                            equippedPet = equippedPet
+                                        )
+                                        ItemImageCache.preload(pending.item.emoji)
+                                    }
                                 }
-                                // Nur Inventar nachziehen — kein voller Katalog
-                                reloadShopAndInventory(includeCatalog = false)
+                                // Kein zweites fetchInventory — UI ist schon optimistisch + Buy-Response
                             }.onFailure {
                                 prevAccount?.let { AccountSession.setAccount(it) }
                                 scope.launch {

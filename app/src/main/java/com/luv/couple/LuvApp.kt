@@ -30,6 +30,8 @@ class LuvApp : Application() {
         instance = this
         prefs = PrefsRepository(this)
         CanvasStore.init(this)
+        com.luv.couple.ui.ItemImageCache.init(this)
+        com.luv.couple.ui.WeddingImageCache.init(this)
         UnlockMonitor.start(this)
         createNotificationChannel()
         LuvAlertNotifier.ensureChannel(this) // inkl. Live-Nähe-Kanal

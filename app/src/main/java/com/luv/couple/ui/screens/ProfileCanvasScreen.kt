@@ -277,6 +277,21 @@ fun ProfileCanvasScreen(
             }
             state = local.normalized(nickname)
             loadedNick = nickname
+            savedSnapshot = state.snapshotKey()
+            // Lokales Layout sofort zeigen — Remote im Hintergrund
+            ownedStickers = withContext(Dispatchers.IO) { prefs.ownedStickers() }
+            ownedThemes = withContext(Dispatchers.IO) { prefs.ownedThemes() }
+            ownedPets = withContext(Dispatchers.IO) { prefs.ownedPets() }
+            emojiBar = withContext(Dispatchers.IO) {
+                runCatching { prefs.emojiBar() }
+                    .getOrDefault(com.luv.couple.shop.ShopCatalog.DEFAULT_BAR)
+            }
+            displayCoins = AccountSession.account.value?.coins ?: myCoins
+            profileReady = true
+            state.layout.forEach { el ->
+                el.emoji?.trim()?.takeIf { it.startsWith("img_", true) }
+                    ?.let { com.luv.couple.ui.ItemImageCache.preload(it) }
+            }
             runCatching {
                 val remote = LuvApiClient.fetchMyProfileCanvas()
                 state = remote.second.normalized(remote.first)
@@ -284,8 +299,8 @@ fun ProfileCanvasScreen(
                 withContext(Dispatchers.IO) {
                     prefs.setProfileCanvasJson(ProfileCatalog.encode(state))
                 }
+                savedSnapshot = state.snapshotKey()
             }
-            savedSnapshot = state.snapshotKey()
             withContext(Dispatchers.IO) {
                 runCatching {
                     val remote = LuvApiClient.fetchInventory()

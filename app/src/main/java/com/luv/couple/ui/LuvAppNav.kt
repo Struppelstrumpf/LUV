@@ -454,6 +454,24 @@ fun LuvAppNav() {
             if (!includeShop) return@runCatching
             // Katalog + Admin-Namen syncen (sonst bleiben lokale Hardcodes wie „Tiger“)
             runCatching { LuvApiClient.fetchShopCatalog() }
+            runCatching {
+                val imgIds = buildList {
+                    com.luv.couple.shop.LiveShopCatalog.remotePets?.forEach { p ->
+                        if (p.emoji.startsWith("img_", true)) add(p.emoji)
+                    }
+                    com.luv.couple.shop.LiveShopCatalog.remoteStickers?.forEach { s ->
+                        if (s.emoji.startsWith("img_", true)) add(s.emoji)
+                    }
+                    com.luv.couple.shop.LiveShopCatalog.remoteEmojis?.forEach { e ->
+                        if (e.emoji.startsWith("img_", true)) add(e.emoji)
+                    }
+                    prefs.ownedPets().keys.filter { it.startsWith("img_", true) }.forEach { add(it) }
+                    prefs.ownedStickers().keys.filter { it.startsWith("img_", true) }.forEach { add(it) }
+                    prefs.ownedEmojis().keys.filter { it.startsWith("img_", true) }.forEach { add(it) }
+                    prefs.equippedPet().takeIf { it.startsWith("img_", true) }?.let { add(it) }
+                }.distinct()
+                com.luv.couple.ui.ItemImageCache.preloadAll(imgIds)
+            }
             val (enabled, list) = LuvApiClient.shopPacks()
             shopEnabled = enabled
             val playPrices = runCatching {

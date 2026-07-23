@@ -12,6 +12,14 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.171",
+            listOf(
+                "Schnelleres Tippen: Käufe und Belohnungen ohne Extra-Warten",
+                "Custom-Bilder ohne Pfoten-Flash (Cache + Vorladen)",
+                "Freunde-Anfragen erscheinen live im offenen Freunde-Tab",
+            )
+        ),
+        Entry(
             "2.2.170",
             listOf(
                 "Hochzeit und Custom-Räume: Mitspieler-Positionen per Live-Push statt ständiger Abfrage",

@@ -366,12 +366,12 @@ private fun EventHeroCard(
                     scope.launch {
                         runCatching { LuvApiClient.claimContestPrize(event.id) }
                             .onSuccess { result ->
+                                // user/coins schon in claimContestPrize → AccountSession
                                 onStateUpdated(result.state)
                                 if (result.coinsGranted > 0) {
                                     onCoinsGranted(result.coinsGranted)
-                                    runCatching { LuvApiClient.me() }
-                                        .onSuccess { AccountSession.setAccount(it) }
                                 }
+                                claimBusy = false
                                 Toast.makeText(
                                     context,
                                     if (result.coinsGranted > 0) {
@@ -383,13 +383,13 @@ private fun EventHeroCard(
                                 ).show()
                             }
                             .onFailure { err ->
+                                claimBusy = false
                                 Toast.makeText(
                                     context,
                                     err.message ?: "Abholen fehlgeschlagen",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
-                        claimBusy = false
                     }
                 },
             )

@@ -467,11 +467,13 @@ private fun FriendsPanel(
         reload(force = true)
     }
 
-    // Level/Status: alle 3 Min leise — nur wenn Freunde-Tab sichtbar
+    // Tab sichtbar: sofort + alle ~8s — Anfragen ploppen ohne Tab-Wechsel
     LaunchedEffect(active) {
         if (!active) return@LaunchedEffect
+        reload(force = true)
         while (true) {
-            delay(180_000L)
+            delay(8_000L)
+            if (!active) continue
             runCatching { LuvApiClient.fetchFriends(force = true) }
                 .onSuccess { applyFriendsSnap(it) }
         }
