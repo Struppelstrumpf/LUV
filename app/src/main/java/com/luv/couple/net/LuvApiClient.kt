@@ -19,6 +19,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -3306,6 +3307,12 @@ object LuvApiClient {
             parseCeremonyInfo(json.optJSONObject("ceremony"))
         }
 
+    /** Brautpaar verlässt „Hochzeit öffnen“ — Partner sieht 1/2 sofort. */
+    suspend fun ceremonyPresenceLeave(): CeremonyInfo? = withContext(Dispatchers.IO) {
+        val json = authedPost("/v1/me/marriage/ceremony/presence/leave", "{}")
+        parseCeremonyInfo(json.optJSONObject("ceremony"))
+    }
+
     /** Kapelle schließen — Avatar für andere sofort unsichtbar. */
     suspend fun ceremonyExitRoom(): Boolean = withContext(Dispatchers.IO) {
         val json = authedPost("/v1/me/marriage/ceremony/exit-room", "{}")
@@ -3875,6 +3882,7 @@ object LuvApiClient {
 
     data class MarketPriceInsight(
         val shopPrice: Int? = null,
+        val lastSalePrice: Int? = null,
         val windowDays: Int = 90,
         val sales: MarketPriceRange? = null,
         val listings: MarketPriceRange? = null,
@@ -3882,8 +3890,13 @@ object LuvApiClient {
         val trend: String = "="
     ) {
         val hasAny: Boolean
-            get() = shopPrice != null || sales != null || listings != null
+            get() = shopPrice != null || lastSalePrice != null || sales != null || listings != null
     }
+
+    data class MarketPriceHint(
+        val lastSalePrice: Int? = null,
+        val shopPrice: Int? = null
+    )
 
     data class MarketItem(
         val listingId: String,
@@ -4069,8 +4082,12 @@ object LuvApiClient {
         if (o == null) return null
         val shopRaw = o.optInt("shopPrice", -1)
         val shopPrice = if (o.has("shopPrice") && !o.isNull("shopPrice") && shopRaw > 0) shopRaw else null
+        val lastSaleRaw = o.optInt("lastSalePrice", -1)
+        val lastSalePrice =
+            if (o.has("lastSalePrice") && !o.isNull("lastSalePrice") && lastSaleRaw > 0) lastSaleRaw else null
         return MarketPriceInsight(
             shopPrice = shopPrice,
+            lastSalePrice = lastSalePrice,
             windowDays = o.optInt("windowDays", 90).coerceIn(1, 365),
             sales = parseMarketPriceRange(o.optJSONObject("sales")),
             listings = parseMarketPriceRange(o.optJSONObject("listings")),
@@ -4511,6 +4528,42 @@ object LuvApiClient {
             totalCoins = json.optInt("totalCoins", sales.sumOf { it.priceCoins }),
             count = json.optInt("count", sales.size)
         )
+    }
+
+    /** Bulk: letzter Verkauf + Shop-Preis für Inventar-Preisanzeige. */
+    suspend fun fetchMarketPriceHints(
+        items: List<Pair<String, String>>
+    ): Map<String, MarketPriceHint> = withContext(Dispatchers.IO) {
+        if (items.isEmpty()) return@withContext emptyMap()
+        val arr = JSONArray()
+        items.take(220).forEach { (kind, itemId) ->
+            val k = kind.trim()
+            val id = clipShopItemId(itemId, 32)
+            if (k.isBlank() || id.isBlank()) return@forEach
+            arr.put(JSONObject().put("kind", k).put("itemId", id))
+        }
+        if (arr.length() == 0) return@withContext emptyMap()
+        val json = authedPost(
+            "/v1/market/price-hints",
+            JSONObject().put("items", arr).toString()
+        )
+        val hintsObj = json.optJSONObject("hints") ?: return@withContext emptyMap()
+        buildMap {
+            val keys = hintsObj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val o = hintsObj.optJSONObject(key) ?: continue
+                val lastRaw = o.optInt("lastSalePrice", -1)
+                val shopRaw = o.optInt("shopPrice", -1)
+                put(
+                    key,
+                    MarketPriceHint(
+                        lastSalePrice = lastRaw.takeIf { o.has("lastSalePrice") && !o.isNull("lastSalePrice") && it > 0 },
+                        shopPrice = shopRaw.takeIf { o.has("shopPrice") && !o.isNull("shopPrice") && it > 0 }
+                    )
+                )
+            }
+        }
     }
 
     suspend fun claimPendingMarketSales(): PendingSalesResult = withContext(Dispatchers.IO) {

@@ -41,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.luv.couple.shop.LiveShopCatalog
 import androidx.compose.ui.Alignment
@@ -74,6 +75,26 @@ import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
 import com.luv.couple.ui.theme.TextMuted
 import com.luv.couple.ui.theme.TextPrimary
+import kotlinx.coroutines.launch
+
+private enum class InvPriceSortMode { Off, Asc, Desc }
+
+private val InvPriceRed = Color(0xFFE53935)
+private val InvPriceGreen = Color(0xFF43A047)
+
+private fun invHintDisplay(
+    hint: LuvApiClient.MarketPriceHint?
+): Pair<Int, Color>? {
+    if (hint == null) return null
+    val last = hint.lastSalePrice
+    if (last != null && last > 0) return last to InvPriceRed
+    val shop = hint.shopPrice
+    if (shop != null && shop > 0) return shop to InvPriceGreen
+    return null
+}
+
+private fun invHintSortPrice(hint: LuvApiClient.MarketPriceHint?): Int =
+    invHintDisplay(hint)?.first ?: Int.MAX_VALUE / 4
 
 /** Referenzbreite für Scale 1.0 — darunter proportional kleiner. */
 private val RefInventoryWidth = 390.dp
@@ -177,7 +198,48 @@ fun ProfileInventoryPanel(
     }
     var searchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    /** Nicht persistiert — beim Verlassen des Composables zurück auf Off. */
+    var priceSort by remember { mutableStateOf(InvPriceSortMode.Off) }
+    var priceHints by remember {
+        mutableStateOf<Map<String, LuvApiClient.MarketPriceHint>>(emptyMap())
+    }
+    val scope = rememberCoroutineScope()
     var labelsEpoch by remember { mutableIntStateOf(LiveShopCatalog.displayLabelsEpoch) }
+
+    fun fetchPriceHintsIfNeeded() {
+        val items = buildList {
+            ownedEmojis.keys.forEach { add("emojis" to it) }
+            ownedThemes.forEach { add("themes" to it) }
+            ownedStickers.keys.forEach { add("stickers" to it) }
+            ownedPets.keys.forEach { add("pets" to it) }
+        }
+        scope.launch {
+            priceHints = runCatching { LuvApiClient.fetchMarketPriceHints(items) }
+                .getOrDefault(emptyMap())
+        }
+    }
+
+    fun cyclePriceSort() {
+        priceSort = when (priceSort) {
+            InvPriceSortMode.Off -> {
+                fetchPriceHintsIfNeeded()
+                InvPriceSortMode.Asc
+            }
+            InvPriceSortMode.Asc -> InvPriceSortMode.Desc
+            InvPriceSortMode.Desc -> InvPriceSortMode.Off
+        }
+    }
+
+    fun sortPriceKey(kind: String, itemId: String): Int {
+        val base = invHintSortPrice(priceHints["$kind:$itemId"])
+        val missing = base >= Int.MAX_VALUE / 4
+        return when (priceSort) {
+            InvPriceSortMode.Asc -> base
+            // Hohe Preise zuerst; fehlende Hinweise ans Ende
+            InvPriceSortMode.Desc -> if (missing) Int.MAX_VALUE / 4 else -base
+            InvPriceSortMode.Off -> 0
+        }
+    }
     val guidePulse = rememberInfiniteTransition(label = "tutStickerPulse")
     val guidePulseScale by guidePulse.animateFloat(
         initialValue = 0.96f,
@@ -216,7 +278,9 @@ fun ProfileInventoryPanel(
     val freeEmojis = remember(ownedEmojis, emojiBar) {
         InventoryAvailability.freeEmojis(ownedEmojis, emojiBar)
     }
-    val themeItems = remember(ownedThemes, searchQuery, labelsEpoch, LiveShopCatalog.remoteThemes) {
+    val themeItems = remember(
+        ownedThemes, searchQuery, labelsEpoch, LiveShopCatalog.remoteThemes, priceSort, priceHints
+    ) {
         ownedThemes
             .map { it.trim() }
             .filter { it.isNotEmpty() }
@@ -229,14 +293,31 @@ fun ProfileInventoryPanel(
                     ItemLabels.themeLabel(it.id)
                 )
             }
+            .let { list ->
+                if (priceSort == InvPriceSortMode.Off) list
+                else list.sortedWith(
+                    compareBy(
+                        { sortPriceKey("themes", it.id) },
+                        { it.id }
+                    )
+                )
+            }
     }
-    val petItems = remember(ownedPets, searchQuery, labelsEpoch) {
+    val petItems = remember(ownedPets, searchQuery, labelsEpoch, priceSort, priceHints) {
         ownedPets.keys.map { it.trim() }.filter { it.isNotEmpty() }.ifEmpty {
             if (readOnly) listOf("🐣") else emptyList()
         }.filter { id ->
             val label = ItemLabels.petLabel(id)
             val search = LiveShopCatalog.remotePets?.firstOrNull { it.emoji == id }?.searchText.orEmpty()
             LiveShopCatalog.matchesQuery(searchQuery, id, label, search)
+        }.let { list ->
+            if (priceSort == InvPriceSortMode.Off) list
+            else list.sortedWith(
+                compareBy(
+                    { sortPriceKey("pets", it) },
+                    { it }
+                )
+            )
         }
     }
 
@@ -272,6 +353,36 @@ fun ProfileInventoryPanel(
                     fontSize = ts(22.sp),
                     modifier = Modifier.weight(1f)
                 )
+                Box(
+                    modifier = Modifier
+                        .size(s(40.dp))
+                        .clip(CircleShape)
+                        .background(
+                            when (priceSort) {
+                                InvPriceSortMode.Off -> BgSoft
+                                InvPriceSortMode.Asc -> InvPriceGreen.copy(0.22f)
+                                InvPriceSortMode.Desc -> InvPriceRed.copy(0.22f)
+                            }
+                        )
+                        .border(1.dp, Color.White.copy(0.1f), CircleShape)
+                        .clickable(onClick = ::cyclePriceSort),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        when (priceSort) {
+                            InvPriceSortMode.Off -> "🪙"
+                            InvPriceSortMode.Asc -> "🪙↑"
+                            InvPriceSortMode.Desc -> "🪙↓"
+                        },
+                        fontSize = ts(14.sp),
+                        color = when (priceSort) {
+                            InvPriceSortMode.Off -> TextPrimary
+                            InvPriceSortMode.Asc -> InvPriceGreen
+                            InvPriceSortMode.Desc -> InvPriceRed
+                        }
+                    )
+                }
+                Spacer(modifier = Modifier.width(s(8.dp)))
                 ShopSearchIconButton(
                     expanded = searchOpen,
                     onClick = {
@@ -399,7 +510,15 @@ fun ProfileInventoryPanel(
                 InvTab.Emojis -> {
                     val entries = ownedEmojis.entries
                         .filter { LiveShopCatalog.matchesQuery(q, it.key, ItemLabels.emojiLabel(it.key)) }
-                        .sortedBy { it.key }
+                        .let { list ->
+                            if (priceSort == InvPriceSortMode.Off) list.sortedBy { it.key }
+                            else list.sortedWith(
+                                compareBy(
+                                    { sortPriceKey("emojis", it.key) },
+                                    { it.key }
+                                )
+                            )
+                        }
                     val freeEntries = if (readOnly) entries else entries.filter { (freeEmojis[it.key] ?: 0) > 0 }
                     val dimmedEntries = if (readOnly) emptyList() else entries.filter { (freeEmojis[it.key] ?: 0) <= 0 }
                     if (entries.isEmpty()) {
@@ -424,6 +543,9 @@ fun ProfileInventoryPanel(
                             fun EmojiCell(emoji: String, count: Int, dimmed: Boolean) {
                                 val free = freeEmojis[emoji] ?: 0
                                 val itemKey = "emojis:$emoji"
+                                val priceTag = if (priceSort != InvPriceSortMode.Off) {
+                                    invHintDisplay(priceHints["emojis:$emoji"])
+                                } else null
                                 ItemNewGlowBorder(
                                     active = itemKey in highlightKeys,
                                     corner = s(14.dp),
@@ -438,6 +560,16 @@ fun ProfileInventoryPanel(
                                             .clickable(enabled = readOnly || free > 0) { onEmoji(emoji) }
                                             .padding(s(6.dp))
                                     ) {
+                                        if (priceTag != null) {
+                                            Text(
+                                                "${priceTag.first}",
+                                                color = priceTag.second,
+                                                fontFamily = BodyFont,
+                                                fontSize = ts(9.sp),
+                                                maxLines = 1,
+                                                modifier = Modifier.align(Alignment.TopEnd)
+                                            )
+                                        }
                                         com.luv.couple.ui.ItemGlyph(
                                             id = emoji,
                                             fontSize = ts(26.sp),
@@ -489,6 +621,9 @@ fun ProfileInventoryPanel(
                         fun ThemeCell(theme: ProfileTheme, dimmed: Boolean) {
                             val on = theme.id == currentThemeId
                             val itemKey = "themes:${theme.id}"
+                            val priceTag = if (priceSort != InvPriceSortMode.Off) {
+                                invHintDisplay(priceHints["themes:${theme.id}"])
+                            } else null
                             ItemNewGlowBorder(
                                 active = itemKey in highlightKeys,
                                 corner = s(14.dp),
@@ -510,6 +645,18 @@ fun ProfileInventoryPanel(
                                         theme = theme,
                                         modifier = Modifier.fillMaxSize()
                                     )
+                                    if (priceTag != null) {
+                                        Text(
+                                            "${priceTag.first}",
+                                            color = priceTag.second,
+                                            fontFamily = BodyFont,
+                                            fontSize = ts(9.sp),
+                                            maxLines = 1,
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .padding(s(4.dp))
+                                        )
+                                    }
                                     Column(
                                         modifier = Modifier
                                             .align(Alignment.BottomCenter)
@@ -548,7 +695,15 @@ fun ProfileInventoryPanel(
                             LiveShopCatalog.matchesQuery(q, it.key, ItemLabels.stickerLabel(it.key))
                         }
                         .filter { guideSticker == null || it.key == guideSticker }
-                        .sortedBy { it.key }
+                        .let { list ->
+                            if (priceSort == InvPriceSortMode.Off) list.sortedBy { it.key }
+                            else list.sortedWith(
+                                compareBy(
+                                    { sortPriceKey("stickers", it.key) },
+                                    { it.key }
+                                )
+                            )
+                        }
                     val freeEntries = if (readOnly) stickerEntries
                     else stickerEntries.filter { (freeStickers[it.key] ?: 0) > 0 }
                     val dimmedEntries = if (readOnly || tutorialLocked) emptyList()
@@ -574,6 +729,9 @@ fun ProfileInventoryPanel(
                                 val free = freeStickers[emoji] ?: 0
                                 val itemKey = "stickers:$emoji"
                                 val isGuide = guideSticker != null && emoji == guideSticker
+                                val priceTag = if (priceSort != InvPriceSortMode.Off) {
+                                    invHintDisplay(priceHints["stickers:$emoji"])
+                                } else null
                                 ItemNewGlowBorder(
                                     active = itemKey in highlightKeys || isGuide,
                                     corner = s(14.dp),
@@ -620,6 +778,15 @@ fun ProfileInventoryPanel(
                                                     .align(Alignment.TopCenter)
                                                     .offset(y = s((-2).dp))
                                                     .zIndex(2f)
+                                            )
+                                        } else if (priceTag != null) {
+                                            Text(
+                                                "${priceTag.first}",
+                                                color = priceTag.second,
+                                                fontFamily = BodyFont,
+                                                fontSize = ts(9.sp),
+                                                maxLines = 1,
+                                                modifier = Modifier.align(Alignment.TopEnd)
                                             )
                                         }
                                         com.luv.couple.ui.ItemGlyph(
@@ -677,6 +844,9 @@ fun ProfileInventoryPanel(
                             val equipped = emoji == currentCompanion
                             val count = ownedPets[emoji] ?: 0
                             val itemKey = "pets:$emoji"
+                            val priceTag = if (priceSort != InvPriceSortMode.Off) {
+                                invHintDisplay(priceHints["pets:$emoji"])
+                            } else null
                             ItemNewGlowBorder(
                                 active = itemKey in highlightKeys,
                                 corner = s(14.dp),
@@ -696,6 +866,18 @@ fun ProfileInventoryPanel(
                                         .clickable(enabled = readOnly || !equipped) { onCompanion(emoji) },
                                     contentAlignment = Alignment.Center
                                 ) {
+                                    if (priceTag != null) {
+                                        Text(
+                                            "${priceTag.first}",
+                                            color = priceTag.second,
+                                            fontFamily = BodyFont,
+                                            fontSize = ts(9.sp),
+                                            maxLines = 1,
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .padding(s(4.dp))
+                                        )
+                                    }
                                     com.luv.couple.ui.CompanionGlyph(
                                         petId = emoji,
                                         fontSize = ts(28.sp)

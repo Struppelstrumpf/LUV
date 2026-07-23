@@ -389,18 +389,22 @@ private fun FriendsPanel(
             com.luv.couple.net.NotificationBadges.onCeremonyLobbyScheduled(null, 0L)
         }
         com.luv.couple.net.NotificationBadges.syncAppBadge(context)
-        // Partner: Mal- oder Kapellen-Lobby syncen (ohne zwingend nach Home)
-        val code = (
-            it.myMarriage?.ceremonyLobbyCode
-                ?: it.myMarriage?.weddingLobbyCode
-            )?.trim()?.uppercase()?.takeIf { c -> c.isNotBlank() }
+        // Partner: Mal-/Kapellen-Lobby syncen — auch wenn Mal-Lobby nach Skip weg ist
+        val paintCode = it.myMarriage?.weddingLobbyCode
+            ?.trim()?.uppercase()?.takeIf { c -> c.isNotBlank() }
+        val ceremonyCode = it.myMarriage?.ceremonyLobbyCode
+            ?.trim()?.uppercase()?.takeIf { c -> c.isNotBlank() }
         val phase = it.myMarriage?.status
-        if (
-            code != null &&
-            code != lastWeddingLobbyCode &&
+        val trackCode = ceremonyCode ?: paintCode
+        if (phase == "ceremony_pending" && lastWeddingLobbyCode != null && paintCode == null) {
+            lastWeddingLobbyCode = null
+            onSyncWeddingLobbies()
+        } else if (
+            trackCode != null &&
+            trackCode != lastWeddingLobbyCode &&
             (phase == "wedding" || phase == "ceremony_scheduled")
         ) {
-            lastWeddingLobbyCode = code
+            lastWeddingLobbyCode = trackCode
             onSyncWeddingLobbies()
         }
     }
@@ -1163,6 +1167,8 @@ private fun FriendsPanel(
                 myMarriage = it
                 LuvApiClient.invalidateFriendsCache()
                 reload(force = true)
+                // Mal-Lobby sofort aus Home entfernen (nicht erst nach App-Neustart)
+                onSyncWeddingLobbies()
             }
         )
     }

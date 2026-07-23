@@ -68,6 +68,7 @@ import com.luv.couple.shop.ShopCatalog
 import com.luv.couple.ui.UiScale
 import com.luv.couple.ui.rememberUiScale
 import com.luv.couple.ui.theme.AccentRose
+import com.luv.couple.ui.theme.BgDeep
 import com.luv.couple.ui.theme.BgSoft
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
@@ -76,12 +77,13 @@ import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val MarketCream = Color(0xFFF7F0E4)
-private val MarketCreamDeep = Color(0xFFEDE4D4)
-private val MarketBrown = Color(0xFF4A3728)
-private val MarketBrownMuted = Color(0xFF8B7355)
-private val MarketGold = Color(0xFFB8860B)
-private val MarketCard = Color(0xFFFFFBF5)
+/** LUV-Dark-Theme-Aliase — Struktur unverändert, Palette an App angepasst. */
+private val MarketCream = BgDeep
+private val MarketCreamDeep = BgSoft
+private val MarketBrown = TextPrimary
+private val MarketBrownMuted = TextMuted
+private val MarketGold = Color(0xFFE8C547)
+private val MarketCard = BgSoft
 
 private data class InventoryPick(
     val kind: String,

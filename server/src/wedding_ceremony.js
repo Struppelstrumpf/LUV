@@ -198,6 +198,20 @@ function clearGatheringPresence(m, userId) {
   }
 }
 
+/** Brautpaar-Dialog „Hochzeit öffnen“ verlassen → 1/2 sofort live */
+function clearPresence(m, userId, bucket = "presence") {
+  const c = ensureCeremony(m);
+  if (!c || !userId) return false;
+  if (bucket === "gathering") {
+    if (!c.gatheringPresence?.[userId]) return false;
+    delete c.gatheringPresence[userId];
+    return true;
+  }
+  if (!c.presence?.[userId]) return false;
+  delete c.presence[userId];
+  return true;
+}
+
 function countCouplePresence(m, bucket = "presence") {
   const c = ensureCeremony(m);
   const now = Date.now();
@@ -792,6 +806,7 @@ module.exports = {
   ensureCeremony,
   isCouple,
   touchPresence,
+  clearPresence,
   clearGatheringPresence,
   countCouplePresence,
   isPresent,

@@ -345,9 +345,15 @@ private fun MarketHub(
     onOpenCoinShop: () -> Unit,
     onOpenLootbox: () -> Unit
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var hub by remember { mutableStateOf(MarketHubCache.latest) }
     var lootPending by remember { mutableIntStateOf(0) }
     val marketAlert by com.luv.couple.net.NotificationBadges.hasMarketDot.collectAsStateWithLifecycle()
+    val pendingSalesCount by com.luv.couple.net.NotificationBadges.pendingSales.collectAsStateWithLifecycle()
+    var pendingSales by remember { mutableStateOf<com.luv.couple.net.PendingSalesResult?>(null) }
+    var claimBusy by remember { mutableStateOf(false) }
+    var claimFlashCoins by remember { mutableIntStateOf(0) }
     val shopRotRev by com.luv.couple.net.ShopRotatedBus.revision.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
         val fresh = runCatching { LuvApiClient.fetchMarketHub() }.getOrNull()
@@ -355,7 +361,19 @@ private fun MarketHub(
             MarketHubCache.latest = fresh
             hub = fresh
         }
-        com.luv.couple.net.NotificationBadges.refreshPendingSales()
+    }
+    LaunchedEffect(marketAlert, pendingSalesCount) {
+        if (marketAlert || pendingSalesCount > 0) {
+            pendingSales = com.luv.couple.net.NotificationBadges.refreshPendingSales()
+                ?: runCatching { LuvApiClient.fetchPendingMarketSales() }.getOrNull()
+        } else if (claimFlashCoins <= 0) {
+            pendingSales = null
+        }
+    }
+    LaunchedEffect(claimFlashCoins) {
+        if (claimFlashCoins <= 0) return@LaunchedEffect
+        delay(1000)
+        claimFlashCoins = 0
     }
     LaunchedEffect(shopRotRev) {
         if (shopRotRev <= 0) return@LaunchedEffect
@@ -365,6 +383,7 @@ private fun MarketHub(
     LaunchedEffect(lootRefreshKey) {
         lootPending = runCatching { LuvApiClient.pendingLootboxes().size }.getOrDefault(0)
     }
+    val showSoldOverlay = (pendingSales?.count ?: 0) > 0 && claimFlashCoins <= 0
     val marketPreviews = hub?.marketNewest.orEmpty()
     val shopPreviews = hub?.shopTop.orEmpty()
     val offerPack = remember(packs, hub) {
@@ -404,11 +423,31 @@ private fun MarketHub(
                         .weight(1.15f)
                         .fillMaxWidth(),
                     title = "Marktplatz",
-                    badge = if (marketAlert) "Verkauf!" else "Neueste Angebote",
+                    badge = when {
+                        showSoldOverlay -> "Verkäufe"
+                        else -> "Neueste Angebote"
+                    },
                     brush = Brush.linearGradient(listOf(Color(0xFF2A3148), Color(0xFF1A2030))),
                     previews = marketPreviews,
                     emptyHint = "Noch keine Angebote",
-                    alertDot = marketAlert,
+                    alertDot = false,
+                    soldSales = if (showSoldOverlay) pendingSales else null,
+                    claimBusy = claimBusy,
+                    claimFlashCoins = claimFlashCoins,
+                    onClaimSales = {
+                        if (claimBusy) return@MarketTile
+                        claimBusy = true
+                        scope.launch {
+                            runCatching { LuvApiClient.claimPendingMarketSales() }
+                                .onSuccess { result ->
+                                    com.luv.couple.net.NotificationBadges.setPendingSales(0)
+                                    com.luv.couple.net.NotificationBadges.syncAppBadge(context)
+                                    pendingSales = null
+                                    claimFlashCoins = result.totalCoins.coerceAtLeast(0)
+                                }
+                            claimBusy = false
+                        }
+                    },
                     onClick = onOpenMarketplace
                 )
                 MarketTile(
@@ -527,8 +566,13 @@ private fun MarketTile(
     onClick: () -> Unit,
     alertDot: Boolean = false,
     /** Eine Vorschau füllt die ganze Kachel (z. B. Coinshop-Hälfte) */
-    expandSinglePreview: Boolean = false
+    expandSinglePreview: Boolean = false,
+    soldSales: com.luv.couple.net.PendingSalesResult? = null,
+    claimBusy: Boolean = false,
+    claimFlashCoins: Int = 0,
+    onClaimSales: (() -> Unit)? = null
 ) {
+    val showSold = (soldSales?.count ?: 0) > 0
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(22.dp))
@@ -537,7 +581,7 @@ private fun MarketTile(
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
-        if (alertDot) {
+        if (alertDot && !showSold) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -566,7 +610,7 @@ private fun MarketTile(
                 if (badge.isNotBlank()) {
                     Text(
                         badge,
-                        color = if (alertDot) AccentRose else TextMuted,
+                        color = if (showSold) AccentRose else TextMuted,
                         fontFamily = BodyFont,
                         fontSize = 11.sp,
                         maxLines = 1,
@@ -574,35 +618,150 @@ private fun MarketTile(
                     )
                 }
             }
-            if (previews.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(emptyHint, color = TextMuted, fontFamily = BodyFont, fontSize = 13.sp)
-                }
-            } else {
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    previews.take(2).forEach { preview ->
-                        MarketTilePreviewCard(
-                            preview = preview,
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxSize()
-                        )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                if (previews.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(emptyHint, color = TextMuted, fontFamily = BodyFont, fontSize = 13.sp)
                     }
-                    if (previews.size == 1 && !expandSinglePreview) {
-                        Spacer(modifier = Modifier.weight(1f))
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        previews.take(2).forEach { preview ->
+                            MarketTilePreviewCard(
+                                preview = preview,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxSize()
+                            )
+                        }
+                        if (previews.size == 1 && !expandSinglePreview) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+                if (showSold && soldSales != null) {
+                    MarketSoldOverlay(
+                        sales = soldSales,
+                        claimBusy = claimBusy,
+                        onClaim = { onClaimSales?.invoke() },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                if (claimFlashCoins > 0) {
+                    // Kein clickable/pointerInput — Klicks gehen durch zum Tile
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "+$claimFlashCoins 🪙",
+                            color = Color(0xFFFFD54F),
+                            fontFamily = DisplayFont,
+                            fontSize = 28.sp,
+                            textAlign = TextAlign.Center
+                        )
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MarketSoldOverlay(
+    sales: com.luv.couple.net.PendingSalesResult,
+    claimBusy: Boolean,
+    onClaim: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val extras = (sales.count - 3).coerceAtLeast(0)
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(BgDeep.copy(0.92f))
+            .border(1.dp, AccentRose.copy(0.35f), RoundedCornerShape(16.dp))
+            .clickable(enabled = false, onClick = {})
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            sales.sales.take(3).forEach { sale ->
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(BgSoft)
+                        .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(10.dp))
+                        .padding(vertical = 6.dp, horizontal = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    ItemGlyph(id = sale.emoji, fontSize = 20.sp)
+                    Text(
+                        "${sale.priceCoins}",
+                        color = Color(0xFFFFD54F),
+                        fontFamily = BodyFont,
+                        fontSize = 10.sp,
+                        maxLines = 1
+                    )
+                }
+            }
+            if (extras > 0) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(BgSoft)
+                        .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(10.dp))
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "+$extras",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = 16.sp
+                    )
+                }
+            }
+        }
+        Text(
+            "${sales.totalCoins} 🪙",
+            color = TextPrimary,
+            fontFamily = DisplayFont,
+            fontSize = 15.sp
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(AccentRose.copy(0.95f), Color(0xFFE11D48).copy(0.9f))
+                    )
+                )
+                .clickable(enabled = !claimBusy, onClick = onClaim)
+                .padding(vertical = 8.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                if (claimBusy) "…" else "Einsammeln",
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 13.sp
+            )
         }
     }
 }
@@ -1032,6 +1191,7 @@ private fun ItemShopContent(
     var localSearchQuery by remember { mutableStateOf("") }
     val searchQuery = if (searchManagedExternally) externalSearchQuery else localSearchQuery
     var catalogTick by remember { mutableIntStateOf(0) }
+    var sortMode by remember { mutableStateOf(ShopItemSortMode.PriceAsc) }
     fun openBuy(pending: ShopPendingBuy) {
         if (!economyUnlocked) {
             onRequireGoogle()
@@ -1340,28 +1500,62 @@ private fun ItemShopContent(
         }
         fun s(v: androidx.compose.ui.unit.Dp) = v * scale
         Column(modifier = Modifier.fillMaxSize()) {
-            // Header atmosphere
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(s(18.dp)))
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                AccentRose.copy(0.18f),
-                                BgSoft.copy(0.55f),
-                                Color.Transparent
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(s(10.dp))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(s(18.dp)))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    AccentRose.copy(0.28f),
+                                    Color(0xFFFFD54F).copy(0.18f),
+                                    BgSoft.copy(0.9f)
+                                )
                             )
                         )
+                        .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(s(18.dp)))
+                        .padding(horizontal = s(14.dp), vertical = s(11.dp)),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(s(8.dp))
+                ) {
+                    Text("🪙", fontSize = (18f * scale).sp)
+                    Text(
+                        "${account?.coins ?: 0} Coins",
+                        color = TextPrimary,
+                        fontFamily = DisplayFont,
+                        fontSize = (15f * scale).sp
                     )
-                    .padding(horizontal = s(14.dp), vertical = s(12.dp))
-            ) {
-                Text(
-                    "${account?.coins ?: 0} Coins",
-                    color = TextPrimary,
-                    fontFamily = DisplayFont,
-                    fontSize = (15f * scale).sp
-                )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(s(42.dp))
+                        .clip(CircleShape)
+                        .background(
+                            if (sortMode == ShopItemSortMode.LeavingSoon) {
+                                Color(0xFFFFD54F).copy(0.22f)
+                            } else {
+                                BgSoft
+                            }
+                        )
+                        .border(1.dp, Color.White.copy(0.12f), CircleShape)
+                        .clickable {
+                            sortMode = when (sortMode) {
+                                ShopItemSortMode.PriceAsc -> ShopItemSortMode.LeavingSoon
+                                ShopItemSortMode.LeavingSoon -> ShopItemSortMode.PriceAsc
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        if (sortMode == ShopItemSortMode.LeavingSoon) "🪙" else "🕐",
+                        fontSize = (18f * scale).sp
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(s(10.dp)))
             // Featured preview — Demnächst immer, Pool = voller lokaler Katalog
@@ -1586,8 +1780,7 @@ private fun ItemShopContent(
             }
             val q = searchQuery
             // Keine Client-Rotation mehr im Grid: Server entscheidet Sichtbarkeit (Fix/Fenster).
-            // Nur Preis-Sortierung — sonst verschwinden Custom-Items und landen falsch sortiert.
-            val stickers = remember(catalogTick, q) {
+            val stickers = remember(catalogTick, q, sortMode) {
                 LiveShopCatalog.stickers()
                     .filter {
                         LiveShopCatalog.matchesQuery(
@@ -1597,23 +1790,23 @@ private fun ItemShopContent(
                             searchText = it.searchText
                         )
                     }
-                    .sortedWith(compareBy({ it.priceCoins }, { it.emoji }))
+                    .sortedWith(shopItemComparator(sortMode, { it.remainingMs }, { it.priceCoins }, { it.emoji }))
             }
-            val themes = remember(catalogTick, q) {
+            val themes = remember(catalogTick, q, sortMode) {
                 LiveShopCatalog.themes()
                     .filter {
                         LiveShopCatalog.matchesQuery(q, it.emoji, it.label, it.searchText)
                     }
-                    .sortedWith(compareBy({ it.priceCoins }, { it.id }))
+                    .sortedWith(shopItemComparator(sortMode, { it.remainingMs }, { it.priceCoins }, { it.id }))
             }
-            val pets = remember(catalogTick, q) {
+            val pets = remember(catalogTick, q, sortMode) {
                 LiveShopCatalog.pets()
                     .filter {
                         LiveShopCatalog.matchesQuery(q, it.emoji, it.label, it.searchText)
                     }
-                    .sortedWith(compareBy({ it.priceCoins }, { it.emoji }))
+                    .sortedWith(shopItemComparator(sortMode, { it.remainingMs }, { it.priceCoins }, { it.emoji }))
             }
-            val emojis = remember(catalogTick, q) {
+            val emojis = remember(catalogTick, q, sortMode) {
                 LiveShopCatalog.emojis()
                     .filter {
                         LiveShopCatalog.matchesQuery(
@@ -1623,7 +1816,7 @@ private fun ItemShopContent(
                             searchText = it.searchText
                         )
                     }
-                    .sortedWith(compareBy({ it.priceCoins }, { it.emoji }))
+                    .sortedWith(shopItemComparator(sortMode, { it.remainingMs }, { it.priceCoins }, { it.emoji }))
             }
             when (tab) {
                 0 -> LazyVerticalGrid(
@@ -2713,6 +2906,22 @@ private fun ShopFeaturedCard(
     }
 }
 
+private enum class ShopItemSortMode { PriceAsc, LeavingSoon }
+
+private fun <T> shopItemComparator(
+    mode: ShopItemSortMode,
+    remainingOf: (T) -> Long?,
+    priceOf: (T) -> Int,
+    tieOf: (T) -> String
+): Comparator<T> = when (mode) {
+    ShopItemSortMode.LeavingSoon -> compareBy(
+        { remainingOf(it)?.takeIf { ms -> ms > 0L } ?: Long.MAX_VALUE },
+        { priceOf(it) },
+        { tieOf(it) }
+    )
+    ShopItemSortMode.PriceAsc -> compareBy({ priceOf(it) }, { tieOf(it) })
+}
+
 @Composable
 private fun ShopGridCell(
     emoji: String,
@@ -2725,7 +2934,7 @@ private fun ShopGridCell(
     remainingMs: Long? = null,
     name: String? = null
 ) {
-    val timer = formatShopRemaining(remainingMs)
+    val timerInfo = formatShopRemainingInfo(remainingMs)
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -2771,10 +2980,10 @@ private fun ShopGridCell(
                     .height(14.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
-                if (timer != null) {
+                if (timerInfo != null) {
                     Text(
-                        timer,
-                        color = if (themeId != null) Color(0xFFFFD54F) else AccentRose,
+                        timerInfo.text,
+                        color = timerInfo.color,
                         fontFamily = BodyFont,
                         fontSize = 8.sp,
                         maxLines = 1,

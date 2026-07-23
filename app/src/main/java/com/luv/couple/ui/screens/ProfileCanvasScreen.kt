@@ -239,8 +239,8 @@ fun ProfileCanvasScreen(
     }
 
     LaunchedEffect(userId, editable, nickname, tutorialMode) {
-        profileReady = false
         if (editable) {
+            profileReady = false
             if (tutorialMode) {
                 loadedNick = nickname
                 state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname))
@@ -344,6 +344,11 @@ fun ProfileCanvasScreen(
             }
             profileReady = true
         } else if (!userId.isNullOrBlank()) {
+            // Sofort Placeholder mit Nickname — Remote danach nachladen
+            loadedNick = nickname
+            state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname)).normalized(nickname)
+            savedSnapshot = state.snapshotKey()
+            profileReady = true
             val remote = LuvApiClient.fetchUserProfileCanvas(userId)
             if (remote != null) {
                 loadedNick = remote.nickname
@@ -366,8 +371,6 @@ fun ProfileCanvasScreen(
                 engagedExtraName = remote.fiancePublic?.nickname
                 dayStreak = remote.dayStreak
             } else {
-                loadedNick = nickname
-                state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname)).normalized(nickname)
                 displayCoins = 0
                 friendStatus = "none"
                 canPetKraul = false
@@ -385,8 +388,6 @@ fun ProfileCanvasScreen(
                 dayStreak = 0
             }
             savedSnapshot = state.snapshotKey()
-            // Sofort zeigen — kein künstliches 1,1s-Warten mehr
-            profileReady = true
             // img_*-Stickers/Pets parallel vorladen (sonst bleiben lange 🐾)
             val imgIds = buildList {
                 state.companionEmoji.trim().takeIf { it.startsWith("img_", true) }?.let { add(it) }

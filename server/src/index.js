@@ -9325,6 +9325,13 @@ app.post("/v1/me/lobby-invites", (req, res) => {
         message: "Nur das Brautpaar darf zur Hochzeit einladen.",
       });
     }
+    // Ehepartner / Verlobte:n ist schon Brautpaar — nicht als Gast einladen
+    if (friendUserId === m.a || friendUserId === m.b) {
+      return res.status(400).json({
+        error: "is_couple",
+        message: "Dein:e Partner:in ist schon Teil der Hochzeit.",
+      });
+    }
     const gp = String(m.giftPhase || live?.giftPhase || stored?.giftPhase || "none");
     if (
       m.status === "married" ||
@@ -10141,11 +10148,42 @@ app.post("/v1/me/marriage/ceremony/presence", (req, res) => {
     roomLayouts.ensureSpawnPosition(layout, c.positions, ctx.user.id);
   }
   scheduleSave();
+  if (bucket === "presence") {
+    const n = weddingCeremony.countCouplePresence(m, "presence");
+    emitMarriageLiveUpdate(
+      m,
+      m.status,
+      n >= 2 ? "Beide Brautleute sind da" : "Anwesenheit aktualisiert",
+      ctx.user.id
+    );
+  }
   return res.json({
     ok: true,
     ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
     marriage: publicMarriageView(m, ctx.user.id),
     roomLayout: ceremonyLayoutOf(m, db),
+  });
+});
+
+/** Brautpaar verlässt „Hochzeit öffnen“ → Partner sieht 1/2 sofort */
+app.post("/v1/me/marriage/ceremony/presence/leave", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const db = getDb();
+  const m = findMarriageForCeremonyMember(db, ctx.user.id);
+  if (!m) {
+    return res.status(400).json({ error: "wrong_phase" });
+  }
+  if (!weddingCeremony.isCouple(m, ctx.user.id)) {
+    return res.status(403).json({ error: "couple_only" });
+  }
+  const cleared = weddingCeremony.clearPresence(m, ctx.user.id, "presence");
+  if (cleared) scheduleSave();
+  emitMarriageLiveUpdate(m, m.status, "Partner hat die Anzeige verlassen", ctx.user.id);
+  return res.json({
+    ok: true,
+    ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+    marriage: publicMarriageView(m, ctx.user.id),
   });
 });
 
@@ -10164,6 +10202,7 @@ app.post("/v1/me/marriage/ceremony/start-confirm", (req, res) => {
   const c = weddingCeremony.ensureCeremony(m);
   c.startConfirm[ctx.user.id] = true;
   scheduleSave();
+  emitMarriageLiveUpdate(m, m.status, "Zur Hochzeit starten", ctx.user.id);
   return res.json({
     ok: true,
     ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
@@ -10353,6 +10392,7 @@ app.post("/v1/me/marriage/ceremony/propose", (req, res) => {
   const result = weddingCeremony.proposeTime(m, ctx.user.id, req.body?.ceremonyAt);
   if (!result.ok) return res.status(400).json(result);
   scheduleSave();
+  emitMarriageLiveUpdate(m, m.status, "Neuer Terminvorschlag", ctx.user.id);
   return res.json({
     ok: true,
     ceremonyAt: result.ceremonyAt,
@@ -10376,6 +10416,7 @@ app.post("/v1/me/marriage/ceremony/propose/withdraw", (req, res) => {
   const result = weddingCeremony.withdrawTime(m, ctx.user.id, req.body?.ceremonyAt);
   if (!result.ok) return res.status(400).json(result);
   scheduleSave();
+  emitMarriageLiveUpdate(m, m.status, "Terminvorschlag zurückgezogen", ctx.user.id);
   return res.json({
     ok: true,
     ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
@@ -10401,6 +10442,7 @@ app.post("/v1/me/marriage/ceremony/propose/accept", (req, res) => {
   weddingCeremony.touchPresence(m, ctx.user.id, "presence");
   const done = beginCeremonyBooking(m, ctx.user.id, at, db);
   if (!done.ok) return res.status(done.status).json(done.body);
+  emitMarriageLiveUpdate(m, m.status, "Termin gewählt — Buchung starten", ctx.user.id);
   return res.json(done.body);
 });
 
@@ -10422,6 +10464,12 @@ app.post("/v1/me/marriage/ceremony/booking/money-trees", (req, res) => {
   );
   if (!result.ok) return res.status(400).json(result);
   scheduleSave();
+  emitMarriageLiveUpdate(
+    m,
+    m.status,
+    result.advanced ? "Geldbäume entschieden — Raum wählen" : "Geldbäume-Stimme",
+    ctx.user.id
+  );
   return res.json({
     ok: true,
     advanced: Boolean(result.advanced),
@@ -10444,6 +10492,12 @@ app.post("/v1/me/marriage/ceremony/booking/room", (req, res) => {
   const result = weddingCeremony.booking.voteRoom(m, ctx.user.id, req.body?.roomId);
   if (!result.ok) return res.status(400).json(result);
   scheduleSave();
+  emitMarriageLiveUpdate(
+    m,
+    m.status,
+    result.advanced ? "Raum gewählt — Bestätigen" : "Raum-Stimme",
+    ctx.user.id
+  );
   return res.json({
     ok: true,
     advanced: Boolean(result.advanced),
@@ -10487,6 +10541,7 @@ app.post("/v1/me/marriage/ceremony/booking/confirm", (req, res) => {
 
   if (!result.ready) {
     scheduleSave();
+    emitMarriageLiveUpdate(m, m.status, "Hochzeit buchen — warte auf Partner", ctx.user.id);
     return res.json({
       ok: true,
       ready: false,
@@ -14422,6 +14477,27 @@ app.get("/v1/market/item-price", (req, res) => {
     priceInsight,
     priceWindowDays: market.priceWindowDays(getDb()),
   });
+});
+
+/** Bulk: letzter Verkauf + Shop-Preis für Inventar-Preisanzeige */
+app.post("/v1/market/price-hints", (req, res) => {
+  const ctx = requireAuth(req, res);
+  if (!ctx) return;
+  const raw = Array.isArray(req.body?.items) ? req.body.items : [];
+  const hints = {};
+  for (const row of raw.slice(0, 220)) {
+    const kind = String(row?.kind || "").trim();
+    const itemId = clipMarketItemId(row?.itemId ?? row?.id);
+    if (!["pets", "themes", "stickers", "emojis"].includes(kind) || !itemId) continue;
+    const key = `${kind}:${itemId}`;
+    if (hints[key]) continue;
+    const insight = attachPriceInsight(kind, itemId);
+    hints[key] = {
+      lastSalePrice: insight.lastSalePrice || null,
+      shopPrice: insight.shopPrice || null,
+    };
+  }
+  return res.json({ ok: true, hints });
 });
 
 app.get("/v1/admin/market-settings", (req, res) => {

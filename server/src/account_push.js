@@ -175,6 +175,12 @@ function fcmTitleBody(type, data) {
         body: String(data?.message || data?.title || "Neuer Erfolg — Belohnung abholen"),
       };
     case "lobby_invite":
+      if (data?.isWeddingCeremony) {
+        return {
+          title: "Hochzeitseinladung",
+          body: String(data?.message || `${nick} lädt dich zur Hochzeit ein`),
+        };
+      }
       return { title: "Lobby-Einladung", body: `${nick} lädt dich ein` };
     default:
       return { title: "LUV", body: String(data?.message || "Etwas Neues in LUV") };

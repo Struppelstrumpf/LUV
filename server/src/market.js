@@ -205,6 +205,9 @@ function priceInsight(db, kind, itemId, shopPriceRaw) {
     listings?.trend ||
     "=";
 
+  const lastSaleRaw = ever.length
+    ? Math.max(0, Math.floor(Number(ever[ever.length - 1].price) || 0))
+    : 0;
   return {
     shopPrice,
     windowDays,
@@ -212,6 +215,8 @@ function priceInsight(db, kind, itemId, shopPriceRaw) {
     listings,
     source,
     trend,
+    /** Letzter Marktplatz-Verkaufspreis (alle Zeiten), sonst null */
+    lastSalePrice: lastSaleRaw > 0 ? lastSaleRaw : null,
   };
 }
 

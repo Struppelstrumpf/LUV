@@ -100,6 +100,7 @@ fun WeddingPresenceDialog(
     var showSchedule by remember { mutableStateOf(false) }
     var showBooking by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
+    var leftPresence by remember { mutableStateOf(false) }
 
     fun lobbyCodeOf(
         m: LuvApiClient.MarriageInfo?,
@@ -107,6 +108,14 @@ fun WeddingPresenceDialog(
     ): String? =
         c?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
             ?: m?.ceremonyLobbyCode?.takeIf { it.isNotBlank() }
+
+    fun closePresence() {
+        if (!leftPresence) {
+            leftPresence = true
+            scope.launch { runCatching { LuvApiClient.ceremonyPresenceLeave() } }
+        }
+        onDismiss()
+    }
 
     val ceremonyRev by com.luv.couple.net.CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
     LaunchedEffect(Unit, ceremonyRev) {
@@ -127,12 +136,22 @@ fun WeddingPresenceDialog(
             }
         }
     }
+    // Keepalive: Anwesenheit frisch halten, Partner sieht 2/2 live
+    LaunchedEffect(loaded, showSchedule, showBooking) {
+        if (!loaded || showSchedule || showBooking) return@LaunchedEffect
+        while (true) {
+            delay(12_000)
+            runCatching { LuvApiClient.ceremonyPresence("presence") }
+                .onSuccess { ceremony = it }
+        }
+    }
 
     if (showBooking) {
         WeddingBookingDialog(
-            onDismiss = onDismiss,
+            onDismiss = { closePresence() },
             onBooked = { code ->
                 showBooking = false
+                leftPresence = true
                 if (!code.isNullOrBlank()) onScheduled(code)
             }
         )
@@ -144,6 +163,7 @@ fun WeddingPresenceDialog(
             onDismiss = { showSchedule = false },
             onScheduled = { code ->
                 showSchedule = false
+                leftPresence = true
                 if (!code.isNullOrBlank()) onScheduled(code)
             }
         )
@@ -152,7 +172,7 @@ fun WeddingPresenceDialog(
 
     if (!loaded) {
         Dialog(
-            onDismissRequest = { if (!busy) onDismiss() },
+            onDismissRequest = { if (!busy) closePresence() },
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             Column(
@@ -177,7 +197,7 @@ fun WeddingPresenceDialog(
 
     val c = ceremony
     Dialog(
-        onDismissRequest = { if (!busy) onDismiss() },
+        onDismissRequest = { if (!busy) closePresence() },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Column(
@@ -277,7 +297,7 @@ fun WeddingPresenceDialog(
                     }
                 }
             }
-            TextButton(onClick = onDismiss) {
+            TextButton(onClick = { closePresence() }) {
                 Text("Schließen", color = TextMuted, fontFamily = BodyFont)
             }
         }
@@ -962,31 +982,55 @@ fun WeddingBookingDialog(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+            Text(
+                "Hochzeit buchen",
+                color = TextPrimary,
+                fontFamily = DisplayFont,
+                fontSize = 22.sp,
+            )
+            // Rechnung-Kachel oben
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(Color(0x332A1F28), Color(0x22FFD54F))
+                        )
+                    )
+                    .border(1.dp, Gold.copy(0.35f), RoundedCornerShape(16.dp))
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
-                    "Hochzeit buchen",
-                    color = TextPrimary,
-                    fontFamily = DisplayFont,
-                    fontSize = 20.sp,
-                )
-                Text(
-                    "Rechnung: $bill Coins je",
-                    color = Gold,
-                    fontFamily = DisplayFont,
-                    fontSize = 13.sp,
-                )
-            }
-            if ((b?.ceremonyAt ?: 0L) > 0L) {
-                Text(
-                    "Termin: ${formatCeremonyAt(b!!.ceremonyAt)}",
+                    "Rechnung",
                     color = TextMuted,
                     fontFamily = BodyFont,
-                    fontSize = 13.sp,
+                    fontSize = 11.sp,
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        if ((b?.ceremonyAt ?: 0L) > 0L) {
+                            formatCeremonyAt(b!!.ceremonyAt)
+                        } else {
+                            "Termin folgt"
+                        },
+                        color = TextPrimary,
+                        fontFamily = BodyFont,
+                        fontSize = 13.sp,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        "$bill 🪙 je",
+                        color = Gold,
+                        fontFamily = DisplayFont,
+                        fontSize = 18.sp,
+                    )
+                }
             }
 
             when (b?.step) {
@@ -1027,6 +1071,18 @@ fun WeddingBookingDialog(
                                         )
                                     }
                                         .onFailure {
+                                            // Schritt evtl. schon weiter (Partner) — frisch laden
+                                            scope.launch {
+                                                runCatching { LuvApiClient.fetchCeremony() }
+                                                    .onSuccess { bundle ->
+                                                        applyCer(
+                                                            bundle.ceremony,
+                                                            marriageStatus = bundle.marriage?.status,
+                                                            marriageLobby =
+                                                                bundle.marriage?.ceremonyLobbyCode,
+                                                        )
+                                                    }
+                                            }
                                             Toast.makeText(
                                                 context,
                                                 it.message ?: "Fehler",
@@ -1077,7 +1133,7 @@ fun WeddingBookingDialog(
                         fontSize = 17.sp,
                     )
                     Text(
-                        "Beide tippen denselben Raum — Anzeige „gewählt n/2“ bis Match.",
+                        "Beide tippen denselben Raum — gewählt n/2 bis Match.",
                         color = TextMuted,
                         fontFamily = BodyFont,
                         fontSize = 12.sp,
@@ -1085,15 +1141,17 @@ fun WeddingBookingDialog(
                     b.rooms.forEach { room ->
                         val votes = b.roomVoteCounts[room.id] ?: 0
                         val mine = b.roomMine == room.id
-                        Column(
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(if (mine) Color(0x33FFD54F) else Color(0x22000000))
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    if (mine) Color(0x44FFD54F) else Color(0xFF1A2030)
+                                )
                                 .border(
-                                    1.dp,
+                                    1.5.dp,
                                     if (mine) Gold else Color.White.copy(0.12f),
-                                    RoundedCornerShape(14.dp)
+                                    RoundedCornerShape(16.dp)
                                 )
                                 .clickable(enabled = !busy) {
                                     busy = true
@@ -1117,27 +1175,54 @@ fun WeddingBookingDialog(
                                         busy = false
                                     }
                                 }
-                                .padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Text(
-                                "${room.shortLabel.ifBlank { room.name }} · gewählt $votes/2",
-                                color = TextPrimary,
-                                fontFamily = DisplayFont,
-                                fontSize = 15.sp,
-                            )
-                            Text(
-                                "${room.guestSlots} Gäste-Slots (Cap ${room.capacity}) · " +
-                                    if (room.perPerson <= 0) "kostenlos"
-                                    else "${room.totalCost} Coins (${room.perPerson} je Person)",
-                                color = TextMuted,
-                                fontFamily = BodyFont,
-                                fontSize = 12.sp,
-                            )
-                            if (room.blurb.isNotBlank()) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
                                 Text(
-                                    room.blurb,
+                                    room.shortLabel.ifBlank { room.name },
+                                    color = TextPrimary,
+                                    fontFamily = DisplayFont,
+                                    fontSize = 16.sp,
+                                )
+                                Text(
+                                    "${room.guestSlots} Gäste-Slots · Cap ${room.capacity}",
                                     color = TextMuted,
+                                    fontFamily = BodyFont,
+                                    fontSize = 12.sp,
+                                )
+                                if (room.blurb.isNotBlank()) {
+                                    Text(
+                                        room.blurb,
+                                        color = TextMuted,
+                                        fontFamily = BodyFont,
+                                        fontSize = 11.sp,
+                                        maxLines = 2,
+                                    )
+                                }
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    if (room.perPerson <= 0) "gratis" else "${room.perPerson} 🪙",
+                                    color = Gold,
+                                    fontFamily = DisplayFont,
+                                    fontSize = 18.sp,
+                                )
+                                if (room.totalCost > 0) {
+                                    Text(
+                                        "${room.totalCost} gesamt",
+                                        color = TextMuted,
+                                        fontFamily = BodyFont,
+                                        fontSize = 10.sp,
+                                    )
+                                }
+                                Text(
+                                    "gewählt $votes/2",
+                                    color = if (votes >= 2) Color(0xFF81C784) else AccentRose,
                                     fontFamily = BodyFont,
                                     fontSize = 12.sp,
                                 )
@@ -1154,16 +1239,26 @@ fun WeddingBookingDialog(
                         fontFamily = DisplayFont,
                         fontSize = 17.sp,
                     )
-                    Text(
-                        "• Termin: ${formatCeremonyAt(b.ceremonyAt)}\n" +
-                            "• Geldbäume: ${if (b.moneyTrees == true) "ja (+${b.moneyTreesPerPerson} je)" else "nein"}\n" +
-                            "• Raum: ${room?.name ?: b.roomId} " +
-                            "(${room?.guestSlots ?: "?"} Gäste)\n" +
-                            "• Summe je Person: $bill Coins",
-                        color = TextPrimary,
-                        fontFamily = BodyFont,
-                        fontSize = 13.sp,
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color(0xFF1A2030))
+                            .border(1.dp, Gold.copy(0.3f), RoundedCornerShape(16.dp))
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        ConfirmBillRow("Termin", formatCeremonyAt(b.ceremonyAt))
+                        ConfirmBillRow(
+                            "Geldbäume",
+                            if (b.moneyTrees == true) "ja (+${b.moneyTreesPerPerson} je)" else "nein",
+                        )
+                        ConfirmBillRow(
+                            "Raum",
+                            "${room?.name ?: b.roomId} · ${room?.guestSlots ?: "?"} Gäste",
+                        )
+                        ConfirmBillRow("Summe je Person", "$bill 🪙", emphasize = true)
+                    }
                     Text(
                         "Beide müssen buchen — erst dann wird abgebucht und die Lobby erstellt.",
                         color = TextMuted,
@@ -1287,6 +1382,27 @@ fun WeddingBookingDialog(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ConfirmBillRow(
+    label: String,
+    value: String,
+    emphasize: Boolean = false,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, color = TextMuted, fontFamily = BodyFont, fontSize = 13.sp)
+        Text(
+            value,
+            color = if (emphasize) Gold else TextPrimary,
+            fontFamily = if (emphasize) DisplayFont else BodyFont,
+            fontSize = if (emphasize) 16.sp else 13.sp,
+        )
     }
 }
 

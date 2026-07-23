@@ -19,7 +19,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.luv.couple.ui.theme.AccentRose
@@ -112,15 +111,30 @@ fun ShopSearchToggleRow(
     }
 }
 
-fun formatShopRemaining(ms: Long?): String? {
+data class ShopRemainingInfo(
+    val text: String,
+    val color: Color
+)
+
+private val ShopTimerRed = Color(0xFFE53935)
+private val ShopTimerOrange = Color(0xFFFF9800)
+private val ShopTimerGreen = Color(0xFF43A047)
+
+fun formatShopRemainingInfo(ms: Long?): ShopRemainingInfo? {
     if (ms == null || ms <= 0L) return null
-    val days = ms / 86_400_000L
+    val minutes = ((ms + 59_999L) / 60_000L).coerceAtLeast(1L)
     val hours = ms / 3_600_000L
+    val days = ms / 86_400_000L
     return when {
-        days >= 2L -> "noch $days Tage"
-        days >= 1L -> "noch 1 Tag"
-        hours >= 2L -> "noch $hours Stunden"
-        hours >= 1L -> "noch 1 Stunde"
-        else -> "noch weniger als 1 Stunde"
+        ms < 5 * 60_000L -> ShopRemainingInfo("noch $minutes Min", ShopTimerRed)
+        ms < 3_600_000L -> ShopRemainingInfo("noch $minutes Min", ShopTimerOrange)
+        ms < 86_400_000L -> {
+            val label = if (hours <= 1L) "noch 1 Stunde" else "noch $hours Stunden"
+            ShopRemainingInfo(label, ShopTimerOrange)
+        }
+        days <= 1L -> ShopRemainingInfo("noch 1 Tag", ShopTimerGreen)
+        else -> ShopRemainingInfo("noch $days Tage", ShopTimerGreen)
     }
 }
+
+fun formatShopRemaining(ms: Long?): String? = formatShopRemainingInfo(ms)?.text

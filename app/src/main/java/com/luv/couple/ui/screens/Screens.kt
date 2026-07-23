@@ -1916,7 +1916,14 @@ fun InviteLobbyDialog(
         LaunchedEffect(Unit) {
             friendsLoading = true
             friends = runCatching {
-                com.luv.couple.net.LuvApiClient.fetchFriends().friends
+                val snap = com.luv.couple.net.LuvApiClient.fetchFriends()
+                val partnerId = snap.myMarriage?.partnerId?.trim().orEmpty()
+                // Brautpartner:in nicht als Gast zur eigenen Hochzeit einladen
+                if (lobby.isWeddingCeremony && partnerId.isNotBlank()) {
+                    snap.friends.filter { it.userId != partnerId }
+                } else {
+                    snap.friends
+                }
             }.getOrDefault(emptyList())
             friendsLoading = false
         }
