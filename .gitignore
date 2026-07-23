@@ -26,6 +26,7 @@ out/
 /secrets/
 
 .tmp/
+.backup_pre_scale/
 
 
 server/data/

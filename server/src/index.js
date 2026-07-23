@@ -40,6 +40,7 @@ const adminWebAuth = require("./admin_web_auth");
 const maintenance = require("./maintenance");
 const shopChangeQueue = require("./shop_change_queue");
 const bugReports = require("./bug_reports");
+const redisUtil = require("./redis_util");
 ach.bindGetDb(getDb);
 const {
   STICKER_SHOP_PRICES,
@@ -6956,6 +6957,17 @@ function broadcastRoom(room, payload, exceptSocket = null) {
   }
 }
 
+/** Live positions for ceremony / custom rooms (does not touch stroke relay). */
+function broadcastLivePos(roomCode, payload) {
+  const code = String(roomCode || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  if (!code) return;
+  const room = rooms.get(code);
+  if (!room || !room.sockets || room.sockets.size === 0) return;
+  broadcastRoom(room, payload);
+}
+
 /**
  * Jede verbundene Person genau einmal — immer mit Anzeigenamen.
  * Früher: leere Nicknames wurden übersprungen → fehlten in Kachel/Avataren.
@@ -10527,66 +10539,87 @@ app.post("/v1/me/marriage/ceremony/enter-altar", (req, res) => {
   });
 });
 
-app.post("/v1/me/marriage/ceremony/move", (req, res) => {
-  const ctx = requireAuth(req, res);
-  if (!ctx) return;
-  const db = getDb();
-  let m = findMarriageForCeremonyMember(db, ctx.user.id);
-  if (!m && req.body?.marriageId) {
-    m = marriage.ensureMarriages(db)[String(req.body.marriageId)];
-  }
-  if (!m || (m.status !== "ceremony_scheduled" && m.status !== "married")) {
-    return res.status(400).json({ error: "wrong_phase" });
-  }
-  const c = weddingCeremony.ensureCeremony(m);
-  if (
-    c.phase === "none" ||
-    c.phase === "presence" ||
-    c.phase === "scheduled"
-  ) {
-    c.phase = "gathering";
-  }
-  if (
-    c.phase !== "altar" &&
-    c.phase !== "vows" &&
-    c.phase !== "gifts" &&
-    c.phase !== "reception" &&
-    c.phase !== "gathering"
-  ) {
-    return res.status(400).json({
-      error: "not_in_room",
-      message: "Bitte zuerst eintreten.",
-    });
-  }
-  // Nach Sitz-Lock: Sitzende dürfen nicht mehr laufen
-  if (c.seated[ctx.user.id] && !weddingCeremony.canStand(m, ctx.user.id)) {
-    return res.status(400).json({
-      error: "seating_locked",
-      message: "Während der Zeremonie bleibt ihr sitzen.",
+app.post("/v1/me/marriage/ceremony/move", async (req, res) => {
+  try {
+    const ctx = requireAuth(req, res);
+    if (!ctx) return;
+    const allowed = await redisUtil.allow(`cmove:${ctx.user.id}`, 50, 1);
+    if (!allowed) {
+      return res.status(429).json({
+        error: "rate_limited",
+        message: "Zu schnell — kurz warten.",
+      });
+    }
+    const db = getDb();
+    let m = findMarriageForCeremonyMember(db, ctx.user.id);
+    if (!m && req.body?.marriageId) {
+      m = marriage.ensureMarriages(db)[String(req.body.marriageId)];
+    }
+    if (!m || (m.status !== "ceremony_scheduled" && m.status !== "married")) {
+      return res.status(400).json({ error: "wrong_phase" });
+    }
+    const c = weddingCeremony.ensureCeremony(m);
+    if (
+      c.phase === "none" ||
+      c.phase === "presence" ||
+      c.phase === "scheduled"
+    ) {
+      c.phase = "gathering";
+    }
+    if (
+      c.phase !== "altar" &&
+      c.phase !== "vows" &&
+      c.phase !== "gifts" &&
+      c.phase !== "reception" &&
+      c.phase !== "gathering"
+    ) {
+      return res.status(400).json({
+        error: "not_in_room",
+        message: "Bitte zuerst eintreten.",
+      });
+    }
+    // Nach Sitz-Lock: Sitzende dürfen nicht mehr laufen
+    if (c.seated[ctx.user.id] && !weddingCeremony.canStand(m, ctx.user.id)) {
+      return res.status(400).json({
+        error: "seating_locked",
+        message: "Während der Zeremonie bleibt ihr sitzen.",
+        ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+      });
+    }
+    const layout = ceremonyLayoutOf(m, db);
+    const prev = c.positions[ctx.user.id] || { x: 0.5, y: 0.86 };
+    const clamped = roomLayouts.clampMove(
+      layout,
+      prev.x,
+      prev.y,
+      Number(req.body?.x),
+      Number(req.body?.y)
+    );
+    c.positions[ctx.user.id] = { x: clamped.x, y: clamped.y };
+    // Sitzt nur, wer im passenden Rechteck steht (nicht mehr: Move = Aufstehen)
+    syncWeddingZoneSeating(m, db, ctx.user.id);
+    weddingCeremony.touchPresence(m, ctx.user.id, "gathering");
+    tickCeremonyRitual(m, db);
+    scheduleSave();
+    if (m.ceremonyLobbyCode) {
+      broadcastLivePos(m.ceremonyLobbyCode, {
+        type: "ceremony_pos",
+        roomCode: String(m.ceremonyLobbyCode).toUpperCase(),
+        userId: ctx.user.id,
+        x: clamped.x,
+        y: clamped.y,
+      });
+    }
+    return res.json({
+      ok: true,
       ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+      roomLayout: layout,
+      blocked: Boolean(clamped.blocked),
     });
+  } catch (err) {
+    console.error("[ceremony/move]", err?.message || err);
+    return res.status(500).json({ error: "server_error" });
   }
-  const layout = ceremonyLayoutOf(m, db);
-  const prev = c.positions[ctx.user.id] || { x: 0.5, y: 0.86 };
-  const clamped = roomLayouts.clampMove(
-    layout,
-    prev.x,
-    prev.y,
-    Number(req.body?.x),
-    Number(req.body?.y)
-  );
-  c.positions[ctx.user.id] = { x: clamped.x, y: clamped.y };
-  // Sitzt nur, wer im passenden Rechteck steht (nicht mehr: Move = Aufstehen)
-  syncWeddingZoneSeating(m, db, ctx.user.id);
-  weddingCeremony.touchPresence(m, ctx.user.id, "gathering");
-  tickCeremonyRitual(m, db);
-  scheduleSave();
-  return res.json({
-    ok: true,
-    ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
-    roomLayout: layout,
-    blocked: Boolean(clamped.blocked),
-  });
 });
 
 app.post("/v1/me/marriage/ceremony/sit", (req, res) => {
@@ -16556,104 +16589,126 @@ app.get("/v1/rooms/:code/space", (req, res) => {
   return res.json({ ok: true, space: publicRoomSpace(pack.room, db, pack.ctx.user.id) });
 });
 
-app.post("/v1/rooms/:code/space/move", (req, res) => {
-  const pack = requireCustomRoomMember(req, res);
-  if (!pack) return;
-  const db = getDb();
-  const space = ensureRoomSpace(pack.room);
-  const hubId = hubLayoutId(pack.room);
-  const uid = pack.ctx.user.id;
-  const layoutId = playerLayoutId(space, uid, hubId);
-  const layout = roomLayouts.getLayout(db, layoutId);
-  if (space.seated[uid]) {
-    delete space.seated[uid];
-  }
-  const prev = normalizeSpacePos(
-    space.positions[uid],
-    hubId,
-    layout?.spawn
-  );
-  const clamped = roomLayouts.clampMove(
-    layout,
-    prev.x,
-    prev.y,
-    Number(req.body?.x),
-    Number(req.body?.y)
-  );
-  const others = Object.entries(space.positions)
-    .filter(([id, p]) => id !== uid && playerLayoutId(space, id, hubId) === layoutId)
-    .map(([, p]) => ({ x: p.x, y: p.y }));
-  const sep = roomLayouts.separateFromOthers(
-    clamped.x,
-    clamped.y,
-    others,
-    (layout?.avatarR || 0.022) * 2.2
-  );
-  const finalPos = roomLayouts.isWalkable(layout, sep.x, sep.y)
-    ? sep
-    : { x: clamped.x, y: clamped.y };
-  space.positions[uid] = {
-    x: finalPos.x,
-    y: finalPos.y,
-    layoutId,
-  };
-  space.lastMoveAt = Date.now();
-  space.lastMoveBy = uid;
-  pack.room.lastActiveAt = Date.now();
+app.post("/v1/rooms/:code/space/move", async (req, res) => {
+  try {
+    const pack = requireCustomRoomMember(req, res);
+    if (!pack) return;
+    const allowed = await redisUtil.allow(`smove:${pack.ctx.user.id}`, 40, 1);
+    if (!allowed) {
+      return res.status(429).json({
+        error: "rate_limited",
+        message: "Zu schnell — kurz warten.",
+      });
+    }
+    const db = getDb();
+    const space = ensureRoomSpace(pack.room);
+    const hubId = hubLayoutId(pack.room);
+    const uid = pack.ctx.user.id;
+    const layoutId = playerLayoutId(space, uid, hubId);
+    const layout = roomLayouts.getLayout(db, layoutId);
+    if (space.seated[uid]) {
+      delete space.seated[uid];
+    }
+    const prev = normalizeSpacePos(
+      space.positions[uid],
+      hubId,
+      layout?.spawn
+    );
+    const clamped = roomLayouts.clampMove(
+      layout,
+      prev.x,
+      prev.y,
+      Number(req.body?.x),
+      Number(req.body?.y)
+    );
+    const others = Object.entries(space.positions)
+      .filter(([id, p]) => id !== uid && playerLayoutId(space, id, hubId) === layoutId)
+      .map(([, p]) => ({ x: p.x, y: p.y }));
+    const sep = roomLayouts.separateFromOthers(
+      clamped.x,
+      clamped.y,
+      others,
+      (layout?.avatarR || 0.022) * 2.2
+    );
+    const finalPos = roomLayouts.isWalkable(layout, sep.x, sep.y)
+      ? sep
+      : { x: clamped.x, y: clamped.y };
+    space.positions[uid] = {
+      x: finalPos.x,
+      y: finalPos.y,
+      layoutId,
+    };
+    space.lastMoveAt = Date.now();
+    space.lastMoveBy = uid;
+    pack.room.lastActiveAt = Date.now();
 
-  // Portal-Cooldown: nicht sofort wieder auslösen (Spawn oft nahe Eingang)
-  const now = Date.now();
-  if (!space.portalCooldown) space.portalCooldown = {};
-  const cooled = Number(space.portalCooldown[uid]) || 0;
-  let enteredPortal = false;
-  let portal = null;
-  let action = roomLayouts.findActionAt(layout, finalPos.x, finalPos.y);
-  if (now >= cooled) {
-    portal = roomLayouts.findPortalAt(layout, finalPos.x, finalPos.y);
-    if (portal) {
-      const target = roomLayouts.getLayout(db, portal.targetRoomId);
-      if (target && target.hasImage) {
-        delete space.seated[uid];
-        const spawn = target.spawn || { x: 0.5, y: 0.85 };
-        space.positions[uid] = {
-          x: spawn.x,
-          y: spawn.y,
-          layoutId: target.id,
-        };
-        roomLayouts.ensureSpawnPosition(target, space.positions, uid);
-        if (space.positions[uid]) {
-          space.positions[uid].layoutId = target.id;
-          // Spawn leicht vom Portal wegschieben
-          const landed = space.positions[uid];
-          const backHit = roomLayouts.findPortalAt(target, landed.x, landed.y);
-          if (backHit) {
-            landed.y = Math.max(0.05, landed.y - 0.08);
-            if (!roomLayouts.isWalkable(target, landed.x, landed.y)) {
-              const sp = target.spawn || spawn;
-              landed.x = sp.x;
-              landed.y = Math.max(0.05, (sp.y || 0.8) - 0.1);
+    // Portal-Cooldown: nicht sofort wieder auslösen (Spawn oft nahe Eingang)
+    const now = Date.now();
+    if (!space.portalCooldown) space.portalCooldown = {};
+    const cooled = Number(space.portalCooldown[uid]) || 0;
+    let enteredPortal = false;
+    let portal = null;
+    let action = roomLayouts.findActionAt(layout, finalPos.x, finalPos.y);
+    if (now >= cooled) {
+      portal = roomLayouts.findPortalAt(layout, finalPos.x, finalPos.y);
+      if (portal) {
+        const target = roomLayouts.getLayout(db, portal.targetRoomId);
+        if (target && target.hasImage) {
+          delete space.seated[uid];
+          const spawn = target.spawn || { x: 0.5, y: 0.85 };
+          space.positions[uid] = {
+            x: spawn.x,
+            y: spawn.y,
+            layoutId: target.id,
+          };
+          roomLayouts.ensureSpawnPosition(target, space.positions, uid);
+          if (space.positions[uid]) {
+            space.positions[uid].layoutId = target.id;
+            // Spawn leicht vom Portal wegschieben
+            const landed = space.positions[uid];
+            const backHit = roomLayouts.findPortalAt(target, landed.x, landed.y);
+            if (backHit) {
+              landed.y = Math.max(0.05, landed.y - 0.08);
+              if (!roomLayouts.isWalkable(target, landed.x, landed.y)) {
+                const sp = target.spawn || spawn;
+                landed.x = sp.x;
+                landed.y = Math.max(0.05, (sp.y || 0.8) - 0.1);
+              }
             }
           }
+          space.portalCooldown[uid] = now + 2500;
+          enteredPortal = true;
+          action = null;
+        } else {
+          portal = null;
         }
-        space.portalCooldown[uid] = now + 2500;
-        enteredPortal = true;
-        action = null;
-      } else {
-        portal = null;
       }
     }
-  }
 
-  persistRooms();
-  return res.json({
-    ok: true,
-    blocked: Boolean(clamped.blocked),
-    enteredPortal,
-    portalId: enteredPortal ? portal?.id || null : null,
-    actionId: action?.id || null,
-    actionType: action?.actionType || null,
-    space: publicRoomSpace(pack.room, db, uid),
-  });
+    persistRooms();
+    const posOut = space.positions[uid] || finalPos;
+    broadcastLivePos(pack.code, {
+      type: "space_pos",
+      roomCode: pack.code,
+      userId: uid,
+      x: posOut.x,
+      y: posOut.y,
+      layoutId: posOut.layoutId || layoutId,
+      enteredPortal,
+    });
+    return res.json({
+      ok: true,
+      blocked: Boolean(clamped.blocked),
+      enteredPortal,
+      portalId: enteredPortal ? portal?.id || null : null,
+      actionId: action?.id || null,
+      actionType: action?.actionType || null,
+      space: publicRoomSpace(pack.room, db, uid),
+    });
+  } catch (err) {
+    console.error("[space/move]", err?.message || err);
+    return res.status(500).json({ error: "server_error" });
+  }
 });
 
 app.post("/v1/rooms/:code/space/enter-portal", (req, res) => {

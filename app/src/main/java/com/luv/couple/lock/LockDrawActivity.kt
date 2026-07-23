@@ -642,6 +642,8 @@ class LockDrawActivity : ComponentActivity() {
                             }
                         }
                     }
+                    // Custom-/Ceremony-Raum Positions-Push — hier irrelevant
+                    is PairEvent.LivePos -> Unit
                 }
             }
         }

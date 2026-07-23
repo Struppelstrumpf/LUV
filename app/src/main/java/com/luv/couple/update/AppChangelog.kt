@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.170",
+            listOf(
+                "Hochzeit und Custom-Räume: Mitspieler-Positionen per Live-Push statt ständiger Abfrage",
+            )
+        ),
+        Entry(
             "2.2.169",
             listOf(
                 "Fremde Profile und Hochzeitsbilder laden deutlich schneller",

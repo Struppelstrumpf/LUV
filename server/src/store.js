@@ -2,6 +2,15 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
+// Live path: JSON file. Postgres is prepared (see sql/ + migrate_json_to_pg.js).
+// Flip only after dual-read validation: STORE_BACKEND=postgres
+const STORE_BACKEND = String(process.env.STORE_BACKEND || "json").toLowerCase();
+if (STORE_BACKEND !== "json") {
+  console.warn(
+    `[store] STORE_BACKEND=${STORE_BACKEND} not fully implemented — using JSON file`
+  );
+}
+
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 const DATA_FILE = path.join(DATA_DIR, "luv-store.json");
 
@@ -201,6 +210,15 @@ function enqueueSave() {
               fs.rename(tmp, DATA_FILE, (err2) => {
                 if (err2) {
                   console.error("[store] rename failed", err2?.message || err2);
+                } else {
+                  try {
+                    const { maybeDualWrite } = require("./pg_dual");
+                    setImmediate(() => {
+                      maybeDualWrite(DATA_FILE).catch(() => {});
+                    });
+                  } catch {
+                    /* optional */
+                  }
                 }
                 resolve();
               });

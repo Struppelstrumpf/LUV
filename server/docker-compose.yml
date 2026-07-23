@@ -1,4 +1,5 @@
-# Isolierter Stack — berührt andere Compose-Projekte auf dem Server nicht.
+# Isolierter Stack — API nur über Private IP (Caddy auf reineke.pro proxyt).
+# STORE_BACKEND=json (Default) | später postgres.
 
 services:
   luv-api:
@@ -9,7 +10,7 @@ services:
     env_file:
       - .env
     ports:
-      - "18780:8080"
+      - "10.0.0.3:8080:8080"
     environment:
       PORT: "8080"
       ROOM_TTL_MS: "86400000"
@@ -20,20 +21,19 @@ services:
       PUBLIC_JOIN_BASE: "https://reineke.pro/luv/j"
       GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
       WEB_DIR: "/opt/luv-web"
-      # Google Play Billing — JSON als Env ODER Datei im Container (siehe Deploy-Doku)
       GOOGLE_PLAY_PACKAGE: "com.luv.couple"
       GOOGLE_PLAY_SERVICE_ACCOUNT_FILE: "${GOOGLE_PLAY_SERVICE_ACCOUNT_FILE:-/run/secrets/play-service-account.json}"
       GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: "${GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:-}"
       GOOGLE_PLAY_BILLING_ENABLED: "${GOOGLE_PLAY_BILLING_ENABLED:-1}"
-      # Play Integrity (Anti-Bot bei Neuanmeldung) — Project-Nummer aus Google Cloud
       GOOGLE_CLOUD_PROJECT_NUMBER: "${GOOGLE_CLOUD_PROJECT_NUMBER:-37411430724}"
       PLAY_INTEGRITY_REQUIRED: "${PLAY_INTEGRITY_REQUIRED:-}"
-      # Sideload-APK-Login nur für diese Google-Mails (Komma). Leer = Super-Admins.
       SIDELOAD_LOGIN_EMAILS: "${SIDELOAD_LOGIN_EMAILS:-}"
+      STORE_BACKEND: "${STORE_BACKEND:-json}"
+      DATABASE_URL: "${DATABASE_URL:-}"
+      REDIS_URL: "${REDIS_URL:-}"
     volumes:
       - luv_data:/data
       - /opt/luv-web:/opt/luv-web:ro
-      # Host-Datei optional: mkdir -p /opt/luv-api/secrets && play-service-account.json ablegen
       - /opt/luv-api/secrets:/run/secrets:ro
     healthcheck:
       test:
@@ -49,10 +49,37 @@ services:
       start_period: 10s
     networks:
       - luv_net
+    depends_on:
+      - redis
+      - postgres
+
+  redis:
+    image: redis:7-alpine
+    container_name: luv-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - luv_net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: luv-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: luv
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-luv_change_me}
+      POSTGRES_DB: luv
+    volumes:
+      - luv_pg:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    networks:
+      - luv_net
 
 volumes:
   luv_data:
     name: luv_data
+  luv_pg:
+    name: luv_pg
 
 networks:
   luv_net:

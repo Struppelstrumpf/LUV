@@ -79,6 +79,8 @@ import com.luv.couple.LuvApp
 import com.luv.couple.R
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
+import com.luv.couple.net.PairConnectionService
+import com.luv.couple.net.PairEvent
 import com.luv.couple.shop.ShopCatalog
 import com.luv.couple.ui.ItemGlyph
 import com.luv.couple.ui.clipItemId
@@ -416,6 +418,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
+        PairConnectionService.startAll(context)
         // Ceremony zuerst (enthält oft schon roomLayout) + Layout per layoutId als Fallback
         coroutineScope {
             val firstResult = runCatching { LuvApiClient.fetchCeremony() }
@@ -554,8 +557,30 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                     cNow?.pastorPhase == "closing_no" ||
                     cNow?.pastorPhase == "married" ||
                     cNow?.liveWindowActive == true
-            // Rede: etwas öfter pollen für Phasenwechsel; Typing läuft lokal
-            delay(if (fast) 200 else if (entered) 380 else 900)
+            // Phasen/Ritual weiter pollen; Avatar-Live kommt über WS ceremony_pos
+            delay(if (fast) 450 else if (entered) 900 else 1600)
+        }
+    }
+
+    LaunchedEffect(myId) {
+        PairConnectionService.events.collect { ev ->
+            val pos = ev as? PairEvent.LivePos ?: return@collect
+            if (pos.kind != "ceremony_pos") return@collect
+            if (pos.userId == myId) return@collect
+            val want = ceremony?.ceremonyLobbyCode
+                ?.uppercase()
+                ?.removePrefix("LUV-")
+                .orEmpty()
+            val rc = pos.roomCode.uppercase().removePrefix("LUV-")
+            if (want.isNotBlank() && rc != want) return@collect
+            remoteX[pos.userId] = pos.x
+            remoteY[pos.userId] = pos.y
+            val c = ceremony ?: return@collect
+            ceremony = c.copy(
+                gathering = c.gathering.map { g ->
+                    if (g.userId == pos.userId) g.copy(x = pos.x, y = pos.y) else g
+                },
+            )
         }
     }
 

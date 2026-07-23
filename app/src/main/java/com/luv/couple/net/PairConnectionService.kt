@@ -631,6 +631,31 @@ class PairConnectionService : Service() {
                     }
                     return
                 }
+                "space_pos", "ceremony_pos" -> {
+                    val uid = json.optString("userId").trim()
+                    if (uid.isBlank()) return
+                    val roomCode = json.optString("roomCode").trim()
+                        .ifBlank { lobby.code }
+                        .uppercase()
+                    val x = json.optDouble("x", Double.NaN).toFloat()
+                    val y = json.optDouble("y", Double.NaN).toFloat()
+                    if (!x.isFinite() || !y.isFinite()) return
+                    scope.launch {
+                        _events.emit(
+                            PairEvent.LivePos(
+                                lobbyId = lobby.id,
+                                roomCode = roomCode,
+                                userId = uid,
+                                x = x,
+                                y = y,
+                                layoutId = json.optString("layoutId").trim()
+                                    .takeIf { it.isNotBlank() },
+                                kind = json.optString("type"),
+                            )
+                        )
+                    }
+                    return
+                }
                 "welcome", "peers" -> {
                     val peers = json.optInt("peers", json.optInt("count", 0))
                     val capacity = json.optInt("capacity", 0).takeIf { it > 0 }
@@ -2038,5 +2063,15 @@ sealed class PairEvent {
         val lobbyId: String,
         val confirms: Map<String, Boolean>,
         val fromUserId: String?
+    ) : PairEvent()
+    /** Live avatar position in custom room / ceremony (WS push). */
+    data class LivePos(
+        val lobbyId: String,
+        val roomCode: String,
+        val userId: String,
+        val x: Float,
+        val y: Float,
+        val layoutId: String? = null,
+        val kind: String = "space_pos",
     ) : PairEvent()
 }

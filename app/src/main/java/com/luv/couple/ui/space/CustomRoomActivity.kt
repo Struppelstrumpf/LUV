@@ -79,6 +79,8 @@ import com.luv.couple.data.PeerPalette
 import com.luv.couple.lock.CanvasMemoryKeeper
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
+import com.luv.couple.net.PairConnectionService
+import com.luv.couple.net.PairEvent
 import com.luv.couple.shop.ShopCatalog
 import com.luv.couple.ui.ItemGlyph
 import com.luv.couple.ui.clipItemId
@@ -303,6 +305,8 @@ fun CustomRoomScreen(
 
     LaunchedEffect(code) {
         if (code.isBlank()) return@LaunchedEffect
+        // WS für diese Lobby sicher starten (Live-Positions-Push)
+        PairConnectionService.startAll(context)
         runCatching { LuvApiClient.fetchRoomSpace(code) }
             .onSuccess { s ->
                 space = s
@@ -328,8 +332,9 @@ fun CustomRoomScreen(
                 }
                 lastBellMoveAt = s.lastMoveAt
             }
+        // Fallback-Poll (selten) — Live kommt über WS space_pos
         while (true) {
-            delay(1500)
+            delay(4000)
             runCatching { LuvApiClient.fetchRoomSpace(code) }
                 .onSuccess { s ->
                     if (spaceBell &&
@@ -353,6 +358,38 @@ fun CustomRoomScreen(
                         },
                     )
                 }
+        }
+    }
+
+    LaunchedEffect(code, myId) {
+        if (code.isBlank()) return@LaunchedEffect
+        val want = code.uppercase().removePrefix("LUV-")
+        PairConnectionService.events.collect { ev ->
+            val pos = ev as? PairEvent.LivePos ?: return@collect
+            if (pos.kind != "space_pos") return@collect
+            val rc = pos.roomCode.uppercase().removePrefix("LUV-")
+            if (rc != want) return@collect
+            if (pos.userId == myId) return@collect
+            val cur = space ?: return@collect
+            val others = cur.people.toMutableList()
+            val idx = others.indexOfFirst { it.userId == pos.userId }
+            if (idx >= 0) {
+                others[idx] = others[idx].copy(x = pos.x, y = pos.y)
+            } else {
+                others.add(
+                    LuvApiClient.RoomSpacePerson(
+                        userId = pos.userId,
+                        nickname = "…",
+                        petEmoji = "🙂",
+                        x = pos.x,
+                        y = pos.y,
+                        layoutId = pos.layoutId,
+                        isMe = false,
+                    )
+                )
+            }
+            space = cur.copy(people = others, lastMoveAt = System.currentTimeMillis(), lastMoveBy = pos.userId)
+            if (spaceBell) vibrateShort(context, 40)
         }
     }
 
