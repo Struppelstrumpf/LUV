@@ -2,9 +2,17 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-// json = file primary | postgres = store_live primary + JSON hot mirror
+// json = file primary | postgres = domain tables (+ optional store_live)
 const STORE_BACKEND = String(process.env.STORE_BACKEND || "json").toLowerCase();
 const USE_PG = STORE_BACKEND === "postgres" || STORE_BACKEND === "pg";
+/** off|0|false = do not keep a fat store_live blob (tables-only SoT). */
+const STORE_LIVE_WRITE = String(process.env.STORE_LIVE_WRITE || "on").toLowerCase();
+const USE_STORE_LIVE_WRITE = !(
+  STORE_LIVE_WRITE === "off" ||
+  STORE_LIVE_WRITE === "0" ||
+  STORE_LIVE_WRITE === "false" ||
+  STORE_LIVE_WRITE === "no"
+);
 const USERS_BACKEND = String(process.env.USERS_BACKEND || "blob").toLowerCase();
 const USE_USERS_TABLE = USERS_BACKEND === "table" || USERS_BACKEND === "pg";
 const SESSIONS_BACKEND = String(process.env.SESSIONS_BACKEND || "blob").toLowerCase();
@@ -17,6 +25,35 @@ const USE_FRIENDS_TABLE =
   FRIENDS_BACKEND === "table" || FRIENDS_BACKEND === "pg";
 const EVENTS_BACKEND = String(process.env.EVENTS_BACKEND || "blob").toLowerCase();
 const USE_EVENTS_TABLE = EVENTS_BACKEND === "table" || EVENTS_BACKEND === "pg";
+const ROOMS_BACKEND = String(process.env.ROOMS_BACKEND || "blob").toLowerCase();
+const USE_ROOMS_TABLE = ROOMS_BACKEND === "table" || ROOMS_BACKEND === "pg";
+const ECONOMY_BACKEND = String(process.env.ECONOMY_BACKEND || "blob").toLowerCase();
+const USE_ECONOMY_TABLE =
+  ECONOMY_BACKEND === "table" || ECONOMY_BACKEND === "pg";
+const MARRIAGES_BACKEND = String(
+  process.env.MARRIAGES_BACKEND || "blob"
+).toLowerCase();
+const USE_MARRIAGES_TABLE =
+  MARRIAGES_BACKEND === "table" || MARRIAGES_BACKEND === "pg";
+const SHOP_BACKEND = String(process.env.SHOP_BACKEND || "blob").toLowerCase();
+const USE_SHOP_TABLE = SHOP_BACKEND === "table" || SHOP_BACKEND === "pg";
+const MISC_BACKEND = String(process.env.MISC_BACKEND || "blob").toLowerCase();
+const USE_MISC_TABLE = MISC_BACKEND === "table" || MISC_BACKEND === "pg";
+
+function allDomainsTableSoT() {
+  return (
+    USE_USERS_TABLE &&
+    USE_SESSIONS_TABLE &&
+    USE_MARKET_TABLE &&
+    USE_FRIENDS_TABLE &&
+    USE_EVENTS_TABLE &&
+    USE_ROOMS_TABLE &&
+    USE_ECONOMY_TABLE &&
+    USE_MARRIAGES_TABLE &&
+    USE_SHOP_TABLE &&
+    USE_MISC_TABLE
+  );
+}
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 const DATA_FILE = path.join(DATA_DIR, "luv-store.json");
@@ -306,11 +343,139 @@ function hydrateEventsFromTable(dbObj) {
   return dbObj;
 }
 
+function hydrateKvDomain(dbObj, {
+  useTable,
+  label,
+  loadSync,
+  applyToDb,
+  summarize,
+  emptyKeepBlob,
+}) {
+  if (!useTable || !process.env.DATABASE_URL) return dbObj;
+  try {
+    const fromTable = loadSync();
+    const sum = summarize(fromTable);
+    if (typeof emptyKeepBlob === "function" && emptyKeepBlob(sum, dbObj)) {
+      console.warn(
+        `[store] ${label}_BACKEND=table but domain empty — keeping blob ${label}`
+      );
+      return dbObj;
+    }
+    applyToDb(dbObj, fromTable);
+    console.log(`[store] ${label} SoT=table`, sum);
+  } catch (err) {
+    console.error(
+      `[store] ${label} table load failed — keeping blob:`,
+      err?.message || err
+    );
+  }
+  return dbObj;
+}
+
+function hydrateRoomsFromTable(dbObj) {
+  return hydrateKvDomain(dbObj, {
+    useTable: USE_ROOMS_TABLE,
+    label: "rooms",
+    loadSync: () => require("./rooms_pg").loadAllRoomsSync(),
+    applyToDb: (db, data) => require("./rooms_pg").applyToDb(db, data),
+    summarize: (data) => require("./rooms_pg").summarizeRooms(data),
+    emptyKeepBlob: (sum, blob) => {
+      if ((sum.rooms || 0) > 0) return false;
+      const b = require("./rooms_pg").summarizeRooms(blob);
+      return (b.rooms || 0) > 0;
+    },
+  });
+}
+
+function hydrateEconomyFromTable(dbObj) {
+  return hydrateKvDomain(dbObj, {
+    useTable: USE_ECONOMY_TABLE,
+    label: "economy",
+    loadSync: () => require("./economy_pg").loadAllEconomySync(),
+    applyToDb: (db, data) => require("./economy_pg").applyToDb(db, data),
+    summarize: (data) => require("./economy_pg").summarizeEconomy(data),
+    emptyKeepBlob: (sum, blob) => {
+      if ((sum.payments || 0) + (sum.ledger || 0) + (sum.vouchers || 0) > 0) {
+        return false;
+      }
+      const b = require("./economy_pg").summarizeEconomy(blob);
+      return (b.payments || 0) + (b.ledger || 0) + (b.vouchers || 0) > 0;
+    },
+  });
+}
+
+function hydrateMarriagesFromTable(dbObj) {
+  return hydrateKvDomain(dbObj, {
+    useTable: USE_MARRIAGES_TABLE,
+    label: "marriages",
+    loadSync: () => require("./marriages_pg").loadAllMarriagesSync(),
+    applyToDb: (db, data) => require("./marriages_pg").applyToDb(db, data),
+    summarize: (data) => require("./marriages_pg").summarizeMarriages(data),
+    emptyKeepBlob: (sum, blob) => {
+      if ((sum.marriages || 0) > 0) return false;
+      const b = require("./marriages_pg").summarizeMarriages(blob);
+      return (b.marriages || 0) > 0;
+    },
+  });
+}
+
+function hydrateShopFromTable(dbObj) {
+  return hydrateKvDomain(dbObj, {
+    useTable: USE_SHOP_TABLE,
+    label: "shop",
+    loadSync: () => require("./shop_pg").loadAllShopSync(),
+    applyToDb: (db, data) => require("./shop_pg").applyToDb(db, data),
+    summarize: (data) => require("./shop_pg").summarizeShop(data),
+    emptyKeepBlob: (sum, blob) => {
+      if ((sum.shopItems || 0) > 0) return false;
+      const b = require("./shop_pg").summarizeShop(blob);
+      return (b.shopItems || 0) > 0;
+    },
+  });
+}
+
+function hydrateMiscFromTable(dbObj) {
+  return hydrateKvDomain(dbObj, {
+    useTable: USE_MISC_TABLE,
+    label: "misc",
+    loadSync: () => require("./misc_pg").loadAllMiscSync(),
+    applyToDb: (db, data) => require("./misc_pg").applyToDb(db, data),
+    summarize: (data) => require("./misc_pg").summarizeMisc(data),
+    emptyKeepBlob: (sum, blob) => {
+      const n =
+        (sum.roomLayouts || 0) +
+        (sum.publicReports || 0) +
+        (sum.peerReports || 0) +
+        (sum.bugReports || 0) +
+        (sum.maintenanceReports || 0);
+      if (n > 0) return false;
+      const b = require("./misc_pg").summarizeMisc(blob);
+      const bn =
+        (b.roomLayouts || 0) +
+        (b.publicReports || 0) +
+        (b.peerReports || 0) +
+        (b.bugReports || 0) +
+        (b.maintenanceReports || 0);
+      return bn > 0;
+    },
+  });
+}
+
 function hydrateDomainTables(dbObj) {
-  return hydrateEventsFromTable(
-    hydrateFriendsFromTable(
-      hydrateMarketFromTable(
-        hydrateSessionsFromTable(hydrateUsersFromTable(dbObj))
+  return hydrateMiscFromTable(
+    hydrateShopFromTable(
+      hydrateMarriagesFromTable(
+        hydrateEconomyFromTable(
+          hydrateRoomsFromTable(
+            hydrateEventsFromTable(
+              hydrateFriendsFromTable(
+                hydrateMarketFromTable(
+                  hydrateSessionsFromTable(hydrateUsersFromTable(dbObj))
+                )
+              )
+            )
+          )
+        )
       )
     )
   );
@@ -329,8 +494,23 @@ function load() {
   }
   try {
     const { loadLiveSync, saveLiveSync } = require("./pg_store");
+
+    // Tables-only boot: ignore fat store_live payload
+    if (!USE_STORE_LIVE_WRITE && allDomainsTableSoT()) {
+      const dbObj = hydrateDomainTables(normalize(structuredClone(DEFAULT)));
+      console.log(
+        "[store] primary=postgres tables-only (STORE_LIVE_WRITE=off, all domain SoT)"
+      );
+      return dbObj;
+    }
+
     let payload = loadLiveSync();
     if (payload == null) {
+      if (allDomainsTableSoT()) {
+        const dbObj = hydrateDomainTables(normalize(structuredClone(DEFAULT)));
+        console.log("[store] primary=postgres (no store_live; hydrated tables)");
+        return dbObj;
+      }
       console.warn(
         "[store] store_live empty — seeding empty DEFAULT into Postgres"
       );
@@ -339,8 +519,19 @@ function load() {
       console.log("[store] primary=postgres (seeded empty)");
       return hydrateDomainTables(normalize(empty));
     }
+    // Stub row from STORE_LIVE_WRITE=off
+    if (
+      payload &&
+      typeof payload === "object" &&
+      payload._sot === "tables" &&
+      allDomainsTableSoT()
+    ) {
+      const dbObj = hydrateDomainTables(normalize(structuredClone(DEFAULT)));
+      console.log("[store] primary=postgres tables-only (store_live stub)");
+      return dbObj;
+    }
     const dbObj = hydrateDomainTables(normalize(payload));
-    console.log("[store] primary=postgres (loaded store_live, no JSON mirror)");
+    console.log("[store] primary=postgres (loaded store_live + domain hydrate)");
     return dbObj;
   } catch (err) {
     console.error(
@@ -555,9 +746,15 @@ module.exports = {
   DATA_DIR,
   DATA_FILE,
   STORE_BACKEND: USE_PG ? "postgres" : "json",
+  STORE_LIVE_WRITE: USE_STORE_LIVE_WRITE ? "on" : "off",
   USERS_BACKEND: USE_USERS_TABLE ? "table" : "blob",
   SESSIONS_BACKEND: USE_SESSIONS_TABLE ? "table" : "blob",
   MARKET_BACKEND: USE_MARKET_TABLE ? "table" : "blob",
   FRIENDS_BACKEND: USE_FRIENDS_TABLE ? "table" : "blob",
   EVENTS_BACKEND: USE_EVENTS_TABLE ? "table" : "blob",
+  ROOMS_BACKEND: USE_ROOMS_TABLE ? "table" : "blob",
+  ECONOMY_BACKEND: USE_ECONOMY_TABLE ? "table" : "blob",
+  MARRIAGES_BACKEND: USE_MARRIAGES_TABLE ? "table" : "blob",
+  SHOP_BACKEND: USE_SHOP_TABLE ? "table" : "blob",
+  MISC_BACKEND: USE_MISC_TABLE ? "table" : "blob",
 };

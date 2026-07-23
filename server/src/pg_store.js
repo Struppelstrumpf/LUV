@@ -97,8 +97,22 @@ async function loadLive() {
   });
 }
 
+function storeLiveWriteEnabled() {
+  const v = String(process.env.STORE_LIVE_WRITE || "on").toLowerCase();
+  return !(
+    v === "off" ||
+    v === "0" ||
+    v === "false" ||
+    v === "no"
+  );
+}
+
 async function saveLive(db, { source = "save", alsoSnapshot = false } = {}) {
-  const raw = JSON.stringify(db, null, 0);
+  const writeFatBlob = storeLiveWriteEnabled();
+  const stub = { _sot: "tables", updatedAt: Date.now() };
+  const raw = writeFatBlob
+    ? JSON.stringify(db, null, 0)
+    : JSON.stringify(stub, null, 0);
   const bytes = Buffer.byteLength(raw);
   const hash = contentHash(raw);
   const users = db.users && typeof db.users === "object" ? db.users : {};
@@ -118,7 +132,7 @@ async function saveLive(db, { source = "save", alsoSnapshot = false } = {}) {
         [raw, bytes, hash]
       );
 
-      if (alsoSnapshot) {
+      if (alsoSnapshot && writeFatBlob) {
         await client.query(
           `INSERT INTO store_snapshots(source, bytes, payload) VALUES ($1,$2,$3::jsonb)`,
           [source, bytes, raw]
@@ -191,6 +205,41 @@ async function saveLive(db, { source = "save", alsoSnapshot = false } = {}) {
         /* events_domain may not exist yet */
       }
 
+      try {
+        const { replaceRoomsInClient } = require("./rooms_pg");
+        await replaceRoomsInClient(client, db);
+      } catch {
+        /* rooms_domain may not exist yet */
+      }
+
+      try {
+        const { replaceEconomyInClient } = require("./economy_pg");
+        await replaceEconomyInClient(client, db);
+      } catch {
+        /* economy_domain may not exist yet */
+      }
+
+      try {
+        const { replaceMarriagesInClient } = require("./marriages_pg");
+        await replaceMarriagesInClient(client, db);
+      } catch {
+        /* marriages_domain may not exist yet */
+      }
+
+      try {
+        const { replaceShopInClient } = require("./shop_pg");
+        await replaceShopInClient(client, db);
+      } catch {
+        /* shop_domain may not exist yet */
+      }
+
+      try {
+        const { replaceMiscInClient } = require("./misc_pg");
+        await replaceMiscInClient(client, db);
+      } catch {
+        /* misc_domain may not exist yet */
+      }
+
       await client.query(
         `INSERT INTO meta(key, value) VALUES ('last_store_live_at', $1)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
@@ -203,7 +252,7 @@ async function saveLive(db, { source = "save", alsoSnapshot = false } = {}) {
     }
   });
 
-  return { bytes, hash, summary: summarize(db) };
+  return { bytes, hash, summary: summarize(db), fatBlob: writeFatBlob };
 }
 
 /** Sync load for module boot (spawns short-lived Node). */
