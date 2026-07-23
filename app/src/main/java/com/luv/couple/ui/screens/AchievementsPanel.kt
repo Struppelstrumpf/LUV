@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.times
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.luv.couple.net.AccountSession
 import com.luv.couple.net.AchievementsBadge
 import com.luv.couple.net.LuvApiClient
 import com.luv.couple.shop.ItemLabels
@@ -115,27 +116,55 @@ fun AchievementsPanel(
         }
     }
 
+    fun bumpLocalCoins(delta: Int) {
+        if (delta == 0) return
+        val acc = AccountSession.account.value ?: return
+        AccountSession.setAccount(acc.copy(coins = (acc.coins + delta).coerceAtLeast(0)))
+    }
+
     fun claimAchievement(id: String) {
+        val prev = state ?: return
+        val item = prev.achievements.firstOrNull { it.id == id } ?: return
+        if (!item.claimable || busyId == id) return
+        // Sofort UI aktualisieren — Server-Roundtrip nicht abwarten
+        val optimisticCoins = if (item.rewardItem == null) item.coins.coerceAtLeast(0) else 0
+        val optimistic = prev.copy(
+            achievements = prev.achievements.map {
+                if (it.id == id) it.copy(claimable = false, claimed = true) else it
+            },
+            coinsEarnedToday = prev.coinsEarnedToday + optimisticCoins,
+            coinsRemainingToday = (prev.coinsRemainingToday - optimisticCoins).coerceAtLeast(0),
+            claimableCount = (prev.claimableCount - 1).coerceAtLeast(0),
+            hasClaimable = prev.daily.claimable ||
+                prev.achievements.any { it.id != id && it.claimable }
+        )
+        state = optimistic
+        AchievementsBadge.updateFrom(optimistic)
+        if (optimisticCoins > 0) bumpLocalCoins(optimisticCoins)
+        val pendingMsg = when {
+            item.rewardItem != null -> {
+                val g = item.rewardItem
+                val name = g.label.takeIf { it.isNotBlank() && !ItemLabels.looksLikeRawId(it) }
+                    ?: ItemLabels.forKind(g.kind, g.emoji)
+                "$name erhalten"
+            }
+            optimisticCoins > 0 -> "+$optimisticCoins Coins abgeholt"
+            else -> "Abgeholt"
+        }
+        Toast.makeText(context, pendingMsg, Toast.LENGTH_SHORT).show()
+        // busyId nur als Doppelklick-Schutz — UI ist schon „abgeholt“
         busyId = id
         scope.launch {
             runCatching { LuvApiClient.claimAchievementReward(id) }
                 .onSuccess { result ->
                     state = result.state
                     AchievementsBadge.updateFrom(result.state)
-                    onCoinsGranted(result.coinsGranted)
-                    val msg = when {
-                        result.itemGranted != null -> {
-                            val g = result.itemGranted
-                            val name = g.label.takeIf { it.isNotBlank() && !ItemLabels.looksLikeRawId(it) }
-                                ?: ItemLabels.forKind(g.kind, g.emoji)
-                            "$name erhalten"
-                        }
-                        result.coinsGranted > 0 -> "+${result.coinsGranted} Coins abgeholt"
-                        else -> "Abgeholt"
-                    }
-                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                    onCoinsGranted(0)
                 }
                 .onFailure {
+                    state = prev
+                    AchievementsBadge.updateFrom(prev)
+                    if (optimisticCoins > 0) bumpLocalCoins(-optimisticCoins)
                     Toast.makeText(
                         context,
                         it.message ?: "Abholen fehlgeschlagen",
@@ -191,19 +220,39 @@ fun AchievementsPanel(
                 busy = busyId == "daily",
                 scale = ui.value,
                 onClaim = {
+                    val prev = state ?: return@DailyTasksCard
+                    if (!prev.daily.claimable || busyId == "daily") return@DailyTasksCard
+                    val coins = prev.daily.rewardCoins.coerceAtLeast(0)
+                    val optimistic = prev.copy(
+                        daily = prev.daily.copy(
+                            rewardClaimed = true,
+                            claimable = false,
+                            completed = true
+                        ),
+                        coinsEarnedToday = prev.coinsEarnedToday + coins,
+                        claimableCount = (prev.claimableCount - 1).coerceAtLeast(0),
+                        hasClaimable = prev.achievements.any { it.claimable }
+                    )
+                    state = optimistic
+                    AchievementsBadge.updateFrom(optimistic)
+                    if (coins > 0) bumpLocalCoins(coins)
+                    Toast.makeText(
+                        context,
+                        if (coins > 0) "+$coins Coin abgeholt" else "Abgeholt",
+                        Toast.LENGTH_SHORT
+                    ).show()
                     busyId = "daily"
                     scope.launch {
                         runCatching { LuvApiClient.claimDailyAchievementReward() }
-                            .onSuccess { (coins, next) ->
+                            .onSuccess { (_, next) ->
                                 state = next
-                                onCoinsGranted(coins)
-                                Toast.makeText(
-                                    context,
-                                    if (coins > 0) "+$coins Coin abgeholt" else "Abgeholt",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                                AchievementsBadge.updateFrom(next)
+                                onCoinsGranted(0)
                             }
                             .onFailure {
+                                state = prev
+                                AchievementsBadge.updateFrom(prev)
+                                if (coins > 0) bumpLocalCoins(-coins)
                                 Toast.makeText(
                                     context,
                                     it.message ?: "Abholen fehlgeschlagen",

@@ -242,6 +242,7 @@ fun SocialScreen(
                     SocialKeepAliveTab(visible = tab == 0) {
                         FriendsPanel(
                             modifier = Modifier.fillMaxSize(),
+                            active = tab == 0,
                             reloadKey = friendsReloadKey,
                             onOpenFriendProfile = onOpenFriendProfile,
                             onSyncWeddingLobbies = onSyncWeddingLobbies,
@@ -270,14 +271,8 @@ fun SocialScreen(
                         AchievementsPanel(
                             modifier = Modifier.fillMaxSize(),
                             reloadKey = achReloadKey,
-                            onCoinsGranted = { amount ->
-                                if (amount > 0) {
-                                    scope.launch {
-                                        runCatching { LuvApiClient.me() }
-                                            .onSuccess { AccountSession.setAccount(it) }
-                                    }
-                                }
-                            }
+                            // Claim-Response setzt AccountSession bereits — kein zweites me()
+                            onCoinsGranted = {}
                         )
                     }
                 }
@@ -297,6 +292,8 @@ private fun SocialKeepAliveTab(
             .fillMaxSize()
             .zIndex(if (visible) 1f else 0f)
             .alpha(if (visible) 1f else 0f)
+            // Unsichtbar: keine Klicks stehlen (sonst trifft leerer Erfolge-Rand Freunde darunter)
+            .then(if (visible) Modifier else Modifier.size(0.dp))
     ) {
         content()
     }
@@ -305,6 +302,7 @@ private fun SocialKeepAliveTab(
 @Composable
 private fun FriendsPanel(
     modifier: Modifier = Modifier,
+    active: Boolean = true,
     reloadKey: Int = 0,
     onOpenFriendProfile: (userId: String, nickname: String) -> Unit,
     onSyncWeddingLobbies: () -> Unit = {},
@@ -338,7 +336,8 @@ private fun FriendsPanel(
     var claimingCoins by remember { mutableStateOf(false) }
     var liveCount by remember { mutableIntStateOf(-1) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
         while (true) {
             runCatching { LuvApiClient.fetchLiveCount() }.onSuccess { liveCount = it }
             delay(60_000)
@@ -351,10 +350,11 @@ private fun FriendsPanel(
         }
     }
 
-    // Kapelle nur pollen, wenn wirklich was läuft — sonst alle 3 Min leicht
-    LaunchedEffect(myMarriage?.status) {
+    // Kapelle nur pollen, wenn Tab sichtbar und wirklich was läuft
+    LaunchedEffect(active, myMarriage?.status) {
+        if (!active) return@LaunchedEffect
         val st = myMarriage?.status
-        val active =
+        val ceremonyHot =
             st == "ceremony_scheduled" ||
                 st == "ceremony_pending" ||
                 st == "wedding" ||
@@ -365,11 +365,12 @@ private fun FriendsPanel(
                     leftNoticeName = bundle.ceremony.leftByNickname
                 }
             }
-            delay(if (active) 12_000L else 180_000L)
+            delay(if (ceremonyHot) 12_000L else 180_000L)
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
         while (true) {
             ceremonyTick = System.currentTimeMillis()
             delay(1_000)
@@ -472,8 +473,9 @@ private fun FriendsPanel(
         reload(force = true)
     }
 
-    // Level/Status: alle 3 Min leise (Anfragen/Level) — kein Spinner
-    LaunchedEffect(Unit) {
+    // Level/Status: alle 3 Min leise — nur wenn Freunde-Tab sichtbar
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
         while (true) {
             delay(180_000L)
             runCatching { LuvApiClient.fetchFriends(force = true) }
@@ -482,7 +484,8 @@ private fun FriendsPanel(
     }
 
     // Verlobung/Hochzeit: Partner merkt die Lobby — alle 20s reicht
-    LaunchedEffect(myMarriage?.status, myMarriage?.engageFreeSkipAvailable) {
+    LaunchedEffect(active, myMarriage?.status, myMarriage?.engageFreeSkipAvailable) {
+        if (!active) return@LaunchedEffect
         val st = myMarriage?.status
         if (st != "engaged" && st != "wedding") return@LaunchedEffect
         while (true) {

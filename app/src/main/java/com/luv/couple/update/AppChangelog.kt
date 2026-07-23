@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.167",
+            listOf(
+                "Erfolge und Tagesbelohnung lassen sich wieder sofort abholen",
+            )
+        ),
+        Entry(
             "2.2.166",
             listOf(
                 "Jede Mal-Lobby merkt sich die eigene Stiftfarbe beim Wechseln",

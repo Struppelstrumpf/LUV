@@ -346,11 +346,29 @@ object LuvApiClient {
     )
     private val bareCodeRegex = Regex("""\b([A-Z0-9]{6})\b""", RegexOption.IGNORE_CASE)
 
+    /**
+     * JSON-API — eigener Dispatcher/Pool.
+     * Bild-Downloads dürfen Claims (Erfolge/Daily) nicht hinter sich anstellen.
+     */
     private val http = OkHttpClient.Builder()
         .dispatcher(
             Dispatcher().apply {
                 maxRequests = 64
                 maxRequestsPerHost = 32
+            }
+        )
+        .protocols(listOf(Protocol.HTTP_1_1))
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
+        .writeTimeout(12, TimeUnit.SECONDS)
+        .build()
+
+    /** Media (img_*, Event-Bilder, Room-Assets) — gedrosselt, eigener Pool. */
+    private val mediaHttp = OkHttpClient.Builder()
+        .dispatcher(
+            Dispatcher().apply {
+                maxRequests = 10
+                maxRequestsPerHost = 6
             }
         )
         .protocols(listOf(Protocol.HTTP_1_1))
@@ -364,8 +382,8 @@ object LuvApiClient {
 
     fun baseUrl(): String = BuildConfig.LUV_API_BASE_URL.trimEnd('/')
 
-    /** Für Bild-Downloads (Begleiter-PNGs etc.). */
-    fun httpClient(): OkHttpClient = http
+    /** Für Bild-Downloads (Begleiter-PNGs etc.) — nicht für JSON-API. */
+    fun httpClient(): OkHttpClient = mediaHttp
 
     fun publicJoinUrl(code: String): String =
         "https://reineke.pro/luv/j/${code.uppercase()}"
