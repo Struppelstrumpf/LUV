@@ -2472,6 +2472,7 @@ fun LuvAppNav() {
                                                 ?.takeIf { it.isNotBlank() }
                                         if (!uid.isNullOrBlank()) {
                                             com.luv.couple.net.PendingWeddingGuestbook.offer(uid)
+                                            com.luv.couple.net.PeerProfilePrefetch.start(uid)
                                             navController.currentBackStackEntry
                                                 ?.savedStateHandle
                                                 ?.set("peer_nick", "Ehepaar")
@@ -2498,6 +2499,7 @@ fun LuvAppNav() {
                                             ?.ifBlank { "Profil" }
                                             ?: "Profil"
                                         if (!uid.isNullOrBlank()) {
+                                            com.luv.couple.net.PeerProfilePrefetch.start(uid)
                                             navController.currentBackStackEntry
                                                 ?.savedStateHandle
                                                 ?.set("peer_nick", nick)
@@ -2518,6 +2520,7 @@ fun LuvAppNav() {
                                 scope.launch {
                                     runCatching { LuvApiClient.pingAchievement("profile_views") }
                                 }
+                                com.luv.couple.net.PeerProfilePrefetch.start(userId)
                                 navController.currentBackStackEntry
                                     ?.savedStateHandle
                                     ?.set("peer_nick", nick)
@@ -2990,6 +2993,7 @@ fun LuvAppNav() {
                     navController.popBackStack()
                 },
                 onOpenProfile = { userId, nick ->
+                    com.luv.couple.net.PeerProfilePrefetch.start(userId)
                     navController.currentBackStackEntry
                         ?.savedStateHandle
                         ?.set("peer_nick", nick)
@@ -3080,6 +3084,7 @@ fun LuvAppNav() {
     LiveNoticePopup(
         onOpenWeddingGuestbook = { uid ->
             com.luv.couple.net.PendingWeddingGuestbook.offer(uid)
+            com.luv.couple.net.PeerProfilePrefetch.start(uid)
             navController.currentBackStackEntry
                 ?.savedStateHandle
                 ?.set("peer_nick", "Ehepaar")

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.181",
+            listOf(
+                "Profil öffnen: Fetch startet beim Tippen — echtes Profil schneller sichtbar",
+            )
+        ),
+        Entry(
             "2.2.180",
             listOf(
                 "Fremde Profile öffnen ohne leeren Platzhalter-Flash",

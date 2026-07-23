@@ -2847,6 +2847,14 @@ class LockDrawActivity : ComponentActivity() {
         val myId = AccountSession.account.value?.id
         val isMe = peer.peerKey == "me" ||
             (!myId.isNullOrBlank() && peer.userId == myId)
+        val prefetchId = when {
+            isMe -> myId
+            !peer.userId.isNullOrBlank() -> peer.userId
+            else -> null
+        }
+        if (!prefetchId.isNullOrBlank()) {
+            com.luv.couple.net.PeerProfilePrefetch.start(prefetchId)
+        }
         val host = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,

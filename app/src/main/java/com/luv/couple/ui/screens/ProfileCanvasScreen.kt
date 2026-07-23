@@ -102,7 +102,7 @@ import com.luv.couple.LuvApp
 import com.luv.couple.data.PeerPalette
 import com.luv.couple.net.AccountSession
 import com.luv.couple.net.LuvApiClient
-import com.luv.couple.net.PeerProfileCache
+import com.luv.couple.net.PeerProfilePrefetch
 import com.luv.couple.net.PendingProfilePlace
 import com.luv.couple.net.PendingShop
 import com.luv.couple.net.ProfilePlaceAction
@@ -372,21 +372,14 @@ fun ProfileCanvasScreen(
                 savedSnapshot = state.snapshotKey()
             }
 
-            // Cache zuerst → echtes Profil sofort, kein leerer Default-Flash
-            val cached = PeerProfileCache.get(userId)
-            if (cached != null) {
-                applyPeer(cached)
-                profileReady = true
-            } else {
-                profileReady = false
-            }
-
-            val remote = LuvApiClient.fetchUserProfileCanvas(userId)
+            // Fetch läuft oft schon seit dem Antippen (PeerProfilePrefetch) — kein Massen-Cache.
+            // Bis die Antwort da ist: Loader, kein leeres Default-Profil.
+            profileReady = false
+            val remote = PeerProfilePrefetch.awaitOrFetch(userId)
             if (remote != null) {
-                PeerProfileCache.put(userId, remote)
                 applyPeer(remote)
                 profileReady = true
-            } else if (cached == null) {
+            } else {
                 loadedNick = nickname
                 state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname))
                     .normalized(nickname)

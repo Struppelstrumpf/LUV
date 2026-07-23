@@ -892,7 +892,11 @@ fun CustomRoomScreen(
                                 .background(Color(0xFF42A5F5))
                                 .clickable {
                                     peerProfileNick = peer.nickname.ifBlank { "Spieler" }
-                                    peerProfileUserId = peer.userId
+                                    val uid = peer.userId
+                                    if (!uid.isNullOrBlank()) {
+                                        com.luv.couple.net.PeerProfilePrefetch.start(uid)
+                                    }
+                                    peerProfileUserId = uid
                                     peerPopup = null
                                 }
                                 .padding(vertical = 12.dp),
