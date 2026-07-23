@@ -18812,8 +18812,39 @@ app.get("/v1/me/memories", (req, res) => {
 });
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: "/v1/ws" });
-accountPush.attachAccountWss(server, userFromSessionToken);
+// Zwei WS-Pfade: kein { server, path } parallel — sonst antwortet der andere mit 400.
+const wss = new WebSocketServer({ noServer: true });
+const accountWss = accountPush.attachAccountWss(null, userFromSessionToken);
+server.on("upgrade", (request, socket, head) => {
+  let pathname = "/";
+  try {
+    pathname = new URL(request.url || "", "http://localhost").pathname;
+  } catch {
+    /* ignore */
+  }
+  if (pathname === "/v1/ws/account") {
+    accountWss.handleUpgrade(request, socket, head, (ws) => {
+      accountWss.emit("connection", ws, request);
+    });
+    return;
+  }
+  if (pathname === "/v1/ws") {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws, request);
+    });
+    return;
+  }
+  try {
+    socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+  } catch {
+    /* ignore */
+  }
+  try {
+    socket.destroy();
+  } catch {
+    /* ignore */
+  }
+});
 
 // Ohne Listener crasht ein einzelner MASK-/Proxy-Fehler den ganzen API-Prozess —
 // dann sehen alle nur noch sich selbst und Strokes kommen nicht an.

@@ -295,11 +295,12 @@ function unregisterDeviceToken(user, token) {
 }
 
 /**
- * @param {import('http').Server} httpServer
+ * noServer WSS — Upgrade-Routing liegt in index.js (zwei Pfade auf einem HTTP-Server).
+ * @param {import('http').Server|null} _httpServer unused (API-Kompatibilität)
  * @param {(sessionToken: string) => object|null} userFromSessionToken
  */
-function attachAccountWss(httpServer, userFromSessionToken) {
-  const wss = new WebSocketServer({ server: httpServer, path: "/v1/ws/account" });
+function attachAccountWss(_httpServer, userFromSessionToken) {
+  const wss = new WebSocketServer({ noServer: true });
   wss.on("error", (err) => {
     console.warn("[account_push] wss error", err?.message || err);
   });
