@@ -443,7 +443,7 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
         if (!entered || leaving) return@LaunchedEffect
         while (true) {
             runCatching { LuvApiClient.ceremonyPresence("gathering") }
-                .onSuccess { c -> if (c != null) ceremony = c }
+                .onSuccess { c -> if (c.ceremony != null) ceremony = c.ceremony }
             delay(35_000)
         }
     }
@@ -836,8 +836,9 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                 entered = true
                                 scope.launch {
                                     runCatching { LuvApiClient.ceremonyPresence("gathering") }
-                                        .onSuccess { c ->
-                                            ceremony = c
+                                        .onSuccess { bundle ->
+                                            val c = bundle.ceremony
+                                            if (c != null) ceremony = c
                                             val me = c?.gathering?.find { it.userId == myId }
                                             if (me != null) {
                                                 myX = me.x

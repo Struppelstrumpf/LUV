@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -113,9 +114,8 @@ fun WeddingPresenceDialog(
     var busy by remember { mutableStateOf(false) }
     var showSchedule by remember { mutableStateOf(false) }
     var showBooking by remember { mutableStateOf(false) }
-    var loaded by remember { mutableStateOf(false) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    var loadNonce by remember { mutableStateOf(0) }
+    var loadNonce by remember { mutableIntStateOf(0) }
     var leftPresence by remember { mutableStateOf(false) }
 
     fun lobbyCodeOf(
@@ -128,6 +128,7 @@ fun WeddingPresenceDialog(
     fun applyPresenceBundle(bundle: LuvApiClient.CeremonyBundle) {
         ceremony = bundle.ceremony
         marriage = bundle.marriage
+        loadError = null
         val code = lobbyCodeOf(bundle.marriage, bundle.ceremony)
         if (!code.isNullOrBlank() && bundle.marriage?.status == "ceremony_scheduled") {
             onScheduled(code)
@@ -147,38 +148,34 @@ fun WeddingPresenceDialog(
     }
 
     val ceremonyRev by com.luv.couple.net.CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
-    // Einmal laden — NICHT an ceremonyRev hängen: presence() pusht marriage_update
-    // → Bus.bump → Effect-Cancel → ewig „Hochzeit wird geladen…“
+    // Partner-Updates: eigenes presence-Echo kurz ignorieren
+    var suppressRevUntil by remember { mutableLongStateOf(0L) }
+    // Ein Request reicht: presence liefert ceremony+marriage (kein zweiter GET)
     LaunchedEffect(loadNonce) {
-        loaded = false
         loadError = null
-        val result = ceremonyApi {
-            LuvApiClient.ceremonyPresence("presence")
-            LuvApiClient.fetchCeremony()
-        }
-        result
+        ceremonyApi { LuvApiClient.ceremonyPresence("presence") }
             .onSuccess {
                 applyPresenceBundle(it)
-                loaded = true
+                suppressRevUntil = android.os.SystemClock.elapsedRealtime() + 1_200L
             }
-            .onFailure {
-                loadError = it.message ?: "Laden fehlgeschlagen"
-                loaded = true
-            }
+            .onFailure { loadError = it.message ?: "Laden fehlgeschlagen" }
     }
-    // Partner-Updates nach dem ersten Load (nur GET, kein presence-Spam)
-    LaunchedEffect(loaded, ceremonyRev, showSchedule, showBooking) {
-        if (!loaded || showSchedule || showBooking) return@LaunchedEffect
+    LaunchedEffect(ceremonyRev, showSchedule, showBooking) {
+        if (ceremony == null || showSchedule || showBooking) return@LaunchedEffect
+        if (android.os.SystemClock.elapsedRealtime() < suppressRevUntil) return@LaunchedEffect
         ceremonyApi { LuvApiClient.fetchCeremony() }
             .onSuccess { applyPresenceBundle(it) }
     }
-    // Keepalive: Anwesenheit frisch halten, Partner sieht 2/2 live
-    LaunchedEffect(loaded, showSchedule, showBooking) {
-        if (!loaded || showSchedule || showBooking) return@LaunchedEffect
+    // Keepalive
+    LaunchedEffect(showSchedule, showBooking) {
+        if (showSchedule || showBooking) return@LaunchedEffect
         while (true) {
             delay(12_000)
             ceremonyApi { LuvApiClient.ceremonyPresence("presence") }
-                .onSuccess { ceremony = it }
+                .onSuccess {
+                    applyPresenceBundle(it)
+                    suppressRevUntil = android.os.SystemClock.elapsedRealtime() + 1_200L
+                }
         }
     }
 
@@ -206,68 +203,6 @@ fun WeddingPresenceDialog(
         return
     }
 
-    if (!loaded) {
-        Dialog(
-            onDismissRequest = { if (!busy) closePresence() },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(BgSoft)
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    "Hochzeit wird geladen…",
-                    color = TextMuted,
-                    fontFamily = BodyFont,
-                    fontSize = 14.sp,
-                )
-            }
-        }
-        return
-    }
-
-    if (loadError != null && ceremony == null) {
-        Dialog(
-            onDismissRequest = { if (!busy) closePresence() },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(BgSoft)
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(
-                    loadError ?: "Laden fehlgeschlagen",
-                    color = AccentRose,
-                    fontFamily = BodyFont,
-                    fontSize = 14.sp,
-                    textAlign = TextAlign.Center,
-                )
-                TextButton(
-                    onClick = {
-                        loadNonce += 1
-                    }
-                ) {
-                    Text("Nochmal", color = Gold, fontFamily = DisplayFont)
-                }
-                TextButton(onClick = { closePresence() }) {
-                    Text("Schließen", color = TextMuted, fontFamily = BodyFont)
-                }
-            }
-        }
-        return
-    }
-
     val c = ceremony
     Dialog(
         onDismissRequest = { if (!busy) closePresence() },
@@ -291,7 +226,19 @@ fun WeddingPresenceDialog(
                 fontFamily = BodyFont,
                 fontSize = 13.sp
             )
-            val present = c?.couplePresent ?: 0
+            if (loadError != null && c == null) {
+                Text(
+                    loadError ?: "Fehler",
+                    color = AccentRose,
+                    fontFamily = BodyFont,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                )
+                TextButton(onClick = { loadNonce += 1 }) {
+                    Text("Nochmal", color = Gold, fontFamily = DisplayFont)
+                }
+            } else {
+            val present = c?.couplePresent ?: 1 // du bist gerade dabei — kein 0/2-Flash
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -360,7 +307,7 @@ fun WeddingPresenceDialog(
                             busy = false
                         }
                     },
-                    enabled = !busy && !mine
+                    enabled = !busy && c != null && !mine
                 ) {
                     Text(
                         if (mine) "Wartest auf Partner…" else "Zur Hochzeit starten",
@@ -376,6 +323,7 @@ fun WeddingPresenceDialog(
                         Text("Datum & Zeit wählen", color = AccentRose, fontFamily = DisplayFont)
                     }
                 }
+            }
             }
             TextButton(onClick = { closePresence() }) {
                 Text("Schließen", color = TextMuted, fontFamily = BodyFont)
@@ -422,10 +370,8 @@ fun WeddingScheduleDialog(
 
     val scheduleRev by CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
-        ceremonyApi {
-            LuvApiClient.ceremonyPresence("presence")
-            LuvApiClient.fetchCeremony()
-        }.onSuccess { bundle -> refreshFrom(bundle) }
+        ceremonyApi { LuvApiClient.ceremonyPresence("presence") }
+            .onSuccess { bundle -> refreshFrom(bundle) }
     }
     LaunchedEffect(scheduleRev) {
         ceremonyApi { LuvApiClient.fetchCeremony() }
@@ -682,7 +628,7 @@ fun WeddingGatheringDialog(
     val gatherRev by CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
         ceremonyApi { LuvApiClient.ceremonyPresence("gathering") }
-            .onSuccess { ceremony = it }
+            .onSuccess { ceremony = it.ceremony }
     }
     LaunchedEffect(gatherRev) {
         ceremonyApi { LuvApiClient.fetchCeremony() }
@@ -693,7 +639,7 @@ fun WeddingGatheringDialog(
         while (true) {
             delay(30_000)
             ceremonyApi { LuvApiClient.ceremonyPresence("gathering") }
-                .onSuccess { ceremony = it }
+                .onSuccess { ceremony = it.ceremony }
         }
     }
 

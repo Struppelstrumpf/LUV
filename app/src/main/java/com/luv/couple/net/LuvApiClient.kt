@@ -3299,13 +3299,24 @@ object LuvApiClient {
         )
     }
 
-    suspend fun ceremonyPresence(bucket: String = "presence"): CeremonyInfo? =
+    /**
+     * Anwesenheit setzen — Response enthält bereits ceremony + marriage
+     * (kein zweiter GET nötig).
+     */
+    suspend fun ceremonyPresence(bucket: String = "presence"): CeremonyBundle =
         withContext(Dispatchers.IO) {
             val body = JSONObject().put("bucket", bucket).toString()
             val json = authedPost("/v1/me/marriage/ceremony/presence", body)
-            // roomLayout ggf. mitgeliefert — Caller pollt sowieso; Spawn steckt in ceremony.positions
-            parseCeremonyInfo(json.optJSONObject("ceremony"))
+            CeremonyBundle(
+                marriage = parseMarriageInfo(json.optJSONObject("marriage")),
+                ceremony = parseCeremonyInfo(json.optJSONObject("ceremony")),
+                roomLayout = parseRoomLayout(json.optJSONObject("roomLayout")),
+            )
         }
+
+    /** Nur Ceremony-Objekt (ältere Call-Sites / Keepalive). */
+    suspend fun ceremonyPresenceInfo(bucket: String = "presence"): CeremonyInfo? =
+        ceremonyPresence(bucket).ceremony
 
     /** Brautpaar verlässt „Hochzeit öffnen“ — Partner sieht 1/2 sofort. */
     suspend fun ceremonyPresenceLeave(): CeremonyInfo? = withContext(Dispatchers.IO) {

@@ -336,8 +336,8 @@ private fun FriendsPanel(
 
     // leftNotify / Zeremonie: Account-WS → einmal fetch, kein Dauer-Poll
     val ceremonyRev by com.luv.couple.net.CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
-    LaunchedEffect(active, ceremonyRev, myMarriage?.status) {
-        if (!active) return@LaunchedEffect
+    LaunchedEffect(active, ceremonyRev, myMarriage?.status, showCeremonyPresence) {
+        if (!active || showCeremonyPresence) return@LaunchedEffect
         val st = myMarriage?.status
         if (
             st != "ceremony_scheduled" &&
