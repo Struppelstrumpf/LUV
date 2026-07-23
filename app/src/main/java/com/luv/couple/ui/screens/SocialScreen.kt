@@ -364,6 +364,7 @@ private fun FriendsPanel(
     }
 
     var lastWeddingLobbyCode by remember { mutableStateOf<String?>(null) }
+    var lastMarriedGiftSync by remember { mutableStateOf("") }
 
     fun applyFriendsSnap(it: LuvApiClient.FriendsBag) {
         friends = it.friends
@@ -406,6 +407,26 @@ private fun FriendsPanel(
         ) {
             lastWeddingLobbyCode = trackCode
             onSyncWeddingLobbies()
+        } else if (phase == "married" && ceremonyCode != null) {
+            // Empfang/Geschenk-Meta auf Home-Lobby ziehen (Timer statt „Zur Hochzeit“)
+            val giftEnds = it.myMarriage?.giftWindowEndsAt ?: 0L
+            val giftPhase = it.myMarriage?.giftPhase?.ifBlank { "open" } ?: "open"
+            val giftKey = "$ceremonyCode:$giftPhase:$giftEnds"
+            if (giftKey != lastMarriedGiftSync) {
+                lastMarriedGiftSync = giftKey
+                onSyncWeddingLobbies()
+                if (giftEnds > 0L) {
+                    scope.launch {
+                        runCatching {
+                            com.luv.couple.LuvApp.instance.prefs.patchWeddingCeremonyGiftMeta(
+                                ceremonyCode,
+                                giftPhase,
+                                giftEnds,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 

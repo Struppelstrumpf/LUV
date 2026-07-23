@@ -875,6 +875,36 @@ class PrefsRepository(private val context: Context) {
         }
     }
 
+    /** Nach Ja / Empfang: Home-Button „Noch … · Empfang“ statt „Zur Hochzeit“. */
+    suspend fun patchWeddingCeremonyGiftMeta(
+        lobbyCode: String?,
+        giftPhase: String,
+        giftWindowEndsAt: Long,
+    ) {
+        val code = lobbyCode?.trim()?.uppercase()?.removePrefix("LUV-").orEmpty()
+        if (code.isBlank()) return
+        val phase = giftPhase.trim().ifBlank { "open" }
+        context.dataStore.edit { prefs ->
+            val list = parseLobbies(prefs[lobbiesKey]).toMutableList()
+            val idx = list.indexOfFirst {
+                it.isWeddingCeremony && it.code.equals(code, ignoreCase = true)
+            }
+            if (idx < 0) return@edit
+            val cur = list[idx]
+            if (
+                cur.giftPhase == phase &&
+                cur.giftWindowEndsAt == giftWindowEndsAt
+            ) {
+                return@edit
+            }
+            list[idx] = cur.copy(
+                giftPhase = phase,
+                giftWindowEndsAt = giftWindowEndsAt.coerceAtLeast(0L),
+            )
+            prefs[lobbiesKey] = encodeLobbies(pinSpecialLobbies(list))
+        }
+    }
+
     suspend fun upsertLobby(lobby: Lobby) {
         context.dataStore.edit { prefs ->
             val list = parseLobbies(prefs[lobbiesKey]).toMutableList()

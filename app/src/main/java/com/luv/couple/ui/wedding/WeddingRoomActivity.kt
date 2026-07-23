@@ -245,7 +245,57 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     fun leaveRoom() {
         if (leaving) return
         leaving = true
+        // Home-Button sofort auf Empfang-Timer stellen (nicht erst nach Sync)
+        val code = ceremony?.ceremonyLobbyCode ?: marriage?.ceremonyLobbyCode
+        val ends = when {
+            (ceremony?.receptionEndsAt ?: 0L) > 0L -> ceremony!!.receptionEndsAt
+            (marriage?.giftWindowEndsAt ?: 0L) > 0L -> marriage!!.giftWindowEndsAt
+            else -> 0L
+        }
+        val phase = marriage?.giftPhase?.takeIf {
+            it.isNotBlank() && it != "none"
+        } ?: if (ends > System.currentTimeMillis()) "open" else marriage?.giftPhase
+        if (!code.isNullOrBlank() && ends > 0L && !phase.isNullOrBlank()) {
+            scope.launch {
+                runCatching {
+                    LuvApp.instance.prefs.patchWeddingCeremonyGiftMeta(code, phase, ends)
+                }
+            }
+        }
         onClose()
+    }
+
+    // Empfang läuft → Prefs patchen, damit Home „Noch … · Empfang“ zeigt
+    LaunchedEffect(
+        ceremony?.receptionEndsAt,
+        ceremony?.pastorPhase,
+        ceremony?.phase,
+        marriage?.giftPhase,
+        marriage?.giftWindowEndsAt,
+        marriage?.status,
+    ) {
+        if (marriage?.status != "married") return@LaunchedEffect
+        val code = ceremony?.ceremonyLobbyCode ?: marriage?.ceremonyLobbyCode
+        if (code.isNullOrBlank()) return@LaunchedEffect
+        val inReception =
+            ceremony?.pastorPhase == "reception" ||
+                ceremony?.phase == "reception" ||
+                ceremony?.pastorPhase == "married"
+        val ends = when {
+            (ceremony?.receptionEndsAt ?: 0L) > 0L -> ceremony!!.receptionEndsAt
+            (marriage?.giftWindowEndsAt ?: 0L) > 0L -> marriage!!.giftWindowEndsAt
+            else -> 0L
+        }
+        if (ends <= 0L) return@LaunchedEffect
+        val phase = when {
+            marriage?.giftPhase == "rolled" || marriage?.giftPhase == "done" ->
+                marriage!!.giftPhase
+            inReception || ends > System.currentTimeMillis() -> "open"
+            else -> marriage?.giftPhase?.ifBlank { "open" } ?: "open"
+        }
+        runCatching {
+            LuvApp.instance.prefs.patchWeddingCeremonyGiftMeta(code, phase, ends)
+        }
     }
 
     BackHandler(enabled = !leaving) {

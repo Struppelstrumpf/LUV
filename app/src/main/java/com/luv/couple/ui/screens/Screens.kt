@@ -1485,12 +1485,18 @@ private fun WeddingCeremonyLobbyButton(
             kotlinx.coroutines.delay(1000)
         }
     }
-    val giftPhase = lobby.giftPhase.lowercase()
+    val giftPhase = lobby.giftPhase.lowercase().trim()
     val giftEnds = lobby.giftWindowEndsAt
     val giftRem = (giftEnds - now).coerceAtLeast(0L)
+    val receptionActive =
+        giftEnds > now &&
+            giftPhase != "rolled" &&
+            giftPhase != "done"
     val receptionOver =
         giftPhase == "rolled" ||
-            (giftPhase == "open" && giftEnds > 0L && now >= giftEnds)
+            giftPhase == "done" ||
+            (giftEnds > 0L && now >= giftEnds &&
+                (giftPhase == "open" || giftPhase == "none" || giftPhase.isEmpty()))
     // Kapelle öffnet 10 Min. vor Termin — Einladen ist unabhängig davon (Sitze oben).
     val openAt = (lobby.ceremonyAt - 10 * 60 * 1000L).coerceAtLeast(0L)
     val open = lobby.ceremonyAt > 0L && now >= openAt
@@ -1500,10 +1506,11 @@ private fun WeddingCeremonyLobbyButton(
     } else 0L
     val label = when {
         receptionOver -> "Geschenke abholen"
-        giftPhase == "open" && giftEnds > 0L ->
+        // Empfang / Geschenkfenster — auch wenn lokale giftPhase noch "none" ist
+        receptionActive ->
             "Noch ${formatCountdown(giftRem)} · Empfang"
         lobby.ceremonyAt <= 0L -> "Hochzeit"
-        open && liveRem > 0L && giftPhase.isBlank() ->
+        open && liveRem > 0L && (giftPhase.isEmpty() || giftPhase == "none") ->
             "Ja-Wort · ${formatCountdown(liveRem)}"
         open -> "Zur Hochzeit"
         else -> "Noch ${formatCountdown(openAt - now)}"

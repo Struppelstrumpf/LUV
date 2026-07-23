@@ -2248,7 +2248,12 @@ fun LuvAppNav() {
                                                         ).show()
                                                     }
                                             }
-                                        } else if (giftPhase == "open") {
+                                        } else if (
+                                            giftPhase == "open" ||
+                                                (giftEnds > now &&
+                                                    giftPhase != "rolled" &&
+                                                    giftPhase != "done")
+                                        ) {
                                             // Empfang / Geschenkfenster — Kapelle für Gäste offen
                                             context.startActivity(
                                                 Intent(

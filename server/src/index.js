@@ -2588,12 +2588,15 @@ function keepCeremonyLobbyForGifts(m) {
     Number(c.receptionEndsAt) ||
     Number(m.giftWindowEndsAt) ||
     Date.now() + weddingCeremony.RECEPTION_MS;
-  if (inReception) {
-    m.giftWindowEndsAt = ends;
+  // Nach Ja / im Empfang: Phase immer "open" (nicht "none" stehen lassen)
+  if (m.status === "married" || inReception) {
+    if (!m.giftPhase || m.giftPhase === "none") m.giftPhase = "open";
+    if (inReception) m.giftWindowEndsAt = ends;
   }
   room.capacity = Math.max(room.capacity || 10, weddingCeremony.CEREMONY_CAPACITY);
-  room.giftWindowEndsAt = ends;
-  room.giftPhase = m.giftPhase || "open";
+  room.giftWindowEndsAt = Number(m.giftWindowEndsAt) || ends;
+  room.giftPhase =
+    m.giftPhase && m.giftPhase !== "none" ? m.giftPhase : "open";
   m.ceremonyMemberIds = Array.isArray(room.memberUserIds)
     ? [...room.memberUserIds]
     : [m.a, m.b].filter(Boolean);
@@ -11228,11 +11231,17 @@ app.post("/v1/me/marriage/ceremony/exit-room", (req, res) => {
     return res.json({ ok: true, left: true });
   }
   weddingCeremony.clearGatheringPresence(m, ctx.user.id);
+  // Empfang/Gift-Meta auf Lobby spiegeln — Home zeigt „Noch … · Empfang“
+  if (m.status === "married") {
+    keepCeremonyLobbyForGifts(m);
+    emitMarriageLiveUpdate(m, "married", "Empfang läuft", ctx.user.id);
+  }
   scheduleSave();
   return res.json({
     ok: true,
     left: true,
     ceremony: weddingCeremony.publicCeremony(m, ctx.user.id, db.users),
+    marriage: publicMarriageView(m, ctx.user.id),
   });
 });
 
