@@ -15,6 +15,8 @@ const USE_MARKET_TABLE = MARKET_BACKEND === "table" || MARKET_BACKEND === "pg";
 const FRIENDS_BACKEND = String(process.env.FRIENDS_BACKEND || "blob").toLowerCase();
 const USE_FRIENDS_TABLE =
   FRIENDS_BACKEND === "table" || FRIENDS_BACKEND === "pg";
+const EVENTS_BACKEND = String(process.env.EVENTS_BACKEND || "blob").toLowerCase();
+const USE_EVENTS_TABLE = EVENTS_BACKEND === "table" || EVENTS_BACKEND === "pg";
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 const DATA_FILE = path.join(DATA_DIR, "luv-store.json");
@@ -263,10 +265,53 @@ function hydrateFriendsFromTable(dbObj) {
   return dbObj;
 }
 
+function hydrateEventsFromTable(dbObj) {
+  if (!USE_EVENTS_TABLE || !process.env.DATABASE_URL) return dbObj;
+  try {
+    const { loadAllEventsSync, applyToDb, summarizeEvents } = require("./events_pg");
+    const fromTable = loadAllEventsSync();
+    const sum = summarizeEvents(fromTable);
+    // Empty table + no config → keep blob (pre-migrate safety)
+    if (
+      sum.eventsConfigCount === 0 &&
+      sum.contestEvents === 0 &&
+      sum.homeFeed === 0 &&
+      sum.notifyPhrases === 0 &&
+      !sum.hasLiveNotice
+    ) {
+      const blobSum = summarizeEvents(dbObj);
+      if (
+        blobSum.eventsConfigCount > 0 ||
+        blobSum.contestEvents > 0 ||
+        blobSum.homeFeed > 0 ||
+        blobSum.notifyPhrases > 0 ||
+        blobSum.hasLiveNotice
+      ) {
+        console.warn(
+          "[store] EVENTS_BACKEND=table but domain empty — keeping blob events"
+        );
+        return dbObj;
+      }
+    }
+    applyToDb(dbObj, fromTable);
+    console.log(
+      `[store] events SoT=table (events=${sum.eventsConfigCount}, contestEntries=${sum.contestEntries}, feed=${sum.homeFeed})`
+    );
+  } catch (err) {
+    console.error(
+      "[store] events table load failed — keeping blob events:",
+      err?.message || err
+    );
+  }
+  return dbObj;
+}
+
 function hydrateDomainTables(dbObj) {
-  return hydrateFriendsFromTable(
-    hydrateMarketFromTable(
-      hydrateSessionsFromTable(hydrateUsersFromTable(dbObj))
+  return hydrateEventsFromTable(
+    hydrateFriendsFromTable(
+      hydrateMarketFromTable(
+        hydrateSessionsFromTable(hydrateUsersFromTable(dbObj))
+      )
     )
   );
 }
@@ -538,4 +583,5 @@ module.exports = {
   SESSIONS_BACKEND: USE_SESSIONS_TABLE ? "table" : "blob",
   MARKET_BACKEND: USE_MARKET_TABLE ? "table" : "blob",
   FRIENDS_BACKEND: USE_FRIENDS_TABLE ? "table" : "blob",
+  EVENTS_BACKEND: USE_EVENTS_TABLE ? "table" : "blob",
 };

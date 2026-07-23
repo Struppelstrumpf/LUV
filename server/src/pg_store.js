@@ -184,6 +184,13 @@ async function saveLive(db, { source = "save", alsoSnapshot = false } = {}) {
         /* friends tables may not exist yet */
       }
 
+      try {
+        const { replaceEventsInClient } = require("./events_pg");
+        await replaceEventsInClient(client, db);
+      } catch {
+        /* events_domain may not exist yet */
+      }
+
       await client.query(
         `INSERT INTO meta(key, value) VALUES ('last_store_live_at', $1)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
