@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.169",
+            listOf(
+                "Fremde Profile und Hochzeitsbilder laden deutlich schneller",
+            )
+        ),
+        Entry(
             "2.2.168",
             listOf(
                 "Tippen hat Vorrang: Freunde, Tip-Glas und Hintergrund-Syncs stören weniger",

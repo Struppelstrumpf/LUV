@@ -8866,8 +8866,7 @@ app.get("/v1/users/:userId/profile", (req, res) => {
   const isSelf = uid === ctx.user.id;
   const areFriends = !isSelf && friendRelation(ctx.user, uid) === "friends";
   const tipRecv = glassTipRecvState(user);
-  marriage.repairMarriageLinks(db, ctx.user, WEDDING_DIR);
-  marriage.repairMarriageLinks(db, user, WEDDING_DIR);
+  // Kein repairMarriageLinks hier — FS-Scan bei jedem Profil-Blick war spürbar langsam
   const bond = marriage.findMarriageBetween(db, ctx.user.id, uid);
   const theirMarriage = marriage.findMarriageForUser(db, uid);
   const myMarriageBusy = marriage.findMarriageForUser(db, ctx.user.id);

@@ -240,7 +240,6 @@ fun ProfileCanvasScreen(
 
     LaunchedEffect(userId, editable, nickname, tutorialMode) {
         profileReady = false
-        val started = SystemClock.elapsedRealtime()
         if (editable) {
             if (tutorialMode) {
                 loadedNick = nickname
@@ -371,10 +370,25 @@ fun ProfileCanvasScreen(
                 dayStreak = 0
             }
             savedSnapshot = state.snapshotKey()
-            val minMs = 1100L
-            val elapsed = SystemClock.elapsedRealtime() - started
-            if (elapsed < minMs) delay(minMs - elapsed)
+            // Sofort zeigen — kein künstliches 1,1s-Warten mehr
             profileReady = true
+            // img_*-Stickers/Pets parallel vorladen (sonst bleiben lange 🐾)
+            val imgIds = buildList {
+                state.companionEmoji.trim().takeIf { it.startsWith("img_", true) }?.let { add(it) }
+                peerPetEmoji.trim().takeIf { it.startsWith("img_", true) }?.let { add(it) }
+                state.layout.forEach { el ->
+                    el.emoji?.trim()?.takeIf { it.startsWith("img_", true) }?.let { add(it) }
+                    el.text?.trim()?.takeIf { it.startsWith("img_", true) }?.let { add(it) }
+                }
+            }.distinct()
+            imgIds.forEach { com.luv.couple.ui.ItemImageCache.preload(it) }
+            // Hochzeitsbild schon cachen, falls Gästebuch als Nächstes kommt
+            val uid = userId
+            if (!uid.isNullOrBlank() && peerMarriage?.hasWeddingImage == true) {
+                launch {
+                    runCatching { com.luv.couple.ui.WeddingImageCache.getOrLoad(uid) }
+                }
+            }
         } else {
             loadedNick = nickname
             state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname)).normalized(nickname)
@@ -2985,17 +2999,13 @@ private fun WeddingGuestbookDialog(
 
     LaunchedEffect(profileUserId) {
         loading = true
+        weddingBmp = com.luv.couple.ui.WeddingImageCache.peek(profileUserId)
         wedding = LuvApiClient.fetchWedding(profileUserId)
-        weddingBmp = null
-        if (wedding?.hasImage == true) {
-            weddingBmp = withContext(Dispatchers.IO) {
-                runCatching {
-                    val bytes = LuvApiClient.downloadWeddingImage(profileUserId)
-                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                }.getOrNull()
-            }
-        }
+        // Meta sofort — Bild nicht blockierend
         loading = false
+        if (wedding?.hasImage == true && weddingBmp == null) {
+            weddingBmp = com.luv.couple.ui.WeddingImageCache.getOrLoad(profileUserId)
+        }
     }
 
     Dialog(
@@ -3190,7 +3200,8 @@ private fun WeddingOverviewCard(
                         contentScale = ContentScale.Fit
                     )
                 }
-                loading -> Text("Lade…", color = WeddingInk.copy(0.5f), fontFamily = BodyFont)
+                loading || wedding?.hasImage == true ->
+                    Text("Lade Bild…", color = WeddingInk.copy(0.5f), fontFamily = BodyFont)
                 else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("🖼️", fontSize = 36.sp)
                     Text(

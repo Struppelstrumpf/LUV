@@ -3594,13 +3594,14 @@ object LuvApiClient {
         }.getOrNull()
     }
 
+    /** Über mediaHttp — blockiert nicht die JSON-API (Profil/Freunde). */
     suspend fun downloadWeddingImage(userId: String): ByteArray = withContext(Dispatchers.IO) {
         val clean = userId.trim()
         if (clean.isBlank()) throw LuvApiException("Kein Bild.")
         val request = authedRequestBuilder("/v1/users/${clean.encodeURL()}/wedding/image")
             .get()
             .build()
-        http.newCall(request).execute().use { response ->
+        mediaHttp.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw LuvApiException("Hochzeitsbild nicht verfügbar (${response.code}).")
             }
