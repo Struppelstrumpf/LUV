@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.186",
+            listOf(
+                "Hochzeit Nein: Kapellen-Lobby wird für Brautpaar und Gäste sofort geschlossen und gelöscht",
+            )
+        ),
+        Entry(
             "2.2.185",
             listOf(
                 "Hochzeit öffnen wieder schnell: ein Request statt Doppel-Laden, Popup sofort",

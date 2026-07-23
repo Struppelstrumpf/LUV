@@ -1308,6 +1308,22 @@ class PrefsRepository(private val context: Context) {
         }
     }
 
+    /** Nach Nein / Abbruch: alle Hochzeits-Zeremonie-Lobbys lokal weg. */
+    suspend fun removeWeddingCeremonyLobbies(codeHint: String? = null) {
+        val hint = codeHint
+            ?.trim()
+            ?.uppercase()
+            ?.removePrefix("LUV-")
+            ?.takeIf { it.length >= 3 }
+        val targets = snapshot().lobbies.filter { lobby ->
+            lobby.isWeddingCeremony &&
+                (hint == null || lobby.code.equals(hint, ignoreCase = true))
+        }
+        for (lobby in targets) {
+            removeLobby(lobby.id)
+        }
+    }
+
     suspend fun bindWidget(widgetId: Int, lobbyId: String) {
         context.dataStore.edit { prefs ->
             val map = parseWidgetMap(prefs[widgetMapKey]).toMutableMap()

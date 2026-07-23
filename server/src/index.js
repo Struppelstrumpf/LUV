@@ -2964,9 +2964,15 @@ function dissolveWeddingCeremonyLobby(code) {
     // Sicherheit: nie Mal-/Normal-Lobbys hier auflösen
     if (room?.isWedding || saved?.isWedding) return;
   }
-  const members = room?.memberUserIds || saved?.memberUserIds || [];
+  const members = [
+    ...(room?.memberUserIds || []),
+    ...(saved?.memberUserIds || []),
+  ];
   const db = getDb();
+  const seen = new Set();
   for (const uid of members) {
+    if (!uid || seen.has(uid)) continue;
+    seen.add(uid);
     const u = db.users?.[uid];
     if (u) {
       releaseHostedRoom(code, uid);
@@ -2974,8 +2980,27 @@ function dissolveWeddingCeremonyLobby(code) {
       if (u.hostedRooms?.[code]) delete u.hostedRooms[code];
     }
   }
+  // Offene Einladungen zu dieser Lobby streichen
+  const codeUp = String(code).toUpperCase();
+  for (const u of Object.values(db.users || {})) {
+    if (!Array.isArray(u?.lobbyInvites) || !u.lobbyInvites.length) continue;
+    u.lobbyInvites = u.lobbyInvites.filter(
+      (i) => String(i?.roomCode || "").toUpperCase() !== codeUp
+    );
+  }
   if (room) {
     for (const sock of [...(room.sockets?.values?.() || [])]) {
+      try {
+        sock.send(
+          JSON.stringify({
+            type: "room_closed",
+            reason: "ceremony_ended",
+            message: "Die Hochzeit ist beendet.",
+          })
+        );
+      } catch {
+        /* ignore */
+      }
       try {
         sock.close(4001, "ceremony_ended");
       } catch {
@@ -2986,6 +3011,89 @@ function dissolveWeddingCeremonyLobby(code) {
   }
   if (db.rooms?.[code]) delete db.rooms[code];
   persistRooms();
+}
+
+/** Brautpaar + Gäste: Lobby weg / Status (Account-WS). */
+function notifyCeremonyLobbyRemoved(m, removedCode, message, actorId = null) {
+  if (!m) return;
+  const db = getDb();
+  const targets = new Set([m.a, m.b]);
+  for (const uid of m.ceremonyMemberIds || []) {
+    if (uid) targets.add(uid);
+  }
+  const actor = actorId ? db.users?.[actorId] : null;
+  const nick = String(actor?.nickname || "Hochzeit").trim().slice(0, 18) || "Hochzeit";
+  const data = {
+    status: "cancelled",
+    message: String(message || "Die Trauung wurde abgebrochen").trim().slice(0, 160),
+    nickname: nick,
+    fromUserId: actorId || "",
+    weddingLobbyCode: "",
+    ceremonyLobbyCode: "",
+    removedCeremonyLobbyCode: String(removedCode || "").toUpperCase(),
+    ceremonyAt: 0,
+  };
+  for (const uid of targets) {
+    if (!uid) continue;
+    accountPush.emitUserEvent(db, uid, "marriage_update", data);
+  }
+}
+
+/**
+ * Nein am Altar: Kapellen-Lobby sofort kick + löschen (Home bei allen weg),
+ * Marriage bleibt kurz für Pastor-Rede, danach abort.
+ */
+function dissolveCeremonyLobbyAfterReject(m, rejectedByUserId) {
+  if (!m) return;
+  const code = String(m.ceremonyLobbyCode || "").trim().toUpperCase();
+  if (!code) return;
+  const room = rooms.get(code) || getDb().rooms?.[code];
+  if (Array.isArray(room?.memberUserIds)) {
+    m.ceremonyMemberIds = [...new Set([...(m.ceremonyMemberIds || []), ...room.memberUserIds])];
+  }
+  dissolveWeddingCeremonyLobby(code);
+  m.ceremonyLobbyCode = null;
+  notifyCeremonyLobbyRemoved(
+    m,
+    code,
+    "Jemand hat Nein gesagt — die Hochzeits-Lobby ist zu Ende.",
+    rejectedByUserId || null
+  );
+}
+
+/** Pastor-Rede vorbei → Ehe-Datensatz nach kurzer Grace weg (ohne Client-Poll). */
+const pendingRejectAbortTimers = new Map();
+function scheduleRejectAbort(m) {
+  if (!m) return;
+  const key = m.id || marriage.pairKey(m.a, m.b);
+  if (!key || pendingRejectAbortTimers.has(key)) return;
+  const rejectUserId = m.ceremony?.rejectUserId || null;
+  const t = setTimeout(() => {
+    pendingRejectAbortTimers.delete(key);
+    try {
+      const db = getDb();
+      const all = marriage.ensureMarriages(db);
+      const still =
+        all[key] ||
+        Object.values(all).find(
+          (x) =>
+            x &&
+            (x.id === key || marriage.pairKey(x.a, x.b) === key)
+        );
+      if (!still) return;
+      const c = weddingCeremony.ensureCeremony(still);
+      if (c.pastorPhase !== "ended" && c.phase !== "ended") return;
+      // Lobby sollte schon weg sein — nochmal sicher
+      if (still.ceremonyLobbyCode) {
+        dissolveCeremonyLobbyAfterReject(still, c.rejectUserId || rejectUserId);
+      }
+      abortWeddingCeremonyRejected(still, c.rejectUserId || rejectUserId);
+      scheduleSave();
+    } catch (e) {
+      console.error("scheduleRejectAbort", e?.message || e);
+    }
+  }, 2_500);
+  pendingRejectAbortTimers.set(key, t);
 }
 
 function findMarriageForCeremonyMember(db, userId) {
@@ -3019,10 +3127,30 @@ function abortWeddingCeremony(
     ? String(leftUser.nickname || "").trim().slice(0, 18) || "Partner"
     : "Partner";
   const partnerId = weddingCeremony.partnerOf(m, leftByUserId);
-  if (m.ceremonyLobbyCode) {
-    dissolveWeddingCeremonyLobby(m.ceremonyLobbyCode);
+  const removedCode = String(m.ceremonyLobbyCode || "").trim().toUpperCase();
+  // Members vor Dissolve merken (für Push an Gäste)
+  const room = removedCode
+    ? rooms.get(removedCode) || db.rooms?.[removedCode]
+    : null;
+  if (Array.isArray(room?.memberUserIds)) {
+    m.ceremonyMemberIds = [
+      ...new Set([...(m.ceremonyMemberIds || []), ...room.memberUserIds]),
+    ];
+  }
+  if (removedCode) {
+    dissolveWeddingCeremonyLobby(removedCode);
     m.ceremonyLobbyCode = null;
   }
+  notifyCeremonyLobbyRemoved(
+    m,
+    removedCode,
+    noticeText ||
+      (divorceCooldown
+        ? "Deine Hochzeit… Tippe für mehr"
+        : "Die Trauung wurde abgebrochen — ihr könnt euch erneut verloben."),
+    leftByUserId || null
+  );
+  m.ceremonyMemberIds = [];
   // Gäste aus Memberliste droppen (Lobby weg)
   const a = db.users?.[m.a];
   const b = db.users?.[m.b];
@@ -3212,15 +3340,21 @@ function tickCeremonyRitual(m, db) {
   if (adv?.receptionStarted) {
     keepCeremonyLobbyForGifts(m);
   }
+  if (adv?.rejectEnded) {
+    scheduleRejectAbort(m);
+  }
   // Empfang abgelaufen → Gäste raus, Geschenke würfeln, Paar Claim (Lobby bleibt)
   const c = weddingCeremony.ensureCeremony(m);
-  // Nach Nein-Rede: kurz phase=ended halten, damit beide Clients das Ende sehen
+  // Fallback falls Timer nicht lief: nach kurzer Grace aborten
   const rejectDoneAt = Number(c.rejectFinishedAt) || 0;
   if (
     rejectDoneAt > 0 &&
     (c.pastorPhase === "ended" || c.phase === "ended") &&
-    Date.now() - rejectDoneAt >= 8_000
+    Date.now() - rejectDoneAt >= 2_500
   ) {
+    if (m.ceremonyLobbyCode) {
+      dissolveCeremonyLobbyAfterReject(m, c.rejectUserId || null);
+    }
     abortWeddingCeremonyRejected(m, c.rejectUserId || null);
     return { dissolved: true };
   }
@@ -11107,6 +11241,8 @@ app.post("/v1/me/marriage/ceremony/vow", (req, res) => {
   if (choice === "no" && progress >= 1) {
     const nick = String(ctx.user.nickname || "").trim().slice(0, 18) || "Jemand";
     weddingCeremony.startRejectClosing(m, ctx.user.id, nick);
+    // Lobby sofort weg — Kick Brautpaar + Gäste, Home bei allen leer
+    dissolveCeremonyLobbyAfterReject(m, ctx.user.id);
     scheduleSave();
     return res.json({
       ok: true,

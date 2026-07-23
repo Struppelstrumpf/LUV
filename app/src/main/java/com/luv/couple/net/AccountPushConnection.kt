@@ -174,6 +174,34 @@ object AccountEventRouter {
             "marriage_proposal", "marriage_update", "lobby_invite" -> {
                 LuvApiClient.invalidateFriendsCache()
                 CeremonyRefreshBus.bump()
+                if (event == "marriage_update") {
+                    val status = data.optString("status").trim().lowercase()
+                    val removed = data.optString("removedCeremonyLobbyCode")
+                        .trim()
+                        .uppercase()
+                        .removePrefix("LUV-")
+                    val ceremonyGone =
+                        status == "cancelled" ||
+                            status == "rejected" ||
+                            removed.isNotBlank() ||
+                            (status.isNotBlank() &&
+                                data.optString("ceremonyLobbyCode").isBlank() &&
+                                data.has("removedCeremonyLobbyCode"))
+                    if (ceremonyGone) {
+                        ioScope.launch {
+                            runCatching {
+                                val prefs = com.luv.couple.LuvApp.instance.prefs
+                                prefs.removeWeddingCeremonyLobbies(
+                                    removed.takeIf { it.length >= 3 }
+                                )
+                                com.luv.couple.lock.CanvasStore.updateKnownLobbies(
+                                    prefs.snapshot().lobbies.map { it.id }
+                                )
+                            }
+                            CeremonyLobbyGoneBus.bump()
+                        }
+                    }
+                }
                 ioScope.launch {
                     runCatching { NotificationBadges.refreshFriends(app, force = true) }
                     NotificationBadges.syncAppBadge(app)

@@ -206,6 +206,7 @@ fun LuvAppNav() {
     val pendingDeep by com.luv.couple.net.PendingDeepLink.target.collectAsStateWithLifecycle()
     val updateState by AppUpdater.state.collectAsStateWithLifecycle()
     val focusUpdate by AppUpdater.focusRequest.collectAsStateWithLifecycle()
+    val ceremonyLobbyGoneRev by com.luv.couple.net.CeremonyLobbyGoneBus.revision.collectAsStateWithLifecycle()
     var googleEnabled by remember { mutableStateOf(false) }
     var googleBusy by remember { mutableStateOf(false) }
     val needsGoogleGate = AccountSession.needsGoogleLogin(googleEnabled) ||
@@ -763,6 +764,16 @@ fun LuvAppNav() {
             prefs.setProfileCanvasJson(
                 com.luv.couple.profile.ProfileCatalog.encode(state)
             )
+        }
+    }
+
+    LaunchedEffect(ceremonyLobbyGoneRev) {
+        if (ceremonyLobbyGoneRev <= 0) return@LaunchedEffect
+        // Nach Nein: lokale Ceremony-Lobby weg + Cloud-Sync, damit Home bei allen stimmt
+        runCatching {
+            prefs.removeWeddingCeremonyLobbies()
+            CanvasStore.updateKnownLobbies(prefs.snapshot().lobbies.map { it.id })
+            syncCloudAccount(force = true)
         }
     }
 

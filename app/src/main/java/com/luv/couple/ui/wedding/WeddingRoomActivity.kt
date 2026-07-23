@@ -765,7 +765,13 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
             )
         }
         LaunchedEffect(rejectName) {
-            delay(5200)
+            delay(4200)
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    com.luv.couple.LuvApp.instance.prefs.removeWeddingCeremonyLobbies()
+                }
+            }
+            com.luv.couple.net.CeremonyLobbyGoneBus.bump()
             onClose()
         }
         return
@@ -1248,7 +1254,17 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                             scope.launch {
                                 val r = runCatching { LuvApiClient.ceremonyVow("no", p) }.getOrNull()
                                 ceremony = r?.ceremony ?: ceremony
-                                // Rede läuft noch — Overlay erst nach pastorPhase=ended
+                                if (r?.rejected == true) {
+                                    // Lobby sofort lokal weg (Server kickt parallel);
+                                    // Overlay erst nach Pastor-Rede (phase=ended)
+                                    withContext(Dispatchers.IO) {
+                                        runCatching {
+                                            com.luv.couple.LuvApp.instance.prefs
+                                                .removeWeddingCeremonyLobbies()
+                                        }
+                                    }
+                                    com.luv.couple.net.CeremonyLobbyGoneBus.bump()
+                                }
                             }
                         }
                     )
