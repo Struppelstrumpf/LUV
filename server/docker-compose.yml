@@ -32,6 +32,7 @@ services:
       STORE_BACKEND: "${STORE_BACKEND:-json}"
       USERS_BACKEND: "${USERS_BACKEND:-blob}"
       SESSIONS_BACKEND: "${SESSIONS_BACKEND:-blob}"
+      MARKET_BACKEND: "${MARKET_BACKEND:-blob}"
       DATABASE_URL: "${DATABASE_URL:-}"
       REDIS_URL: "${REDIS_URL:-}"
     volumes:

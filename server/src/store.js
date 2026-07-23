@@ -10,6 +10,8 @@ const USE_USERS_TABLE = USERS_BACKEND === "table" || USERS_BACKEND === "pg";
 const SESSIONS_BACKEND = String(process.env.SESSIONS_BACKEND || "blob").toLowerCase();
 const USE_SESSIONS_TABLE =
   SESSIONS_BACKEND === "table" || SESSIONS_BACKEND === "pg";
+const MARKET_BACKEND = String(process.env.MARKET_BACKEND || "blob").toLowerCase();
+const USE_MARKET_TABLE = MARKET_BACKEND === "table" || MARKET_BACKEND === "pg";
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 const DATA_FILE = path.join(DATA_DIR, "luv-store.json");
@@ -205,8 +207,31 @@ function hydrateSessionsFromTable(dbObj) {
   return dbObj;
 }
 
+function hydrateMarketFromTable(dbObj) {
+  if (!USE_MARKET_TABLE || !process.env.DATABASE_URL) return dbObj;
+  try {
+    const { loadAllMarketSync } = require("./market_pg");
+    const fromTable = loadAllMarketSync();
+    const n = Object.keys(fromTable.listings || {}).length;
+    dbObj.marketListings = fromTable.listings || {};
+    dbObj.marketMeta =
+      fromTable.meta && typeof fromTable.meta === "object"
+        ? fromTable.meta
+        : { priceHistory: {}, saleHistory: {} };
+    console.log(`[store] market SoT=table (loaded ${n} listings)`);
+  } catch (err) {
+    console.error(
+      "[store] market table load failed — keeping blob market:",
+      err?.message || err
+    );
+  }
+  return dbObj;
+}
+
 function hydrateDomainTables(dbObj) {
-  return hydrateSessionsFromTable(hydrateUsersFromTable(dbObj));
+  return hydrateMarketFromTable(
+    hydrateSessionsFromTable(hydrateUsersFromTable(dbObj))
+  );
 }
 
 function load() {
@@ -474,4 +499,5 @@ module.exports = {
   STORE_BACKEND: USE_PG ? "postgres" : "json",
   USERS_BACKEND: USE_USERS_TABLE ? "table" : "blob",
   SESSIONS_BACKEND: USE_SESSIONS_TABLE ? "table" : "blob",
+  MARKET_BACKEND: USE_MARKET_TABLE ? "table" : "blob",
 };

@@ -166,6 +166,17 @@ async function saveLive(db, { source = "save", alsoSnapshot = false } = {}) {
         /* sessions table may not exist yet */
       }
 
+      try {
+        const { replaceMarketInClient } = require("./market_pg");
+        await replaceMarketInClient(
+          client,
+          db.marketListings || {},
+          db.marketMeta || {}
+        );
+      } catch {
+        /* market tables may not exist yet */
+      }
+
       await client.query(
         `INSERT INTO meta(key, value) VALUES ('last_store_live_at', $1)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
