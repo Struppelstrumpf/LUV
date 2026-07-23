@@ -16,13 +16,13 @@ object PeerProfilePrefetch {
     private var jobId: String? = null
     private var job: Deferred<LuvApiClient.PeerProfile?>? = null
 
-    fun start(userId: String) {
+    fun start(userId: String, force: Boolean = false) {
         val id = userId.trim()
         if (id.isEmpty()) return
         synchronized(lock) {
-            if (jobId == id && job?.isActive == true) return
-            // Abgeschlossener Job für dieselbe ID: behalten (erneutes Öffnen ohne zweiten Roundtrip)
-            if (jobId == id && job?.isCompleted == true) return
+            if (!force && jobId == id && job?.isActive == true) return
+            // Abgeschlossener Job: behalten — außer force (nach Speichern)
+            if (!force && jobId == id && job?.isCompleted == true) return
             jobId = id
             job = scope.async {
                 runCatching { LuvApiClient.fetchUserProfileCanvas(id) }.getOrNull()
@@ -30,14 +30,25 @@ object PeerProfilePrefetch {
         }
     }
 
-    suspend fun awaitOrFetch(userId: String): LuvApiClient.PeerProfile? {
+    fun clear(userId: String? = null) {
+        val id = userId?.trim().orEmpty()
+        synchronized(lock) {
+            if (id.isEmpty() || jobId == id) {
+                jobId = null
+                job = null
+            }
+        }
+    }
+
+    suspend fun awaitOrFetch(userId: String, force: Boolean = false): LuvApiClient.PeerProfile? {
         val id = userId.trim()
         if (id.isEmpty()) return null
+        if (force) clear(id)
         val existing = synchronized(lock) {
-            if (jobId == id) job else null
+            if (!force && jobId == id) job else null
         }
         if (existing != null) return existing.await()
-        start(id)
+        start(id, force = force)
         return synchronized(lock) { if (jobId == id) job else null }?.await()
             ?: runCatching { LuvApiClient.fetchUserProfileCanvas(id) }.getOrNull()
     }

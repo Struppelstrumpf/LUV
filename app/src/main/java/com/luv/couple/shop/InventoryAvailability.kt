@@ -9,11 +9,21 @@ object InventoryAvailability {
     fun freeStickers(
         owned: Map<String, Int>,
         placedOnProfile: Map<String, Int>
-    ): Map<String, Int> =
-        owned.mapNotNull { (id, total) ->
-            val free = (total - (placedOnProfile[id] ?: 0)).coerceAtLeast(0)
+    ): Map<String, Int> {
+        val placed = placedOnProfile.mapKeys {
+            com.luv.couple.profile.ProfileCatalog.clipProfileItemId(it.key)
+        }
+        val merged = linkedMapOf<String, Int>()
+        for ((raw, total) in owned) {
+            val id = com.luv.couple.profile.ProfileCatalog.clipProfileItemId(raw)
+            if (id.isEmpty()) continue
+            merged[id] = (merged[id] ?: 0) + total.coerceAtLeast(0)
+        }
+        return merged.mapNotNull { (id, total) ->
+            val free = (total - (placed[id] ?: 0)).coerceAtLeast(0)
             if (free > 0) id to free else null
         }.toMap()
+    }
 
     fun freeEmojis(
         owned: Map<String, Int>,
@@ -68,7 +78,10 @@ object InventoryAvailability {
         layoutEmojis: Iterable<String?>
     ): Map<String, Int> =
         layoutEmojis
-            .mapNotNull { it?.trim()?.takeIf { e -> e.isNotEmpty() } }
+            .mapNotNull {
+                com.luv.couple.profile.ProfileCatalog.clipProfileItemId(it.orEmpty())
+                    .takeIf { e -> e.isNotEmpty() }
+            }
             .groupingBy { it }
             .eachCount()
 }

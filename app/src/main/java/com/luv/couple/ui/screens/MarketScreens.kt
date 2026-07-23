@@ -3206,8 +3206,10 @@ fun InventoryScreen(
     fun confirmPlace(action: ProfilePlaceAction) {
         when (action) {
             is ProfilePlaceAction.Sticker -> {
+                val id = ProfileCatalog.clipProfileItemId(action.emoji)
                 val free = InventoryAvailability.freeStickers(ownedStickersMap, placedStickers)
-                if ((free[action.emoji] ?: 0) < 1) {
+                val freeN = (free[id] ?: free[action.emoji] ?: 0)
+                if (freeN < 1) {
                     Toast.makeText(context, "Kein Sticker mehr frei", Toast.LENGTH_SHORT).show()
                     return
                 }

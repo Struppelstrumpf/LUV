@@ -146,6 +146,11 @@ fun ProfileCanvasScreen(
     /** Tutorial: echte Profilgestaltung mit Coachmark + Fertig nach Hund-Sticker */
     tutorialMode: Boolean = false,
     onTutorialFinished: ((profileJson: String) -> Unit)? = null,
+    /**
+     * Eigenes „Profil ansehen“: aktuelles Edit-Layout zeigen (kein Peer-Fetch/Cache).
+     * Sonst fehlen frisch platzierte Elemente.
+     */
+    localPreviewState: com.luv.couple.profile.ProfileState? = null,
     onClose: () -> Unit,
     onEditNickname: (() -> Unit)? = null,
     onReport: (() -> Unit)? = null,
@@ -208,9 +213,11 @@ fun ProfileCanvasScreen(
     var showUnfriendConfirm by remember { mutableStateOf(false) }
     var showGuestbookFor by remember { mutableStateOf<String?>(null) }
     // Immer erst laden (Inventar!), sonst Pending-Place mit owned=0 → „kein … mehr frei“
-    var profileReady by remember(userId, editable) {
+    var profileReady by remember(userId, editable, localPreviewState != null) {
         mutableStateOf(false)
     }
+    /** true erst nach Remote+Inventar — Pending-Place darf nicht vorher laufen (sonst Wipe). */
+    var profileHydrated by remember(userId, editable) { mutableStateOf(false) }
     var emojiBar by remember { mutableStateOf<List<String>>(emptyList()) }
     var rootW by remember { mutableFloatStateOf(1f) }
     var rootH by remember { mutableFloatStateOf(1f) }
@@ -241,9 +248,24 @@ fun ProfileCanvasScreen(
 
     // nickname nur bei eigenem Profil als Key — sonst flackert Peer-Profil beim Schließen
     // (Nav liefert kurz Fallback-Nick → Effect neu → leerer Platzhalter).
-    LaunchedEffect(userId, editable, tutorialMode, nickname.takeIf { editable || tutorialMode }) {
+    LaunchedEffect(
+        userId,
+        editable,
+        tutorialMode,
+        localPreviewState,
+        nickname.takeIf { editable || tutorialMode || localPreviewState != null }
+    ) {
+        if (localPreviewState != null && !editable) {
+            loadedNick = nickname
+            state = localPreviewState.normalized(nickname)
+            savedSnapshot = state.snapshotKey()
+            profileHydrated = true
+            profileReady = true
+            return@LaunchedEffect
+        }
         if (editable) {
             profileReady = false
+            profileHydrated = false
             if (tutorialMode) {
                 loadedNick = nickname
                 state = ProfileState(layout = ProfileCatalog.defaultLayout(nickname))
@@ -273,6 +295,7 @@ fun ProfileCanvasScreen(
                 displayCoins = AccountSession.account.value?.coins ?: myCoins
                 savedSnapshot = state.snapshotKey()
                 profileReady = true
+                profileHydrated = true
                 return@LaunchedEffect
             }
             val local = withContext(Dispatchers.IO) {
@@ -290,6 +313,7 @@ fun ProfileCanvasScreen(
                     .getOrDefault(com.luv.couple.shop.ShopCatalog.DEFAULT_BAR)
             }
             displayCoins = AccountSession.account.value?.coins ?: myCoins
+            // UI schon mit lokalem Layout — Pending-Place erst nach Hydration
             profileReady = true
             state.layout.forEach { el ->
                 el.emoji?.trim()?.takeIf { it.startsWith("img_", true) }
@@ -346,6 +370,7 @@ fun ProfileCanvasScreen(
                 }
             }
             profileReady = true
+            profileHydrated = true
         } else if (!userId.isNullOrBlank()) {
             fun applyPeer(remote: LuvApiClient.PeerProfile) {
                 loadedNick = remote.nickname
@@ -715,38 +740,6 @@ fun ProfileCanvasScreen(
         }
     }
 
-    // Nach Inventar-Load: Item aus Menü-Inventar platzieren (nicht vorher — sonst owned=0)
-    LaunchedEffect(editable, profileReady) {
-        if (!editable || !profileReady) return@LaunchedEffect
-        val action = PendingProfilePlace.peek() ?: return@LaunchedEffect
-        // Sticker: Inventar muss die ID kennen, sonst kurz warten/nachladen
-        if (action is ProfilePlaceAction.Sticker) {
-            val id = ProfileCatalog.clipProfileItemId(action.emoji)
-            if (ownedStickerCount(id) < 1) {
-                runCatching {
-                    val remote = LuvApiClient.fetchInventory()
-                    withContext(Dispatchers.IO) {
-                        prefs.applyInventorySnap(
-                            emojis = remote.emojis,
-                            themes = remote.themes,
-                            stickers = remote.stickers,
-                            pets = remote.pets,
-                            equippedPet = remote.equippedPet
-                        )
-                    }
-                    ownedStickers = remote.stickers
-                }
-            }
-            if (ownedStickerCount(id) < 1) {
-                PendingProfilePlace.consume()
-                Toast.makeText(context, "Kein Sticker mehr frei", Toast.LENGTH_SHORT).show()
-                return@LaunchedEffect
-            }
-        }
-        PendingProfilePlace.consume()
-        applyPendingPlace(action)
-    }
-
     fun reopenChestFromPlace(): Boolean {
         if (!returnToChestAfterPlace) return false
         returnToChestAfterPlace = false
@@ -813,6 +806,9 @@ fun ProfileCanvasScreen(
                     )
                 }
             }
+            // Edit-State = gespeicherter Stand; Peer-Cache invalidieren
+            state = clean
+            AccountSession.account.value?.id?.let { PeerProfilePrefetch.clear(it) }
             saving = false
             savedSnapshot = clean.snapshotKey()
             if (!silent) {
@@ -827,6 +823,39 @@ fun ProfileCanvasScreen(
     }
 
     fun save() = persistProfile(closeAfter = true, silent = false)
+
+    // Erst nach Remote+Inventar — sonst überschreibt fetchMyProfileCanvas() das Platzierte
+    val pendingPlace by PendingProfilePlace.pending.collectAsStateWithLifecycle()
+    LaunchedEffect(editable, profileHydrated, pendingPlace) {
+        if (!editable || !profileHydrated) return@LaunchedEffect
+        val action = PendingProfilePlace.peek() ?: return@LaunchedEffect
+        if (action is ProfilePlaceAction.Sticker) {
+            val id = ProfileCatalog.clipProfileItemId(action.emoji)
+            if (ownedStickerCount(id) < 1) {
+                runCatching {
+                    val remote = LuvApiClient.fetchInventory()
+                    withContext(Dispatchers.IO) {
+                        prefs.applyInventorySnap(
+                            emojis = remote.emojis,
+                            themes = remote.themes,
+                            stickers = remote.stickers,
+                            pets = remote.pets,
+                            equippedPet = remote.equippedPet
+                        )
+                    }
+                    ownedStickers = remote.stickers
+                }
+            }
+            if (ownedStickerCount(id) < 1) {
+                PendingProfilePlace.consume()
+                Toast.makeText(context, "Kein Sticker mehr frei", Toast.LENGTH_SHORT).show()
+                return@LaunchedEffect
+            }
+        }
+        PendingProfilePlace.consume()
+        applyPendingPlace(action)
+        persistProfile(closeAfter = false, silent = true)
+    }
 
     // Z-Reihenfolge / Größe still mit Google-Konto synchronisieren
     LaunchedEffect(editable, state.snapshotKey(), tutorialMode) {
@@ -1672,7 +1701,6 @@ fun ProfileCanvasScreen(
         }
 
         if (showPreview) {
-            val myId = account?.id
             Dialog(
                 onDismissRequest = { showPreview = false },
                 properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -1692,15 +1720,14 @@ fun ProfileCanvasScreen(
                             .background(BgDeep)
                             .clickable(enabled = false) {}
                     ) {
-                        if (!myId.isNullOrBlank()) {
-                            ProfileCanvasScreen(
-                                nickname = loadedNick,
-                                colorIndex = colorIndex,
-                                editable = false,
-                                userId = myId,
-                                onClose = { showPreview = false }
-                            )
-                        }
+                        ProfileCanvasScreen(
+                            nickname = loadedNick,
+                            colorIndex = colorIndex,
+                            editable = false,
+                            userId = null,
+                            localPreviewState = state,
+                            onClose = { showPreview = false }
+                        )
                     }
                 }
             }

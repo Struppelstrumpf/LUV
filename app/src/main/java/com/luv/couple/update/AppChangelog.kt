@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.187",
+            listOf(
+                "Profil: Platzieren aus dem Inventar funktioniert wieder; Ansehen zeigt alle Elemente",
+            )
+        ),
+        Entry(
             "2.2.186",
             listOf(
                 "Hochzeit Nein: Kapellen-Lobby wird für Brautpaar und Gäste sofort geschlossen und gelöscht",
