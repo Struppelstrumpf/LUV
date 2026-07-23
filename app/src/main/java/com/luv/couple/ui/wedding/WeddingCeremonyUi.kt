@@ -584,6 +584,7 @@ fun WeddingGatheringDialog(
     var ceremony by remember { mutableStateOf<LuvApiClient.CeremonyInfo?>(null) }
     var busy by remember { mutableStateOf(false) }
     var floatEmoji by remember { mutableStateOf<String?>(null) }
+    var floatEmojiToken by remember { mutableLongStateOf(0L) }
 
     val gatherRev by CeremonyRefreshBus.revision.collectAsStateWithLifecycle()
     LaunchedEffect(Unit, gatherRev) {
@@ -660,11 +661,15 @@ fun WeddingGatheringDialog(
                             modifier = Modifier
                                 .clickable {
                                     scope.launch {
+                                        floatEmoji = emo
+                                        val token = System.currentTimeMillis()
+                                        floatEmojiToken = token
                                         runCatching { LuvApiClient.ceremonyReact(emo) }
-                                            .onSuccess {
-                                                ceremony = it
-                                                floatEmoji = emo
-                                            }
+                                            .onSuccess { ceremony = it }
+                                        delay(2000)
+                                        if (floatEmojiToken == token && floatEmoji == emo) {
+                                            floatEmoji = null
+                                        }
                                     }
                                 }
                                 .padding(4.dp)
@@ -728,10 +733,6 @@ fun WeddingGatheringDialog(
                 }
             }
             floatEmoji?.let { emo ->
-                LaunchedEffect(emo) {
-                    delay(1600)
-                    floatEmoji = null
-                }
                 Text(
                     emo,
                     fontSize = 64.sp,

@@ -7074,6 +7074,17 @@ function broadcastLivePos(roomCode, payload) {
   broadcastRoom(room, payload);
 }
 
+/** Sofort-FX in der Kapellen-Lobby (Emoji / Applaus / Konfetti). */
+function broadcastCeremonyLobby(m, payload) {
+  const code = String(m?.ceremonyLobbyCode || "")
+    .toUpperCase()
+    .replace(/^LUV-/, "");
+  if (!code) return;
+  const room = rooms.get(code);
+  if (!room || !room.sockets || room.sockets.size === 0) return;
+  broadcastRoom(room, payload);
+}
+
 /**
  * Jede verbundene Person genau einmal — immer mit Anzeigenamen.
  * Früher: leere Nicknames wurden übersprungen → fehlten in Kachel/Avataren.
@@ -8034,6 +8045,19 @@ setInterval(() => {
     if (result?.job?.ran) {
       console.log("[maintenance] nightly job done", result.job.report?.id || "");
       scheduleSave();
+      const report = result.job.report || {};
+      accountPush.broadcastEvent("maintenance_start", {
+        nightKey: report.nightKey || "",
+        reportId: report.id || "",
+        joke: String(db.maintenance?.joke || ""),
+      });
+      if (report.shop) {
+        accountPush.broadcastEvent("shop_rotated", {
+          touched: Number(report.shop.touched) || 0,
+          ok: report.shop.ok !== false,
+          nightKey: report.nightKey || "",
+        });
+      }
     }
   } catch (e) {
     console.error("[maintenance] tick failed", e);
@@ -10950,8 +10974,15 @@ app.post("/v1/me/marriage/ceremony/react", (req, res) => {
   const emoji = String(req.body?.emoji || "").trim().slice(0, 64);
   if (!emoji) return res.status(400).json({ error: "bad_emoji" });
   const c = weddingCeremony.ensureCeremony(m);
-  c.reactions[ctx.user.id] = { emoji, until: Date.now() + 2000 };
+  const until = Date.now() + 2000;
+  c.reactions[ctx.user.id] = { emoji, until };
   weddingCeremony.touchPresence(m, ctx.user.id, "gathering");
+  broadcastCeremonyLobby(m, {
+    type: "ceremony_react",
+    userId: ctx.user.id,
+    emoji,
+    until,
+  });
   scheduleSave();
   return res.json({
     ok: true,
@@ -11048,17 +11079,30 @@ app.post("/v1/me/marriage/ceremony/applause", (req, res) => {
   const c = weddingCeremony.ensureCeremony(m);
   const x = Math.min(0.95, Math.max(0.05, Number(req.body?.x) || 0.5));
   const y = Math.min(0.95, Math.max(0.05, Number(req.body?.y) || 0.7));
-  c.applauseBursts.push({
-    userId: ctx.user.id,
-    at: Date.now(),
-    emoji: "👏",
-    x,
-    y,
-  });
-  if (c.applauseBursts.length > 40) {
-    c.applauseBursts = c.applauseBursts.slice(-40);
+  const now = Date.now();
+  const wantExtras = Math.min(12, Math.max(0, Math.floor(Number(req.body?.extras) || 8)));
+  const bursts = [{ userId: ctx.user.id, at: now, emoji: "👏", x, y }];
+  for (let i = 0; i < wantExtras; i++) {
+    bursts.push({
+      userId: ctx.user.id,
+      at: now + i + 1,
+      emoji: "👏",
+      x: Math.min(0.92, Math.max(0.08, 0.15 + Math.random() * 0.7)),
+      y: Math.min(0.88, Math.max(0.12, 0.15 + Math.random() * 0.55)),
+    });
   }
-  c.reactions[ctx.user.id] = { emoji: "👏", until: Date.now() + 1800 };
+  for (const b of bursts) c.applauseBursts.push(b);
+  if (c.applauseBursts.length > 80) {
+    c.applauseBursts = c.applauseBursts.slice(-80);
+  }
+  const reactUntil = now + 1800;
+  c.reactions[ctx.user.id] = { emoji: "👏", until: reactUntil };
+  broadcastCeremonyLobby(m, {
+    type: "ceremony_applause",
+    userId: ctx.user.id,
+    bursts: bursts.map((b) => ({ x: b.x, y: b.y, at: b.at })),
+    reactionUntil: reactUntil,
+  });
   scheduleSave();
   return res.json({
     ok: true,
@@ -11078,15 +11122,23 @@ app.post("/v1/me/marriage/ceremony/confetti", (req, res) => {
   if (!Array.isArray(c.confettiBursts)) c.confettiBursts = [];
   const x = Math.min(0.95, Math.max(0.05, Number(req.body?.x) || 0.5));
   const y = Math.min(0.95, Math.max(0.05, Number(req.body?.y) || 0.7));
+  const at = Date.now();
   c.confettiBursts.push({
     userId: ctx.user.id,
-    at: Date.now(),
+    at,
     x,
     y,
   });
   if (c.confettiBursts.length > 40) {
     c.confettiBursts = c.confettiBursts.slice(-40);
   }
+  broadcastCeremonyLobby(m, {
+    type: "ceremony_confetti",
+    userId: ctx.user.id,
+    x,
+    y,
+    at,
+  });
   scheduleSave();
   return res.json({
     ok: true,
@@ -12504,6 +12556,13 @@ app.post("/v1/admin/users/:userId/warn", (req, res) => {
   };
   scheduleSave();
   staffAudit(ctx.user, "user_warn", { targetId: uid, message, severity, warningId: warning.id });
+  accountPush.emitUserEvent(getDb(), uid, "staff_warning", {
+    id: warning.id,
+    message,
+    severity,
+    at: warning.at,
+    authorNickname: "Team",
+  });
   return res.json({ ok: true, warning, user: staffUserCard(target) });
 });
 
@@ -12590,6 +12649,20 @@ app.post("/v1/admin/users/:userId/gift", (req, res) => {
     qty: given,
     noticeId: notice.id,
   });
+  accountPush.emitUserEvent(getDb(), uid, "staff_warning", {
+    id: notice.id,
+    message: notice.message,
+    severity: "gift",
+    at: notice.at,
+    authorNickname: "Team",
+  });
+  accountPush.emitUserEvent(
+    getDb(),
+    uid,
+    "inventory_new",
+    { kind, itemId, qty: given, label, emoji: emojiGlyph },
+    { skipFcm: true }
+  );
   const inv = target.inventory || {};
   return res.json({
     ok: true,
@@ -16275,6 +16348,13 @@ app.post("/v1/shop/lootbox", (req, res) => {
   }
   trackAch(ctx.user, "coins_spent", charged);
   scheduleSave();
+  accountPush.emitUserEvent(
+    getDb(),
+    ctx.user.id,
+    "lootbox_ready",
+    { pending: pendingLootboxPublic(ctx.user).length, added: created.length },
+    { skipFcm: true }
+  );
   return res.json({
     ok: true,
     price: LOOTBOX_PRICE,
@@ -16347,6 +16427,28 @@ app.post("/v1/shop/lootbox/open", (req, res) => {
     }
   }
   scheduleSave();
+  if (!grant.duplicate) {
+    accountPush.emitUserEvent(
+      getDb(),
+      ctx.user.id,
+      "inventory_new",
+      {
+        kind: entry.kind,
+        itemId: entry.itemId,
+        emoji: entry.emoji,
+        label: entry.label,
+        source: "lootbox",
+      },
+      { skipFcm: true }
+    );
+  }
+  accountPush.emitUserEvent(
+    getDb(),
+    ctx.user.id,
+    "lootbox_ready",
+    { pending: pendingLootboxPublic(ctx.user).length, added: 0 },
+    { skipFcm: true }
+  );
   return res.json({
     ok: true,
     item: {

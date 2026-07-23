@@ -214,6 +214,39 @@ object AccountEventRouter {
                     )
                 }
             }
+            "staff_warning" -> {
+                val id = data.optString("id").trim()
+                val msg = data.optString("message").trim()
+                if (id.isNotBlank() && msg.isNotBlank()) {
+                    StaffWarningBus.offerFromPush(
+                        LuvApiClient.StaffWarning(
+                            id = id,
+                            message = msg,
+                            severity = data.optString("severity", "warn").ifBlank { "warn" },
+                            at = data.optLong("at", System.currentTimeMillis()),
+                            byNick = "Team",
+                            seen = false,
+                        )
+                    )
+                }
+            }
+            "maintenance_start" -> MaintenancePushBus.bump()
+            "shop_rotated" -> {
+                ShopRotatedBus.bump()
+                ioScope.launch {
+                    runCatching {
+                        com.luv.couple.ui.screens.MarketHubCache.warm(force = true)
+                    }
+                }
+            }
+            "inventory_new" -> {
+                InventoryRefreshBus.bump()
+                NotificationBadges.syncAppBadge(app)
+            }
+            "lootbox_ready" -> {
+                LootboxRefreshBus.bump()
+                NotificationBadges.syncAppBadge(app)
+            }
             else -> Unit
         }
     }

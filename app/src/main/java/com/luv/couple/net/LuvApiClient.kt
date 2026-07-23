@@ -3534,10 +3534,15 @@ object LuvApiClient {
         json.optBoolean("ok", false)
     }
 
-    suspend fun ceremonyApplause(x: Float, y: Float): CeremonyInfo? = withContext(Dispatchers.IO) {
+    suspend fun ceremonyApplause(
+        x: Float,
+        y: Float,
+        extras: Int = 8,
+    ): CeremonyInfo? = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("x", x.toDouble())
             .put("y", y.toDouble())
+            .put("extras", extras.coerceIn(0, 12))
             .toString()
         val json = authedPost("/v1/me/marriage/ceremony/applause", body)
         parseCeremonyInfo(json.optJSONObject("ceremony"))

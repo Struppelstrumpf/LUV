@@ -47,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -232,6 +233,8 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
     var guestApplausePromptDone by remember { mutableStateOf(false) }
     var receptionStartedAt by remember { mutableStateOf(0L) }
     var myReaction by remember { mutableStateOf<String?>(null) }
+    /** Wechselt bei jedem Tippen — nur der letzte Timer darf das Emoji nach 2s löschen. */
+    var myReactionToken by remember { mutableLongStateOf(0L) }
     var layout by remember { mutableStateOf(cachedLayout) }
     var spawned by remember { mutableStateOf(cachedLayout != null) }
     var reactionExpanded by remember { mutableStateOf(false) }
@@ -571,23 +574,88 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
 
     LaunchedEffect(myId) {
         PairConnectionService.events.collect { ev ->
-            val pos = ev as? PairEvent.LivePos ?: return@collect
-            if (pos.kind != "ceremony_pos") return@collect
-            if (pos.userId == myId) return@collect
-            val want = ceremony?.ceremonyLobbyCode
-                ?.uppercase()
-                ?.removePrefix("LUV-")
-                .orEmpty()
-            val rc = pos.roomCode.uppercase().removePrefix("LUV-")
-            if (want.isNotBlank() && rc != want) return@collect
-            remoteX[pos.userId] = pos.x
-            remoteY[pos.userId] = pos.y
-            val c = ceremony ?: return@collect
-            ceremony = c.copy(
-                gathering = c.gathering.map { g ->
-                    if (g.userId == pos.userId) g.copy(x = pos.x, y = pos.y) else g
-                },
-            )
+            when (ev) {
+                is PairEvent.LivePos -> {
+                    if (ev.kind != "ceremony_pos") return@collect
+                    if (ev.userId == myId) return@collect
+                    val want = ceremony?.ceremonyLobbyCode
+                        ?.uppercase()
+                        ?.removePrefix("LUV-")
+                        .orEmpty()
+                    val rc = ev.roomCode.uppercase().removePrefix("LUV-")
+                    if (want.isNotBlank() && rc != want) return@collect
+                    remoteX[ev.userId] = ev.x
+                    remoteY[ev.userId] = ev.y
+                    val c = ceremony ?: return@collect
+                    ceremony = c.copy(
+                        gathering = c.gathering.map { g ->
+                            if (g.userId == ev.userId) g.copy(x = ev.x, y = ev.y) else g
+                        },
+                    )
+                }
+                is PairEvent.CeremonyReact -> {
+                    if (ev.userId == myId) {
+                        myReaction = ev.emoji
+                        val token = SystemClock.elapsedRealtime()
+                        myReactionToken = token
+                        scope.launch {
+                            delay((ev.until - System.currentTimeMillis()).coerceIn(200L, 2500L))
+                            if (myReactionToken == token && myReaction == ev.emoji) {
+                                myReaction = null
+                            }
+                        }
+                    }
+                    val c = ceremony ?: return@collect
+                    ceremony = c.copy(
+                        gathering = c.gathering.map { g ->
+                            if (g.userId == ev.userId) {
+                                g.copy(reaction = ev.emoji, reactionUntil = ev.until)
+                            } else {
+                                g
+                            }
+                        },
+                    )
+                }
+                is PairEvent.CeremonyApplause -> {
+                    // Eigene Klatscher schon optimistisch — Server-Bursts nicht doppelt
+                    if (ev.userId != myId) {
+                        val fresh = ev.bursts.filter { it.at > 0L && it.at !in seenApplauseAts }
+                        if (fresh.isNotEmpty()) {
+                            seenApplauseAts = seenApplauseAts + fresh.map { it.at }
+                            applauseBursts =
+                                applauseBursts + fresh.map { Triple(it.x, it.y, it.at) }
+                        }
+                    } else {
+                        seenApplauseAts =
+                            seenApplauseAts + ev.bursts.mapNotNull { b ->
+                                b.at.takeIf { it > 0L }
+                            }
+                    }
+                    if (ev.reactionUntil > 0L) {
+                        val c = ceremony ?: return@collect
+                        ceremony = c.copy(
+                            gathering = c.gathering.map { g ->
+                                if (g.userId == ev.userId) {
+                                    g.copy(reaction = "👏", reactionUntil = ev.reactionUntil)
+                                } else {
+                                    g
+                                }
+                            },
+                        )
+                    }
+                }
+                is PairEvent.CeremonyConfetti -> {
+                    if (ev.userId == myId) {
+                        if (ev.at > 0L) seenConfettiAts = seenConfettiAts + ev.at
+                        return@collect
+                    }
+                    if (ev.at > 0L && ev.at !in seenConfettiAts) {
+                        seenConfettiAts = seenConfettiAts + ev.at
+                        confettiBursts = confettiBursts + Triple(ev.x, ev.y, ev.at)
+                    }
+                }
+                else -> Unit
+            }
         }
     }
 
@@ -1214,10 +1282,14 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                     .background(Color.White.copy(0.08f))
                                     .clickable {
                                         scope.launch {
-                                            runCatching { LuvApiClient.ceremonyReact(emo) }
                                             myReaction = emo
+                                            val token = SystemClock.elapsedRealtime()
+                                            myReactionToken = token
+                                            runCatching { LuvApiClient.ceremonyReact(emo) }
                                             delay(2000)
-                                            if (myReaction == emo) myReaction = null
+                                            if (myReactionToken == token && myReaction == emo) {
+                                                myReaction = null
+                                            }
                                         }
                                     },
                                 contentAlignment = Alignment.Center,
@@ -1323,17 +1395,26 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                         scope.launch {
                             playApplauseSound(context)
                             val now = System.currentTimeMillis()
-                            val extras = List(10) {
+                            val extras = List(8) { i ->
                                 Triple(
                                     Random.nextFloat() * 0.7f + 0.15f,
                                     Random.nextFloat() * 0.55f + 0.15f,
-                                    now + it
+                                    now + 1L + i,
                                 )
                             }
-                            applauseBursts = applauseBursts + Triple(myX, myY, now) + extras
-                            seenApplauseAts = seenApplauseAts + now
-                            runCatching { LuvApiClient.ceremonyApplause(myX, myY) }
-                                .onSuccess { if (it != null) ceremony = it }
+                            val local = listOf(Triple(myX, myY, now)) + extras
+                            applauseBursts = applauseBursts + local
+                            seenApplauseAts = seenApplauseAts + local.map { it.third }
+                            runCatching { LuvApiClient.ceremonyApplause(myX, myY, extras = 8) }
+                                .onSuccess { fresh ->
+                                    if (fresh != null) {
+                                        seenApplauseAts = seenApplauseAts +
+                                            fresh.applauseBursts.mapNotNull { b ->
+                                                b.at.takeIf { it > 0L }
+                                            }
+                                        ceremony = fresh
+                                    }
+                                }
                         }
                     }
                     .padding(horizontal = 22.dp, vertical = 12.dp)
@@ -1406,10 +1487,26 @@ fun WeddingRoomScreen(onClose: () -> Unit) {
                                 scope.launch {
                                     playApplauseSound(context)
                                     val now = System.currentTimeMillis()
-                                    applauseBursts = applauseBursts + Triple(myX, myY, now)
-                                    seenApplauseAts = seenApplauseAts + now
-                                    runCatching { LuvApiClient.ceremonyApplause(myX, myY) }
-                                        .onSuccess { if (it != null) ceremony = it }
+                                    val extras = List(8) { i ->
+                                        Triple(
+                                            Random.nextFloat() * 0.7f + 0.15f,
+                                            Random.nextFloat() * 0.55f + 0.15f,
+                                            now + 1L + i,
+                                        )
+                                    }
+                                    val local = listOf(Triple(myX, myY, now)) + extras
+                                    applauseBursts = applauseBursts + local
+                                    seenApplauseAts = seenApplauseAts + local.map { it.third }
+                                    runCatching { LuvApiClient.ceremonyApplause(myX, myY, extras = 8) }
+                                        .onSuccess { fresh ->
+                                            if (fresh != null) {
+                                                seenApplauseAts = seenApplauseAts +
+                                                    fresh.applauseBursts.mapNotNull { b ->
+                                                        b.at.takeIf { it > 0L }
+                                                    }
+                                                ceremony = fresh
+                                            }
+                                        }
                                 }
                             }
                             .padding(vertical = 8.dp),

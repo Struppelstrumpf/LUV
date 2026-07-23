@@ -665,6 +665,75 @@ class PairConnectionService : Service() {
                     }
                     return
                 }
+                "ceremony_react" -> {
+                    val uid = json.optString("userId").trim()
+                    val emoji = json.optString("emoji").trim()
+                    if (uid.isBlank() || emoji.isBlank()) return
+                    val until = json.optLong("until", System.currentTimeMillis() + 2000L)
+                    scope.launch {
+                        _events.emit(
+                            PairEvent.CeremonyReact(
+                                lobbyId = lobby.id,
+                                userId = uid,
+                                emoji = emoji,
+                                until = until,
+                            )
+                        )
+                    }
+                    return
+                }
+                "ceremony_applause" -> {
+                    val uid = json.optString("userId").trim()
+                    if (uid.isBlank()) return
+                    val arr = json.optJSONArray("bursts")
+                    val bursts = buildList {
+                        if (arr != null) {
+                            for (i in 0 until arr.length()) {
+                                val b = arr.optJSONObject(i) ?: continue
+                                val x = b.optDouble("x", Double.NaN).toFloat()
+                                val y = b.optDouble("y", Double.NaN).toFloat()
+                                if (!x.isFinite() || !y.isFinite()) continue
+                                add(
+                                    PairEvent.CeremonyBurstPoint(
+                                        x = x,
+                                        y = y,
+                                        at = b.optLong("at", System.currentTimeMillis()),
+                                    )
+                                )
+                            }
+                        }
+                    }
+                    scope.launch {
+                        _events.emit(
+                            PairEvent.CeremonyApplause(
+                                lobbyId = lobby.id,
+                                userId = uid,
+                                bursts = bursts,
+                                reactionUntil = json.optLong("reactionUntil", 0L),
+                            )
+                        )
+                    }
+                    return
+                }
+                "ceremony_confetti" -> {
+                    val uid = json.optString("userId").trim()
+                    if (uid.isBlank()) return
+                    val x = json.optDouble("x", Double.NaN).toFloat()
+                    val y = json.optDouble("y", Double.NaN).toFloat()
+                    if (!x.isFinite() || !y.isFinite()) return
+                    scope.launch {
+                        _events.emit(
+                            PairEvent.CeremonyConfetti(
+                                lobbyId = lobby.id,
+                                userId = uid,
+                                x = x,
+                                y = y,
+                                at = json.optLong("at", System.currentTimeMillis()),
+                            )
+                        )
+                    }
+                    return
+                }
                 "welcome", "peers" -> {
                     val peers = json.optInt("peers", json.optInt("count", 0))
                     val capacity = json.optInt("capacity", 0).takeIf { it > 0 }
@@ -2119,5 +2188,25 @@ sealed class PairEvent {
         val y: Float,
         val layoutId: String? = null,
         val kind: String = "space_pos",
+    ) : PairEvent()
+    data class CeremonyReact(
+        val lobbyId: String,
+        val userId: String,
+        val emoji: String,
+        val until: Long,
+    ) : PairEvent()
+    data class CeremonyBurstPoint(val x: Float, val y: Float, val at: Long)
+    data class CeremonyApplause(
+        val lobbyId: String,
+        val userId: String,
+        val bursts: List<CeremonyBurstPoint>,
+        val reactionUntil: Long = 0L,
+    ) : PairEvent()
+    data class CeremonyConfetti(
+        val lobbyId: String,
+        val userId: String,
+        val x: Float,
+        val y: Float,
+        val at: Long,
     ) : PairEvent()
 }

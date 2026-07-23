@@ -1677,6 +1677,21 @@ fun LuvAppNav() {
         mutableStateOf<LuvApiClient.MaintenanceStatus?>(null)
     }
     var maintenanceHold by remember { mutableStateOf(false) }
+    val maintenancePushAt by com.luv.couple.net.MaintenancePushBus.ping.collectAsStateWithLifecycle()
+    val inventoryPushRev by com.luv.couple.net.InventoryRefreshBus.revision.collectAsStateWithLifecycle()
+    // Sofort wenn Wartung startet (Account-Push), nicht erst beim nächsten Sleep-Wake
+    LaunchedEffect(maintenancePushAt) {
+        if (maintenancePushAt <= 0L) return@LaunchedEffect
+        val st = runCatching { LuvApiClient.fetchMaintenanceStatus() }.getOrNull() ?: return@LaunchedEffect
+        if (st.active || st.canClaim) {
+            maintenanceHold = true
+            maintenanceStatus = st
+        }
+    }
+    LaunchedEffect(inventoryPushRev) {
+        if (inventoryPushRev <= 0) return@LaunchedEffect
+        syncInventory()
+    }
     // Wartung nur nachts ~03:00 — schlafen bis kurz vorher, kein 20s-Poll
     LaunchedEffect(Unit) {
         while (true) {

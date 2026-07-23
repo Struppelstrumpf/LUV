@@ -24,6 +24,18 @@ object StaffWarningBus {
         }
     }
 
+    /** Sofort aus Account-Push (ohne HTTP-Roundtrip). */
+    fun offerFromPush(notice: LuvApiClient.StaffWarning) {
+        if (notice.id.isBlank() || notice.message.isBlank()) return
+        if (notice.severity != "gift") {
+            val rest = _inbox.value.filter { it.id != notice.id }
+            _inbox.value = listOf(notice.copy(seen = false)) + rest
+        }
+        if (_pending.value?.id != notice.id) {
+            _pending.value = notice
+        }
+    }
+
     fun consume(id: String) {
         if (_pending.value?.id == id) _pending.value = null
     }

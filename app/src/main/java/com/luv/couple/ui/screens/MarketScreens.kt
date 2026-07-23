@@ -179,6 +179,15 @@ fun MarketScreen(
     var showHubLootbox by remember { mutableStateOf(false) }
     var hubLootBusy by remember { mutableStateOf<String?>(null) }
     var hubLootRefresh by remember { mutableIntStateOf(0) }
+    val lootPushRev by com.luv.couple.net.LootboxRefreshBus.revision.collectAsStateWithLifecycle()
+    val shopRotatedRev by com.luv.couple.net.ShopRotatedBus.revision.collectAsStateWithLifecycle()
+    LaunchedEffect(lootPushRev) {
+        if (lootPushRev > 0) hubLootRefresh++
+    }
+    LaunchedEffect(shopRotatedRev) {
+        if (shopRotatedRev <= 0) return@LaunchedEffect
+        MarketHubCache.warm(force = true)
+    }
     val hubAccount by AccountSession.account.collectAsStateWithLifecycle()
     when (panel) {
         MarketPanel.Hub -> {
@@ -339,6 +348,7 @@ private fun MarketHub(
     var hub by remember { mutableStateOf(MarketHubCache.latest) }
     var lootPending by remember { mutableIntStateOf(0) }
     val marketAlert by com.luv.couple.net.NotificationBadges.hasMarketDot.collectAsStateWithLifecycle()
+    val shopRotRev by com.luv.couple.net.ShopRotatedBus.revision.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
         val fresh = runCatching { LuvApiClient.fetchMarketHub() }.getOrNull()
         if (fresh != null) {
@@ -346,6 +356,11 @@ private fun MarketHub(
             hub = fresh
         }
         com.luv.couple.net.NotificationBadges.refreshPendingSales()
+    }
+    LaunchedEffect(shopRotRev) {
+        if (shopRotRev <= 0) return@LaunchedEffect
+        MarketHubCache.warm(force = true)
+        hub = MarketHubCache.latest ?: hub
     }
     LaunchedEffect(lootRefreshKey) {
         lootPending = runCatching { LuvApiClient.pendingLootboxes().size }.getOrDefault(0)

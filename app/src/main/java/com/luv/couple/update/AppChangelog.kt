@@ -12,6 +12,14 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.176",
+            listOf(
+                "Team-Hinweise und Geschenke kommen sofort per Live-Verbindung",
+                "Kapelle: Emoji-Reaktionen und Applaus live und flüssig",
+                "Shop-Rotation, Inventar und Lootbox aktualisieren sich ohne Warten",
+            )
+        ),
+        Entry(
             "2.2.175",
             listOf(
                 "Weniger Hintergrund-Anfragen: Live-Hinweise, Home-Feed und Hochzeit per Sofort-Update",
