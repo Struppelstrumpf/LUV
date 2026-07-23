@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -56,6 +57,7 @@ import com.luv.couple.net.PublicCanvasPreview
 import com.luv.couple.ui.theme.AccentRose
 import com.luv.couple.ui.theme.BodyFont
 import com.luv.couple.ui.theme.DisplayFont
+import com.luv.couple.ui.theme.LuvWordmarkLightSweep
 import com.luv.couple.ui.theme.TextPrimary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -203,6 +205,11 @@ fun PublicCanvasSplash(
         animationSpec = tween(420),
         label = "nameAlpha"
     )
+    val wordmarkAlpha by animateFloatAsState(
+        targetValue = if (ready && bitmap != null) 1f else 0f,
+        animationSpec = tween(380),
+        label = "wordmarkAlpha"
+    )
     val progress = barProgress.value
 
     Box(
@@ -246,6 +253,21 @@ fun PublicCanvasSplash(
                                 )
                             )
                     )
+                    // LUV mittig im oberen Bereich + Licht-Sweep L→V (~¾ s)
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .fillMaxHeight(0.42f)
+                            .alpha(wordmarkAlpha),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        LuvWordmarkLightSweep(
+                            fontSize = 52.sp,
+                            play = ready && bitmap != null,
+                            durationMs = 750
+                        )
+                    }
                 }
                 if (bitmap != null && nameLine.isNotBlank()) {
                     Column(

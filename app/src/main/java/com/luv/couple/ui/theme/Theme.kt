@@ -2,6 +2,7 @@ package com.luv.couple.ui.theme
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -9,14 +10,24 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -28,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import com.luv.couple.R
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlinx.coroutines.delay
 
 val MaleBlue = Color(0xFF00B7E4)
 val FemalePurple = Color(0xFFC218A8)
@@ -164,6 +176,56 @@ fun LuvWordmark(
                 modifier = Modifier.padding(start = 8.dp)
             )
         }
+    }
+}
+
+/**
+ * Wie [LuvWordmark], mit einmaligem Licht-Sweep L→V (~¾ s) —
+ * als würde man das Logo im Licht schwenken.
+ */
+@Composable
+fun LuvWordmarkLightSweep(
+    fontSize: TextUnit = 48.sp,
+    showHeart: Boolean = false,
+    play: Boolean = true,
+    durationMs: Int = 750,
+    modifier: Modifier = Modifier
+) {
+    val shine = remember { Animatable(-0.25f) }
+    LaunchedEffect(play) {
+        shine.snapTo(-0.25f)
+        if (!play) return@LaunchedEffect
+        delay(80)
+        shine.animateTo(
+            targetValue = 1.25f,
+            animationSpec = tween(durationMs, easing = FastOutSlowInEasing)
+        )
+    }
+    val t = shine.value
+    Box(
+        modifier = modifier
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithContent {
+                drawContent()
+                val band = size.width * 0.28f
+                val x = t * (size.width + band) - band * 0.5f
+                drawRect(
+                    brush = Brush.linearGradient(
+                        colorStops = arrayOf(
+                            0f to Color.Transparent,
+                            0.35f to Color.White.copy(alpha = 0.15f),
+                            0.5f to Color.White.copy(alpha = 0.75f),
+                            0.65f to Color.White.copy(alpha = 0.15f),
+                            1f to Color.Transparent
+                        ),
+                        start = Offset(x - band * 0.5f, -size.height * 0.2f),
+                        end = Offset(x + band * 0.5f, size.height * 1.2f)
+                    ),
+                    blendMode = BlendMode.SrcAtop
+                )
+            }
+    ) {
+        LuvWordmark(fontSize = fontSize, showHeart = showHeart)
     }
 }
 
