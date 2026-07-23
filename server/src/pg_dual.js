@@ -1,7 +1,7 @@
 /**
- * Throttled Postgres snapshot history (+ users upsert when JSON is primary).
- * When STORE_BACKEND=postgres, store.js already writes store_live; this only
- * appends store_snapshots history on a throttle.
+ * Throttled Postgres snapshot history.
+ * When STORE_BACKEND=postgres, pass { payloadUtf8 } from store.js (no JSON file).
+ * When JSON is primary, may still read dataFile.
  */
 const fs = require("fs");
 const path = require("path");
@@ -30,10 +30,13 @@ async function maybeDualWrite(dataFile, opts = {}) {
     } catch {
       return;
     }
-    const file =
-      dataFile || path.join(process.env.DATA_DIR || "/data", "luv-store.json");
-    if (!fs.existsSync(file)) return;
-    const raw = fs.readFileSync(file, "utf8");
+    let raw = opts.payloadUtf8 ? String(opts.payloadUtf8) : null;
+    if (!raw) {
+      const file =
+        dataFile || path.join(process.env.DATA_DIR || "/data", "luv-store.json");
+      if (!fs.existsSync(file)) return;
+      raw = fs.readFileSync(file, "utf8");
+    }
     const db = JSON.parse(raw);
     const users = db.users && typeof db.users === "object" ? db.users : {};
     const client = new pg.Client({ connectionString: DATABASE_URL });
@@ -42,7 +45,11 @@ async function maybeDualWrite(dataFile, opts = {}) {
       await client.query("BEGIN");
       await client.query(
         `INSERT INTO store_snapshots(source, bytes, payload) VALUES ($1,$2,$3::jsonb)`,
-        [opts.fromPrimary ? "primary_snapshot" : "dual_write", Buffer.byteLength(raw), raw]
+        [
+          opts.fromPrimary ? "primary_snapshot" : "dual_write",
+          Buffer.byteLength(raw),
+          raw,
+        ]
       );
       await client.query(
         `DELETE FROM store_snapshots WHERE id NOT IN (
@@ -50,7 +57,6 @@ async function maybeDualWrite(dataFile, opts = {}) {
          )`
       );
 
-      // When JSON is still primary, also refresh store_live + users as safety mirror
       if (!USE_PG) {
         await client.query(`
           CREATE TABLE IF NOT EXISTS store_live (

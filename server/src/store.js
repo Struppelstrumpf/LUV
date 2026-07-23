@@ -323,37 +323,31 @@ function load() {
   }
   if (!process.env.DATABASE_URL) {
     console.error(
-      "[store] STORE_BACKEND=postgres but DATABASE_URL missing — falling back to JSON file"
+      "[store] STORE_BACKEND=postgres but DATABASE_URL missing — cannot start"
     );
-    return loadFromFile();
+    process.exit(1);
   }
   try {
-    const { loadLiveSync, saveLiveSync, writeJsonMirror } = require("./pg_store");
+    const { loadLiveSync, saveLiveSync } = require("./pg_store");
     let payload = loadLiveSync();
     if (payload == null) {
       console.warn(
-        "[store] store_live empty — bootstrapping from JSON file into Postgres"
+        "[store] store_live empty — seeding empty DEFAULT into Postgres"
       );
-      const fromFile = loadFromFile();
-      saveLiveSync(fromFile, { source: "bootstrap_from_json", alsoSnapshot: true });
-      writeJsonMirror(DATA_FILE, fromFile);
-      console.log("[store] primary=postgres (bootstrapped from JSON)");
-      return hydrateDomainTables(normalize(fromFile));
+      const empty = structuredClone(DEFAULT);
+      saveLiveSync(empty, { source: "bootstrap_empty", alsoSnapshot: true });
+      console.log("[store] primary=postgres (seeded empty)");
+      return hydrateDomainTables(normalize(empty));
     }
     const dbObj = hydrateDomainTables(normalize(payload));
-    try {
-      writeJsonMirror(DATA_FILE, dbObj);
-    } catch (e) {
-      console.warn("[store] json mirror on boot failed", e?.message || e);
-    }
-    console.log("[store] primary=postgres (loaded store_live)");
+    console.log("[store] primary=postgres (loaded store_live, no JSON mirror)");
     return dbObj;
   } catch (err) {
     console.error(
-      "[store] postgres load failed — falling back to JSON file:",
+      "[store] postgres load failed — refusing JSON fallback:",
       err?.message || err
     );
-    return hydrateDomainTables(loadFromFile());
+    process.exit(1);
   }
 }
 
@@ -379,21 +373,9 @@ function saveJsonFileSync() {
 function save(next = db) {
   if (next !== db) db = next;
   if (USE_PG && process.env.DATABASE_URL) {
-    try {
-      const { saveLiveSync, writeJsonMirror } = require("./pg_store");
-      saveLiveSync(db, { source: "flush_sync" });
-      writeJsonMirror(DATA_FILE, db);
-      return;
-    } catch (err) {
-      console.error("[store] pg sync save failed", err?.message || err);
-      // Still mirror JSON so rollback data exists
-      try {
-        saveJsonFileSync();
-      } catch (e2) {
-        console.error("[store] json fallback save failed", e2?.message || e2);
-      }
-      throw err;
-    }
+    const { saveLiveSync } = require("./pg_store");
+    saveLiveSync(db, { source: "flush_sync" });
+    return;
   }
   saveJsonFileSync();
 }
@@ -418,16 +400,17 @@ function enqueueSave() {
 
             if (USE_PG && process.env.DATABASE_URL) {
               try {
-                const { saveLive, writeJsonMirrorAsync } = require("./pg_store");
+                const { saveLive } = require("./pg_store");
                 const parsed = JSON.parse(payload);
                 await saveLive(parsed, { source: "enqueue_save", alsoSnapshot: false });
                 pgSaveFailures = 0;
-                await writeJsonMirrorAsync(DATA_FILE, payload);
-                // Periodic history snapshot via pg_dual throttle
                 try {
                   const { maybeDualWrite } = require("./pg_dual");
                   setImmediate(() => {
-                    maybeDualWrite(DATA_FILE, { fromPrimary: true }).catch(() => {});
+                    maybeDualWrite(null, {
+                      fromPrimary: true,
+                      payloadUtf8: payload,
+                    }).catch(() => {});
                   });
                 } catch {
                   /* optional */
@@ -438,13 +421,6 @@ function enqueueSave() {
                   "[store] postgres save failed (#" + pgSaveFailures + ")",
                   err?.message || err
                 );
-                // Always keep JSON mirror current for emergency rollback
-                try {
-                  const { writeJsonMirrorAsync } = require("./pg_store");
-                  await writeJsonMirrorAsync(DATA_FILE, payload);
-                } catch {
-                  /* ignore */
-                }
               }
               resolve();
               return;

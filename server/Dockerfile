@@ -2,7 +2,7 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache fontconfig font-dejavu
+RUN apk add --no-cache fontconfig font-dejavu postgresql16-client
 
 COPY package.json ./
 RUN npm install --omit=dev

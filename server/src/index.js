@@ -38,6 +38,7 @@ const shopCalendar = require("./shop_calendar");
 const seasonEvents = require("./events");
 const adminWebAuth = require("./admin_web_auth");
 const maintenance = require("./maintenance");
+const iapLedger = require("./iap_ledger");
 const shopChangeQueue = require("./shop_change_queue");
 const bugReports = require("./bug_reports");
 const redisUtil = require("./redis_util");
@@ -5182,6 +5183,7 @@ function ensureDailyGrant(user) {
 const PAID_CREDIT_REASONS = new Set([
   "mollie_purchase",
   "play_purchase",
+  "play_purchase_replay",
   "voucher",
   "clear_refund",
   "signup_grant",
@@ -5758,6 +5760,19 @@ function applyLedger(userId, delta, reason, refId) {
   if (db.ledger.length > 5000) db.ledger.splice(0, db.ledger.length - 5000);
   scheduleSave();
   return user;
+}
+
+// Nach Store-Load: fehlende Play-Käufe aus durable JSONL nachziehen (Restore-Schutz).
+try {
+  const iapReplay = iapLedger.replayMissingCredits(getDb(), (userId, coins, paymentId) => {
+    applyLedger(userId, coins, "play_purchase_replay", paymentId);
+  });
+  if (iapReplay.replayed > 0) {
+    console.warn("[iap_ledger] boot replay", iapReplay);
+    scheduleSave();
+  }
+} catch (e) {
+  console.error("[iap_ledger] boot replay failed", e?.message || e);
 }
 
 /** Erfolgs-/Daily-Fortschritt — Coins über applyLedger, Cap 25/Tag. */
@@ -15801,6 +15816,12 @@ app.post("/v1/shop/play-purchase", async (req, res) => {
     credited: true,
   };
   applyLedger(ctx.user.id, creditCoins, "play_purchase", paymentKey);
+  // Durable append-only (survives older pg_dump restores)
+  try {
+    iapLedger.appendCreditedPurchase(db.payments[paymentKey]);
+  } catch (e) {
+    console.error("[iap_ledger] append failed", e?.message || e);
+  }
   bumpPackPurchase(pack.id, 1);
   if (pack.oncePerUserAndIp) {
     ctx.user.introOfferUsed = true;

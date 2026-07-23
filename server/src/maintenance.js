@@ -1,16 +1,18 @@
 /**
  * Nächtlicher Wartungsmodus 02:59–03:09 Europe/Berlin:
- * Shop-Zyklus, Store-Backup (max. 10), Gesundheitsbericht.
+ * Shop-Zyklus, Postgres-Dump (+ IAP-Ledger-Kopie), Retention 14 Tage, Gesundheitsbericht.
  */
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("child_process");
 const { berlinParts, berlinLocalMs } = require("./events");
 
 const WINDOW_START_H = 2;
 const WINDOW_START_M = 59;
 const WINDOW_END_H = 3;
 const WINDOW_END_M = 9;
-const MAX_BACKUPS = 10;
+/** Keep nightly dump folders for this many days. */
+const BACKUP_RETENTION_DAYS = 14;
 const CLAIM_GRACE_MS = 30 * 60_000;
 
 const JOKES = [
@@ -158,34 +160,106 @@ function backupDir(dataDir) {
   return path.join(dataDir, "backups");
 }
 
-function pruneBackups(dir, maxKeep = MAX_BACKUPS) {
+function pruneBackupsByAge(dir, retentionDays = BACKUP_RETENTION_DAYS) {
   if (!fs.existsSync(dir)) return { kept: 0, deleted: [] };
-  const files = fs
-    .readdirSync(dir)
-    .filter((f) => /^luv-store-.*\.json$/i.test(f))
-    .map((f) => ({ name: f, full: path.join(dir, f), mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
-    .sort((a, b) => b.mtime - a.mtime);
+  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
   const deleted = [];
-  while (files.length > maxKeep) {
-    const old = files.pop();
+  let kept = 0;
+  for (const name of fs.readdirSync(dir)) {
+    const full = path.join(dir, name);
+    let st;
     try {
-      fs.unlinkSync(old.full);
-      deleted.push(old.name);
+      st = fs.statSync(full);
+    } catch {
+      continue;
+    }
+    const isBackup =
+      st.isDirectory() ||
+      /^luv-.*\.(dump|sql|json)$/i.test(name) ||
+      /^night-/i.test(name);
+    if (!isBackup) continue;
+    if (st.mtimeMs < cutoff) {
+      try {
+        fs.rmSync(full, { recursive: true, force: true });
+        deleted.push(name);
+      } catch (_) {
+        /* ignore */
+      }
+    } else {
+      kept += 1;
+    }
+  }
+  return { kept, deleted };
+}
+
+function runPgDumpBackup(dataDir) {
+  const entry = { level: "info", code: "BACKUP", message: "", recommendation: null };
+  const url = String(process.env.DATABASE_URL || "").trim();
+  if (!url) {
+    entry.level = "error";
+    entry.code = "BACKUP_NO_DATABASE_URL";
+    entry.message = "DATABASE_URL fehlt — Postgres-Dump unmöglich.";
+    return { ok: false, entry, path: null };
+  }
+  const root = backupDir(dataDir);
+  fs.mkdirSync(root, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const folder = path.join(root, `night-${stamp}`);
+  fs.mkdirSync(folder, { recursive: true });
+  const dumpPath = path.join(folder, "luv.dump");
+  const iapPath = path.join(folder, "play_purchases.jsonl");
+
+  const dump = spawnSync(
+    "pg_dump",
+    [url, "-Fc", "-f", dumpPath],
+    { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 }
+  );
+  if (dump.status !== 0) {
+    entry.level = "error";
+    entry.code = "BACKUP_PG_DUMP_FAILED";
+    entry.message = (dump.stderr || dump.stdout || "pg_dump failed").slice(0, 500);
+    entry.recommendation =
+      "postgresql-client im API-Image prüfen; DATABASE_URL und Postgres-Container prüfen.";
+    try {
+      fs.rmSync(folder, { recursive: true, force: true });
     } catch (_) {
       /* ignore */
     }
+    return { ok: false, entry, path: null };
   }
-  return { kept: files.length, deleted };
+
+  let iapBytes = 0;
+  try {
+    const iap = require("./iap_ledger");
+    const copied = iap.copyLedgerTo(iapPath);
+    iapBytes = copied.bytes || 0;
+  } catch (e) {
+    fs.writeFileSync(iapPath, "", "utf8");
+    entry.level = "warn";
+    entry.message = `Dump ok, IAP-Ledger-Kopie: ${e?.message || e}`;
+  }
+
+  const bytes = fs.existsSync(dumpPath) ? fs.statSync(dumpPath).size : 0;
+  const pruned = pruneBackupsByAge(root, BACKUP_RETENTION_DAYS);
+  if (!entry.message) {
+    entry.message = `Postgres-Dump ok (${bytes} Bytes) + IAP-Ledger (${iapBytes} Bytes) → ${path.basename(folder)}. Retention ${BACKUP_RETENTION_DAYS}d, behalten≈${pruned.kept}.`;
+  } else {
+    entry.message += ` Dump=${bytes}B folder=${path.basename(folder)}.`;
+  }
+  if (pruned.deleted.length) {
+    entry.message += ` Gelöscht: ${pruned.deleted.join(", ")}.`;
+  }
+  return { ok: true, entry, path: folder, bytes, iapBytes, pruned };
 }
 
-function runBackup(dataFile, dataDir) {
+/** Legacy JSON copy — only when STORE_BACKEND=json. */
+function runJsonFileBackup(dataFile, dataDir) {
   const entry = { level: "info", code: "BACKUP", message: "", recommendation: null };
   try {
     if (!fs.existsSync(dataFile)) {
       entry.level = "warn";
       entry.code = "BACKUP_MISSING_STORE";
       entry.message = "luv-store.json nicht gefunden — Backup übersprungen.";
-      entry.recommendation = "Prüfen ob DATA_DIR korrekt ist und der Store geschrieben wird.";
       return { ok: false, entry, path: null };
     }
     const dir = backupDir(dataDir);
@@ -194,8 +268,8 @@ function runBackup(dataFile, dataDir) {
     const dest = path.join(dir, `luv-store-${stamp}.json`);
     fs.copyFileSync(dataFile, dest);
     const bytes = fs.statSync(dest).size;
-    const pruned = pruneBackups(dir, MAX_BACKUPS);
-    entry.message = `Backup ok (${bytes} Bytes) → ${path.basename(dest)}. Behalten: ${pruned.kept}.`;
+    const pruned = pruneBackupsByAge(dir, BACKUP_RETENTION_DAYS);
+    entry.message = `JSON-Backup ok (${bytes} Bytes) → ${path.basename(dest)}.`;
     if (pruned.deleted.length) {
       entry.message += ` Gelöscht: ${pruned.deleted.join(", ")}.`;
     }
@@ -204,10 +278,16 @@ function runBackup(dataFile, dataDir) {
     entry.level = "error";
     entry.code = "BACKUP_FAILED";
     entry.message = e?.message || String(e);
-    entry.recommendation =
-      "Festplatte/Rechte prüfen; ggf. manuell luv-store.json sichern und Server-Logs lesen.";
     return { ok: false, entry, path: null };
   }
+}
+
+function runBackup(dataFile, dataDir) {
+  const backend = String(process.env.STORE_BACKEND || "json").toLowerCase();
+  if (backend === "postgres" || backend === "pg") {
+    return runPgDumpBackup(dataDir || path.dirname(dataFile || "/data"));
+  }
+  return runJsonFileBackup(dataFile, dataDir);
 }
 
 function runShopCycle(db, shopCalendar, shopCatalog) {
@@ -648,6 +728,7 @@ module.exports = {
   tick,
   runNightlyJob,
   runManualReport,
+  runBackup,
   listReports,
   getReport,
   ensureState,
@@ -655,4 +736,5 @@ module.exports = {
   WINDOW_START_M,
   WINDOW_END_H,
   WINDOW_END_M,
+  BACKUP_RETENTION_DAYS,
 };
