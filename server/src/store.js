@@ -7,6 +7,9 @@ const STORE_BACKEND = String(process.env.STORE_BACKEND || "json").toLowerCase();
 const USE_PG = STORE_BACKEND === "postgres" || STORE_BACKEND === "pg";
 const USERS_BACKEND = String(process.env.USERS_BACKEND || "blob").toLowerCase();
 const USE_USERS_TABLE = USERS_BACKEND === "table" || USERS_BACKEND === "pg";
+const SESSIONS_BACKEND = String(process.env.SESSIONS_BACKEND || "blob").toLowerCase();
+const USE_SESSIONS_TABLE =
+  SESSIONS_BACKEND === "table" || SESSIONS_BACKEND === "pg";
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 const DATA_FILE = path.join(DATA_DIR, "luv-store.json");
@@ -185,10 +188,31 @@ function hydrateUsersFromTable(dbObj) {
   return dbObj;
 }
 
+function hydrateSessionsFromTable(dbObj) {
+  if (!USE_SESSIONS_TABLE || !process.env.DATABASE_URL) return dbObj;
+  try {
+    const { loadAllSessionsSync } = require("./sessions_pg");
+    const fromTable = loadAllSessionsSync();
+    const n = Object.keys(fromTable || {}).length;
+    dbObj.sessions = fromTable || {};
+    console.log(`[store] sessions SoT=table (loaded ${n} sessions)`);
+  } catch (err) {
+    console.error(
+      "[store] sessions table load failed — keeping blob sessions:",
+      err?.message || err
+    );
+  }
+  return dbObj;
+}
+
+function hydrateDomainTables(dbObj) {
+  return hydrateSessionsFromTable(hydrateUsersFromTable(dbObj));
+}
+
 function load() {
   if (!USE_PG) {
     const fromFile = loadFromFile();
-    return hydrateUsersFromTable(fromFile);
+    return hydrateDomainTables(fromFile);
   }
   if (!process.env.DATABASE_URL) {
     console.error(
@@ -207,9 +231,9 @@ function load() {
       saveLiveSync(fromFile, { source: "bootstrap_from_json", alsoSnapshot: true });
       writeJsonMirror(DATA_FILE, fromFile);
       console.log("[store] primary=postgres (bootstrapped from JSON)");
-      return hydrateUsersFromTable(normalize(fromFile));
+      return hydrateDomainTables(normalize(fromFile));
     }
-    const dbObj = hydrateUsersFromTable(normalize(payload));
+    const dbObj = hydrateDomainTables(normalize(payload));
     try {
       writeJsonMirror(DATA_FILE, dbObj);
     } catch (e) {
@@ -222,7 +246,7 @@ function load() {
       "[store] postgres load failed — falling back to JSON file:",
       err?.message || err
     );
-    return hydrateUsersFromTable(loadFromFile());
+    return hydrateDomainTables(loadFromFile());
   }
 }
 
@@ -449,4 +473,5 @@ module.exports = {
   DATA_FILE,
   STORE_BACKEND: USE_PG ? "postgres" : "json",
   USERS_BACKEND: USE_USERS_TABLE ? "table" : "blob",
+  SESSIONS_BACKEND: USE_SESSIONS_TABLE ? "table" : "blob",
 };

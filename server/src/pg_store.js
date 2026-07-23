@@ -157,6 +157,15 @@ async function saveLive(db, { source = "save", alsoSnapshot = false } = {}) {
         }
       }
 
+      try {
+        const { replaceSessionsInClient } = require("./sessions_pg");
+        const sessions =
+          db.sessions && typeof db.sessions === "object" ? db.sessions : {};
+        await replaceSessionsInClient(client, sessions);
+      } catch {
+        /* sessions table may not exist yet */
+      }
+
       await client.query(
         `INSERT INTO meta(key, value) VALUES ('last_store_live_at', $1)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
