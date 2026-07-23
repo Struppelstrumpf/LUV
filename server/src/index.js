@@ -2135,6 +2135,11 @@ function createWeddingLobby(userA, userB, marriageRec) {
       dissolveOrphanWeddingPaintLobbies(userA, userB, marriageRec, existingCode);
       persistRooms();
       scheduleSave();
+      emitMarriageLiveUpdate(
+        marriageRec,
+        "wedding",
+        "Hochzeitsbild-Lobby ist offen"
+      );
       return existingCode;
     }
   }
@@ -2184,6 +2189,7 @@ function createWeddingLobby(userA, userB, marriageRec) {
   marriageRec.status = "wedding";
   dissolveOrphanWeddingPaintLobbies(userA, userB, marriageRec, code);
   persistRooms();
+  emitMarriageLiveUpdate(marriageRec, "wedding", "Hochzeitsbild-Lobby ist offen");
   return code;
 }
 
@@ -2555,6 +2561,11 @@ function markCeremonyPending(m, { force = false } = {}) {
   const c = weddingCeremony.ensureCeremony(m);
   c.phase = "presence";
   c.startConfirm = {};
+  emitMarriageLiveUpdate(
+    m,
+    "ceremony_pending",
+    "Hochzeitsbild fertig — Zeremonie vorbereiten"
+  );
   return true;
 }
 
@@ -2823,6 +2834,7 @@ function finalizeWeddingMarriage(m, { force = false } = {}) {
   } catch (e) {
     console.error("wedding home feed failed", e);
   }
+  emitMarriageLiveUpdate(m, "married", "Ihr seid verheiratet");
   return true;
 }
 
@@ -2933,6 +2945,11 @@ function createWeddingCeremonyLobby(
   c.liveWindowCleared = false;
   weddingCeremony.ensureLiveWindow(marriageRec);
   persistRooms();
+  emitMarriageLiveUpdate(
+    marriageRec,
+    "ceremony_scheduled",
+    "Hochzeit-Lobby ist bereit"
+  );
   return code;
 }
 
@@ -3038,6 +3055,12 @@ function abortWeddingCeremony(
   }
   const all = marriage.ensureMarriages(db);
   const key = m.id || marriage.pairKey(m.a, m.b);
+  emitMarriageLiveUpdate(
+    m,
+    "cancelled",
+    text || "Die Trauung wurde abgebrochen",
+    leftByUserId || null
+  );
   if (a) {
     marriage.clearMarriageItem(a);
     marriage.stripSpouseFromProfile(a);
@@ -3220,6 +3243,7 @@ function startEngagement(m) {
   const b = db.users?.[m.b];
   if (a) marriage.clearDivorceCooldown(a);
   if (b) marriage.clearDivorceCooldown(b);
+  emitMarriageLiveUpdate(m, "engaged", "Verlobt — Wartezeit läuft");
 }
 
 /** Sofort Verlobung → Hochzeitsbild-Lobby oder Wedding → ceremony_pending. */
@@ -5808,6 +5832,28 @@ function notifyAchievementUnlocks(user, result) {
       message: "Tagesaufgabe fertig — Belohnung abholen",
       daily: true,
     });
+  }
+}
+
+/** Beide Partner: Sozial-Kacheln / Freunde-Liste sofort per Account-WS. */
+function emitMarriageLiveUpdate(m, status, message, actorId = null) {
+  if (!m) return;
+  const db = getDb();
+  const st = String(status || m.status || "").trim();
+  const actor = actorId ? db.users?.[actorId] : null;
+  const nick = String(actor?.nickname || "Hochzeit").trim().slice(0, 18) || "Hochzeit";
+  const data = {
+    status: st,
+    message: String(message || "").trim().slice(0, 160),
+    nickname: nick,
+    fromUserId: actorId || "",
+    weddingLobbyCode: m.weddingLobbyCode || "",
+    ceremonyLobbyCode: m.ceremonyLobbyCode || "",
+    ceremonyAt: Number(m.ceremonyAt) || 0,
+  };
+  for (const uid of [m.a, m.b]) {
+    if (!uid) continue;
+    accountPush.emitUserEvent(db, uid, "marriage_update", data);
   }
 }
 

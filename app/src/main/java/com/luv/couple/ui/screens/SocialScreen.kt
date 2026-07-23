@@ -467,25 +467,13 @@ private fun FriendsPanel(
         reload(force = true)
     }
 
-    // Tab sichtbar: sofort; Push/Account-WS ist Hauptweg — Poll nur als seltener Fallback
+    // Tab sichtbar: sofort; Hochzeit-Kacheln laufen über Account-WS — Poll nur Fallback
     LaunchedEffect(active) {
         if (!active) return@LaunchedEffect
         reload(force = true)
         while (true) {
-            delay(90_000L)
+            delay(300_000L)
             if (!active) continue
-            runCatching { LuvApiClient.fetchFriends(force = true) }
-                .onSuccess { applyFriendsSnap(it) }
-        }
-    }
-
-    // Verlobung/Hochzeit: Lobby-Status — Fallback seltener (Live über Account-WS)
-    LaunchedEffect(active, myMarriage?.status, myMarriage?.engageFreeSkipAvailable) {
-        if (!active) return@LaunchedEffect
-        val st = myMarriage?.status
-        if (st != "engaged" && st != "wedding") return@LaunchedEffect
-        while (true) {
-            delay(60_000)
             runCatching { LuvApiClient.fetchFriends(force = true) }
                 .onSuccess { applyFriendsSnap(it) }
         }

@@ -12,6 +12,12 @@ object AppChangelog {
 
     val entries: List<Entry> = listOf(
         Entry(
+            "2.2.173",
+            listOf(
+                "Hochzeit-Kacheln im Freunde-Tab aktualisieren sich live (Antrag bis verheiratet)",
+            )
+        ),
+        Entry(
             "2.2.172",
             listOf(
                 "Freunde, Heirat, Markt und Erfolge: Sofort-Hinweise per Live-Verbindung",

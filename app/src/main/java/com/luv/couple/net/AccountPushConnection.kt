@@ -161,6 +161,7 @@ object AccountEventRouter {
         when (event) {
             "friend_request", "friend_accepted", "friend_removed",
             "marriage_proposal", "marriage_update" -> {
+                // Cache-Invalidierung → SocialScreen lädt myMarriage-Kacheln neu
                 LuvApiClient.invalidateFriendsCache()
                 ioScope.launch {
                     runCatching { NotificationBadges.refreshFriends(app, force = true) }
